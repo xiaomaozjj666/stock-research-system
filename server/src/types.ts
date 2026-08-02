@@ -8,6 +8,16 @@ export interface StockInfo {
   description: string;
 }
 
+// 最新消息情绪信号（来自 quant/newsSignal）
+import type { NewsSignal, NewsItem } from './quant/newsSignal.js';
+export type { NewsSignal, NewsItem };
+
+// 数据质量标记
+export interface DataQualityFlags {
+  estimatedFields: string[];  // 估算字段列表
+  missingFields: string[];    // 缺失字段列表
+}
+
 // 财务数据（多年）
 export interface FinancialData {
   years: string[];
@@ -25,6 +35,8 @@ export interface FinancialData {
   inventory: number[];
   goodwill: number[];
   debtRatio: number[];
+  capEx?: number[];  // 资本支出（亿元），可选字段
+  dataQuality?: DataQualityFlags;  // 数据质量标记
 }
 
 // 估值数据
@@ -34,7 +46,7 @@ export interface ValuationData {
   pb: number;
   ps: number;
   marketCap: number;
-  historicalPE: { year: string; pe: number }[];
+  historicalPE: { year: string; pe: number; isEstimated?: boolean }[];
   peerComparison: {
     name: string;
     code: string;
@@ -52,10 +64,17 @@ export interface DataSource {
   confidence: number;
 }
 
+// 个股完整数据集合（由 dataService.getData 组装，供分析流水线使用）
+export interface StockDataSet {
+  info: StockInfo;
+  financial: FinancialData;
+  valuation: ValuationData;
+}
+
 // 专家观点
 export interface ExpertOpinion {
   expert: string;
-  arguments: { text: string; confidence: number; type: 'support' | 'oppose' }[];
+  arguments: { text: string; confidence: number; type: 'support' | 'oppose'; evidenceType: 'fact' | 'inference' | 'hypothesis' }[];
   overallSentiment: 'bullish' | 'neutral' | 'bearish';
   confidence: number;
   keyPoints: string[];
@@ -86,6 +105,68 @@ export interface ChartConfig {
   config: Record<string, unknown>;
 }
 
+// 情景分析结果
+export interface ScenarioResult {
+  name: '乐观' | '中性' | '悲观';
+  probability: number; // 0-1
+  keyAssumptions: string[];
+  targetPriceRange: { low: number; high: number };
+  supportingArguments: { expert: string; text: string; confidence: number }[];
+  preconditions: string[]; // 前置条件
+}
+
+// 量化策略推荐
+export interface StrategyRecommendation {
+  strategyType: string; // '均线交叉' | '动量策略' | '均值回归'
+  sharpeRatio: number;
+  maxDrawdown: number;
+  winRate: number;
+  totalReturn: number;
+  applicableMarket: string; // 适用行情描述
+  fatalWeakness: string; // 致命弱点
+  backtestWarning: string; // 回测风险提醒
+  newsAware?: { // 含最新消息情绪叠加层的回测对比
+    totalReturn: number;
+    sharpeRatio: number;
+    maxDrawdown: number;
+    winRate: number;
+    posture: number;
+  };
+}
+
+// 自选股批量"含最新消息回测"结果行
+export interface WatchlistNewsBacktestRow {
+  code: string;
+  name: string | null;
+  /** 最新消息情绪信号（无新闻为 null） */
+  newsSentiment: NewsSignal | null;
+  /** 3 种策略的推荐（含 newsAware 对比，仅当有新闻时存在） */
+  strategyList: StrategyRecommendation[];
+  /** 按夏普排序取最优策略的摘要（便于表格直接展示） */
+  bestStrategy?: {
+    strategyType: string;
+    totalReturn: number;
+    sharpeRatio: number;
+    maxDrawdown: number;
+    winRate: number;
+    newsAware?: StrategyRecommendation['newsAware'];
+  };
+  /** 该只是否使用了模拟 K 线（网络不可达时的降级） */
+  simulatedKline: boolean;
+  /** 处理该只时的错误信息（如取数失败） */
+  error?: string;
+}
+
+// 自选股批量"含最新消息回测"总报告
+export interface WatchlistNewsBacktestReport {
+  generatedAt: string;
+  /** 参与回测的代码数 */
+  count: number;
+  /** 其中命中最新消息的代码数 */
+  withNewsCount: number;
+  results: WatchlistNewsBacktestRow[];
+}
+
 // 完整分析结果
 export interface AnalysisResult {
   stock_pool: {
@@ -106,6 +187,9 @@ export interface AnalysisResult {
     reflection_notes: string[];
     chart_list: ChartConfig[];
     follow_up_indicators: string[];
+    scenarios?: ScenarioResult[];
+    strategyList?: StrategyRecommendation[];
+    newsSentiment?: NewsSignal; // 最新消息情绪信号
   }[];
   data_sources: DataSource[];
   research_confidence: string;

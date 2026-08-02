@@ -1,5 +1,7 @@
 import type { StockInfo, FinancialData, ValuationData } from '../types.js';
 import { fetchStockInfo, fetchFinancialData, fetchValuationData } from './dataFetcher.js';
+import { buildPeerComparison, resolveStockIndustry } from './peerService.js';
+import { loadStockMaster, fuzzyMatch } from './stockMaster.js';
 import { MOUTAI_INFO, MOUTAI_FINANCIAL, MOUTAI_VALUATION } from '../data/sampleData.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -12,26 +14,47 @@ export interface StockDataSet {
 
 const CACHE_DIR = path.join(import.meta.dirname, '..', 'data', 'cache');
 
-// 确保缓存目录存在
+// 确保缓存目录存在（同步，模块加载时执行一次）
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
 
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 小时
+const CACHE_TTL_HOURS = Number(process.env.CACHE_TTL_HOURS) || 24;
+const CACHE_TTL = CACHE_TTL_HOURS * 60 * 60 * 1000;
+
+// 品牌名/常用名 → 上市简称 的别名映射。东方财富搜索 API 只认上市主体简称，
+// 用户输入品牌名（如「长鑫存储」）时需改写为上市主体名（「长鑫科技」）才能命中。
+export const SEARCH_ALIASES: Record<string, string> = {
+  '长鑫存储': '长鑫科技',
+  '长鑫': '长鑫科技',
+};
+
+// 上市窗口期临时前缀（C=上市后次日起 5 个交易日内，N=上市首日）仅表示
+// 涨跌幅限制机制，并非证券简称的一部分，展示时应去除。个别股票窗口名被
+// 交易所截断（如「C长鑫」实为「长鑫科技」），按代码显式补全。
+const DISPLAY_NAME_OVERRIDE: Record<string, string> = {
+  '688825': '长鑫科技',
+};
+
+export function cleanDisplayName(name: string, code?: string): string {
+  if (code && DISPLAY_NAME_OVERRIDE[code]) return DISPLAY_NAME_OVERRIDE[code];
+  return name.replace(/^[CN](?=[一-龥])/, '');
+}
 
 export async function getData(stockCode: string): Promise<StockDataSet> {
-  // 1. 检查缓存
+  // 1. 检查缓存（异步文件 I/O）
   const cacheFile = path.join(CACHE_DIR, `${stockCode}.json`);
-  if (fs.existsSync(cacheFile)) {
-    try {
-      const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
+  try {
+    if (fs.existsSync(cacheFile)) {
+      const cachedContent = await fs.promises.readFile(cacheFile, 'utf-8');
+      const cached = JSON.parse(cachedContent);
       const cacheAge = Date.now() - cached.timestamp;
       if (cacheAge < CACHE_TTL) {
         return cached.data as StockDataSet;
       }
-    } catch {
-      // 缓存损坏，忽略
     }
+  } catch {
+    // 缓存损坏或读取失败，忽略
   }
 
   // 2. 尝试从 API 获取数据
@@ -41,10 +64,40 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
       fetchFinancialData(stockCode),
       fetchValuationData(stockCode)
     ]);
+    // 去除上市窗口期临时前缀（C/N），展示规范简称
+    info.name = cleanDisplayName(info.name, info.code);
+    // 填充同业对比（行业参考表 + 实时估值，供估值/行业/资金专家使用）
+    try {
+      // 反查并补全行业（主数据不可达时由 datacenter BOARD_NAME 兜底）
+      const industry = await resolveStockIndustry(info.code, info.industry);
+      if (industry) info.industry = industry;
+      console.log(`[peer] industry=${info.industry} self=${info.code}`);
+      const peers = await buildPeerComparison(info.code, info.industry);
+      valuation.peerComparison = peers.map((p) => ({
+        name: p.name,
+        code: p.code,
+        pe: p.pe,
+        pb: p.pb,
+        roe: p.roe,
+        marketCap: p.marketCap,
+      }));
+      console.log(`[peer] filled=${valuation.peerComparison.length} [${valuation.peerComparison.map(p => p.code + p.name).join(',')}]`);
+    } catch (e) {
+      console.log('[peer] buildPeerComparison error:', (e as Error).message);
+    }
+
     const dataSet: StockDataSet = { info, financial, valuation };
 
-    // 写入缓存
-    fs.writeFileSync(cacheFile, JSON.stringify({ data: dataSet, timestamp: Date.now() }, null, 2));
+    // 写入缓存（异步）
+    try {
+      await fs.promises.writeFile(
+        cacheFile,
+        JSON.stringify({ data: dataSet, timestamp: Date.now() }, null, 2),
+        'utf-8'
+      );
+    } catch (writeErr) {
+      console.warn('缓存写入失败:', (writeErr as Error).message);
+    }
     return dataSet;
   } catch (error) {
     // 3. 降级到 sampleData（仅茅台）
@@ -63,18 +116,23 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
 export async function getSupportedStocks(): Promise<{ code: string; name: string; industry: string }[]> {
   const stocks: { code: string; name: string; industry: string }[] = [];
 
-  // 从缓存目录读取已查询过的股票
-  if (fs.existsSync(CACHE_DIR)) {
-    const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.json'));
-    for (const file of files) {
-      try {
-        const cached = JSON.parse(fs.readFileSync(path.join(CACHE_DIR, file), 'utf-8'));
-        const info = (cached.data as StockDataSet).info;
-        stocks.push({ code: info.code, name: info.name, industry: info.industry });
-      } catch {
-        // 忽略损坏的缓存文件
+  // 从缓存目录读取已查询过的股票（异步）
+  try {
+    if (fs.existsSync(CACHE_DIR)) {
+      const files = (await fs.promises.readdir(CACHE_DIR)).filter(f => f.endsWith('.json'));
+      for (const file of files) {
+        try {
+          const content = await fs.promises.readFile(path.join(CACHE_DIR, file), 'utf-8');
+          const cached = JSON.parse(content);
+          const info = (cached.data as StockDataSet).info;
+          stocks.push({ code: info.code, name: info.name, industry: info.industry });
+        } catch {
+          // 忽略损坏的缓存文件
+        }
       }
     }
+  } catch {
+    // 目录读取失败，忽略
   }
 
   // 确保茅台始终在列表中
@@ -86,20 +144,34 @@ export async function getSupportedStocks(): Promise<{ code: string; name: string
 }
 
 export async function searchStocks(keyword: string): Promise<{ code: string; name: string }[]> {
+  const kw = keyword.trim();
+  const query = SEARCH_ALIASES[kw] ?? kw; // 品牌名别名改写
+  // 1. 东方财富 suggest（擅长代码/拼音/上市简称）
   try {
-    const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(keyword)}&type=14&token=D43BF722C8E33BDC906FB84D85E326E8&count=10`;
+    const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=D43BF722C8E33BDC906FB84D85E326E8&count=10`;
     const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
     const data = await response.json() as {
       QuotationCodeTable?: { Data?: Array<{ MktNum: string; Code: string; Name: string }> };
     };
 
     if (data.QuotationCodeTable?.Data) {
-      return data.QuotationCodeTable.Data
+      const results = data.QuotationCodeTable.Data
         .filter(item => item.MktNum === '0' || item.MktNum === '1')
-        .map(item => ({ code: item.Code, name: item.Name }));
+        .map(item => ({ code: item.Code, name: cleanDisplayName(item.Name, item.Code) }));
+      if (results.length > 0) return results;
     }
-    return [];
   } catch {
-    return [];
+    /* 上游失败，走兜底 */
   }
+
+  // 2. 兜底：本地证券全表模糊匹配（支持工商全称/子串/部分重叠）
+  try {
+    const master = await loadStockMaster();
+    const fuzzy = fuzzyMatch(query, master);
+    if (fuzzy.length > 0) return fuzzy.map(e => ({ code: e.code, name: cleanDisplayName(e.name, e.code) }));
+  } catch {
+    /* 兜底失败，返回空 */
+  }
+
+  return [];
 }

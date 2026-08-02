@@ -1,4 +1,21 @@
-import ReactECharts from 'echarts-for-react';
+import ReactEChartsCoreDefault from 'echarts-for-react/lib/core';
+import type { ComponentType, CSSProperties } from 'react';
+import echarts from '../lib/echarts';
+
+// echarts-for-react@3.0.7 的声明基于 React 18 的 Component 类型，与 React 19 的 JSX 类型不兼容
+// （运行时正常）。这里做最小类型桥接，使其可作为 JSX 组件使用。
+// option 采用 unknown：ECharts 6 的 EChartsOption 类型较严格，内联配置对象（type 字面量被推断为
+// string 等）易触发类型不匹配；运行时渲染不受影响。
+const ReactEChartsCore = ReactEChartsCoreDefault as unknown as ComponentType<{
+  echarts: typeof import('../lib/echarts').default;
+  option: unknown;
+  style?: CSSProperties;
+  notMerge?: boolean;
+  lazyUpdate?: boolean;
+  theme?: string | object;
+  onChartReady?: (instance: unknown) => void;
+  onEvents?: Record<string, (params: unknown) => void>;
+}>;
 
 interface StockData {
   stock_name?: string;
@@ -57,6 +74,9 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
   const revenueChart = {
     backgroundColor: transparent,
     textStyle: chartTextStyle,
+    animation: true,
+    animationDuration: 1500,
+    animationEasing: 'cubicOut' as const,
     tooltip: { trigger: 'axis' as const },
     legend: { data: ['营业收入', '净利润'], textStyle: chartTextStyle, top: 0 },
     grid: { left: 60, right: 60, top: 40, bottom: 30 },
@@ -85,6 +105,9 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
   const profitChart = {
     backgroundColor: transparent,
     textStyle: chartTextStyle,
+    animation: true,
+    animationDuration: 1500,
+    animationEasing: 'cubicOut' as const,
     tooltip: { trigger: 'axis' as const, formatter: (params: { seriesName: string; value: number; marker: string }[]) => {
       let s = `<b>${params[0]?.seriesName || ''}</b><br/>`;
       params.forEach((p: { seriesName: string; value: number; marker: string }) => { s += `${p.marker} ${p.seriesName}: ${p.value}%<br/>`; });
@@ -108,6 +131,9 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
   const peerChart = {
     backgroundColor: transparent,
     textStyle: chartTextStyle,
+    animation: true,
+    animationDuration: 1500,
+    animationEasing: 'cubicOut' as const,
     tooltip: { trigger: 'axis' as const },
     grid: { left: 50, right: 20, top: 20, bottom: 40 },
     xAxis: { type: 'category' as const, data: peerNames, axisLine: { lineStyle: { color: borderDefault } }, axisLabel: { ...chartTextStyle, fontSize: 11 } },
@@ -122,6 +148,8 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
   const radarChart = {
     backgroundColor: transparent,
     textStyle: chartTextStyle,
+    animation: true,
+    animationDuration: 1500,
     tooltip: {},
     radar: {
       indicator: [
@@ -161,6 +189,9 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
   const peChart = {
     backgroundColor: transparent,
     textStyle: chartTextStyle,
+    animation: true,
+    animationDuration: 1500,
+    animationEasing: 'cubicOut' as const,
     tooltip: { trigger: 'axis' as const },
     grid: { left: 50, right: 20, top: 20, bottom: 30 },
     xAxis: { type: 'category' as const, data: peYears, axisLine: { lineStyle: { color: borderDefault } }, axisLabel: chartTextStyle },
@@ -191,31 +222,31 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
         {hasFinanceData && (
           <div className="chart-card">
             <h4>营收与利润趋势</h4>
-            <ReactECharts option={revenueChart} style={{ height: 280 }} />
+            <ReactEChartsCore echarts={echarts} option={revenueChart} style={{ height: 280 }} />
           </div>
         )}
         {hasFinanceData && (
           <div className="chart-card">
             <h4>盈利能力指标</h4>
-            <ReactECharts option={profitChart} style={{ height: 280 }} />
+            <ReactEChartsCore echarts={echarts} option={profitChart} style={{ height: 280 }} />
           </div>
         )}
         {hasPeerData && (
           <div className="chart-card">
             <h4>同业 PE 对比</h4>
-            <ReactECharts option={peerChart} style={{ height: 280 }} />
+            <ReactEChartsCore echarts={echarts} option={peerChart} style={{ height: 280 }} />
           </div>
         )}
         {hasRadar && (
           <div className="chart-card">
             <h4>五维度雷达图</h4>
-            <ReactECharts option={radarChart} style={{ height: 280 }} />
+            <ReactEChartsCore echarts={echarts} option={radarChart} style={{ height: 280 }} />
           </div>
         )}
         {hasPeData && (
           <div className="chart-card">
             <h4>历史 PE 走势</h4>
-            <ReactECharts option={peChart} style={{ height: 280 }} />
+            <ReactEChartsCore echarts={echarts} option={peChart} style={{ height: 280 }} />
           </div>
         )}
       </div>

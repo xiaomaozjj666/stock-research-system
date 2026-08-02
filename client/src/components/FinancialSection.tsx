@@ -63,7 +63,7 @@ export default function FinancialSection({ data }: FinancialSectionProps) {
                 <td>{row.label}</td>
                 {row.values.map((v, i) => {
                   const prev = i > 0 ? row.values[i - 1] : undefined;
-                  const change = prev ? ((v! - prev) / Math.abs(prev)) * 100 : undefined;
+                  const change = prev && prev !== 0 ? ((v! - prev) / Math.abs(prev)) * 100 : undefined;
                   return (
                     <td key={i} className={yoyColor(change)}>
                       {fmt(v, row.type)}

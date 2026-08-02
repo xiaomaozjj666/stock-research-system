@@ -1,4 +1,5 @@
 import type { StockInfo, FinancialData, ValuationData } from '../types.js';
+import { fetchJson } from '../utils/http.js';
 
 // ============ 工具函数 ============
 
@@ -12,17 +13,15 @@ function getSecId(code: string): string {
 }
 
 /**
- * 带超时的 fetch 封装
+ * 带超时的 fetch 封装（内部走弹性 fetchJson：fetch 失败自动回退 curl）
+ * 为兼容现有调用方，返回包装后的 Response 对象。
  */
 async function fetchWithTimeout(url: string, timeout = 10000): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    return response;
-  } finally {
-    clearTimeout(timer);
-  }
+  const data = await fetchJson(url, { timeoutMs: timeout });
+  return new Response(JSON.stringify(data), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 /**
@@ -107,7 +106,6 @@ export async function fetchStockInfo(code: string): Promise<StockInfo> {
 
 async function fetchFinancialFromEastMoney(code: string): Promise<FinancialData | null> {
   try {
-    const secid = getSecId(code);
     // 东方财富财务指标 API - 获取最近6年年报
     const url = `https://datacenter.eastmoney.com/api/data/get?type=RPT_F10_FINANCE_MAINFINADATA&sty=ALL&filter=(SECUCODE="${code}.${code.startsWith('6') ? 'SH' : 'SZ'}")(REPORT_TYPE="年报")&p=1&ps=6&sr=-1&st=REPORT_DATE&source=HSF10&client=PC&v=099415855`;
 
@@ -150,8 +148,10 @@ async function fetchFinancialFromEastMoney(code: string): Promise<FinancialData 
       if (!year) continue;
 
       years.push(year);
-      revenue.push(toYi(r.TOTALOPERATEREVE));
-      netProfit.push(toYi(r.PARENTNETPROFIT));
+      // F1.3: 财务API(RPT_F10_FINANCE_MAINFINADATA)返回的货币字段单位为元(¥)
+      // 明确除以1e8转换为亿元，不再使用启发式toYi()
+      revenue.push(yuanToYi(r.TOTALOPERATEREVE));
+      netProfit.push(yuanToYi(r.PARENTNETPROFIT));
       grossMargin.push(toPercent(r.XSMLL));
       netMargin.push(toPercent(r.XSJLL));
       roe.push(toPercent(r.ROEJQ));
@@ -161,21 +161,44 @@ async function fetchFinancialFromEastMoney(code: string): Promise<FinancialData 
       const opCashFlow = mgjyxjje * totalShare / 1e8; // 转为亿元
       operatingCashFlow.push(Math.round(opCashFlow * 100) / 100);
       eps.push(toNum(r.EPSJB));
-      totalAssets.push(toYi(r.TOTAL_ASSETS_PK));
-      totalLiabilities.push(toYi(r.LIABILITY));
-      equity.push(toYi(r.TOTAL_EQUITY_PK));
-      accountsReceivable.push(0); // API不直接提供，设为0
-      inventory.push(0); // API不直接提供，设为0
-      goodwill.push(0); // API不直接提供，设为0
+      totalAssets.push(yuanToYi(r.TOTAL_ASSETS_PK));
+      totalLiabilities.push(yuanToYi(r.LIABILITY));
+      equity.push(yuanToYi(r.TOTAL_EQUITY_PK));
+      // F1.4: 应收账款/存货 - 主API不直接提供绝对值，但提供周转天数(YSZKZZTS/CHZZTS)
+      // 用"营收/存货周转天数"反推真实近似值（比硬编码0更能反映真实经营状况）
+      const revYi = yuanToYi(r.TOTALOPERATEREVE);
+      const gmRatio = toPercent(r.XSMLL) / 100;
+      const yszkDays = toNum(r.YSZKZZTS);
+      const chDays = toNum(r.CHZZTS);
+      const ar = revYi > 0 && yszkDays > 0
+        ? Math.round(revYi / 365 * yszkDays * 100) / 100 : 0;
+      const cogsYi = revYi * (1 - gmRatio);
+      const inv = cogsYi > 0 && chDays > 0
+        ? Math.round(cogsYi / 365 * chDays * 100) / 100 : 0;
+      accountsReceivable.push(ar);
+      inventory.push(inv);
+      // 商誉：免费API无可靠来源，保留0并由 dataQuality 标注缺失
+      goodwill.push(0);
       debtRatio.push(toPercent(r.ZCFZL));
     }
 
     if (years.length === 0) return null;
 
+    // F1.4: 标记缺失字段的数据质量
+    const dataQuality: FinancialData['dataQuality'] = {
+      estimatedFields: [],
+      missingFields: []
+    };
+    if (accountsReceivable.every(v => v === 0)) dataQuality.missingFields.push('accountsReceivable');
+    if (inventory.every(v => v === 0)) dataQuality.missingFields.push('inventory');
+    // 商誉：免费API无可靠数据源，始终标注缺失（诚实声明而非编造）
+    dataQuality.missingFields.push('goodwill');
+
     return {
       years, revenue, netProfit, grossMargin, netMargin, roe,
       operatingCashFlow, eps, totalAssets, totalLiabilities, equity,
-      accountsReceivable, inventory, goodwill, debtRatio
+      accountsReceivable, inventory, goodwill, debtRatio,
+      dataQuality
     };
   } catch {
     return null;
@@ -198,22 +221,27 @@ async function fetchFinancialFallback(code: string): Promise<FinancialData | nul
     const d = data.data;
     const currentYear = new Date().getFullYear().toString();
 
+    // F1.3: 备用API字段也使用明确的元→亿元转换
     return {
       years: [currentYear],
-      revenue: [toYi(d.f173)],
-      netProfit: [toYi(d.f187)],
+      revenue: [yuanToYi(d.f173)],
+      netProfit: [yuanToYi(d.f187)],
       grossMargin: [toPercent(d.f188)],
       netMargin: [toPercent(d.f190)],
       roe: [toPercent(d.f191)],
       operatingCashFlow: [0],
       eps: [toNum(d.f192)],
-      totalAssets: [toYi(d.f193)],
+      totalAssets: [yuanToYi(d.f193)],
       totalLiabilities: [0],
       equity: [0],
       accountsReceivable: [0],
       inventory: [0],
       goodwill: [0],
-      debtRatio: [toPercent(d.f162)]
+      debtRatio: [toPercent(d.f162)],
+      dataQuality: {
+        estimatedFields: [],
+        missingFields: ['accountsReceivable', 'inventory', 'goodwill', 'operatingCashFlow', 'totalLiabilities', 'equity']
+      }
     };
   } catch {
     return null;
@@ -244,28 +272,36 @@ async function fetchValuationFromEastMoney(code: string): Promise<ValuationData 
     if (!data?.data) return null;
 
     const d = data.data;
-    const currentPrice = toNum(f43(d));
-    const pe = toNum(d.f167);
-    const pb = toNum(d.f164);
-    const marketCap = toYi(d.f116);
-    const totalRevenue = toYi(d.f173);
-    const ps = totalRevenue > 0 ? marketCap / totalRevenue : 0;
+    // F1.2: push2 API 所有价格字段(f43-f48)均以分(cents)为单位，无条件除以100
+    const currentPrice = priceField(d, 'f43');  // 最新价
+    // F1.1: f167(PE), f164(PB) 作为原始回退值，实际会在 pipeline 中被覆盖
+    const pe = toNum(d.f167);  // raw fallback, will be overridden in pipeline
+    const pb = toNum(d.f164);  // raw fallback, will be overridden in pipeline
+    const marketCap = yuanToYi(d.f116);
+    const totalRevenue = yuanToYi(d.f173);
+    // PS = 市值/营收，两者单位一致（亿元），直接相除
+    const ps = totalRevenue > 0 ? Math.round((marketCap / totalRevenue) * 100) / 100 : 0;
 
-    // 构建历史 PE（简化：使用当前 PE 作为基准，逐年微调）
+    // F1.5: 构建历史 PE 估算（基于当前PE + 行业典型波动范围，确定性随机）
+    // 注意：这是估算值，非真实历史PE数据，因免费API无法获取历史PE
     const currentYear = new Date().getFullYear();
-    const historicalPE: { year: string; pe: number }[] = [];
+    const seed = parseInt(code.slice(-3)) || 42; // 用股票代码后三位作为种子
+    const historicalPE: { year: string; pe: number; isEstimated: boolean }[] = [];
     for (let i = 5; i >= 0; i--) {
       const year = (currentYear - i).toString();
-      // 简单模拟历史 PE 波动
-      const factor = 1 + (i * 0.05) + (Math.sin(i) * 0.1);
-      historicalPE.push({ year, pe: Math.round(pe * factor * 10) / 10 });
+      // 基于种子的确定性伪随机波动，范围 ±15%
+      const hash = ((seed * (i + 1) * 2654435761) >>> 0) % 1000;
+      const variation = (hash - 500) / 500 * 0.15; // -15% ~ +15%
+      const trendFactor = 1 + (i - 2.5) * 0.03; // 轻微趋势
+      const estimatedPe = Math.round(pe * trendFactor * (1 + variation) * 10) / 10;
+      historicalPE.push({ year, pe: Math.max(estimatedPe, 1), isEstimated: true });
     }
 
     return {
       currentPrice,
-      pe: pe || 0,
-      pb: pb || 0,
-      ps: Math.round(ps * 100) / 100,
+      pe: Math.round(pe * 100) / 100 || 0,
+      pb: Math.round(pb * 100) / 100 || 0,
+      ps,
       marketCap: Math.round(marketCap),
       historicalPE,
       peerComparison: []
@@ -275,48 +311,112 @@ async function fetchValuationFromEastMoney(code: string): Promise<ValuationData 
   }
 }
 
-function f43(d: Record<string, unknown>): number {
-  // f43 是价格，可能需要除以100或1000
-  const val = Number(d.f43 ?? 0);
-  return val > 10000 ? val / 100 : val;
+// F1.2: push2 API 所有价格字段(f43-f48)均以分(cents)为单位，无条件除以100
+function priceField(d: Record<string, unknown>, field: string): number {
+  return Number(d[field] ?? 0) / 100;
+}
+
+/** F1.4: 估值兜底来源 —— 东方财富 datacenter「估值分析」(RPT_VALUEANALYSIS_DET)。
+ * 该接口经 Node fetch 可达（与 MAINFINADATA 同源），提供真实的
+ * 收盘价 / PE(TTM) / PB(MRQ) / 总市值，适用于 push2 不可达的环境（如部分沙箱）。
+ */
+async function fetchValuationFromDatacenter(code: string): Promise<ValuationData | null> {
+  try {
+    const secucode = `${code}.${code.startsWith('6') ? 'SH' : 'SZ'}`;
+    const url = `https://datacenter.eastmoney.com/api/data/get?type=RPT_VALUEANALYSIS_DET&sty=ALL&filter=(SECUCODE="${secucode}")&p=1&ps=1&source=HSF10&client=PC&v=099415855`;
+    const response = await fetchWithTimeout(url);
+    const data = (await safeJson(response)) as {
+      result?: { data?: Array<Record<string, unknown>> };
+    } | null;
+    const row = data?.result?.data?.[0];
+    if (!row) return null;
+
+    const currentPrice = toNum(row.CLOSE_PRICE);
+    if (currentPrice <= 0) return null;
+
+    const pe = toNum(row.PE_TTM);
+    const pb = toNum(row.PB_MRQ);
+    const marketCapYi = Math.round((toNum(row.TOTAL_MARKET_CAP) / 1e8) * 100) / 100; // 元 -> 亿元
+
+    return {
+      currentPrice: Math.round(currentPrice * 100) / 100,
+      pe: Math.round(pe * 100) / 100,
+      pb: Math.round(pb * 100) / 100,
+      ps: 0,
+      marketCap: marketCapYi,
+      historicalPE: [],
+      peerComparison: []
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * F1.5: 获取股票所属行业板块名（datacenter BOARD_NAME）与证券简称。
+ * 用于在主数据不可达时反查行业、并补全同业公司名称。
+ */
+export async function fetchBoardInfo(code: string): Promise<{ name?: string; boardName?: string } | null> {
+  try {
+    const secucode = `${code}.${code.startsWith('6') ? 'SH' : 'SZ'}`;
+    const url = `https://datacenter.eastmoney.com/api/data/get?type=RPT_VALUEANALYSIS_DET&sty=ALL&filter=(SECUCODE="${secucode}")&p=1&ps=1&source=HSF10&client=PC&v=099415855`;
+    const response = await fetchWithTimeout(url);
+    const data = (await safeJson(response)) as {
+      result?: { data?: Array<Record<string, unknown>> };
+    } | null;
+    const row = data?.result?.data?.[0];
+    if (!row) return null;
+    return {
+      name: row.SECURITY_NAME_ABBR ? String(row.SECURITY_NAME_ABBR) : undefined,
+      boardName: row.BOARD_NAME ? String(row.BOARD_NAME) : undefined
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchValuationData(code: string): Promise<ValuationData> {
-  const valuation = await fetchValuationFromEastMoney(code);
-  if (valuation && valuation.currentPrice > 0) return valuation;
+  // 优先使用 datacenter 估值分析（Node fetch 可达、字段已正确量纲、沙箱/生产一致）
+  const dc = await fetchValuationFromDatacenter(code);
+  if (dc && dc.currentPrice > 0) return dc;
+
+  // 兜底：东方财富 push2 实时行情
+  const em = await fetchValuationFromEastMoney(code);
+  if (em && em.currentPrice > 0) return em;
 
   throw new Error(`无法获取估值数据: ${code}`);
 }
 
 // ============ 数值转换工具 ============
 
-function toNum(v: unknown): number {
+export function toNum(v: unknown): number {
   if (v === null || v === undefined || v === '-') return 0;
   const n = Number(v);
   return isNaN(n) ? 0 : n;
 }
 
 /**
- * 转换为亿元（API 返回的可能是元）
+ * F1.3: 将东方财富API返回的元(¥)值明确转换为亿元
+ * push2 的 f116(总市值)/f173(营收) 等货币字段以及
+ * RPT_F10_FINANCE_MAINFINADATA 的货币字段，单位均为元
+ * 除以1e8得到亿元，保留2位小数
  */
-function toYi(v: unknown): number {
+export function yuanToYi(v: unknown): number {
   const n = toNum(v);
   if (n === 0) return 0;
-  // 如果值很大，说明单位是元，转换为亿
-  if (Math.abs(n) > 1e8) return Math.round(n / 1e8 * 100) / 100;
-  // 如果值适中，可能已经是亿
-  if (Math.abs(n) > 1e4) return Math.round(n / 1e4 * 100) / 100;
-  return Math.round(n * 100) / 100;
+  return Math.round(n / 1e8 * 100) / 100;
 }
 
 /**
- * 转换为百分比数值（如 91.5 表示 91.5%）
+ * 转换为百分比数值（如 91.5 表示 91.5%）。
+ * 东方财富财务比率字段（毛利率/净利率/ROE/负债率）均为**百分比形式**返回，
+ * 故直接四舍五入即可；仅当值 < 1 时视为小数形式（如 0.915）乘以 100。
+ * 注意：绝不能对所有值统一 ×100 —— 负债率等可能 ≥100（如 105%），
+ * 若误判为小数会得到 10500 这种荒谬结果。
  */
-function toPercent(v: unknown): number {
+export function toPercent(v: unknown): number {
   const n = toNum(v);
   if (n === 0) return 0;
-  // 如果值已经是百分比形式（如 91.5）
-  if (Math.abs(n) < 100) return Math.round(n * 100) / 100;
-  // 如果是小数形式（如 0.915）
-  return Math.round(n * 10000) / 100;
+  const value = Math.abs(n) < 1 ? n * 100 : n;
+  return Math.round(value * 100) / 100;
 }

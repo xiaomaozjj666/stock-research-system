@@ -18,7 +18,7 @@ const PARAM_CONFIG: Record<string, { key: string; label: string; default: number
     { key: 'longPeriod', label: '长期均线天数', default: 20 },
   ],
   momentum: [
-    { key: 'lookbackDays', label: '回看天数', default: 20 },
+    { key: 'lookback', label: '回看天数', default: 20 },
     { key: 'buyThreshold', label: '买入阈值 (%)', default: 5 },
     { key: 'sellThreshold', label: '卖出阈值 (%)', default: -3 },
   ],

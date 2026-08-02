@@ -120,7 +120,7 @@ function checkFutureFunction(backtest: BacktestResult, strategy: StrategyConfig)
   };
 }
 
-function checkOverfitting(backtest: BacktestResult, strategy: StrategyConfig) {
+function checkOverfitting(backtest: BacktestResult, _strategy: StrategyConfig) {
   const tradeCount = backtest.tradeCount ?? 0;
   const annualizedReturn = backtest.annualizedReturn ?? 0;
 

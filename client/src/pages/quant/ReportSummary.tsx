@@ -5,11 +5,13 @@ interface Props {
 }
 
 function getOverallScore(data: QuantResearchReport): number {
+  // 注意：后端返回的 totalReturn/maxDrawdown/winRate 都是百分比值（如 15.5 表示 15.5%）
+  // maxDrawdown 是正数（如 20 表示 20% 回撤）
   const backtestScore = Math.min(100, Math.max(0,
     (data.backtest.sharpeRatio >= 1.5 ? 30 : data.backtest.sharpeRatio >= 1 ? 25 : data.backtest.sharpeRatio >= 0.5 ? 15 : 5) +
-    (data.backtest.totalReturn >= 0.3 ? 25 : data.backtest.totalReturn >= 0.15 ? 20 : data.backtest.totalReturn >= 0 ? 10 : 0) +
-    (data.backtest.maxDrawdown >= -0.1 ? 20 : data.backtest.maxDrawdown >= -0.2 ? 15 : data.backtest.maxDrawdown >= -0.3 ? 8 : 0) +
-    (data.backtest.winRate >= 0.6 ? 15 : data.backtest.winRate >= 0.5 ? 10 : 5) +
+    (data.backtest.totalReturn >= 30 ? 25 : data.backtest.totalReturn >= 15 ? 20 : data.backtest.totalReturn >= 0 ? 10 : 0) +
+    (data.backtest.maxDrawdown <= 10 ? 20 : data.backtest.maxDrawdown <= 20 ? 15 : data.backtest.maxDrawdown <= 30 ? 8 : 0) +
+    (data.backtest.winRate >= 60 ? 15 : data.backtest.winRate >= 50 ? 10 : 5) +
     (data.dataQuality.overallScore >= 80 ? 10 : data.dataQuality.overallScore >= 60 ? 7 : 3)
   ));
   return backtestScore;

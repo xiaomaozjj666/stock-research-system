@@ -1,0 +1,412 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for server/src/data/industryPeers.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../../prettify.css" />
+    <link rel="stylesheet" href="../../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../../index.html">All files</a> / <a href="index.html">server/src/data</a> industryPeers.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">93.1% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>27/29</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">88.23% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>15/17</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>7/7</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>20/20</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">68x</span>
+<span class="cline-any cline-yes">312x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">56x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">81x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">39x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
+ * 行业同业可比参考数据集。
+ *
+ * 用途：在实时证券主数据（东方财富 push2 全表）不可用时，提供 A 股主要行业的
+ * 同业可比公司列表，用于对标的估值对比（peerComparison）。
+ *
+ * - 数据均为 A 股真实上市公司代码（非虚构）。
+ * - 估值（PE/PB/总市值）在运行期通过 datacenter 实时拉取，本表只提供「同业分组」。
+ * - 生产环境下若 push2 主表可用，则优先使用主表的真实行业分组；本表作为兜底与补充。
+ */
+&nbsp;
+export interface IndustryPeerRef {
+  /** 行业中文名（用于展示与匹配） */
+  industry: string;
+  /** 关键词：命中东方财富 BOARD_NAME 即归入该行业（如 "白酒Ⅱ" 含 "白酒"） */
+  keywords: string[];
+  /** 同业可比公司代码（A股6位） */
+  peers: string[];
+}
+&nbsp;
+export const INDUSTRY_PEER_REFS: IndustryPeerRef[] = [
+  { industry: '白酒', keywords: ['白酒'], peers: ['000858', '000568', '600809', '002304', '000596', '000799'] },
+  { industry: '啤酒', keywords: ['啤酒'], peers: ['600132', '000729', '002461'] },
+  { industry: '银行', keywords: ['银行'], peers: ['601398', '601939', '601288', '601988', '600036', '601166', '601328'] },
+  { industry: '保险', keywords: ['保险'], peers: ['601318', '601628', '601601', '601336', '601319'] },
+  { industry: '证券', keywords: ['证券'], peers: ['600030', '600837', '601211', '000776', '600999', '601688'] },
+  { industry: '房地产', keywords: ['房地产', '地产'], peers: ['000002', '600048', '001979', '600383', '000069'] },
+  { industry: '电力', keywords: ['电力', '水电', '火电', '热电'], peers: ['600900', '600886', '600674', '601985', '003816', '600023'] },
+  { industry: '光伏', keywords: ['光伏', '太阳能'], peers: ['601012', '600438', '002129', '688599', '601877'] },
+  { industry: '新能源车', keywords: ['新能源车', '电动汽车', '锂电'], peers: ['300750', '002594', '300014', '002460', '601127'] },
+  { industry: '汽车', keywords: ['汽车', '乘用车', '商用车'], peers: ['600104', '000625', '601238', '601633', '000927'] },
+  { industry: '医药', keywords: ['医药', '化学制药', '生物制品'], peers: ['600276', '000538', '600196', '300760', '600436'] },
+  { industry: '医疗器械', keywords: ['医疗器械', '医疗服务'], peers: ['300760', '300003', '002223', '688271'] },
+  { industry: '半导体', keywords: ['半导体', '集成电路'], peers: ['688981', '603501', '688041', '002049', '603986', '688256'] },
+  { industry: '消费电子', keywords: ['消费电子'], peers: ['002475', '300433', '601138', '002241'] },
+  { industry: '家电', keywords: ['家电', '白色家电', '小家电'], peers: ['000333', '000651', '600690', '002032', '000100'] },
+  { industry: '食品饮料', keywords: ['食品', '调味', '乳业'], peers: ['600887', '603288', '002507', '600887'] },
+  { industry: '钢铁', keywords: ['钢铁', '普钢', '特钢'], peers: ['600019', '000709', '600808', '000932'] },
+  { industry: '煤炭', keywords: ['煤炭', '煤'], peers: ['601088', '600188', '601225', '600348', '601001'] },
+  { industry: '石油石化', keywords: ['石油', '石化'], peers: ['600028', '601857', '600938', '600688'] },
+  { industry: '化工', keywords: ['化工', '化学制品', '化学原料'], peers: ['600309', '002493', '600426', '600989'] },
+  { industry: '工程机械', keywords: ['工程机械', '专用设备'], peers: ['600031', '000425', '601100', '000157'] },
+  { industry: '计算机', keywords: ['软件', '计算机', 'IT服务'], peers: ['600570', '002230', '300454', '688111', '002410'] },
+  { industry: '通信', keywords: ['通信', '电信', '通信设备'], peers: ['600050', '601728', '600941', '000063', '002396'] },
+  { industry: '传媒', keywords: ['传媒', '出版', '广告'], peers: ['300413', '002027', '601928', '300058'] },
+  { industry: '建材', keywords: ['建材', '水泥', '玻璃'], peers: ['600585', '000786', '002271', '600176'] },
+  { industry: '航空机场', keywords: ['航空', '机场', '航运'], peers: ['601111', '600029', '601006', '600009', '600115'] },
+  { industry: '农业', keywords: ['农业', '种植', '饲料'], peers: ['002311', '000998', '600598', '002385'] },
+  { industry: '军工', keywords: ['军工', '航空装备', '航天'], peers: ['600760', '600893', '000768', '600316'] },
+  { industry: '有色金属', keywords: ['有色', '工业金属', '黄金', '小金属'], peers: ['600362', '600547', '603993', '000630', '601600'] },
+  { industry: '建筑', keywords: ['建筑', '基建', '工程'], peers: ['601668', '601390', '601186', '601800'] },
+  { industry: '物流', keywords: ['物流', '快递'], peers: ['600233', '002120', '601156', '600270'] },
+  { industry: '零售', keywords: ['零售', '免税', '百货'], peers: ['601888', '600859', '000759', '600729'] },
+  { industry: '纺织服装', keywords: ['服装', '纺织'], peers: ['600398', '002563', '603877'] },
+  { industry: '造纸', keywords: ['造纸'], peers: ['600966', '002511', '002078'] },
+];
+&nbsp;
+/** 代码 -&gt; 行业（由上面的参考表反查，方便「已知代码反推行业」） */
+export const CODE_TO_INDUSTRY: Record&lt;string, string&gt; = (() =&gt; {
+  const map: Record&lt;string, string&gt; = {};
+  for (const ref of INDUSTRY_PEER_REFS) {
+    for (const code of ref.peers) {
+      if (!map[code]) map[code] = ref.industry;
+    }
+  }
+  // 常见研究标的（可能不在 peers 列表中）
+  const extra: Record&lt;string, string&gt; = {
+    '600519': '白酒', '000858': '白酒', '601318': '保险', '600036': '银行',
+    '000001': '银行', '600000': '银行', '601166': '银行', '600016': '银行',
+    '300750': '新能源车', '002594': '新能源车', '600276': '医药', '000333': '家电',
+    '601012': '光伏', '600900': '电力', '601088': '煤炭',
+    '600028': '石油石化', '600309': '化工', '600031': '工程机械', '600050': '通信',
+    '688825': '半导体', /* 长鑫科技：2026-07-27 登陆科创板，国产 DRAM 龙头 */
+    '601899': '有色金属', '300059': '证券', '600887': '食品饮料', '002415': '计算机',
+    '000725': '消费电子', '601668': '建筑', '600009': '航空机场', '601888': '零售',
+  };
+  for (const [code, ind] of Object.entries(extra)) map[code] = ind;
+  return map;
+})();
+&nbsp;
+/** 去掉行业名中的罗马数字序号（Ⅰ/Ⅱ/Ⅲ/Ⅳ/V…），便于关键词匹配 */
+function normalizeIndustryName(name: string): string {
+  return name.replace(/[Ⅰ-Ⅹ]/g, '').replace(/\s+/g, '').trim();
+}
+&nbsp;
+/**
+ * 解析股票所属行业。
+ * 优先级：代码反查 -&gt; BOARD_NAME 关键词匹配 -&gt; 未命中返回 undefined。
+ */
+export function resolveIndustry(boardName: string | undefined, code: string | undefined): string | undefined {
+  if (code &amp;&amp; CODE_TO_INDUSTRY[code]) return CODE_TO_INDUSTRY[code];
+  if (boardName) {
+    const norm = normalizeIndustryName(boardName);
+    for (const ref of INDUSTRY_PEER_REFS) {
+      <span class="missing-if-branch" title="if path not taken" >I</span>if (ref.keywords.some(k =&gt; norm.includes(k) || k.includes(norm))) <span class="cstat-no" title="statement not covered" >return ref.industry;</span>
+    }
+  }
+  return undefined;
+}
+&nbsp;
+/**
+ * 获取同行业可比公司代码（排除自身），最多 limit 只。
+ */
+export function getPeerCodes(industry: string | undefined, selfCode: string | undefined, limit = 4): string[] {
+  <span class="missing-if-branch" title="if path not taken" >I</span>if (!industry) <span class="cstat-no" title="statement not covered" >return [];</span>
+  const ref = INDUSTRY_PEER_REFS.find(r =&gt; r.industry === industry);
+  if (!ref) return [];
+  return ref.peers.filter(c =&gt; c !== selfCode).slice(0, limit);
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-07-31T15:40:01.354Z
+            </div>
+        <script src="../../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../../sorter.js"></script>
+        <script src="../../../block-navigation.js"></script>
+    </body>
+</html>
+    

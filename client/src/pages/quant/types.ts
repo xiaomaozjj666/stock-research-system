@@ -11,6 +11,28 @@ export interface StrategyConfig {
   slippage?: number;
 }
 
+// 最新消息单条
+export interface NewsItem {
+  id: string;
+  title: string;
+  summary?: string;
+  publishedAt: string;
+  source?: string;
+  polarity?: number;
+}
+
+// 最新消息情绪信号
+export interface NewsSignal {
+  polarity: number;
+  sentimentZ: number;
+  bullishRatio: number;
+  newsCount: number;
+  freshness: number;
+  weightedImpact: number;
+  items: NewsItem[];
+  hasNews: boolean;
+}
+
 // 回测结果
 export interface BacktestResult {
   totalReturn: number;
@@ -23,6 +45,8 @@ export interface BacktestResult {
   equityCurve: { date: string; value: number }[];
   trades: { date: string; type: 'buy' | 'sell'; price: number; shares: number; commission: number; reason: string }[];
   benchmark: { date: string; value: number }[];
+  newsAware?: boolean;
+  newsPosture?: number;
 }
 
 // 数据质量报告
@@ -62,6 +86,8 @@ export interface QuantResearchReport {
   strategy: StrategyConfig;
   dataQuality: DataQualityReport;
   backtest: BacktestResult;
+  backtestBaseline?: BacktestResult;
+  newsSentiment?: NewsSignal;
   audit: AuditReport;
   optimization: OptimizationReport;
   summary: string;

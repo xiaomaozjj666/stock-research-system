@@ -1,13 +1,14 @@
 import { useEffect, useRef } from 'react';
-import * as echarts from 'echarts';
+import echarts from '../../lib/echarts';
 import type { BacktestResult } from './types';
 
 interface Props {
   data: BacktestResult;
 }
 
+// 后端返回的值已经是百分比形式（如 12.34 表示 12.34%），直接加 % 即可
 function formatPct(v: number): string {
-  return (v * 100).toFixed(2) + '%';
+  return v.toFixed(2) + '%';
 }
 
 export default function BacktestChart({ data }: Props) {
@@ -94,12 +95,17 @@ export default function BacktestChart({ data }: Props) {
     { label: '年化收益', value: formatPct(data.annualizedReturn), positive: data.annualizedReturn >= 0 },
     { label: '夏普比率', value: data.sharpeRatio.toFixed(2), positive: data.sharpeRatio >= 1 },
     { label: '最大回撤', value: formatPct(data.maxDrawdown), positive: false },
-    { label: '胜率', value: formatPct(data.winRate), positive: data.winRate >= 0.5 },
+    { label: '胜率', value: formatPct(data.winRate), positive: data.winRate >= 50 },
     { label: '交易次数', value: String(data.tradeCount), positive: true },
   ];
 
   return (
     <div className="quant-backtest">
+      {data.newsAware && (
+        <div className="backtest-news-badge">
+          📰 含最新消息情绪叠加（新闻姿态 {((data.newsPosture ?? 1) * 100).toFixed(0)}% 仓位）
+        </div>
+      )}
       <div className="quant-metrics">
         {metrics.map(m => (
           <div key={m.label} className="quant-metric-card">

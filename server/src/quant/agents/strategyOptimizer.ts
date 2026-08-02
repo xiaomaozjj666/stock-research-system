@@ -68,7 +68,7 @@ function calcPerformanceScore(backtest: BacktestResult): number {
 function generateSuggestions(
   backtest: BacktestResult,
   audit: AuditReport,
-  strategy: StrategyConfig
+  _strategy: StrategyConfig
 ): OptimizationReport['suggestions'] {
   const suggestions: OptimizationReport['suggestions'] = [];
   const maxDD = Math.abs(backtest.maxDrawdown ?? 0);

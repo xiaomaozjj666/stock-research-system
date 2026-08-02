@@ -1,30 +1,127 @@
-import type { AnalysisResult, ExpertOpinion, ScoreDetail, FinancialData, ValuationData, DataSource } from '../types.js';
+import type { AnalysisResult, ExpertOpinion, DataSource } from '../types.js';
 import { getData } from './dataService.js';
 import { fundamentalExpert } from './experts/fundamentalExpert.js';
 import { valuationExpert } from './experts/valuationExpert.js';
 import { industryExpert, type IndustryExpertResult } from './experts/industryExpert.js';
 import { riskExpert } from './experts/riskExpert.js';
+import { capitalFlowExpert } from './experts/capitalFlowExpert.js';
 import { arbitrationExpert } from './experts/arbitrationExpert.js';
+import { generateScenarios } from './scenarioEngine.js';
+import { generateStrategyList } from './strategyListEngine.js';
+import { safeDiv } from './safeDiv.js';
+import { calculateScores } from './scoreEngine.js';
+import { fetchOHLCVData } from '../quant/dataProvider.js';
+import { extractNewsSignal, type NewsSignal } from '../quant/newsSignal.js';
 
-export async function runAnalysis(stockCode: string): Promise<AnalysisResult> {
+/** 限时包装：超时就 reject，用于不让尽力而为的网络抓取阻塞主流程 */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout')), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
+/** 分析阶段事件（用于 SSE 流式推送进度） */
+export type AnalysisStage =
+  | { phase: 'data'; message: string }
+  | { phase: 'experts'; message: string }
+  | { phase: 'arbitration'; message: string }
+  | { phase: 'scoring'; message: string; totalScore: number; rating: string }
+  | { phase: 'strategy'; message: string }
+  | { phase: 'done'; message: string; result: AnalysisResult };
+
+export async function runAnalysis(
+  stockCode: string,
+  onProgress?: (stage: AnalysisStage) => void
+): Promise<AnalysisResult> {
+  const emit = (stage: AnalysisStage) => { onProgress?.(stage); };
+
   // 1. 数据获取
+  emit({ phase: 'data', message: '正在获取行情与财务数据...' });
   const { info, financial, valuation } = await getData(stockCode);
   const n = financial.years.length;
 
-  // 2. 多专家独立研判（并行调用）
-  const [fundOpinion, valOpinion, indOpinionResult, riskOpinion] = await Promise.all([
-    Promise.resolve(fundamentalExpert(financial, valuation, info)),
-    Promise.resolve(valuationExpert(financial, valuation, info)),
-    Promise.resolve(industryExpert(financial, valuation, info)),
-    Promise.resolve(riskExpert(financial, valuation, info))
+  // 1.5 抓取最新消息情绪（尽力而为：限时 3s 且不阻塞主流程，失败/超时则视为无新闻）
+  emit({ phase: 'data', message: '正在获取最新消息情绪...' });
+  let newsSignal: NewsSignal | null = null;
+  try {
+    const fetched = await withTimeout(extractNewsSignal(info.code), 3000);
+    newsSignal = fetched.signal;
+  } catch {
+    newsSignal = null;
+  }
+
+  // === 修正 PE/PB：用股价/每股收益 和 股价/每股净资产 计算，不依赖API不可靠的f167/f164字段 ===
+  const latestEps = financial.eps[n - 1];         // 元/股
+  const latestNetProfit = financial.netProfit[n - 1]; // 亿元
+  const latestEquity = financial.equity?.[n - 1] ?? 0; // 亿元
+  const price = valuation.currentPrice;            // 元/股
+
+  if (latestEps > 0 && price > 0) {
+    // PE = 股价 / 每股收益
+    valuation.pe = Math.round((price / latestEps) * 100) / 100;
+
+    // PB = 股价 / 每股净资产
+    // 从 netProfit(亿元) 和 eps(元/股) 反推总股本: totalShares = netProfit*1e8 / eps
+    const totalShares = (latestNetProfit > 0) ? (latestNetProfit * 1e8 / latestEps) : 0;
+    if (totalShares > 0 && latestEquity > 0) {
+      const bvps = (latestEquity * 1e8) / totalShares; // 元/股
+      if (bvps > 0) {
+        valuation.pb = Math.round((price / bvps) * 100) / 100;
+      }
+    }
+  } else if (latestNetProfit > 0 && valuation.marketCap > 0) {
+    // EPS不可用时回退到市值/净利润
+    valuation.pe = Math.round((valuation.marketCap / latestNetProfit) * 100) / 100;
+    if (latestEquity > 0) {
+      valuation.pb = Math.round((valuation.marketCap / latestEquity) * 100) / 100;
+    }
+  }
+
+  // 修正历史PE估算，基于修正后的当前PE
+  // 说明：免费API无法获取真实历史PE，此处为确定性估算。
+  // 采用"历史中枢略高于当前PE"的假设（A股估值中枢长期下移，历史平均通常高于当前），
+  // 最新年份使用真实当前PE，历史年份围绕中枢波动，使 pePercentile 能反映当前估值相对历史的位置。
+  if (valuation.pe > 0) {
+    const currentYear = new Date().getFullYear();
+    const seed = parseInt(stockCode.slice(-3)) || 42;
+    const center = valuation.pe * 1.18; // 历史中枢：略高于当前
+    const historicalPE: { year: string; pe: number; isEstimated: boolean }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const year = (currentYear - i).toString();
+      if (i === 0) {
+        historicalPE.push({ year, pe: valuation.pe, isEstimated: false });
+      } else {
+        const hash = ((seed * (i + 1) * 2654435761) >>> 0) % 1000;
+        const variation = (hash - 500) / 500; // -1 ~ 1
+        const trend = 1 + (i - 2.5) * 0.02; // 轻微时间趋势
+        const estimatedPe = Math.round(center * trend * (1 + variation * 0.25) * 10) / 10;
+        historicalPE.push({ year, pe: Math.max(estimatedPe, 1), isEstimated: true });
+      }
+    }
+    valuation.historicalPE = historicalPE;
+  }
+
+  // 2. 多专家独立研判（并行调用，保留并行潜力以备未来异步化）
+  emit({ phase: 'experts', message: '5 位 AI 专家独立研判中...' });
+  const [fundOpinion, valOpinion, indOpinionResult, riskOpinion, capitalOpinion] = await Promise.all([
+    fundamentalExpert(financial, valuation, info),
+    valuationExpert(financial, valuation, info),
+    industryExpert(financial, valuation, info),
+    riskExpert(financial, valuation, info),
+    capitalFlowExpert(financial, valuation, info)
   ]);
 
   // 提取行业专家结果和景气度建议
   const indOpinion: IndustryExpertResult = indOpinionResult;
-  const expertOpinions: ExpertOpinion[] = [fundOpinion, valOpinion, indOpinion, riskOpinion];
+  const expertOpinions: ExpertOpinion[] = [fundOpinion, valOpinion, indOpinion, riskOpinion, capitalOpinion];
 
   // 3. 辩论仲裁
-  const { controversies, finalOpinion } = arbitrationExpert({
+  emit({ phase: 'arbitration', message: '多专家辩论仲裁中...' });
+  const { controversies, finalOpinion } = await arbitrationExpert({
     financial,
     valuation,
     info,
@@ -44,7 +141,7 @@ export async function runAnalysis(stockCode: string): Promise<AnalysisResult> {
 
   // PE 历史分位
   const peValues = valuation.historicalPE.map(h => h.pe).sort((a, b) => a - b);
-  const pePercentile = (peValues.filter(p => p <= valuation.pe).length / peValues.length) * 100;
+  const pePercentile = safeDiv(peValues.filter(p => p <= valuation.pe).length, peValues.length) * 100;
 
   // 4. 双层自省
   const reflectionNotes: string[] = [];
@@ -101,7 +198,7 @@ export async function runAnalysis(stockCode: string): Promise<AnalysisResult> {
 
   // 5. 量化打分（传入行业景气度建议）
   const industrySuggestion = (indOpinion as IndustryExpertResult).industryScoreSuggestion;
-  const scoreDetail = calculateScores(financial, valuation, industrySuggestion);
+  const scoreDetail = calculateScores(financial, valuation, info, industrySuggestion);
   const totalScore = scoreDetail.profit_quality + scoreDetail.growth + scoreDetail.valuation +
     scoreDetail.industry_boom + scoreDetail.risk_deduction;
 
@@ -111,6 +208,8 @@ export async function runAnalysis(stockCode: string): Promise<AnalysisResult> {
   else if (totalScore >= 60) rating = '持续观察';
   else if (totalScore >= 40) rating = '谨慎观望';
   else rating = '建议规避';
+
+  emit({ phase: 'scoring', message: `量化打分完成：${totalScore}/100，${rating}`, totalScore, rating });
 
   // 7. 估值水平判断
   let valuationLevel: string;
@@ -145,7 +244,7 @@ export async function runAnalysis(stockCode: string): Promise<AnalysisResult> {
   followUpIndicators.push('毛利率/净利率趋势变化');
 
   // 基于风险专家发现的财务风险动态添加
-  if (financial.revenue[n - 1] !== 0 && financial.accountsReceivable[n - 1] / financial.revenue[n - 1] * 100 > 10) {
+  if (safeDiv(financial.accountsReceivable[n - 1], financial.revenue[n - 1]) * 100 > 10) {
     followUpIndicators.push('应收账款周转天数变化（占营收比例偏高）');
   }
   if (financial.goodwill[n - 1] > 0) {
@@ -174,6 +273,51 @@ export async function runAnalysis(stockCode: string): Promise<AnalysisResult> {
     { name: '估值历史数据', description: '历史PE/PB等估值指标', confidence: 75 }
   ];
 
+  // 12. 情景推演（可选叠加最新消息情绪 z 与极性微调）
+  const scenarios = generateScenarios(
+    allOpinions,
+    financial,
+    valuation,
+    info,
+    newsSignal?.hasNews ? { sentimentZ: newsSignal.sentimentZ, polarity: newsSignal.polarity } : undefined,
+  );
+
+  // 12.5 若抓到最新消息，补充一条自省（逻辑闭环⑤）
+  if (newsSignal?.hasNews) {
+    reflectionNotes.push(
+      `【逻辑闭环⑤】最新消息情绪极性 ${newsSignal.polarity.toFixed(2)}（看多占比 ${(newsSignal.bullishRatio * 100).toFixed(0)}%、新鲜度 ${(newsSignal.freshness * 100).toFixed(0)}%），已纳入情景推演与策略回测。`,
+    );
+  }
+
+  // 13. 量化策略清单（获取OHLCV数据并运行回测，可选叠加最新消息情绪）
+  emit({ phase: 'strategy', message: '量化策略回测中...' });
+  let strategyList: import('../types.js').StrategyRecommendation[] = [];
+  try {
+    const endDate = new Date().toISOString().slice(0, 10);
+    const startDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const ohlcvData = await fetchOHLCVData(info.code, startDate, endDate);
+    if (ohlcvData.length > 0) {
+      const rawStrategies = await generateStrategyList(
+        info.code,
+        ohlcvData,
+        newsSignal?.hasNews ? { polarity: newsSignal.polarity } : null,
+      );
+      strategyList = rawStrategies.map(s => ({
+        strategyType: s.strategyType,
+        sharpeRatio: s.sharpeRatio,
+        maxDrawdown: s.maxDrawdown,
+        winRate: s.winRate,
+        totalReturn: s.totalReturn,
+        applicableMarket: s.applicableMarket,
+        fatalWeakness: s.fatalWeakness,
+        backtestWarning: s.backtestWarning,
+        newsAware: s.newsAware
+      }));
+    }
+  } catch (e) {
+    console.warn('策略清单生成失败:', e);
+  }
+
   return {
     stock_pool: [{
       stock_code: info.code,
@@ -192,7 +336,10 @@ export async function runAnalysis(stockCode: string): Promise<AnalysisResult> {
       expert_opinions: allOpinions,
       reflection_notes: reflectionNotes,
       chart_list: [],
-      follow_up_indicators: followUpIndicators
+      follow_up_indicators: followUpIndicators,
+      scenarios: scenarios,
+      strategyList: strategyList,
+      newsSentiment: newsSignal?.hasNews ? newsSignal : undefined
     }],
     data_sources: dataSources,
     research_confidence: `基于${allOpinions.length}位专家独立研判+仲裁综合，整体置信度${Math.round(allOpinions.reduce((s, o) => s + o.confidence, 0) / allOpinions.length)}%。财务数据置信度高（上市公司年报审计），行业判断置信度中等（存在政策不确定性）。`,
@@ -200,217 +347,3 @@ export async function runAnalysis(stockCode: string): Promise<AnalysisResult> {
   };
 }
 
-function calculateScores(financial: FinancialData, valuation: ValuationData, industryScoreSuggestion?: number): ScoreDetail {
-  const n = financial.years.length;
-
-  // === 盈利质量 (0-20) ===
-  const avgGrossMargin = financial.grossMargin.reduce((a, b) => a + b, 0) / n;
-  const grossMarginStability = Math.max(...financial.grossMargin) - Math.min(...financial.grossMargin);
-  const avgROE = financial.roe.reduce((a, b) => a + b, 0) / n;
-  const avgCashFlowRatio = financial.operatingCashFlow.reduce((s, cf, i) => {
-    return s + (financial.netProfit[i] !== 0 ? cf / financial.netProfit[i] : 0);
-  }, 0) / n;
-
-  let profitScore = 0;
-  // 毛利率水平 (0-5)
-  profitScore += Math.min(5, (avgGrossMargin / 100) * 6);
-  // 毛利率稳定性 (0-3)
-  profitScore += Math.max(0, 3 - grossMarginStability * 1.5);
-  // ROE (0-5)
-  profitScore += Math.min(5, (avgROE / 35) * 5);
-  // 现金流质量 (0-4)
-  profitScore += Math.min(4, avgCashFlowRatio * 3.2);
-  // 应收质量 (0-2)：应收账款/营收占比越低越好
-  const arRatioProfit = financial.revenue[n - 1] !== 0
-    ? financial.accountsReceivable[n - 1] / Math.abs(financial.revenue[n - 1]) * 100 : 0;
-  profitScore += Math.max(0, 2 - arRatioProfit * 0.3);
-  profitScore = Math.min(20, Math.round(profitScore));
-
-  // === 成长性 (0-20) ===
-  const revenueCAGR = safeCAGR(financial.revenue[0], financial.revenue[n - 1], n - 1);
-  const profitCAGR = safeCAGR(financial.netProfit[0], financial.netProfit[n - 1], n - 1);
-  const latestProfitGrowth = financial.netProfit[n - 2] !== 0
-    ? (financial.netProfit[n - 1] - financial.netProfit[n - 2]) / Math.abs(financial.netProfit[n - 2]) * 100
-    : 0;
-
-  let growthScore = 0;
-  // 营收CAGR (0-7)
-  growthScore += Math.min(7, (revenueCAGR / 15) * 7);
-  // 利润CAGR (0-7)
-  growthScore += Math.min(7, (profitCAGR / 18) * 7);
-  // 最新增速 (0-6) - 负增长不给分
-  if (latestProfitGrowth > 0) {
-    growthScore += Math.min(6, (latestProfitGrowth / 20) * 6);
-  }
-  // 增长稳定性调整：用营收增长的标准差作为惩罚因子
-  const revenueGrowthRatesForStability: number[] = [];
-  for (let i = 1; i < financial.revenue.length; i++) {
-    const prev = Math.abs(financial.revenue[i - 1]);
-    if (prev > 0) {
-      revenueGrowthRatesForStability.push(
-        (financial.revenue[i] - financial.revenue[i - 1]) / prev * 100
-      );
-    }
-  }
-  if (revenueGrowthRatesForStability.length > 0) {
-    const growthMean = revenueGrowthRatesForStability.reduce((a, b) => a + b, 0) / revenueGrowthRatesForStability.length;
-    const growthStd = Math.sqrt(
-      revenueGrowthRatesForStability.reduce((s, g) => s + (g - growthMean) ** 2, 0) / revenueGrowthRatesForStability.length
-    );
-    const stabilityFactor = Math.max(0.5, 1 - growthStd / 50); // 标准差越大，惩罚越重（最低打5折）
-    growthScore *= stabilityFactor;
-  }
-  growthScore = Math.min(20, Math.round(growthScore));
-
-  // === 估值性价比 (0-20) ===
-  const peValues = valuation.historicalPE.map(h => h.pe).sort((a, b) => a - b);
-  const pePercentile = (peValues.filter(p => p <= valuation.pe).length / peValues.length) * 100;
-
-  let valScore = 0;
-  // 历史分位 (0-6)
-  valScore += Math.max(0, 6 - (pePercentile / 100) * 6);
-
-  // 同业对比 (0-6) — 空数组保护
-  let peerValScore = 3; // 默认中性分
-  if (valuation.peerComparison.length > 0) {
-    const peerAvgPE = valuation.peerComparison.reduce((s, p) => s + p.pe, 0) / valuation.peerComparison.length;
-    peerValScore = isFinite(peerAvgPE / valuation.pe)
-      ? Math.min(6, Math.max(0, (peerAvgPE / valuation.pe) * 3))
-      : 3;
-  }
-  valScore += peerValScore;
-
-  // PEG (0-4) — 负增长时改用 PB-ROE 模型
-  if (latestProfitGrowth > 0) {
-    const peg = valuation.pe / latestProfitGrowth;
-    valScore += isFinite(peg) ? Math.min(4, Math.max(0, (1.5 - peg) * 4)) : 0;
-  } else {
-    // 负增长：用 PB/ROE 替代 PEG，比值越低越好
-    const avgROEForPeg = financial.roe.reduce((a, b) => a + b, 0) / n;
-    if (avgROEForPeg > 0) {
-      const pbRoeRatio = valuation.pb / (avgROEForPeg / 100);
-      valScore += isFinite(pbRoeRatio) ? Math.min(4, Math.max(0, (3 - pbRoeRatio) * 1.5)) : 0;
-    } else {
-      valScore += 0; // ROE 也为负，不给分
-    }
-  }
-
-  // 估值动量 (0-2)：当前PE vs 历史PE中位数的变化方向
-  const peSorted = valuation.historicalPE.map(h => h.pe).sort((a, b) => a - b);
-  const peMedian = peSorted.length > 0 ? peSorted[Math.floor(peSorted.length / 2)] : valuation.pe;
-  if (isFinite(peMedian) && peMedian > 0) {
-    const peMomentum = (peMedian - valuation.pe) / peMedian; // 正值=当前PE低于中位数=低估
-    if (peMomentum > 0.1) {
-      valScore += 2; // 明显低估
-    } else if (peMomentum > 0) {
-      valScore += 1; // 轻微低估
-    }
-    // 负值不加分（高估不给额外扣分，因为PE分位已经处理了）
-  }
-  valScore = Math.min(20, Math.round(valScore));
-
-  // === 行业景气度 (0-20) ===
-  // 优先使用行业专家的量化建议，否则降级计算
-  let industryScore: number;
-  if (typeof industryScoreSuggestion === 'number') {
-    industryScore = industryScoreSuggestion;
-  } else {
-    // 降级计算：基于营收增速趋势 + 毛利率趋势
-    const revenueGrowthRates: number[] = [];
-    for (let i = 1; i < n; i++) {
-      revenueGrowthRates.push((financial.revenue[i] - financial.revenue[i - 1]) / financial.revenue[i - 1] * 100);
-    }
-    const avgRevenueGrowth = revenueGrowthRates.reduce((a, b) => a + b, 0) / revenueGrowthRates.length;
-    const grossMarginTrend = financial.grossMargin[n - 1] - financial.grossMargin[0];
-
-    let baseScore = 10; // 基础分
-    if (avgRevenueGrowth > 15) baseScore += 5;
-    else if (avgRevenueGrowth > 10) baseScore += 4;
-    else if (avgRevenueGrowth > 5) baseScore += 3;
-    else if (avgRevenueGrowth > 0) baseScore += 1;
-    else baseScore -= 3;
-
-    if (grossMarginTrend > 3) baseScore += 2;
-    else if (grossMarginTrend < -3) baseScore -= 2;
-
-    industryScore = Math.min(20, Math.max(0, Math.round(baseScore)));
-  }
-
-  // === 风险水平 (0-20) ===
-  // 风险越低分越高
-  let riskScore = 0;
-  // 财务风险 (0-7)：资产负债率越低越好
-  riskScore += Math.max(0, 7 - (financial.debtRatio[n - 1] / 100) * 15);
-  // 商誉风险 (0-5)：商誉/净资产越低越好
-  const goodwillRatio = financial.equity[n - 1] !== 0
-    ? financial.goodwill[n - 1] / Math.abs(financial.equity[n - 1]) * 100 : 0;
-  riskScore += Math.max(0, 5 - goodwillRatio * 0.5);
-  // 应收风险 (0-4)
-  const arRatio = financial.revenue[n - 1] !== 0
-    ? financial.accountsReceivable[n - 1] / Math.abs(financial.revenue[n - 1]) * 100 : 0;
-  riskScore += Math.max(0, 4 - arRatio * 10);
-  // 政策/行业风险 (0-4)：基于财务数据波动性动态计算
-  const revenueVolatility = calculateVolatility(financial.revenue);
-  const profitVolatility = calculateVolatility(financial.netProfit);
-  const avgVolatility = (revenueVolatility + profitVolatility) / 2;
-  // 波动越大，风险越高（分越低）
-  const policyRisk = isFinite(avgVolatility) ? Math.min(4, Math.max(0, 4 - avgVolatility * 10)) : 2;
-  riskScore += policyRisk;
-
-  // 财务异常信号 (0-3)：检测常见预警
-  let anomalyScore = 3; // 满分=无异常
-
-  // 应收暴增检测：最新应收增速 vs 营收增速
-  if (n >= 2 && financial.accountsReceivable[n - 2] !== 0 &&
-      isFinite(financial.accountsReceivable[n - 1] / financial.accountsReceivable[n - 2])) {
-    const arGrowth = (financial.accountsReceivable[n - 1] - financial.accountsReceivable[n - 2]) /
-      Math.abs(financial.accountsReceivable[n - 2]) * 100;
-    const revGrowth = financial.revenue[n - 2] !== 0
-      ? (financial.revenue[n - 1] - financial.revenue[n - 2]) / Math.abs(financial.revenue[n - 2]) * 100 : 0;
-    if (arGrowth > revGrowth * 1.5 && arGrowth > 20) {
-      anomalyScore -= 1.5; // 应收暴增预警
-    }
-  }
-
-  // 现金流长期背离净利润
-  const cashFlowDivorce = financial.operatingCashFlow.filter((cf, i) =>
-    financial.netProfit[i] !== 0 && isFinite(cf / financial.netProfit[i]) && cf < financial.netProfit[i] * 0.7
-  ).length;
-  if (cashFlowDivorce >= 3) {
-    anomalyScore -= 1.5; // 连续3年以上现金流低于净利润70%
-  }
-
-  riskScore += Math.max(0, anomalyScore);
-  riskScore = Math.min(20, Math.round(riskScore));
-
-  return {
-    profit_quality: profitScore,
-    growth: growthScore,
-    valuation: valScore,
-    industry_boom: industryScore,
-    risk_deduction: riskScore
-  };
-}
-
-/** 计算数组的波动系数（标准差） */
-function calculateVolatility(values: number[]): number {
-  if (values.length < 2) return 0;
-  const returns: number[] = [];
-  for (let i = 1; i < values.length; i++) {
-    if (values[i - 1] !== 0) {
-      returns.push((values[i] - values[i - 1]) / Math.abs(values[i - 1]));
-    }
-  }
-  if (returns.length === 0) return 0;
-  const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-  const variance = returns.reduce((s, r) => s + (r - mean) ** 2, 0) / returns.length;
-  return Math.sqrt(variance);
-}
-
-/** 安全 CAGR 计算：起始值<=0时返回0避免NaN */
-function safeCAGR(startVal: number, endVal: number, years: number): number {
-  if (years <= 0) return 0;
-  if (startVal <= 0 || endVal <= 0) return 0;
-  const result = (Math.pow(endVal / startVal, 1 / years) - 1) * 100;
-  return isFinite(result) ? result : 0;
-}

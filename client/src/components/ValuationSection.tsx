@@ -93,7 +93,7 @@ export default function ValuationSection({ data, valuation_level, stockName }: V
                   <td>{p.name}</td>
                   <td>{p.pe?.toFixed(1) || '—'}</td>
                   <td>{p.pb?.toFixed(2) || '—'}</td>
-                  <td>{p.roe?.toFixed(1) || '—'}%</td>
+                  <td>{p.roe && p.roe > 0 ? p.roe.toFixed(1) + '%' : '—'}</td>
                   <td>{formatCap(p.marketCap)}</td>
                 </tr>
               ))}

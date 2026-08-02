@@ -84,7 +84,7 @@ export default function OptimizationPanel({ data }: Props) {
         <h4 className="quant-subtitle">风险指标</h4>
         <div className="quant-risk-metrics">
           <div className="quant-risk-metric">
-            <div className="quant-risk-metric-val">{(data.riskMetrics.var95 * 100).toFixed(2)}%</div>
+            <div className="quant-risk-metric-val">{data.riskMetrics.var95.toFixed(2)}%</div>
             <div className="quant-risk-metric-label">VaR (95%)</div>
           </div>
           <div className="quant-risk-metric">

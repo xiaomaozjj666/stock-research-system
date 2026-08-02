@@ -66,7 +66,9 @@ export async function fetchOHLCVData(
   }
 
   // 3. 降级：生成模拟数据（用于演示）
-  return generateSimulatedData(stockCode, startDate, endDate);
+  // F1.6: 模拟数据标记 isSimulated=true，下游策略引擎应检查此标志
+  const simulated = generateSimulatedData(stockCode, startDate, endDate);
+  return simulated.map(d => ({ ...d, isSimulated: true }));
 }
 
 /**

@@ -4,6 +4,14 @@ interface ExpertArgument {
   text: string;
   confidence: number;
   type: 'support' | 'oppose';
+  evidenceType?: 'fact' | 'inference' | 'hypothesis';
+}
+
+function evidenceTagLabel(type?: string): string {
+  if (type === 'fact') return '[事实]';
+  if (type === 'inference') return '[推演]';
+  if (type === 'hypothesis') return '[假设]';
+  return '';
 }
 
 interface ExpertOpinion {
@@ -47,21 +55,17 @@ export default function ExpertOpinions({ data = [] }: ExpertOpinionsProps) {
               <span className="expert-arrow">{openIndex === i ? '▾' : '▸'}</span>
             </div>
           </div>
-          <div
-            className="expert-body"
-            style={{
-              maxHeight: openIndex === i ? 600 : 0,
-              opacity: openIndex === i ? 1 : 0,
-              padding: openIndex === i ? undefined : '0 16px',
-              overflow: 'hidden',
-              transition: 'max-height 0.3s ease, opacity 0.25s ease, padding 0.3s ease',
-            }}
-          >
+          <div className={`expert-body ${openIndex === i ? 'expert-body-open' : 'expert-body-closed'}`}>
             <div className="expert-args">
               {exp.arguments.map((arg, j) => (
                 <div key={j} className={`arg-item ${arg.type}`}>
                   {arg.text}
-                  <span className="confidence-badge" style={{ marginLeft: 8 }}>
+                  {arg.evidenceType && (
+                    <span className={`evidence-tag ${arg.evidenceType}`}>
+                      {evidenceTagLabel(arg.evidenceType)}
+                    </span>
+                  )}
+                  <span className="confidence-badge confidence-badge-spaced">
                     {arg.confidence}%
                   </span>
                 </div>
@@ -69,7 +73,7 @@ export default function ExpertOpinions({ data = [] }: ExpertOpinionsProps) {
             </div>
             {exp.keyPoints.length > 0 && (
               <div className="expert-keypoints">
-                <strong style={{ fontSize: 12, color: 'var(--text-secondary)' }}>关键要点：</strong>
+                <strong className="keypoints-label">关键要点：</strong>
                 <ul>
                   {exp.keyPoints.map((kp, j) => (
                     <li key={j}>{kp}</li>
