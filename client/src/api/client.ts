@@ -145,6 +145,77 @@ export async function runWatchlistNewsBacktest(
   }
 }
 
+// === 对话式智能体 ===
+export interface ChatEvidence {
+  id: string;
+  source: string;
+  text: string;
+  stockCode?: string;
+}
+
+export interface ChatDebate {
+  bull: string;
+  bear: string;
+  synthesis: string;
+}
+
+export interface ChatAgentResponse {
+  answer: string;
+  toolsUsed: string[];
+  evidence: ChatEvidence[];
+  debate?: ChatDebate;
+  /** true = LLM 未配置，规则降级 */
+  degraded: boolean;
+  model?: string;
+}
+
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export async function chatWithAgent(payload: {
+  message: string;
+  history?: ChatTurn[];
+  stockCode?: string;
+}): Promise<ChatAgentResponse> {
+  try {
+    const response = await api.post('/chat', payload, { timeout: 120000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '对话请求失败');
+  }
+}
+
+/**
+ * 流式对话（SSE，事件式：最终以 {phase:'done', ...response} 推回）。
+ * onEvent 在每次事件回调；返回的 cancel 可中断。
+ */
+export function chatWithAgentStream(
+  message: string,
+  onEvent: (event: { phase: 'done' | 'error'; answer?: string; [k: string]: unknown }) => void,
+): { cancel: () => void } {
+  const es = new EventSource(`/api/chat/stream?message=${encodeURIComponent(message)}`);
+  let settled = false;
+  const finish = (data: { phase: 'done' | 'error' }) => {
+    if (settled) return;
+    settled = true;
+    es.close();
+    onEvent(data);
+  };
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data) as { phase: 'done' | 'error' };
+      if (data.phase === 'done' || data.phase === 'error') finish(data);
+      else onEvent(data as never);
+    } catch { /* 忽略 */ }
+  };
+  es.onerror = () => {
+    if (!settled) finish({ phase: 'error' } as { phase: 'error' });
+  };
+  return { cancel: () => { settled = true; es.close(); } };
+}
+
 /** 流式分析阶段事件（与后端 AnalysisStage 对齐） */
 export interface AnalysisStage {
   phase: 'data' | 'experts' | 'arbitration' | 'scoring' | 'strategy' | 'done' | 'error';

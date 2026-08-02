@@ -7,7 +7,13 @@ dist/
 
 # Cache
 cache/
-*.json
+# JSON artifacts (NOT package manifests or configs)
+coverage/
+*.coverage.json
+server/src/data/cache/*.json
+server/src/quant/cache/*.json
+server/src/data/stockMaster.json
+.coverage_tmp/
 
 # Test artifacts
 test-screenshots/

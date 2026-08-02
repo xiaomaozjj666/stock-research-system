@@ -12,17 +12,7 @@ import { safeDiv } from './safeDiv.js';
 import { calculateScores } from './scoreEngine.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
 import { extractNewsSignal, type NewsSignal } from '../quant/newsSignal.js';
-
-/** 限时包装：超时就 reject，用于不让尽力而为的网络抓取阻塞主流程 */
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('timeout')), ms);
-    p.then(
-      (v) => { clearTimeout(t); resolve(v); },
-      (e) => { clearTimeout(t); reject(e); },
-    );
-  });
-}
+import { withTimeout } from '../utils/timeout.js';
 
 /** 分析阶段事件（用于 SSE 流式推送进度） */
 export type AnalysisStage =
@@ -297,6 +287,7 @@ export async function runAnalysis(
     const startDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const ohlcvData = await fetchOHLCVData(info.code, startDate, endDate);
     if (ohlcvData.length > 0) {
+      const isSimulated = ohlcvData.some(d => d.isSimulated);
       const rawStrategies = await generateStrategyList(
         info.code,
         ohlcvData,
@@ -310,7 +301,9 @@ export async function runAnalysis(
         totalReturn: s.totalReturn,
         applicableMarket: s.applicableMarket,
         fatalWeakness: s.fatalWeakness,
-        backtestWarning: s.backtestWarning,
+        backtestWarning: isSimulated
+          ? `[[模拟数据]] ${s.backtestWarning || ''} (K线API不可达，回测基于模拟价格，不代表真实行情)`
+          : s.backtestWarning,
         newsAware: s.newsAware
       }));
     }

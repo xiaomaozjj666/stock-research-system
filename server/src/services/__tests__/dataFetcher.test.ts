@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
-// 隔离网络：dataFetcher 的所有 fetch* 函数都经由 fetchWithTimeout -> fetchJson。
+// 隔离网络：dataFetcher 的所有 fetch* 函数都经由 fetchJsonWithTimeout -> fetchJson。
 // 直接 mock fetchJson 即可驱动每个解析分支，无需真实网络。
 // 注意：本测试文件位于 __tests__/ 子目录，故相对路径需多上一级（../../utils/http.js）。
 vi.mock('../../utils/http.js', () => ({
@@ -13,6 +13,7 @@ import {
   fetchFinancialData,
   fetchValuationData,
   fetchBoardInfo,
+  clearValueAnalysisCache,
   toNum,
   yuanToYi,
   toPercent,
@@ -20,8 +21,21 @@ import {
 
 const mockFetchJson = vi.mocked(fetchJson);
 
+// 备份原始 fetch，用于新浪文本 fetch 的 mock
+const originalFetch = globalThis.fetch;
+
 beforeEach(() => {
   mockFetchJson.mockReset();
+  clearValueAnalysisCache();
+  // 新浪文本 fetch 兜底：mock 返回无名称，使 fetchStockInfo 走完回退链
+  globalThis.fetch = vi.fn().mockResolvedValue({
+    ok: true,
+    text: () => Promise.resolve('var hq_str_sh600519=","'),
+  });
+});
+
+afterAll(() => {
+  globalThis.fetch = originalFetch;
 });
 
 describe('数值工具（toNum / yuanToYi / toPercent）', () => {

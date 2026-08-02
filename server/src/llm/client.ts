@@ -142,6 +142,80 @@ export async function chatJSON<T>(messages: ChatMessage[], options: LLMOptions =
   }
 }
 
+/**
+ * 函数调用（function-calling）对话。
+ * 传入工具定义与一个执行回调；模型若返回 tool_calls，则执行并把结果回灌，循环最多 5 轮，
+ * 直到模型给出最终文本。返回最终回答与本次用到的工具调用。
+ * 注意：带 tools 时不允许同时设置 response_format=json_object（OpenAI 限制），故此处不启用 jsonMode。
+ */
+export interface ToolCallResult {
+  name: string;
+  args: Record<string, unknown>;
+}
+export async function chatWithTools(
+  messages: ChatMessage[],
+  tools: unknown[],
+  executeTool: (name: string, args: Record<string, unknown>) => Promise<string>,
+  options: LLMOptions = {},
+): Promise<{ content: string; toolCalls: ToolCallResult[] }> {
+  if (!isLLMAvailable()) throw new Error('LLM 未配置 API key，请设置 DEEPSEEK_API_KEY');
+  const config = getLLMConfig();
+  const conv: ChatMessage[] = messages.map((m) => ({ ...m }));
+  const used: ToolCallResult[] = [];
+
+  for (let iter = 0; iter < 5; iter++) {
+    const body: Record<string, unknown> = {
+      model: config.model,
+      messages: conv,
+      temperature: options.temperature ?? 0.3,
+      max_tokens: options.maxTokens ?? 1500,
+      stream: false,
+      tools,
+      tool_choice: 'auto',
+    };
+
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`LLM 工具调用失败 (${response.status}): ${errText.slice(0, 300)}`);
+    }
+    const data = (await response.json()) as {
+      choices?: { message?: { content?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[];
+    };
+    const msg = data.choices?.[0]?.message;
+    if (!msg) return { content: '', toolCalls: used };
+
+    // 把助手消息（含 tool_calls）原样回灌，保持对话结构
+    conv.push({ role: 'assistant', content: msg.content || '' });
+
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      for (const tc of msg.tool_calls) {
+        let parsed: Record<string, unknown> = {};
+        try { parsed = JSON.parse(tc.function.arguments || '{}'); } catch { parsed = {}; }
+        used.push({ name: tc.function.name, args: parsed });
+        let result: string;
+        try {
+          result = await executeTool(tc.function.name, parsed);
+        } catch (err) {
+          result = `工具执行出错: ${(err as Error).message}`;
+        }
+        conv.push({ role: 'tool', content: result } as unknown as ChatMessage);
+      }
+      continue; // 让模型基于工具结果继续
+    }
+    return { content: msg.content || '', toolCalls: used };
+  }
+  return { content: conv[conv.length - 1]?.content || '', toolCalls: used };
+}
+
 /** 从可能被 markdown 包裹的文本中提取 JSON */
 function extractJSON(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);

@@ -7,6 +7,7 @@ import {
 } from '../../api/client';
 import type { WatchlistNewsBacktestReport } from '../../types';
 import { normalizeApiError } from '../../api/client';
+import NewsPostureHeatBar from '../../components/NewsPostureHeatBar';
 
 function polarityLabel(p: number): { text: string; cls: string } {
   if (p > 0.15) return { text: '偏多', cls: 'bull' };
@@ -150,6 +151,8 @@ export default function WatchlistPage() {
               {new Date(report.generatedAt).toLocaleString('zh-CN')}
             </span>
           </div>
+          <NewsPostureHeatBar report={report} />
+
           <div className="watchlist-table-wrap">
             <table className="watchlist-table">
               <thead>

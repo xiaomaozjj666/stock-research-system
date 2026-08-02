@@ -120,15 +120,20 @@ export async function getSupportedStocks(): Promise<{ code: string; name: string
   try {
     if (fs.existsSync(CACHE_DIR)) {
       const files = (await fs.promises.readdir(CACHE_DIR)).filter(f => f.endsWith('.json'));
-      for (const file of files) {
-        try {
-          const content = await fs.promises.readFile(path.join(CACHE_DIR, file), 'utf-8');
-          const cached = JSON.parse(content);
-          const info = (cached.data as StockDataSet).info;
-          stocks.push({ code: info.code, name: info.name, industry: info.industry });
-        } catch {
-          // 忽略损坏的缓存文件
-        }
+      const entries = await Promise.all(
+        files.map(async (file) => {
+          try {
+            const content = await fs.promises.readFile(path.join(CACHE_DIR, file), 'utf-8');
+            const cached = JSON.parse(content);
+            const info = (cached.data as StockDataSet).info;
+            return { code: info.code, name: info.name, industry: info.industry };
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const e of entries) {
+        if (e) stocks.push(e);
       }
     }
   } catch {
@@ -146,9 +151,10 @@ export async function getSupportedStocks(): Promise<{ code: string; name: string
 export async function searchStocks(keyword: string): Promise<{ code: string; name: string }[]> {
   const kw = keyword.trim();
   const query = SEARCH_ALIASES[kw] ?? kw; // 品牌名别名改写
+  const searchToken = process.env.EASTMONEY_SEARCH_TOKEN || 'D43BF722C8E33BDC906FB84D85E326E8';
   // 1. 东方财富 suggest（擅长代码/拼音/上市简称）
   try {
-    const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=D43BF722C8E33BDC906FB84D85E326E8&count=10`;
+    const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=${searchToken}&count=10`;
     const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
     const data = await response.json() as {
       QuotationCodeTable?: { Data?: Array<{ MktNum: string; Code: string; Name: string }> };

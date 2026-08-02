@@ -98,18 +98,6 @@ export async function loadStockMaster(force = false): Promise<SecurityMasterEntr
   }
 }
 
-/**
- * 按行业筛选同业（排除自身），返回前 limit 只。
- * 用于填充 peerComparison，提供真实的同业估值对比。
- */
-export async function getIndustryPeers(selfCode: string, industry: string, limit = 4): Promise<SecurityMasterEntry[]> {
-  if (!industry) return [];
-  const master = await loadStockMaster();
-  return master
-    .filter(e => e.code !== selfCode && e.industry && e.industry === industry)
-    .slice(0, limit);
-}
-
 function longestCommonSubstring(a: string, b: string): string {
   const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
   let maxLen = 0;

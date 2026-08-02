@@ -1,0 +1,49 @@
+{
+  "name": "stock-research-system",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "build": "npm run build --workspace=server && npm run build --workspace=client",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"*.{json,md,mjs}\"",
+    "format:check": "prettier --check \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"*.{json,md,mjs}\""
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/jest-dom": "7.0.0",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
+    "@types/supertest": "7.2.1",
+    "@vitest/coverage-v8": "4.1.10",
+    "eslint": "10.8.0",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "17.8.0",
+    "jsdom": "30.0.1",
+    "playwright": "1.62.1",
+    "prettier": "3.9.6",
+    "supertest": "7.2.2",
+    "typescript": "^7.0.2",
+    "vitest": "4.1.10"
+  },
+  "overrides": {
+    "vite": "8.2.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "esbuild@0.21.5": true,
+    "esbuild@0.25.12": true
+  },
+  "dependencies": {
+    "tsx": "4.23.2"
+  }
+}

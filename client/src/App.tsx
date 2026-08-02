@@ -21,6 +21,7 @@ import RiskSection from './components/RiskSection';
 import ReflectionSection from './components/ReflectionSection';
 import FollowUpSection from './components/FollowUpSection';
 import MobileNav from './components/MobileNav';
+import ChatPanel from './components/ChatPanel';
 import { useScrollReveal } from './hooks/useScrollReveal';
 import { useCountUp } from './hooks/useCountUp';
 
@@ -86,7 +87,7 @@ function App() {
   const [analysisStage, setAnalysisStage] = useState<AnalysisStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState('');
-  const [activeTab, setActiveTab] = useState<'research' | 'quant' | 'compare' | 'watchlist'>('research');
+  const [activeTab, setActiveTab] = useState<'research' | 'quant' | 'compare' | 'watchlist' | 'chat'>('research');
   const [scrollProgress, setScrollProgress] = useState(0);
   /** 最近一次分析的代码，用于失败后一键重试 */
   const lastCodeRef = useRef<string>('');
@@ -203,6 +204,12 @@ function App() {
           onClick={() => setActiveTab('watchlist')}
         >
           自选股
+        </button>
+        <button
+          className={`tab ${activeTab === 'chat' ? 'active' : ''}`}
+          onClick={() => setActiveTab('chat')}
+        >
+          研究助手
         </button>
       </div>
 
@@ -341,6 +348,7 @@ function App() {
         {activeTab === 'quant' && <QuantPage />}
         {activeTab === 'compare' && <ComparisonView />}
         {activeTab === 'watchlist' && <WatchlistPage />}
+        {activeTab === 'chat' && <ChatPanel />}
       </Suspense>
     </div>
   );

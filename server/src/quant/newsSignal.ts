@@ -27,6 +27,9 @@
  *    - 在受限/离线环境（如沙箱）下优雅降级为 []，模型本身与单测不依赖网络。
  */
 
+// LLM 语义抽取（可选增强）：LLM 可用时用语义打分替代硬编码词表，失败回退词典法
+import { isLLMAvailable, chatJSON } from '../llm/index.js';
+
 // 时效衰减系数（半衰期 ≈ ln2 / 0.12 ≈ 5.8 天）
 const RECENCY_LAMBDA = 0.12;
 // 情绪 z 分 logit 端点夹紧，避免 ±∞
@@ -242,14 +245,65 @@ export async function fetchLatestNews(code: string): Promise<NewsItem[]> {
 }
 
 /**
+ * 用语义理解给新闻打极性分（仅 LLM 可用时启用；否则返回 null，调用方回退词典法）。
+ * 模型对每条新闻返回 polarity∈[−1,1] 与 impact∈[0,1]，写回 NewsItem.polarity，
+ * 下游 aggregateNewsSentiment 会优先采用预标注极性，从而与词典法同构、可测。
+ */
+export async function scoreNewsWithLLM(items: NewsItem[]): Promise<NewsItem[] | null> {
+  if (!isLLMAvailable() || items.length === 0) return null;
+  try {
+    const payload = items.map((it, i) => ({
+      i,
+      title: it.title,
+      summary: it.summary ?? '',
+      publishedAt: it.publishedAt,
+    }));
+    const raw = await chatJSON<{ scores?: { i: number; polarity: number; impact: number }[] }>([
+      {
+        role: 'system',
+        content: '你是金融新闻情绪分析器。对每条新闻给出极性 polarity(-1看空~1看多)与影响强度 impact(0~1)。只返回 JSON。',
+      },
+      {
+        role: 'user',
+        content: `请分析以下新闻，返回 {"scores":[{"i":序号,"polarity":数值,"impact":数值}]}。\n${JSON.stringify(payload)}`,
+      },
+    ], { temperature: 0.2, maxTokens: 1200, timeout: 30000 });
+
+    if (!Array.isArray(raw.scores)) return null;
+    const byIndex = new Map(raw.scores.map((s) => [s.i, s]));
+    return items.map((it, i) => {
+      const s = byIndex.get(i);
+      if (!s) return it;
+      const polarity = Math.max(-1, Math.min(1, Number(s.polarity) || 0));
+      return { ...it, polarity };
+    });
+  } catch {
+    return null; // 回退词典法
+  }
+}
+
+/**
  * 便捷封装：抓取最新新闻并聚合为 NewsSignal。
+ * LLM 可用时先用语义抽取增强极性，否则/失败时回退词典法。
  * 返回 { signal, source }；source 为 'live'（抓到新闻）或 'none'（无可用新闻）。
  */
 export async function extractNewsSignal(
   code: string,
 ): Promise<{ signal: NewsSignal; source: 'live' | 'none' }> {
   const items = await fetchLatestNews(code);
-  const signal = aggregateNewsSentiment(items);
+  if (items.length === 0) {
+    return { signal: aggregateNewsSentiment([]), source: 'none' };
+  }
+  let scored = items;
+  if (isLLMAvailable()) {
+    try {
+      const enriched = await scoreNewsWithLLM(items);
+      if (enriched) scored = enriched;
+    } catch {
+      // 回退词典法
+    }
+  }
+  const signal = aggregateNewsSentiment(scored);
   return { signal, source: signal.hasNews ? 'live' : 'none' };
 }
 

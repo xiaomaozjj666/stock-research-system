@@ -14,16 +14,10 @@ import { runBacktest } from './quant/backtestEngine.js';
 import { orchestrate, generateSummary, parseStrategyInput } from './quant/agents/orchestrator.js';
 import type { StrategyConfig } from './quant/types.js';
 import { extractNewsSignal, aggregateNewsSentiment, type NewsItem, type NewsSignal } from './quant/newsSignal.js';
+import { withTimeout } from './utils/timeout.js';
+import { chatAgent } from './services/chatAgent.js';
 
-/** 限时包装：尽力而为的新闻抓取，超时/失败即降级为 null，不阻塞主流程 */
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('timeout')), ms);
-    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
-  });
-}
-
-const app = express();
+export const app = express();
 app.use(cors());
 
 // === 安全响应头（OWASP 最佳实践，等效 helmet 核心） ===
@@ -203,7 +197,7 @@ const quantLimiter = rateLimit({
 // === Watchlist Batch News-Backtest Limiter (3 req/min) ===
 const watchlistLimiter = rateLimit({
   windowMs: 60000,
-  max: 3,
+  max: Number(process.env.RATE_LIMIT_MAX_WATCHLIST) || 3,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '自选股批量回测过于频繁（限制：每分钟3次），请稍后再试', retryAfter: 60 }
@@ -366,6 +360,65 @@ app.post('/api/watchlist/news-backtest', watchlistLimiter, async (req, res) => {
   }
 });
 
+// === Chat Agent Rate Limiter (10 req/min) ===
+const chatLimiter = rateLimit({
+  windowMs,
+  max: Number(process.env.RATE_LIMIT_MAX_CHAT) || 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: '对话请求过于频繁（限制：每分钟10次），请稍后再试', retryAfter: 60 }
+});
+
+// === 对话式智能体接口（自然语言入口） ===
+app.post('/api/chat', chatLimiter, async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const message = typeof body.message === 'string' ? body.message.trim() : '';
+    if (!message) {
+      return res.status(400).json({ error: '请提供对话内容' });
+    }
+    if (message.length > 2000) {
+      return res.status(400).json({ error: '对话内容过长（上限 2000 字）' });
+    }
+    const result = await chatAgent.run({
+      message,
+      history: Array.isArray(body.history) ? body.history : undefined,
+      stockCode: typeof body.stockCode === 'string' ? body.stockCode : undefined,
+    });
+    res.json(result);
+  } catch (error) {
+    console.error('Chat error:', error);
+    res.status(500).json({ error: '对话处理失败', detail: (error as Error).message });
+  }
+});
+
+// === 流式对话接口（SSE） ===
+app.get('/api/chat/stream', chatLimiter, async (req: Request, res: Response) => {
+  const message = String(req.query.message || '').trim();
+  if (!message) {
+    return res.status(400).json({ error: '请提供对话内容' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (data: unknown) => {
+    try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* 已断开 */ }
+  };
+
+  try {
+    const result = await chatAgent.run({ message });
+    send({ phase: 'done', ...result });
+  } catch (error) {
+    send({ phase: 'error', message: (error as Error).message || '对话处理失败' });
+  } finally {
+    res.end();
+  }
+});
+
 // === 404 兜底 ===
 app.use((req: Request, res: Response) => {
   res.status(404).json({ error: '接口不存在', path: req.path });
@@ -377,51 +430,53 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: '服务器内部错误', detail: err.message });
 });
 
-// === Start Server ===
-const PORT = Number(process.env.PORT) || 3001;
-const server = app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  // 预热证券全表，使首次兜底模糊搜索即时响应
-  loadStockMaster().catch((err) => console.warn('[stockMaster] 预热失败，首次搜索将按需加载:', (err as Error).message));
-});
+// === Start Server（仅作为进程入口直接运行时监听端口；测试通过 supertest 引用导出的 app，不监听） ===
+if (process.env.NODE_ENV !== 'test') {
+  const PORT = Number(process.env.PORT) || 3001;
+  const server = app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    // 预热证券全表，使首次兜底模糊搜索即时响应
+    loadStockMaster().catch((err) => console.warn('[stockMaster] 预热失败，首次搜索将按需加载:', (err as Error).message));
+  });
 
-// === Graceful Shutdown ===
-let isShuttingDown = false;
+  // === Graceful Shutdown ===
+  let isShuttingDown = false;
 
-function gracefulShutdown(signal: string) {
-  if (isShuttingDown) return;
-  isShuttingDown = true;
+  function gracefulShutdown(signal: string) {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
 
-  console.log(`\n[${signal}] 收到关闭信号，开始优雅关闭...`);
-  console.log('[Shutdown] 等待进行中的请求完成...');
+    console.log(`\n[${signal}] 收到关闭信号，开始优雅关闭...`);
+    console.log('[Shutdown] 等待进行中的请求完成...');
 
-  // 30 秒后强制退出，避免长连接阻塞关闭
-  const forceExit = setTimeout(() => {
-    console.error('[Shutdown] 30秒超时，强制关闭');
-    process.exit(1);
-  }, 30000);
-
-  // server.close 的回调在所有现有连接关闭后触发
-  server.close((err) => {
-    clearTimeout(forceExit);
-    if (err) {
-      console.error('[Shutdown] 关闭出错:', err.message);
+    // 30 秒后强制退出，避免长连接阻塞关闭
+    const forceExit = setTimeout(() => {
+      console.error('[Shutdown] 30秒超时，强制关闭');
       process.exit(1);
-    }
-    console.log('[Shutdown] 所有连接已关闭，优雅关闭完成');
-    process.exit(0);
+    }, 30000);
+
+    // server.close 的回调在所有现有连接关闭后触发
+    server.close((err) => {
+      clearTimeout(forceExit);
+      if (err) {
+        console.error('[Shutdown] 关闭出错:', err.message);
+        process.exit(1);
+      }
+      console.log('[Shutdown] 所有连接已关闭，优雅关闭完成');
+      process.exit(0);
+    });
+  }
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+  // 兜底：未处理的 Promise 拒绝与未捕获异常，避免进程静默崩溃
+  process.on('unhandledRejection', (reason) => {
+    console.error('[UnhandledRejection]', reason);
+  });
+  process.on('uncaughtException', (err) => {
+    console.error('[UncaughtException]', err);
+    // 进入不稳定状态，优雅退出
+    gracefulShutdown('uncaughtException');
   });
 }
-
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-// 兜底：未处理的 Promise 拒绝与未捕获异常，避免进程静默崩溃
-process.on('unhandledRejection', (reason) => {
-  console.error('[UnhandledRejection]', reason);
-});
-process.on('uncaughtException', (err) => {
-  console.error('[UncaughtException]', err);
-  // 进入不稳定状态，优雅退出
-  gracefulShutdown('uncaughtException');
-});

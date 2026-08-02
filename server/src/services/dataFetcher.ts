@@ -13,26 +13,18 @@ function getSecId(code: string): string {
 }
 
 /**
- * 带超时的 fetch 封装（内部走弹性 fetchJson：fetch 失败自动回退 curl）
- * 为兼容现有调用方，返回包装后的 Response 对象。
+ * 带超时的 JSON fetch（内部走弹性 fetchJson：fetch 失败自动回退 curl）。
+ * 返回已解析的 JSON 对象，避免 Response → JSON.stringify → JSON.parse 双序列化。
  */
-async function fetchWithTimeout(url: string, timeout = 10000): Promise<Response> {
-  const data = await fetchJson(url, { timeoutMs: timeout });
-  return new Response(JSON.stringify(data), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+async function fetchJsonWithTimeout(url: string, timeout = 10000): Promise<unknown> {
+  return fetchJson(url, { timeoutMs: timeout });
 }
 
-/**
- * 安全解析 JSON，失败返回 null
- */
-async function safeJson(response: Response): Promise<unknown | null> {
-  try {
-    return await response.json();
-  } catch {
-    return null;
-  }
+/** 带超时的文本 fetch（用于新浪等非 JSON 端点） */
+async function fetchTextWithTimeout(url: string, timeout = 10000): Promise<string> {
+  const resp = await fetch(url, { signal: AbortSignal.timeout(timeout) });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+  return resp.text();
 }
 
 // ============ 获取股票基本信息 ============
@@ -41,8 +33,7 @@ async function fetchStockInfoFromEastMoney(code: string): Promise<StockInfo | nu
   try {
     const secid = getSecId(code);
     const url = `http://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f57,f58,f127,f162,f173,f187,f188,f190,f191,f192,f193&ut=fa5fd1943c7b386f172d6893dbbd1`;
-    const response = await fetchWithTimeout(url);
-    const data = await safeJson(response) as { rc?: number; data?: Record<string, unknown> } | null;
+    const data = await fetchJsonWithTimeout(url) as { rc?: number; data?: Record<string, unknown> } | null;
 
     if (!data?.data) return null;
 
@@ -66,8 +57,7 @@ async function fetchStockInfoFromSina(code: string): Promise<StockInfo | null> {
   try {
     const prefix = code.startsWith('6') ? 'sh' : 'sz';
     const url = `http://hq.sinajs.cn/list=${prefix}${code}`;
-    const response = await fetchWithTimeout(url);
-    const text = await response.text();
+    const text = await fetchTextWithTimeout(url);
 
     // 格式: var hq_str_sh600519="贵州茅台,1580.00,...";
     const match = text.match(/"([^"]+)"/);
@@ -109,8 +99,7 @@ async function fetchFinancialFromEastMoney(code: string): Promise<FinancialData 
     // 东方财富财务指标 API - 获取最近6年年报
     const url = `https://datacenter.eastmoney.com/api/data/get?type=RPT_F10_FINANCE_MAINFINADATA&sty=ALL&filter=(SECUCODE="${code}.${code.startsWith('6') ? 'SH' : 'SZ'}")(REPORT_TYPE="年报")&p=1&ps=6&sr=-1&st=REPORT_DATE&source=HSF10&client=PC&v=099415855`;
 
-    const response = await fetchWithTimeout(url);
-    const data = await safeJson(response) as {
+    const data = await fetchJsonWithTimeout(url) as {
       success?: boolean;
       result?: { data?: Array<Record<string, unknown>> };
     } | null;
@@ -212,8 +201,7 @@ async function fetchFinancialFallback(code: string): Promise<FinancialData | nul
   try {
     const secid = getSecId(code);
     const url = `http://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f57,f58,f162,f167,f173,f187,f188,f190,f191,f192,f193&ut=fa5fd1943c7b386f172d6893dbbd1`;
-    const response = await fetchWithTimeout(url);
-    const data = await safeJson(response) as { data?: Record<string, unknown> } | null;
+    const data = await fetchJsonWithTimeout(url) as { data?: Record<string, unknown> } | null;
 
     if (!data?.data) return null;
 
@@ -266,8 +254,7 @@ async function fetchValuationFromEastMoney(code: string): Promise<ValuationData 
   try {
     const secid = getSecId(code);
     const url = `http://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f55,f57,f58,f116,f117,f162,f163,f164,f167,f170,f171,f173,f183,f184,f185,f186,f187,f188,f190,f191,f192,f193,f292&ut=fa5fd1943c7b386f172d6893dbbd1`;
-    const response = await fetchWithTimeout(url);
-    const data = await safeJson(response) as { data?: Record<string, unknown> } | null;
+    const data = await fetchJsonWithTimeout(url) as { data?: Record<string, unknown> } | null;
 
     if (!data?.data) return null;
 
@@ -316,63 +303,75 @@ function priceField(d: Record<string, unknown>, field: string): number {
   return Number(d[field] ?? 0) / 100;
 }
 
+/** 估值分析 RPT_VALUEANALYSIS_DET 的请求级缓存（同一代码在同一请求中可能被
+ *  valuation 和 board 两个调用方各自触发，始终只请求一次远端） */
+const valueAnalysisCache = new Map<string, Record<string, unknown> | null>();
+
+/** 清除估值分析缓存（供测试重置，避免跨用例缓存污染） */
+export function clearValueAnalysisCache(): void {
+  valueAnalysisCache.clear();
+}
+
+/**
+ * 获取估值分析 RPT_VALUEANALYSIS_DET 的原始 row（共享、缓存）。
+ * 调用方自行从 row 中提取所需字段，始终只发给远端一次。
+ */
+async function fetchValueAnalysisRow(code: string): Promise<Record<string, unknown> | null> {
+  const cached = valueAnalysisCache.get(code);
+  if (cached !== undefined) return cached;
+
+  try {
+    const secucode = `${code}.${code.startsWith('6') ? 'SH' : 'SZ'}`;
+    const url = `https://datacenter.eastmoney.com/api/data/get?type=RPT_VALUEANALYSIS_DET&sty=ALL&filter=(SECUCODE="${secucode}")&p=1&ps=1&source=HSF10&client=PC&v=099415855`;
+    const data = await fetchJsonWithTimeout(url) as {
+      result?: { data?: Array<Record<string, unknown>> };
+    } | null;
+    const row = data?.result?.data?.[0] ?? null;
+    valueAnalysisCache.set(code, row);
+    return row;
+  } catch {
+    valueAnalysisCache.set(code, null);
+    return null;
+  }
+}
+
 /** F1.4: 估值兜底来源 —— 东方财富 datacenter「估值分析」(RPT_VALUEANALYSIS_DET)。
  * 该接口经 Node fetch 可达（与 MAINFINADATA 同源），提供真实的
  * 收盘价 / PE(TTM) / PB(MRQ) / 总市值，适用于 push2 不可达的环境（如部分沙箱）。
  */
 async function fetchValuationFromDatacenter(code: string): Promise<ValuationData | null> {
-  try {
-    const secucode = `${code}.${code.startsWith('6') ? 'SH' : 'SZ'}`;
-    const url = `https://datacenter.eastmoney.com/api/data/get?type=RPT_VALUEANALYSIS_DET&sty=ALL&filter=(SECUCODE="${secucode}")&p=1&ps=1&source=HSF10&client=PC&v=099415855`;
-    const response = await fetchWithTimeout(url);
-    const data = (await safeJson(response)) as {
-      result?: { data?: Array<Record<string, unknown>> };
-    } | null;
-    const row = data?.result?.data?.[0];
-    if (!row) return null;
+  const row = await fetchValueAnalysisRow(code);
+  if (!row) return null;
 
-    const currentPrice = toNum(row.CLOSE_PRICE);
-    if (currentPrice <= 0) return null;
+  const currentPrice = toNum(row.CLOSE_PRICE);
+  if (currentPrice <= 0) return null;
 
-    const pe = toNum(row.PE_TTM);
-    const pb = toNum(row.PB_MRQ);
-    const marketCapYi = Math.round((toNum(row.TOTAL_MARKET_CAP) / 1e8) * 100) / 100; // 元 -> 亿元
+  const pe = toNum(row.PE_TTM);
+  const pb = toNum(row.PB_MRQ);
+  const marketCapYi = Math.round((toNum(row.TOTAL_MARKET_CAP) / 1e8) * 100) / 100; // 元 -> 亿元
 
-    return {
-      currentPrice: Math.round(currentPrice * 100) / 100,
-      pe: Math.round(pe * 100) / 100,
-      pb: Math.round(pb * 100) / 100,
-      ps: 0,
-      marketCap: marketCapYi,
-      historicalPE: [],
-      peerComparison: []
-    };
-  } catch {
-    return null;
-  }
+  return {
+    currentPrice: Math.round(currentPrice * 100) / 100,
+    pe: Math.round(pe * 100) / 100,
+    pb: Math.round(pb * 100) / 100,
+    ps: 0,
+    marketCap: marketCapYi,
+    historicalPE: [],
+    peerComparison: []
+  };
 }
 
 /**
  * F1.5: 获取股票所属行业板块名（datacenter BOARD_NAME）与证券简称。
- * 用于在主数据不可达时反查行业、并补全同业公司名称。
+ * 复用 fetchValueAnalysisRow 缓存，避免重复请求同一接口。
  */
 export async function fetchBoardInfo(code: string): Promise<{ name?: string; boardName?: string } | null> {
-  try {
-    const secucode = `${code}.${code.startsWith('6') ? 'SH' : 'SZ'}`;
-    const url = `https://datacenter.eastmoney.com/api/data/get?type=RPT_VALUEANALYSIS_DET&sty=ALL&filter=(SECUCODE="${secucode}")&p=1&ps=1&source=HSF10&client=PC&v=099415855`;
-    const response = await fetchWithTimeout(url);
-    const data = (await safeJson(response)) as {
-      result?: { data?: Array<Record<string, unknown>> };
-    } | null;
-    const row = data?.result?.data?.[0];
-    if (!row) return null;
-    return {
-      name: row.SECURITY_NAME_ABBR ? String(row.SECURITY_NAME_ABBR) : undefined,
-      boardName: row.BOARD_NAME ? String(row.BOARD_NAME) : undefined
-    };
-  } catch {
-    return null;
-  }
+  const row = await fetchValueAnalysisRow(code);
+  if (!row) return null;
+  return {
+    name: row.SECURITY_NAME_ABBR ? String(row.SECURITY_NAME_ABBR) : undefined,
+    boardName: row.BOARD_NAME ? String(row.BOARD_NAME) : undefined
+  };
 }
 
 export async function fetchValuationData(code: string): Promise<ValuationData> {
