@@ -16,6 +16,13 @@ import type { StrategyConfig } from './quant/types.js';
 import { extractNewsSignal, aggregateNewsSentiment, type NewsItem, type NewsSignal } from './quant/newsSignal.js';
 import { withTimeout } from './utils/timeout.js';
 import { chatAgent } from './services/chatAgent.js';
+import { detectAlerts, type WatchlistAlert } from './services/alerts.js';
+import { ingestDocument, getIngestedDocs } from './llm/rag.js';
+import { extractDocumentInsights } from './services/documentInsights.js';
+import { extractTextFromPdf } from './quant/pdfExtract.js';
+import { startAutonomousLoop, type AutonomousController } from './services/scheduler.js';
+import { getModelRegistry, selectModel, getCostReport, resetCostTracker, isLLMAvailable, isEmbeddingConfigured } from './llm/index.js';
+import { clearHistory } from './services/chatMemory.js';
 
 export const app = express();
 app.use(cors());
@@ -384,6 +391,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
       message,
       history: Array.isArray(body.history) ? body.history : undefined,
       stockCode: typeof body.stockCode === 'string' ? body.stockCode : undefined,
+      sessionId: typeof body.sessionId === 'string' ? body.sessionId : undefined,
     });
     res.json(result);
   } catch (error) {
@@ -410,13 +418,132 @@ app.get('/api/chat/stream', chatLimiter, async (req: Request, res: Response) => 
   };
 
   try {
-    const result = await chatAgent.run({ message });
+    const result = await chatAgent.run({
+      message,
+      sessionId: typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined,
+    });
     send({ phase: 'done', ...result });
   } catch (error) {
     send({ phase: 'error', message: (error as Error).message || '对话处理失败' });
   } finally {
     res.end();
   }
+});
+
+// 自选股主动监控：重跑批量新闻回测并检出异动预警
+app.post('/api/watchlist/monitor', watchlistLimiter, async (req, res) => {
+  try {
+    const codes = getWatchlist();
+    if (codes.length === 0) {
+      return res.status(400).json({ error: '自选股清单为空，请先添加股票' });
+    }
+    const report = await runWatchlistNewsBacktest(codes);
+    const alerts = detectAlerts(report.results);
+    res.json({ generatedAt: report.generatedAt, monitored: report.count, alerts });
+  } catch (error) {
+    console.error('Watchlist monitor error:', error);
+    res.status(500).json({ error: '自选股监控失败', detail: (error as Error).message });
+  }
+});
+
+// === 文档入库（研报/财报/公告）：PDF 或纯文本 → 洞察抽取 → 注入 RAG ===
+app.post('/api/ingest', chatLimiter, async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    if (!title) return res.status(400).json({ error: '请提供文档标题 title' });
+    let text = typeof body.text === 'string' ? body.text : '';
+    if (!text && typeof body.pdfBase64 === 'string' && body.pdfBase64) {
+      text = await extractTextFromPdf(Buffer.from(body.pdfBase64, 'base64'));
+    }
+    if (!text.trim()) return res.status(400).json({ error: '请提供 text 或 pdfBase64' });
+
+    const insight = await extractDocumentInsights(text);
+    const docText = [
+      `【${title}】${insight.summary}`,
+      `利好:${insight.positives.join(';')}`,
+      `风险:${insight.risks.join(';')}`,
+      `催化剂:${insight.catalysts.join(';')}`,
+      text.slice(0, 1500),
+    ].join('\n');
+    const id = `ingested:${Date.now()}`;
+    ingestDocument({ id, source: `doc:${title}`, text: docText });
+    res.json({ id, title, insight, ingested: true });
+  } catch (error) {
+    console.error('Ingest error:', error);
+    res.status(500).json({ error: '文档入库失败', detail: (error as Error).message });
+  }
+});
+
+app.get('/api/documents', (_req, res) => {
+  const docs = getIngestedDocs();
+  res.json({
+    count: docs.length,
+    docs: docs.map((d) => ({ id: d.id, source: d.source, preview: d.text.slice(0, 200) })),
+  });
+});
+
+// === 多模型路由 / 成本治理 ===
+app.get('/api/models', (_req, res) => {
+  const tasks = ['chat', 'analysis', 'debate', 'extract', 'reasoning', 'embedding'] as const;
+  res.json({
+    available: isLLMAvailable(),
+    embeddingEnabled: isEmbeddingConfigured(),
+    registry: getModelRegistry(),
+    routing: Object.fromEntries(tasks.map((t) => [t, selectModel(t)])),
+  });
+});
+
+app.get('/api/cost', (_req, res) => {
+  res.json(getCostReport());
+});
+
+app.post('/api/cost/reset', (_req, res) => {
+  resetCostTracker();
+  res.json({ ok: true });
+});
+
+// === 对话历史清空（持久记忆管理） ===
+app.post('/api/chat/history/clear', (req, res) => {
+  const sessionId = String(req.body?.sessionId ?? '').trim();
+  if (!sessionId) return res.status(400).json({ error: '请提供 sessionId' });
+  clearHistory(sessionId);
+  res.json({ ok: true });
+});
+
+// === 主动监控自治循环（autonomous loop） ===
+let autonomousController: AutonomousController | null = null;
+let lastAutonomousAlerts: WatchlistAlert[] = [];
+
+app.post('/api/autonomous/start', watchlistLimiter, async (req, res) => {
+  try {
+    if (autonomousController) autonomousController.stop();
+    const intervalMs = Number(req.body?.intervalMs) || 5 * 60 * 1000;
+    autonomousController = startAutonomousLoop({
+      intervalMs,
+      monitor: async () => runWatchlistNewsBacktest(getWatchlist()),
+      onAlert: (alerts) => {
+        lastAutonomousAlerts = alerts;
+        console.log(`[autonomous] 检出 ${alerts.length} 条异动预警`);
+      },
+    });
+    res.json({ started: true, ...autonomousController.getState() });
+  } catch (error) {
+    console.error('Autonomous start error:', error);
+    res.status(500).json({ error: '启动自治循环失败', detail: (error as Error).message });
+  }
+});
+
+app.post('/api/autonomous/stop', (_req, res) => {
+  if (autonomousController) {
+    autonomousController.stop();
+    autonomousController = null;
+  }
+  res.json({ stopped: true, lastAlerts: lastAutonomousAlerts });
+});
+
+app.get('/api/autonomous/status', (_req, res) => {
+  res.json(autonomousController ? autonomousController.getState() : { running: false });
 });
 
 // === 404 兜底 ===

@@ -178,12 +178,132 @@ export async function chatWithAgent(payload: {
   message: string;
   history?: ChatTurn[];
   stockCode?: string;
+  sessionId?: string;
 }): Promise<ChatAgentResponse> {
   try {
     const response = await api.post('/chat', payload, { timeout: 120000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '对话请求失败');
+  }
+}
+
+// === 研究增强接口（文档库 / 模型路由 / 成本 / 记忆 / 自治监控） ===
+export interface IngestInsight {
+  summary: string;
+  positives: string[];
+  risks: string[];
+  catalysts: string[];
+  confidence: number;
+  source: string;
+}
+export interface IngestResult {
+  id: string;
+  title: string;
+  ingested: boolean;
+  insight: IngestInsight;
+}
+export async function ingestDocument(payload: {
+  title: string;
+  text?: string;
+  pdfBase64?: string;
+  stockCode?: string;
+}): Promise<IngestResult> {
+  try {
+    const response = await api.post('/ingest', payload, { timeout: 120000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '文档入库失败');
+  }
+}
+export async function listDocuments(): Promise<{ count: number; docs: { id: string; source: string; preview: string }[] }> {
+  try {
+    const response = await api.get('/documents', { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '读取资料库失败');
+  }
+}
+
+export interface ModelRoutingInfo {
+  available: boolean;
+  embeddingEnabled: boolean;
+  registry: { id: string; label: string; costPer1kInput: number; costPer1kOutput: number; tasks: string[] }[];
+  routing: Record<string, string>;
+}
+export async function getModels(): Promise<ModelRoutingInfo> {
+  try {
+    const response = await api.get('/models', { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '获取模型信息失败');
+  }
+}
+
+export interface CostReport {
+  totalCost: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  callCount: number;
+  byModel: Record<string, { promptTokens: number; completionTokens: number; cost: number; calls: number }>;
+}
+export async function getCostReport(): Promise<CostReport> {
+  try {
+    const response = await api.get('/cost', { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '获取成本报告失败');
+  }
+}
+export async function resetCostReport(): Promise<{ ok: boolean }> {
+  try {
+    const response = await api.post('/cost/reset', {}, { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '重置成本失败');
+  }
+}
+
+export async function clearChatHistory(sessionId: string): Promise<{ ok: boolean }> {
+  try {
+    const response = await api.post('/chat/history/clear', { sessionId }, { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '清空对话记忆失败');
+  }
+}
+
+export interface AutonomousState {
+  running: boolean;
+  intervalMs?: number;
+  lastRunAt?: string;
+  lastAlertCount?: number;
+  runCount?: number;
+  errorCount?: number;
+  lastError?: string;
+}
+export async function startAutonomous(intervalMs?: number): Promise<AutonomousState & { started: boolean }> {
+  try {
+    const response = await api.post('/autonomous/start', { intervalMs }, { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '启动自动监控失败');
+  }
+}
+export async function stopAutonomous(): Promise<{ stopped: boolean; lastAlerts: unknown[] }> {
+  try {
+    const response = await api.post('/autonomous/stop', {}, { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '停止自动监控失败');
+  }
+}
+export async function getAutonomousStatus(): Promise<AutonomousState> {
+  try {
+    const response = await api.get('/autonomous/status', { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '获取监控状态失败');
   }
 }
 

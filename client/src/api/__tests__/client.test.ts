@@ -1,6 +1,16 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
-import { normalizeApiError } from '../client.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  normalizeApiError,
+  chatWithAgent,
+  ingestDocument,
+  getModels,
+  startAutonomous,
+  clearChatHistory,
+} from '../client.js';
+
+const axiosInst = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn() }));
+vi.mock('axios', () => ({ default: { create: () => axiosInst } }));
 
 describe('normalizeApiError', () => {
   it('ERR_CANCELED -> 请求已取消', () => {
@@ -41,5 +51,66 @@ describe('normalizeApiError', () => {
   it('有 response 但无业务文案且非特定状态码时回退到默认文案', () => {
     const e = { response: { status: 418, data: {} } };
     expect(normalizeApiError(e, '兜底文案').message).toBe('兜底文案');
+  });
+});
+
+describe('研究增强接口（前端 API 层）', () => {
+  beforeEach(() => {
+    axiosInst.post.mockReset();
+    axiosInst.get.mockReset();
+  });
+
+  it('chatWithAgent 透传 sessionId 给后端（记忆生效）', async () => {
+    axiosInst.post.mockResolvedValue({
+      data: { answer: 'a', toolsUsed: [], evidence: [], degraded: false },
+    });
+    await chatWithAgent({ message: 'hi', sessionId: 's1' });
+    expect(axiosInst.post).toHaveBeenCalledWith(
+      '/chat',
+      expect.objectContaining({ sessionId: 's1' }),
+      expect.any(Object),
+    );
+  });
+
+  it('ingestDocument 调 /ingest 并解析返回值', async () => {
+    axiosInst.post.mockResolvedValue({
+      data: {
+        id: 'x',
+        title: 't',
+        ingested: true,
+        insight: { summary: '', positives: [], risks: [], catalysts: [], confidence: 0, source: 'heuristic' },
+      },
+    });
+    const r = await ingestDocument({ title: 't', text: 'x' });
+    expect(r.ingested).toBe(true);
+    expect(axiosInst.post).toHaveBeenCalledWith(
+      '/ingest',
+      expect.objectContaining({ title: 't' }),
+      expect.any(Object),
+    );
+  });
+
+  it('getModels 返回 embeddingEnabled 字段', async () => {
+    axiosInst.get.mockResolvedValue({
+      data: { available: true, embeddingEnabled: false, registry: [], routing: {} },
+    });
+    const r = await getModels();
+    expect(r.embeddingEnabled).toBe(false);
+  });
+
+  it('startAutonomous 调 /autonomous/start 并带 intervalMs', async () => {
+    axiosInst.post.mockResolvedValue({ data: { started: true, running: true } });
+    await startAutonomous(60000);
+    expect(axiosInst.post).toHaveBeenCalledWith(
+      '/autonomous/start',
+      expect.objectContaining({ intervalMs: 60000 }),
+      expect.any(Object),
+    );
+  });
+
+  it('clearChatHistory 调 /chat/history/clear 并带 sessionId', async () => {
+    axiosInst.post.mockResolvedValue({ data: { ok: true } });
+    await clearChatHistory('s1');
+    expect(axiosInst.post).toHaveBeenCalledWith('/chat/history/clear', { sessionId: 's1' }, expect.any(Object));
   });
 });

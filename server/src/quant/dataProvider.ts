@@ -13,6 +13,31 @@ function getSecId(code: string): string {
   return code.startsWith('6') ? `1.${code}` : `0.${code}`;
 }
 
+export type Market = 'A' | 'HK' | 'US';
+
+/** 识别市场：A 股 6 位纯数字；港股 5 位纯数字；美股字母代码 */
+export function marketOf(code: string): Market {
+  const c = code.trim();
+  if (/^\d{6}$/.test(c)) return 'A';
+  if (/^\d{5}$/.test(c)) return 'HK';
+  if (/^[A-Za-z]{1,6}$/.test(c)) return 'US';
+  return 'A';
+}
+
+/**
+ * 把代码解析为东方财富 secid（含港股/美股）。
+ * A 股：6 开头→1.（上交所），其余→0.（深交所）——与历史 getSecId 完全一致。
+ * 港股：5 位→116.（港股通/港股市场）。
+ * 美股：字母→107.（美股市场，大写）。
+ */
+export function resolveSecid(code: string): string {
+  const c = code.trim();
+  const m = marketOf(c);
+  if (m === 'HK') return `116.${c}`;
+  if (m === 'US') return `107.${c.toUpperCase()}`;
+  return getSecId(c);
+}
+
 /**
  * 获取股票日K线历史数据
  * 使用东方财富公开API
@@ -34,7 +59,7 @@ export async function fetchOHLCVData(
   }
 
   // 2. 从东方财富获取日K线
-  const secid = getSecId(stockCode);
+  const secid = resolveSecid(stockCode);
   const beg = startDate.replace(/-/g, '');
   const end = endDate.replace(/-/g, '');
 

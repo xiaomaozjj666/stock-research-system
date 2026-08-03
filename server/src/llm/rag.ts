@@ -16,6 +16,19 @@ export interface EvidenceDoc {
   stockCode?: string;
 }
 
+/** 运行时注入的文档（研报/财报/用户粘贴），进入 RAG 语料，重启即失（演示用） */
+const ingestedDocs: EvidenceDoc[] = [];
+
+/** 注入一份文档到 RAG 语料（内存态） */
+export function ingestDocument(doc: EvidenceDoc): void {
+  ingestedDocs.push(doc);
+}
+
+/** 读取已注入文档（管理/测试用） */
+export function getIngestedDocs(): EvidenceDoc[] {
+  return ingestedDocs;
+}
+
 /** 把一段结构化对象拍平为可读文本片段 */
 function flatten(obj: unknown, prefix = '', depth = 0): string[] {
   if (depth > 4) return [];
@@ -80,6 +93,8 @@ export function indexCorpus(): EvidenceDoc[] {
     path.join(import.meta.dirname, '..', 'quant', 'cache'),
   ];
   const docs: EvidenceDoc[] = [];
+  // 先加入运行时注入的文档（研报/财报/用户粘贴）
+  for (const d of ingestedDocs) docs.push(d);
   for (const root of roots) {
     try {
       if (!fs.existsSync(root)) continue;
@@ -100,8 +115,84 @@ export function indexCorpus(): EvidenceDoc[] {
   return docs;
 }
 
-/** 对外检索：索引缓存 + 关键词召回 */
-export function retrieveEvidence(query: string, opts: { topK?: number; stockCode?: string } = {}): EvidenceDoc[] {
-  const docs = indexCorpus();
+/** 嵌入函数类型（由调用方注入真实 embed 或 mock） */
+export type Embedder = (texts: string[]) => Promise<number[][]>;
+
+/** 余弦相似度（维度不一致或空向量返回 0） */
+export function cosine(a: number[], b: number[]): number {
+  if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+export interface VectorIndexItem {
+  doc: EvidenceDoc;
+  vector: number[];
+}
+export interface VectorIndex {
+  items: VectorIndexItem[];
+}
+
+/** 构建向量索引：过滤缺失、空向量、全零向量（余弦恒为 0，留着只会拖慢检索） */
+export function buildVectorIndex(docs: EvidenceDoc[], vectors: number[][]): VectorIndex {
+  const items: VectorIndexItem[] = [];
+  for (let i = 0; i < docs.length; i++) {
+    const v = vectors[i];
+    if (!v || v.length === 0) continue;
+    if (!v.some((x) => Number.isFinite(x) && x !== 0)) continue; // 全零/非法向量丢弃
+    items.push({ doc: docs[i], vector: v });
+  }
+  return { items };
+}
+
+export function semanticSearch(
+  queryVec: number[],
+  index: VectorIndex,
+  opts: { topK?: number; stockCode?: string } = {},
+): EvidenceDoc[] {
+  const topK = opts.topK ?? 4;
+  const scored = index.items
+    .map((it) => {
+      let score = cosine(queryVec, it.vector);
+      if (opts.stockCode && it.doc.stockCode === opts.stockCode) score += 0.2;
+      return { doc: it.doc, score };
+    })
+    .filter((s) => s.score > 0);
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, topK).map((s) => s.doc);
+}
+
+/**
+ * 对外检索：优先语义（若提供 embedder），否则回退 BM25-lite。
+ * embedder 由调用方注入（默认走 llm/embed）；无 embedder 或嵌入失败时纯关键词召回。
+ */
+export async function retrieveEvidence(
+  query: string,
+  opts: { topK?: number; stockCode?: string; embedder?: Embedder; docs?: EvidenceDoc[] } = {},
+): Promise<EvidenceDoc[]> {
+  const docs = opts.docs ?? indexCorpus();
+  if (opts.embedder && docs.length > 0) {
+    try {
+      const [qVec, dVecs] = await Promise.all([
+        opts.embedder([query]),
+        opts.embedder(docs.map((d) => d.text)),
+      ]);
+      if (qVec[0] && qVec[0].length > 0) {
+        const idx = buildVectorIndex(docs, dVecs);
+        const sem = semanticSearch(qVec[0], idx, opts);
+        if (sem.length > 0) return sem;
+      }
+    } catch {
+      // 嵌入失败（端点不可用/限流）→ 回退 BM25
+    }
+  }
   return retrieveEvidenceFromDocs(query, docs, opts);
 }

@@ -31,7 +31,7 @@ export interface ToolCall {
 /** 工具执行依赖（生产环境注入真实服务，单测注入 mock） */
 export interface ToolDeps {
   runAnalysis?: (code: string) => Promise<unknown>;
-  runBacktest?: (cfg: unknown) => Promise<unknown>;
+  runBacktest?: (ohlcv: unknown, strategy: unknown) => Promise<unknown>;
   parseStrategyInput?: (input: unknown) => { stockCode: string; startDate?: string; endDate?: string; [k: string]: unknown };
   fetchOHLCVData?: (code: string, start: string, end: string) => Promise<unknown[]>;
 }
@@ -132,10 +132,13 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       const strategy = String(args.strategy || 'ma_cross');
       const start = String(args.startDate || new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0]);
       const end = String(args.endDate || new Date().toISOString().split('T')[0]);
-      const cfg = deps.parseStrategyInput({ stockCode: code, strategy, startDate: start, endDate: end });
+      // parseStrategyInput 接收策略描述串（如 'ma_cross'），返回完整策略配置；
+      // 随后覆盖股票代码与起止日期，得到回测所需的 StrategyConfig。
+      const parsed = deps.parseStrategyInput(strategy) as Record<string, unknown>;
+      const cfg = { ...parsed, stockCode: code, startDate: start, endDate: end };
       const ohlcv = await deps.fetchOHLCVData(code, start, end);
       if (!ohlcv || ohlcv.length === 0) return `无法获取 ${code} 的 K 线数据`;
-      const r = await deps.runBacktest(cfg);
+      const r = await deps.runBacktest(ohlcv, cfg);
       return truncate(JSON.stringify(r, null, 2));
     }
     return `工具 ${call.function.name} 无处理器`;

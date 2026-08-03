@@ -2,11 +2,27 @@
  * LLM 客户端
  * 支持 DeepSeek / OpenAI 兼容接口，提供非流式、流式、JSON 结构化输出三种调用方式。
  */
-import { getLLMConfig, isLLMAvailable } from './config.js';
+import {
+  getLLMConfig,
+  isLLMAvailable,
+  selectModel,
+  modelSpec,
+  getEmbedModel,
+  getEmbedBaseUrl,
+  isEmbeddingConfigured,
+  type LLMTask,
+} from './config.js';
+import { recordUsage } from './cost.js';
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** 助手消息携带的工具调用（function-calling 回灌时必须保留） */
+  tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
+  /** 工具结果消息必须回指对应的 tool_call_id */
+  tool_call_id?: string;
+  /** 工具结果消息对应的函数名 */
+  name?: string;
 }
 
 export interface LLMOptions {
@@ -16,6 +32,10 @@ export interface LLMOptions {
   signal?: AbortSignal;
   /** 单次请求超时（毫秒），默认 60s */
   timeout?: number;
+  /** 显式指定模型（覆盖按任务路由的选择） */
+  model?: string;
+  /** 任务标签，用于多模型路由（chat/analysis/debate/extract/reasoning/embedding） */
+  task?: LLMTask;
 }
 
 /**
@@ -24,8 +44,9 @@ export interface LLMOptions {
 export async function chat(messages: ChatMessage[], options: LLMOptions = {}): Promise<string> {
   if (!isLLMAvailable()) throw new Error('LLM 未配置 API key，请设置 DEEPSEEK_API_KEY');
   const config = getLLMConfig();
+  const model = options.model ?? selectModel(options.task ?? 'chat');
   const body: Record<string, unknown> = {
-    model: config.model,
+    model,
     messages,
     temperature: options.temperature ?? 0.3,
     max_tokens: options.maxTokens ?? 2048,
@@ -56,7 +77,11 @@ export async function chat(messages: ChatMessage[], options: LLMOptions = {}): P
       const errText = await response.text().catch(() => '');
       throw new Error(`LLM 请求失败 (${response.status}): ${errText.slice(0, 300)}`);
     }
-    const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+    const data = (await response.json()) as {
+      choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    recordUsageFromResponse(model, data, options.task);
     return data.choices?.[0]?.message?.content || '';
   } finally {
     clearTimeout(timer);
@@ -73,8 +98,9 @@ export async function chatStream(
 ): Promise<string> {
   if (!isLLMAvailable()) throw new Error('LLM 未配置 API key，请设置 DEEPSEEK_API_KEY');
   const config = getLLMConfig();
+  const model = options.model ?? selectModel(options.task ?? 'chat');
   const body: Record<string, unknown> = {
-    model: config.model,
+    model,
     messages,
     temperature: options.temperature ?? 0.3,
     max_tokens: options.maxTokens ?? 2048,
@@ -160,12 +186,13 @@ export async function chatWithTools(
 ): Promise<{ content: string; toolCalls: ToolCallResult[] }> {
   if (!isLLMAvailable()) throw new Error('LLM 未配置 API key，请设置 DEEPSEEK_API_KEY');
   const config = getLLMConfig();
+  const model = options.model ?? selectModel(options.task ?? 'analysis');
   const conv: ChatMessage[] = messages.map((m) => ({ ...m }));
   const used: ToolCallResult[] = [];
 
   for (let iter = 0; iter < 5; iter++) {
     const body: Record<string, unknown> = {
-      model: config.model,
+      model,
       messages: conv,
       temperature: options.temperature ?? 0.3,
       max_tokens: options.maxTokens ?? 1500,
@@ -189,12 +216,21 @@ export async function chatWithTools(
     }
     const data = (await response.json()) as {
       choices?: { message?: { content?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
+    recordUsageFromResponse(model, data, options.task);
     const msg = data.choices?.[0]?.message;
     if (!msg) return { content: '', toolCalls: used };
 
     // 把助手消息（含 tool_calls）原样回灌，保持对话结构
-    conv.push({ role: 'assistant', content: msg.content || '' });
+    // 注意：带 tool_calls 的助手消息必须保留 tool_calls 字段（含 type:'function'），
+    // 否则下一轮请求里工具结果消息无法与助手调用对应，API 会报 missing field `tool_call_id`。
+    const assistantToolCalls = (msg.tool_calls || []).map((tc) => ({
+      id: tc.id,
+      type: 'function' as const,
+      function: { name: tc.function.name, arguments: tc.function.arguments },
+    }));
+    conv.push({ role: 'assistant', content: msg.content || '', tool_calls: assistantToolCalls });
 
     if (msg.tool_calls && msg.tool_calls.length > 0) {
       for (const tc of msg.tool_calls) {
@@ -207,13 +243,69 @@ export async function chatWithTools(
         } catch (err) {
           result = `工具执行出错: ${(err as Error).message}`;
         }
-        conv.push({ role: 'tool', content: result } as unknown as ChatMessage);
+        // 工具结果消息必须回指 tool_call_id 并带上函数名
+        conv.push({
+          role: 'tool',
+          content: result,
+          tool_call_id: tc.id,
+          name: tc.function.name,
+        });
       }
       continue; // 让模型基于工具结果继续
     }
     return { content: msg.content || '', toolCalls: used };
   }
   return { content: conv[conv.length - 1]?.content || '', toolCalls: used };
+}
+
+/**
+ * 生成文本嵌入向量（OpenAI 兼容 /embeddings）。
+ * 用于轻量向量检索；嵌入端点不可用时抛出错误，调用方应回退 BM25。
+ */
+export async function embed(texts: string[]): Promise<number[][]> {
+  if (!isLLMAvailable()) throw new Error('LLM 未配置 API key，无法生成嵌入');
+  // 未显式配置嵌入能力（如仅配了 DeepSeek 文本模型）→ 直接返回空，由检索层回退 BM25
+  if (!isEmbeddingConfigured()) return [];
+  if (texts.length === 0) return [];
+  const config = getLLMConfig();
+  const body = { model: getEmbedModel(), input: texts };
+  const response = await fetch(`${getEmbedBaseUrl()}/embeddings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new Error(`LLM 嵌入失败 (${response.status}): ${errText.slice(0, 300)}`);
+  }
+  const data = (await response.json()) as {
+    data?: { embedding: number[] }[];
+  };
+  if (!data.data || data.data.length !== texts.length) {
+    throw new Error('LLM 嵌入返回数量与输入不一致');
+  }
+  // 估算嵌入 token 成本（约 4 字符/token），仅作成本治理参考
+  const approxTokens = texts.reduce((sum, t) => sum + Math.ceil(t.length / 4), 0);
+  recordUsage(getEmbedModel(), approxTokens, 0, { task: 'embedding' });
+  return data.data.map((d) => d.embedding);
+}
+
+/** 从响应 usage 记录成本（无 usage 或未知模型时安全跳过） */
+function recordUsageFromResponse(
+  model: string,
+  data: { usage?: { prompt_tokens?: number; completion_tokens?: number } },
+  task?: LLMTask,
+): void {
+  const usage = data.usage;
+  if (!usage) return;
+  const spec = modelSpec(model);
+  const cost =
+    ((usage.prompt_tokens ?? 0) / 1000) * spec.costPer1kInput +
+    ((usage.completion_tokens ?? 0) / 1000) * spec.costPer1kOutput;
+  recordUsage(model, usage.prompt_tokens ?? 0, usage.completion_tokens ?? 0, { cost, task });
 }
 
 /** 从可能被 markdown 包裹的文本中提取 JSON */

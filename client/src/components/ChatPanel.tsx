@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
 import { chatWithAgent, type ChatAgentResponse, type ChatTurn } from '../api/client';
+import ResearchEnhance from './ResearchEnhance';
 
 interface UIMessage extends ChatTurn {
   meta?: ChatAgentResponse;
@@ -18,9 +19,23 @@ export default function ChatPanel() {
   const [loading, setLoading] = useState(false);
   const [openEvidence, setOpenEvidence] = useState<Record<number, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 会话级记忆 ID：持久化到 localStorage，第二轮提问无需重复股票代码
+  const [sessionId] = useState<string>(() => {
+    const KEY = 'srs-session-id';
+    let v = localStorage.getItem(KEY);
+    if (!v) {
+      v = 'sess-' + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem(KEY, v);
+    }
+    return v;
+  });
+  const [showEnhance, setShowEnhance] = useState(false);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    const el = scrollRef.current;
+    if (el && typeof el.scrollTo === 'function') {
+      el.scrollTo({ top: el.scrollHeight });
+    }
   }, [messages, loading]);
 
   async function send(text: string) {
@@ -31,7 +46,7 @@ export default function ChatPanel() {
     setInput('');
     setLoading(true);
     try {
-      const res = await chatWithAgent({ message: content, history: messages });
+      const res = await chatWithAgent({ message: content, history: messages, sessionId });
       setMessages([...next, { role: 'assistant', content: res.answer, meta: res }]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : '对话请求失败';
@@ -51,9 +66,15 @@ export default function ChatPanel() {
   return (
     <div className="chat-panel">
       <div className="chat-header">
-        <h2>研究助手</h2>
+        <div className="chat-header-top">
+          <h2>研究助手</h2>
+          <button className="btn-ghost chat-enhance-toggle" onClick={() => setShowEnhance((s) => !s)}>
+            {showEnhance ? '收起增强能力 ▲' : '研究增强 ▼'}
+          </button>
+        </div>
         <p className="chat-subtitle">用自然语言提问：分析个股、对比、回测、多空辩论。支持工具调用与证据引用。</p>
       </div>
+      {showEnhance && <ResearchEnhance sessionId={sessionId} />}
 
       <div className="chat-messages" ref={scrollRef}>
         {messages.length === 0 && (
@@ -95,9 +116,9 @@ export default function ChatPanel() {
                 </div>
               )}
 
-              {m.meta?.evidence.length > 0 && openEvidence[i] && (
+              {(m.meta?.evidence?.length ?? 0) > 0 && openEvidence[i] && (
                 <ul className="chat-evidence">
-                  {m.meta.evidence.map((ev) => (
+                  {m.meta?.evidence?.map((ev) => (
                     <li key={ev.id}>
                       <span className="chat-evidence-src">{ev.source}</span>
                       <span className="chat-evidence-text">{ev.text.slice(0, 160)}</span>

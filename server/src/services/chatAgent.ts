@@ -10,9 +10,10 @@
  *
  * 所有外部依赖通过 deps 注入，便于单测 mock；生产默认 deps 在文件底部组装。
  */
-import { isLLMAvailable, getLLMConfig, chat, chatWithTools, type ChatMessage } from '../llm/index.js';
-import { retrieveEvidence, type EvidenceDoc } from '../llm/rag.js';
+import { isLLMAvailable, getLLMConfig, chat, chatWithTools, embed, type ChatMessage } from '../llm/index.js';
+import { retrieveEvidence, type EvidenceDoc, type Embedder } from '../llm/rag.js';
 import { TOOL_DEFINITIONS, executeToolCall, type ToolDeps } from '../llm/tools.js';
+import { loadHistory, appendTurn } from './chatMemory.js';
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -23,6 +24,8 @@ export interface ChatAgentRequest {
   message: string;
   history?: ChatTurn[];
   stockCode?: string;
+  /** 会话 ID；提供后自动加载并持久化历史（跨重启记忆） */
+  sessionId?: string;
 }
 
 export interface DebateResult {
@@ -43,10 +46,16 @@ export interface ChatAgentResponse {
 
 export interface ChatAgentDeps {
   runAnalysis: (code: string) => Promise<unknown>;
-  runBacktest: (cfg: unknown) => Promise<unknown>;
+  runBacktest: (ohlcv: unknown, strategy: unknown) => Promise<unknown>;
   parseStrategyInput: (input: unknown) => { stockCode: string; startDate?: string; endDate?: string; [k: string]: unknown };
   fetchOHLCVData: (code: string, start: string, end: string) => Promise<unknown[]>;
-  retrieveEvidence: (q: string, opts?: { topK?: number; stockCode?: string }) => EvidenceDoc[];
+  retrieveEvidence: (q: string, opts?: { topK?: number; stockCode?: string; embedder?: Embedder }) => Promise<EvidenceDoc[]>;
+  /** 嵌入函数（语义检索用）；不提供则 RAG 回退 BM25 */
+  embedder?: Embedder;
+  /** 加载历史（持久记忆）；不提供则不使用持久记忆 */
+  loadHistory?: (sessionId: string) => ChatTurn[];
+  /** 持久化一轮（持久记忆）；不提供则不持久化 */
+  appendTurn?: (sessionId: string, turn: ChatTurn) => void;
   isLLMAvailable: () => boolean;
   chat: (msgs: ChatMessage[], opts?: Record<string, unknown>) => Promise<string>;
   chatWithTools: (
@@ -129,19 +138,26 @@ export function createChatAgent(deps: ChatAgentDeps) {
   const runDebate = deps.runDebate ?? defaultDebate(deps);
 
   async function run(req: ChatAgentRequest): Promise<ChatAgentResponse> {
-    const evidence = deps.retrieveEvidence(
+    const evidence = await deps.retrieveEvidence(
       req.message,
-      req.stockCode ? { stockCode: req.stockCode } : {},
+      req.stockCode
+        ? { stockCode: req.stockCode, embedder: deps.embedder }
+        : { embedder: deps.embedder },
     );
     const evidenceText = evidence.map((e) => `[${e.source}] ${e.text}`).join('\n').slice(0, 3000);
 
+    // 历史：优先用请求内联 history，否则从持久记忆加载
+    const history = req.history ?? (req.sessionId && deps.loadHistory ? deps.loadHistory(req.sessionId) : []);
+
     if (!deps.isLLMAvailable()) {
-      return runFallback(req, deps, evidence);
+      const resp = await runFallback(req, deps, evidence);
+      persist(req, resp.answer);
+      return resp;
     }
 
     const system = buildSystemPrompt(evidenceText);
     const messages: ChatMessage[] = [{ role: 'system', content: system }];
-    for (const h of req.history ?? []) messages.push({ role: h.role, content: h.content });
+    for (const h of history) messages.push({ role: h.role, content: h.content });
     messages.push({ role: 'user', content: req.message });
 
     const toolDeps: ToolDeps = {
@@ -156,7 +172,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
       TOOL_DEFINITIONS,
       (name, args) =>
         executeToolCall({ id: `call_${name}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }, toolDeps),
-      { temperature: 0.3, maxTokens: 2000, timeout: 60000 },
+      { temperature: 0.3, maxTokens: 2000, timeout: 60000, task: 'analysis' },
     );
 
     // 多空辩论（用户显式要求时）
@@ -169,6 +185,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
       }
     }
 
+    persist(req, content);
     return {
       answer: content,
       toolsUsed: toolCalls.map((t) => t.name),
@@ -177,6 +194,14 @@ export function createChatAgent(deps: ChatAgentDeps) {
       degraded: false,
       model: getLLMConfig().model,
     };
+  }
+
+  /** 持久化一轮对话（仅当配置了 sessionId + appendTurn） */
+  function persist(req: ChatAgentRequest, answer: string): void {
+    if (req.sessionId && deps.appendTurn && answer) {
+      deps.appendTurn(req.sessionId, { role: 'user', content: req.message });
+      deps.appendTurn(req.sessionId, { role: 'assistant', content: answer });
+    }
   }
 
   return { run };
@@ -190,10 +215,15 @@ import { fetchOHLCVData } from '../quant/dataProvider.js';
 
 const productionDeps: ChatAgentDeps = {
   runAnalysis,
-  runBacktest,
-  parseStrategyInput,
+  // 真实服务签名更严格（runBacktest(data, strategy)、parseStrategyInput(string|StrategyConfig)），
+  // 在依赖注入边界统一为 unknown 化的抽象契约；运行时 executeToolCall 会以 (ohlcv, cfg) 调用。
+  runBacktest: runBacktest as unknown as ChatAgentDeps['runBacktest'],
+  parseStrategyInput: parseStrategyInput as unknown as ChatAgentDeps['parseStrategyInput'],
   fetchOHLCVData,
   retrieveEvidence,
+  embedder: embed,
+  loadHistory,
+  appendTurn,
   isLLMAvailable,
   chat,
   chatWithTools,

@@ -13,6 +13,9 @@ coverage/
 server/src/data/cache/*.json
 server/src/quant/cache/*.json
 server/src/data/stockMaster.json
+# 对话长期记忆（运行时生成，不入库）
+server/src/data/chatHistory.json
+server/data/chatHistory.json
 .coverage_tmp/
 
 # Test artifacts
