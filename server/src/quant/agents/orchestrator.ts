@@ -46,9 +46,7 @@ export function parseStrategyInput(input: string | StrategyConfig): StrategyConf
   return config;
 }
 
-/**
- * 编排流水线：按顺序调度3个子Agent
- */
+/** Run data quality check → backtest audit → strategy optimization in sequence. */
 export async function orchestrate(
   strategy: StrategyConfig,
   data: OHLCVData[],
@@ -73,9 +71,6 @@ export async function orchestrate(
   return { dataQuality, audit, optimization };
 }
 
-/**
- * 生成综合摘要
- */
 export function generateSummary(
   strategy: StrategyConfig,
   dataQuality: DataQualityReport,
