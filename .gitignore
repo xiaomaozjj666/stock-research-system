@@ -39,3 +39,7 @@ Thumbs.db
 
 # AI 工具工作目录（不入库）
 .workbuddy/
+
+# 运行时数据（watchlist 等）
+server/data/
+server/src/data/watchlist.json
