@@ -3,6 +3,7 @@ import { fetchStockInfo, fetchFinancialData, fetchValuationData } from './dataFe
 import { buildPeerComparison, resolveStockIndustry } from './peerService.js';
 import { loadStockMaster, fuzzyMatch } from './stockMaster.js';
 import { MOUTAI_INFO, MOUTAI_FINANCIAL, MOUTAI_VALUATION } from '../data/sampleData.js';
+import logger from '../utils/logger.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -106,7 +107,7 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
       // 反查并补全行业（主数据不可达时由 datacenter BOARD_NAME 兜底）
       const industry = await resolveStockIndustry(info.code, info.industry);
       if (industry) info.industry = industry;
-      console.log(`[peer] industry=${info.industry} self=${info.code}`);
+      logger.info('[peer] 填充行业信息', { industry: info.industry, stockCode: info.code });
       const peers = await buildPeerComparison(info.code, info.industry);
       valuation.peerComparison = peers.map((p) => ({
         name: p.name,
@@ -116,9 +117,12 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
         roe: p.roe,
         marketCap: p.marketCap,
       }));
-      console.log(`[peer] filled=${valuation.peerComparison.length} [${valuation.peerComparison.map(p => p.code + p.name).join(',')}]`);
+      logger.info('[peer] 同业对比填充完成', {
+        count: valuation.peerComparison.length,
+        peers: valuation.peerComparison.map((p) => p.code + p.name),
+      });
     } catch (e) {
-      console.log('[peer] buildPeerComparison error:', (e as Error).message);
+      logger.info('[peer] buildPeerComparison error', { err: e as Error });
     }
 
     const dataSet: StockDataSet = { info, financial, valuation };
@@ -132,13 +136,13 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
         'utf-8'
       );
     } catch (writeErr) {
-      console.warn('缓存写入失败:', (writeErr as Error).message);
+      logger.warn('缓存写入失败', { stockCode, err: writeErr as Error });
     }
     return dataSet;
   } catch (error) {
     // 3. 降级到 sampleData（仅茅台）
     if (stockCode === '600519') {
-      console.warn(`API 获取失败，使用内置样本数据: ${stockCode}`, (error as Error).message);
+      logger.warn('API 获取失败，使用内置样本数据', { stockCode, err: error as Error });
       return {
         info: MOUTAI_INFO,
         financial: MOUTAI_FINANCIAL,

@@ -216,16 +216,17 @@ describe('TelemetryTracer — trace 导出', () => {
   });
 
   it('logToConsole 在 span 结束时输出精简日志', () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // telemetry 输出经结构化 logger（logger.info → process.stdout.write），原 console.log
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const tracer = new TelemetryTracer({ logToConsole: true });
     const { span } = tracer.startSpan('logged');
     tracer.endSpan(span);
-    expect(logSpy).toHaveBeenCalledTimes(1);
-    const line = String(logSpy.mock.calls[0][0]);
+    const line = writeSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(line).toContain('"level":"info"');
     expect(line).toContain('[telemetry]');
     expect(line).toContain('span=logged');
     expect(line).toContain('status=ok');
-    logSpy.mockRestore();
+    writeSpy.mockRestore();
   });
 });
 
