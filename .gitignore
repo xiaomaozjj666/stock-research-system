@@ -36,3 +36,6 @@ Thumbs.db
 
 # Playwright
 .pw-browsers/
+
+# AI 工具工作目录（不入库）
+.workbuddy/
