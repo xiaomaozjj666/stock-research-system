@@ -6,6 +6,7 @@
 import type { ExpertOpinion } from '../types.js';
 import { isLLMAvailable, chatJSON, type ChatMessage } from './index.js';
 import { normalizeExpertOpinion, EXPERT_OUTPUT_SCHEMA } from './prompts.js';
+import logger from '../utils/logger.js';
 
 export interface ExpertRunOptions {
   /** 专家名称（写入 ExpertOpinion.expert） */
@@ -52,7 +53,7 @@ export async function runExpertWithLLM(options: ExpertRunOptions): Promise<Exper
     });
     return normalizeExpertOpinion({ expert: options.expertName, ...raw });
   } catch (err) {
-    console.warn(`[LLM] ${options.expertName} 降级规则引擎:`, (err as Error).message);
+    logger.warn('[LLM] 降级规则引擎', { expertName: options.expertName, err: err as Error });
     return options.ruleFallback();
   }
 }

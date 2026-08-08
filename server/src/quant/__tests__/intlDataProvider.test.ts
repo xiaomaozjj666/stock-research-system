@@ -5,19 +5,22 @@ import {
   fetchIntlFundamentals,
   fetchBatchFundamentals,
 } from '../intlDataProvider.js';
+import { setLogLevel } from '../../utils/logger.js';
 
 // 隔离网络：intlDataProvider 直接调用全局 fetch，统一 mock globalThis.fetch。
 // 备份原始 fetch，afterAll 恢复，避免污染其它测试套件。
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
-  // 降级路径会 console.warn，这里统一静默，避免污染测试输出
+  // 降级路径会 logger.warn（写 stdout），这里提升日志级别过滤 warn，避免污染测试输出
   vi.spyOn(console, 'warn').mockImplementation(() => {});
+  setLogLevel('error');
 });
 
 afterAll(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
+  setLogLevel('info');
 });
 
 /** 构造一个成功的 fetch Response mock */

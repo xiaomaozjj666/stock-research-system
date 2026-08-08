@@ -12,6 +12,7 @@
  */
 import type { Request, Response, NextFunction } from 'express';
 import { recordUsage, type CostEntry } from '../llm/cost.js';
+import logger from '../utils/logger.js';
 
 /** Span 状态：对齐 OTel SpanStatus 枚举子集 */
 export type SpanStatus = 'unset' | 'ok' | 'error';
@@ -224,7 +225,7 @@ export class TelemetryTracer {
   private export(span: TelemetrySpan): void {
     if (this.logToConsole) {
       // 控制台精简输出，避免噪声；详细数据走 exportTrace / exportHook
-      console.log(
+      logger.info(
         `[telemetry] trace=${span.traceId.slice(0, 8)} span=${span.name} ` +
           `dur=${span.durationMs}ms status=${span.status} events=${span.events.length}`,
       );

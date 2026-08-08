@@ -15,6 +15,7 @@ import { orchestrate, generateSummary, parseStrategyInput } from './quant/agents
 import type { StrategyConfig } from './quant/types.js';
 import { extractNewsSignal, aggregateNewsSentiment, type NewsItem, type NewsSignal } from './quant/newsSignal.js';
 import { withTimeout } from './utils/timeout.js';
+import logger from './utils/logger.js';
 import { chatAgent } from './services/chatAgent.js';
 import { detectAlerts, type WatchlistAlert } from './services/alerts.js';
 import { ingestDocument, getIngestedDocs } from './llm/rag.js';
@@ -108,9 +109,13 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   const reqId = (req as Request & { reqId?: string }).reqId || '-';
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(
-      `[${new Date().toISOString()}] [${reqId}] ${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`,
-    );
+    logger.info('HTTP request', {
+      reqId,
+      method: req.method,
+      url: req.originalUrl,
+      statusCode: res.statusCode,
+      durationMs: duration,
+    });
   });
   next();
 });
@@ -185,7 +190,7 @@ app.post('/api/analyze', analyzeLimiter, async (req, res) => {
     const result = await runAnalysis(stockCode);
     res.json(result);
   } catch (error) {
-    console.error('Analysis error:', error);
+    logger.error('Analysis error', { route: '/api/analyze', stockCode: req.body?.stockCode, err: error });
     res.status(500).json({ error: '分析过程出错', detail: (error as Error).message });
   }
 });
@@ -242,7 +247,7 @@ app.post('/api/compare', compareLimiter, async (req, res) => {
     const results = await Promise.all(stockCodes.map((code: string) => runAnalysis(code)));
     res.json({ stocks: results.map(r => r.stock_pool[0]) });
   } catch (error: unknown) {
-    console.error('Compare error:', error);
+    logger.error('Compare error', { route: '/api/compare', stockCodes: req.body?.stockCodes, err: error });
     const detail = error instanceof Error ? error.message : String(error);
     res.status(500).json({ error: '对比分析失败', detail });
   }
@@ -369,7 +374,7 @@ app.post('/api/quant/analyze', quantLimiter, async (req, res) => {
 
     res.json(report);
   } catch (error) {
-    console.error('Quant analysis error:', error);
+    logger.error('Quant analysis error', { route: '/api/quant/analyze', err: error });
     const message = error instanceof Error ? error.message : '量化分析过程出错';
     res.status(500).json({ error: '量化分析失败', detail: message });
   }
@@ -427,7 +432,7 @@ app.post('/api/watchlist/news-backtest', watchlistLimiter, async (req, res) => {
     const report = await runWatchlistNewsBacktest(codes);
     res.json(report);
   } catch (error) {
-    console.error('Watchlist news-backtest error:', error);
+    logger.error('Watchlist news-backtest error', { route: '/api/watchlist/news-backtest', err: error });
     const message = error instanceof Error ? error.message : '批量回测失败';
     res.status(500).json({ error: '自选股批量回测失败', detail: message });
   }
@@ -471,7 +476,11 @@ app.post('/api/backtest/evaluate', watchlistLimiter, async (req, res) => {
     const comparison = compareBacktests(baseline, experiment);
     res.json({ baseline, experiment, comparison, newsSource: expCfg.newsOverlay ? 'live' : 'none' });
   } catch (error) {
-    console.error('Backtest evaluate error:', error);
+    logger.error('Backtest evaluate error', {
+      route: '/api/backtest/evaluate',
+      stockCode: (req.body as { stockCode?: unknown } | undefined)?.stockCode,
+      err: error,
+    });
     const message = error instanceof Error ? error.message : '受控回测评估失败';
     res.status(500).json({ error: '受控回测评估失败', detail: message });
   }
@@ -505,7 +514,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
     });
     res.json(result);
   } catch (error) {
-    console.error('Chat error:', error);
+    logger.error('Chat error', { route: '/api/chat', err: error });
     res.status(500).json({ error: '对话处理失败', detail: (error as Error).message });
   }
 });
@@ -553,7 +562,7 @@ app.post('/api/watchlist/monitor', watchlistLimiter, async (req, res) => {
     const alerts = detectAlerts(report.results);
     res.json({ generatedAt: report.generatedAt, monitored: report.count, alerts });
   } catch (error) {
-    console.error('Watchlist monitor error:', error);
+    logger.error('Watchlist monitor error', { route: '/api/watchlist/monitor', err: error });
     res.status(500).json({ error: '自选股监控失败', detail: (error as Error).message });
   }
 });
@@ -582,7 +591,7 @@ app.post('/api/ingest', chatLimiter, async (req, res) => {
     ingestDocument({ id, source: `doc:${title}`, text: docText });
     res.json({ id, title, insight, ingested: true });
   } catch (error) {
-    console.error('Ingest error:', error);
+    logger.error('Ingest error', { route: '/api/ingest', title: req.body?.title, err: error });
     res.status(500).json({ error: '文档入库失败', detail: (error as Error).message });
   }
 });
@@ -636,12 +645,12 @@ app.post('/api/autonomous/start', watchlistLimiter, async (req, res) => {
       monitor: async () => runWatchlistNewsBacktest(getWatchlist()),
       onAlert: (alerts) => {
         lastAutonomousAlerts = alerts;
-        console.log(`[autonomous] 检出 ${alerts.length} 条异动预警`);
+        logger.info('[autonomous] 检出异动预警', { count: alerts.length });
       },
     });
     res.json({ started: true, ...autonomousController.getState() });
   } catch (error) {
-    console.error('Autonomous start error:', error);
+    logger.error('Autonomous start error', { route: '/api/autonomous/start', err: error });
     res.status(500).json({ error: '启动自治循环失败', detail: (error as Error).message });
   }
 });
@@ -669,7 +678,7 @@ app.use((err: Error & { statusCode?: number; type?: string }, req: Request, res:
 
   // CORS 错误
   if (err.message === 'Not allowed by CORS') {
-    console.warn(`[${reqId}] CORS blocked: ${req.headers.origin}`);
+    logger.warn('CORS blocked', { reqId, origin: req.headers.origin });
     res.status(403).json({ error: 'CORS 拒绝：来源不在白名单中' });
     return;
   }
@@ -687,7 +696,7 @@ app.use((err: Error & { statusCode?: number; type?: string }, req: Request, res:
   }
 
   // 通用 500
-  console.error(`[${reqId}] [Unhandled Error]`, err);
+  logger.error('Unhandled error', { reqId, err });
   res.status(500).json({
     error: '服务器内部错误',
     detail: process.env.NODE_ENV === 'production' ? undefined : err.message,
@@ -699,9 +708,11 @@ app.use((err: Error & { statusCode?: number; type?: string }, req: Request, res:
 if (process.env.NODE_ENV !== 'test') {
   const PORT = Number(process.env.PORT) || 3001;
   const server = app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    logger.info('Server running', { url: `http://localhost:${PORT}` });
     // 预热证券全表，使首次兜底模糊搜索即时响应
-    loadStockMaster().catch((err) => console.warn('[stockMaster] 预热失败，首次搜索将按需加载:', (err as Error).message));
+    loadStockMaster().catch((err) =>
+      logger.warn('[stockMaster] 预热失败，首次搜索将按需加载', { err: err as Error }),
+    );
   });
 
   // === Graceful Shutdown ===
@@ -711,12 +722,12 @@ if (process.env.NODE_ENV !== 'test') {
     if (isShuttingDown) return;
     isShuttingDown = true;
 
-    console.log(`\n[${signal}] 收到关闭信号，开始优雅关闭...`);
-    console.log('[Shutdown] 等待进行中的请求完成...');
+    logger.info('收到关闭信号，开始优雅关闭', { signal });
+    logger.info('[Shutdown] 等待进行中的请求完成');
 
     // 30 秒后强制退出，避免长连接阻塞关闭
     const forceExit = setTimeout(() => {
-      console.error('[Shutdown] 30秒超时，强制关闭');
+      logger.error('[Shutdown] 30秒超时，强制关闭');
       process.exit(1);
     }, 30000);
 
@@ -724,10 +735,10 @@ if (process.env.NODE_ENV !== 'test') {
     server.close((err) => {
       clearTimeout(forceExit);
       if (err) {
-        console.error('[Shutdown] 关闭出错:', err.message);
+        logger.error('[Shutdown] 关闭出错', { err });
         process.exit(1);
       }
-      console.log('[Shutdown] 所有连接已关闭，优雅关闭完成');
+      logger.info('[Shutdown] 所有连接已关闭，优雅关闭完成');
       process.exit(0);
     });
   }
@@ -737,10 +748,10 @@ if (process.env.NODE_ENV !== 'test') {
 
   // 兜底：未处理的 Promise 拒绝与未捕获异常，避免进程静默崩溃
   process.on('unhandledRejection', (reason) => {
-    console.error('[UnhandledRejection]', reason);
+    logger.error('[UnhandledRejection]', { reason });
   });
   process.on('uncaughtException', (err) => {
-    console.error('[UncaughtException]', err);
+    logger.error('[UncaughtException]', { err });
     // 进入不稳定状态，优雅退出
     gracefulShutdown('uncaughtException');
   });

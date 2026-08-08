@@ -186,17 +186,18 @@ describe('env 环境变量校验', () => {
     process.env.NODE_ENV = 'production';
     delete process.env.ALLOWED_ORIGINS;
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // loadEnv 的警告现经结构化 logger（logger.warn → process.stdout.write）输出，原 console.warn
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
     const env = loadEnv();
 
     expect(env.nodeEnv).toBe('production');
     expect(env.allowedOrigins).toBeNull();
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('生产环境未设置 ALLOWED_ORIGINS'),
-    );
+    const output = writeSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(output).toContain('"level":"warn"');
+    expect(output).toContain('生产环境未设置 ALLOWED_ORIGINS');
 
-    warnSpy.mockRestore();
+    writeSpy.mockRestore();
   });
 
   it('生产环境配置 ALLOWED_ORIGINS 时正常', () => {

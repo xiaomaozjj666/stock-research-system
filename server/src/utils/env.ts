@@ -10,6 +10,8 @@
  * 3. 类型安全：返回值均为具体类型，不是 string | undefined
  */
 
+import logger from './logger.js';
+
 export interface EnvConfig {
   /** 运行环境 */
   nodeEnv: 'development' | 'production' | 'test';
@@ -64,10 +66,7 @@ export function loadEnv(): EnvConfig {
       : null;
 
     if (isProd && !allowedOrigins) {
-      console.warn(
-        '[env] 警告：生产环境未设置 ALLOWED_ORIGINS，CORS 将允许所有来源。' +
-        '建议设置 ALLOWED_ORIGINS 以收紧安全策略。',
-      );
+      logger.warn('[env] 警告：生产环境未设置 ALLOWED_ORIGINS，CORS 将允许所有来源。建议设置 ALLOWED_ORIGINS 以收紧安全策略。');
     }
 
     // 缓存 TTL
@@ -103,13 +102,14 @@ export function loadEnv(): EnvConfig {
     cachedConfig = config;
 
     if (isProd) {
-      console.log('[env] 生产环境配置已加载');
-      console.log(`[env]   PORT: ${port}`);
-      console.log(`[env]   CORS: ${allowedOrigins ? allowedOrigins.join(', ') : '⚠️  未限制'}`);
-      console.log(`[env]   HSTS: ${config.enableHsts ? '启用' : '禁用'}`);
-      console.log(`[env]   LLM: ${config.llm.apiKey ? '已配置' : '未配置（规则降级模式）'}`);
+      logger.info('[env] 生产环境配置已加载', {
+        port,
+        cors: allowedOrigins ? allowedOrigins.join(', ') : '未限制',
+        hsts: config.enableHsts ? '启用' : '禁用',
+        llm: config.llm.apiKey ? '已配置' : '未配置（规则降级模式）',
+      });
     } else {
-      console.log(`[env] 开发环境配置已加载 (NODE_ENV=${nodeEnv})`);
+      logger.info(`[env] 开发环境配置已加载 (NODE_ENV=${nodeEnv})`);
     }
 
     return config;

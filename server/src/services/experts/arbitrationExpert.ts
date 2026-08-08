@@ -2,6 +2,7 @@ import type { FinancialData, ValuationData, StockInfo, ExpertOpinion, Controvers
 import { safeDiv } from '../safeDiv.js';
 import { isLLMAvailable, chatJSON, type ChatMessage } from '../../llm/index.js';
 import { formatContext } from '../../llm/prompts.js';
+import logger from '../../utils/logger.js';
 
 export interface ArbitrationInput {
   financial: FinancialData;
@@ -333,7 +334,7 @@ export async function arbitrationExpert(input: ArbitrationInput): Promise<{
     const raw = await chatJSON<RawArbitration>(messages, { temperature: 0.4, maxTokens: 2500, timeout: 60000 });
     return normalizeArbitration(raw);
   } catch (err) {
-    console.warn('[LLM] 仲裁专家降级规则引擎:', (err as Error).message);
+    logger.warn('[LLM] 仲裁专家降级规则引擎', { err: err as Error });
     return arbitrationExpertRule(input);
   }
 }

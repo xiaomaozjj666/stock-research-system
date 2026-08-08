@@ -13,6 +13,8 @@
  * - PE/PB 等比率字段为无量纲数值，直接四舍五入
  */
 
+import logger from '../utils/logger.js';
+
 /** 港美股市场标识 */
 export type IntlMarket = 'HK' | 'US';
 
@@ -144,7 +146,7 @@ function degradedResult(
   reason: string,
 ): IntlFundamentalsResult {
   // 降级仅打 warn，不抛异常；调用方按 degraded 字段分流
-  console.warn(`[intlDataProvider] ${market}.${code} 降级：${reason}`);
+  logger.warn('[intlDataProvider] 数据降级', { market, code, reason });
   return {
     fundamentals: null,
     degraded: true,

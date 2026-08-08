@@ -16,6 +16,7 @@ import { calculateScores } from './scoreEngine.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
 import { extractNewsSignal, type NewsSignal } from '../quant/newsSignal.js';
 import { withTimeout } from '../utils/timeout.js';
+import logger from '../utils/logger.js';
 
 /** 分析阶段事件（用于 SSE 流式推送进度） */
 export type AnalysisStage =
@@ -314,7 +315,7 @@ export async function runAnalysis(
       }));
     }
   } catch (e) {
-    console.warn('策略清单生成失败:', e);
+    logger.warn('策略清单生成失败', { stockCode: info.code, err: e as Error });
   }
 
   return {

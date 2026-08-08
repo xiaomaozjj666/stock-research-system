@@ -1,4 +1,5 @@
 import type { OHLCVData } from './types.js';
+import logger from '../utils/logger.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -87,7 +88,7 @@ export async function fetchOHLCVData(
       return data;
     }
   } catch (error) {
-    console.warn('获取K线数据失败:', error);
+    logger.warn('获取K线数据失败', { stockCode, startDate, endDate, err: error });
   }
 
   // 3. 降级：生成模拟数据（用于演示）
