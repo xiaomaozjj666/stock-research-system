@@ -77,3 +77,12 @@
 
 - 本机有 `http_proxy=http://127.0.0.1:7890` 代理，会干扰 npm/vitest 运行；执行前先 `unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY`。
 - Git Bash 里 `curl -o /tmp/x.json` 的路径映射不可靠，落盘请用项目内相对路径。
+
+## 已完成但未接入运行服务的模块（2026-08-08 巡检确认）
+
+以下模块测试通过但**尚未接线**到运行中的分析管线/服务，属"完成待接线"状态，接入前跑 `npm run test`（当前 637 passed）确认无回归：
+
+- `services/auditLog.ts`（金融监管 8 号文合规审计/熔断）、`services/telemetry.ts`（链路追踪）：仅内存态存储，生产需配 `persistenceHook`/`exportHook` 落盘才合规。
+- `llm/knowledgeGraph.ts`、`llm/mcpClient.ts`、`quant/sectorRotation.ts`：知识图谱 / MCP 工具 / 板块轮动，功能完整但未启用。
+- `quant/intlDataProvider.ts`（港美股财务估值）：数据源用 `http://push2.eastmoney.com`，本环境 Node fetch 必失败（TLS reset，见上）→ 恒为降级态；若要启用需换 `datacenter.eastmoney.com` 同源 RPT 接口。
+- `utils/env.ts`（环境变量校验）：已实现，接入面待评估。
