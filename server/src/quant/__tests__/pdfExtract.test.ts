@@ -16,7 +16,7 @@ interface MockPdf {
 }
 
 function installPdf(pdf: MockPdf): typeof getDocument {
-  getDocument.mockReturnValue({ promise: Promise.resolve(pdf) });
+  vi.mocked(getDocument).mockReturnValue({ promise: Promise.resolve(pdf) });
   return getDocument;
 }
 
@@ -35,7 +35,7 @@ describe('extractTextFromPdf', () => {
     const text = await extractTextFromPdf(Buffer.from('fake-pdf'));
     expect(text).toBe('Hello World\n');
     // getDocument 收到 Uint8Array 数据
-    const arg = getDocument.mock.calls[0][0] as { data: Uint8Array };
+    const arg = vi.mocked(getDocument).mock.calls[0][0] as { data: Uint8Array };
     expect(arg.data).toBeInstanceOf(Uint8Array);
     expect(Buffer.from(arg.data).toString()).toBe('fake-pdf');
   });

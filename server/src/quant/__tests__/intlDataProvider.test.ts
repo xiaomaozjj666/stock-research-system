@@ -23,14 +23,40 @@ afterAll(() => {
   setLogLevel('info');
 });
 
-/** 构造一个成功的 fetch Response mock */
-function mockOkJson(payload: unknown): ReturnType<typeof vi.fn> {
-  return vi.fn().mockResolvedValue({
+/** 构造一个 HTTP 200 + JSON payload 的 Response mock 对象 */
+function okJsonResponse(payload: unknown) {
+  return {
     ok: true,
     status: 200,
     statusText: 'OK',
     json: () => Promise.resolve(payload),
-  }) as unknown as ReturnType<typeof vi.fn>;
+  };
+}
+
+/** 构造一个恒成功的 fetch mock（每次调用返回同一 payload） */
+function mockOkJson(payload: unknown): ReturnType<typeof vi.fn> {
+  return vi.fn().mockResolvedValue(okJsonResponse(payload)) as unknown as ReturnType<typeof vi.fn>;
+}
+
+/** 构造东方财富数据中心 RPT 网关成功响应（data.result.data 数组） */
+function rptOk(data: Array<Record<string, unknown>> | null): unknown {
+  return {
+    version: 'test',
+    result: { pages: data && data.length > 0 ? 1 : 0, data },
+    success: true,
+    message: 'ok',
+    code: 0,
+  };
+}
+
+/** RPT 网关错误响应（报表不存在 / 其它网关错误，result 缺失） */
+function rptError(): unknown {
+  return {
+    success: false,
+    code: 9501,
+    message: '报表配置不存在',
+    result: null,
+  };
 }
 
 describe('detectMarket', () => {
@@ -84,26 +110,30 @@ describe('formatIntlCode', () => {
 });
 
 describe('fetchIntlFundamentals', () => {
-  it('成功解析港股估值（市值/营收以元计需 /1e8 转亿元）', async () => {
-    globalThis.fetch = mockOkJson({
-      data: {
-        f57: '00700',
-        f58: '腾讯控股',
-        f116: 3.6e12, // 总市值（元）→ 36000 亿
-        f117: 3.6e12,
-        f162: 15,
-        f163: 18.5, // PE TTM
-        f164: 4.2, // PB
-        f173: 6e11, // 营收（元）→ 6000 亿
-        f184: 5e11, // 总负债（元）→ 5000 亿
-        f187: 1.5e11, // 净利润（元）→ 1500 亿
-        f193: 1.8e12, // 总资产（元）→ 18000 亿
-      },
-    }) as unknown as typeof globalThis.fetch;
+  it('成功解析港股估值（RPT 主要指标，市值/营收以元计需 /1e8 转亿元）', async () => {
+    const mock = mockOkJson(
+      rptOk([
+        {
+          SECUCODE: '00700.HK',
+          SECURITY_CODE: '00700',
+          SECURITY_NAME_ABBR: '腾讯控股',
+          STD_REPORT_DATE: '2026-03-31 00:00:00',
+          PE_TTM: 18.5,
+          PB_TTM: 4.2,
+          TOTAL_MARKET_CAP: 3.6e12, // 总市值（元）→ 36000 亿
+          OPERATE_INCOME: 6e11, // 营收（元）→ 6000 亿
+          HOLDER_PROFIT: 1.5e11, // 净利润（元）→ 1500 亿
+          TOTAL_ASSETS: 1.8e12, // 总资产（元）→ 18000 亿
+          TOTAL_LIABILITIES: 5e11, // 总负债（元）→ 5000 亿
+          CURRENCY: 'HKD',
+        },
+      ]),
+    );
+    globalThis.fetch = mock as unknown as typeof globalThis.fetch;
 
     const r = await fetchIntlFundamentals('00700', 'HK');
     expect(r.degraded).toBe(false);
-    expect(r.source).toBe('eastmoney-push2');
+    expect(r.source).toBe('eastmoney-datacenter');
     expect(r.fundamentals).not.toBeNull();
     const f = r.fundamentals!;
     expect(f.code).toBe('00700');
@@ -117,25 +147,40 @@ describe('fetchIntlFundamentals', () => {
     expect(f.totalAssets).toBe(18000);
     expect(f.totalLiabilities).toBe(5000);
     expect(f.currency).toBe('HKD');
-    expect(f.dataSource).toBe('eastmoney-push2');
+    expect(f.dataSource).toBe('eastmoney-datacenter');
     // fetchedAt 是合法 ISO 时间
     expect(new Date(r.fetchedAt).getTime()).not.toBeNaN();
+    // 名称已由主要指标提供，不再回查证券资料 → 仅 1 次请求
+    const calledUrl = String(mock.mock.calls[0]?.[0] ?? '');
+    expect(calledUrl).toContain('RPT_HKF10_FN_MAININDICATOR');
+    expect(calledUrl).toContain('SECUCODE');
+    expect(mock).toHaveBeenCalledTimes(1);
   });
 
-  it('成功解析美股估值，代码强制大写、货币=USD', async () => {
-    const mock = mockOkJson({
-      data: {
-        f57: 'AAPL',
-        f58: '苹果',
-        f116: 2.8e12, // 28000 亿
-        f163: 30.1,
-        f164: 45.7,
-        f173: 4e11, // 4000 亿
-        f187: 1e11, // 1000 亿
-        f193: 3.5e12, // 35000 亿
-        f184: 3e11, // 3000 亿
-      },
-    });
+  it('成功解析美股估值（ORGPROFILE 查 SECUCODE + GMAININDICATOR 补财务，代码大写、货币=USD）', async () => {
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okJsonResponse(
+          rptOk([
+            { SECUCODE: 'AAPL.O', SECURITY_CODE: 'AAPL', SECURITY_NAME_ABBR: '苹果' },
+          ]),
+        ),
+      )
+      .mockResolvedValueOnce(
+        okJsonResponse(
+          rptOk([
+            {
+              SECUCODE: 'AAPL.O',
+              SECURITY_CODE: 'AAPL',
+              SECURITY_NAME_ABBR: '苹果',
+              OPERATE_INCOME: 4e11, // 营收（美元）→ 4000 亿
+              PARENT_HOLDER_NETPROFIT: 1e11, // 净利润（美元）→ 1000 亿
+              CURRENCY_ABBR: 'USD',
+            },
+          ]),
+        ),
+      );
     globalThis.fetch = mock as unknown as typeof globalThis.fetch;
 
     const r = await fetchIntlFundamentals('aapl', 'US');
@@ -143,34 +188,77 @@ describe('fetchIntlFundamentals', () => {
     const f = r.fundamentals!;
     expect(f.code).toBe('AAPL');
     expect(f.market).toBe('US');
+    expect(f.name).toBe('苹果');
     expect(f.currency).toBe('USD');
-    expect(f.pe).toBe(30.1);
-    expect(f.pb).toBe(45.7);
-    expect(f.marketCap).toBe(28000);
-    // 验证 secid 大写：URL 中应含 secid=107.AAPL
-    const calledUrl = String(mock.mock.calls[0]?.[0] ?? '');
-    expect(calledUrl).toContain('secid=107.AAPL');
+    expect(f.revenue).toBe(4000);
+    expect(f.netIncome).toBe(1000);
+    // 数据中心未提供美股 PE/PB/市值/资产负债估值快照 → 归零
+    expect(f.pe).toBe(0);
+    expect(f.pb).toBe(0);
+    expect(f.marketCap).toBe(0);
+    expect(f.totalAssets).toBe(0);
+    expect(f.totalLiabilities).toBe(0);
+    expect(mock).toHaveBeenCalledTimes(2);
+    // 第一步用 SECURITY_CODE 查 SECUCODE
+    const firstUrl = String(mock.mock.calls[0]?.[0] ?? '');
+    expect(firstUrl).toContain('RPT_USF10_INFO_ORGPROFILE');
+    expect(firstUrl).toContain('SECURITY_CODE');
+    // 第二步用 SECUCODE 查主要财务指标
+    const secondUrl = String(mock.mock.calls[1]?.[0] ?? '');
+    expect(secondUrl).toContain('RPT_USF10_FN_GMAININDICATOR');
+    expect(secondUrl).toContain('SECUCODE');
   });
 
-  it('PE TTM(f163) 缺失时回退到动态 PE(f162)', async () => {
-    globalThis.fetch = mockOkJson({
-      data: {
-        f57: '09988',
-        f58: '阿里巴巴',
-        f116: 2e12,
-        f162: 22.5, // 动态 PE
-        f163: 0, // TTM 缺失
-        f164: 3.1,
-        f173: 8e11,
-        f187: 6e10,
-        f193: 1.6e12,
-        f184: 4e11,
-      },
-    }) as unknown as typeof globalThis.fetch;
+  it('港股主要指标缺名称时回查证券资料兜底', async () => {
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okJsonResponse(
+          rptOk([
+            {
+              SECUCODE: '09988.HK',
+              SECURITY_CODE: '09988',
+              PE_TTM: 22.5, // 主要指标无名称
+              PB_TTM: 3.1,
+              TOTAL_MARKET_CAP: 2e12,
+              OPERATE_INCOME: 8e11,
+              HOLDER_PROFIT: 6e10,
+              TOTAL_ASSETS: 1.6e12,
+              TOTAL_LIABILITIES: 4e11,
+              CURRENCY: 'HKD',
+            },
+          ]),
+        ),
+      )
+      .mockResolvedValueOnce(
+        okJsonResponse(
+          rptOk([
+            { SECUCODE: '09988.HK', SECURITY_CODE: '09988', SECURITY_NAME_ABBR: '阿里巴巴' },
+          ]),
+        ),
+      );
+    globalThis.fetch = mock as unknown as typeof globalThis.fetch;
 
     const r = await fetchIntlFundamentals('09988', 'HK');
     expect(r.degraded).toBe(false);
+    expect(r.fundamentals?.name).toBe('阿里巴巴');
     expect(r.fundamentals?.pe).toBe(22.5);
+    expect(mock).toHaveBeenCalledTimes(2);
+    const secondUrl = String(mock.mock.calls[1]?.[0] ?? '');
+    expect(secondUrl).toContain('RPT_HKF10_INFO_SECURITYINFO');
+  });
+
+  it('名称缺失且证券资料兜底也为空 → 降级', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(okJsonResponse(rptOk([{ SECURITY_CODE: '00700' }])))
+      .mockResolvedValueOnce(
+        okJsonResponse(rptOk([{ SECURITY_CODE: '00700', SECURITY_NAME_ABBR: '' }])),
+      ) as unknown as typeof globalThis.fetch;
+
+    const r = await fetchIntlFundamentals('00700', 'HK');
+    expect(r.degraded).toBe(true);
+    expect(r.fundamentals).toBeNull();
   });
 
   it('fetch 失败 → 降级（fundamentals=null, degraded=true）', async () => {
@@ -197,18 +285,16 @@ describe('fetchIntlFundamentals', () => {
     expect(r.fundamentals).toBeNull();
   });
 
-  it('eastmoney 返回空 data → 降级', async () => {
-    globalThis.fetch = mockOkJson({ data: null }) as unknown as typeof globalThis.fetch;
+  it('RPT 网关错误（result 缺失）→ 降级', async () => {
+    globalThis.fetch = mockOkJson(rptError()) as unknown as typeof globalThis.fetch;
 
     const r = await fetchIntlFundamentals('00700', 'HK');
     expect(r.degraded).toBe(true);
     expect(r.fundamentals).toBeNull();
   });
 
-  it('eastmoney 返回空名称 → 降级', async () => {
-    globalThis.fetch = mockOkJson({
-      data: { f57: '00700', f58: '' },
-    }) as unknown as typeof globalThis.fetch;
+  it('RPT 返回空 data → 降级', async () => {
+    globalThis.fetch = mockOkJson(rptOk([])) as unknown as typeof globalThis.fetch;
 
     const r = await fetchIntlFundamentals('00700', 'HK');
     expect(r.degraded).toBe(true);
@@ -243,15 +329,33 @@ describe('fetchIntlFundamentals', () => {
 
 describe('fetchBatchFundamentals', () => {
   it('按 detectMarket 分流，A 股代码不发起网络请求', async () => {
-    const mock = mockOkJson({
-      data: {
-        f57: '00700',
-        f58: '腾讯控股',
-        f163: 18.5,
-        f164: 4.2,
-        f116: 3.6e12,
-      },
-    });
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okJsonResponse(
+          rptOk([
+            {
+              SECURITY_CODE: '00700',
+              SECURITY_NAME_ABBR: '腾讯控股',
+              PE_TTM: 18.5,
+              PB_TTM: 4.2,
+              TOTAL_MARKET_CAP: 3.6e12,
+            },
+          ]),
+        ),
+      )
+      .mockResolvedValueOnce(
+        okJsonResponse(
+          rptOk([{ SECUCODE: 'AAPL.O', SECURITY_CODE: 'AAPL', SECURITY_NAME_ABBR: '苹果' }]),
+        ),
+      )
+      .mockResolvedValueOnce(
+        okJsonResponse(
+          rptOk([
+            { SECURITY_CODE: 'AAPL', OPERATE_INCOME: 4e11, PARENT_HOLDER_NETPROFIT: 1e11 },
+          ]),
+        ),
+      );
     globalThis.fetch = mock as unknown as typeof globalThis.fetch;
 
     const results = await fetchBatchFundamentals(['00700', '600519', 'AAPL']);
@@ -265,28 +369,39 @@ describe('fetchBatchFundamentals', () => {
     // AAPL US 成功
     expect(results[2].degraded).toBe(false);
     expect(results[2].fundamentals?.market).toBe('US');
-    // fetch 仅被调用 2 次（00700 + AAPL），A 股不调用
-    expect(mock).toHaveBeenCalledTimes(2);
+    // fetch 仅被调用 3 次（00700 + AAPL 的 ORGPROFILE + AAPL 的 GMAININDICATOR），A 股不调用
+    expect(mock).toHaveBeenCalledTimes(3);
   });
 
   it('单只失败不影响其余', async () => {
     globalThis.fetch = vi
       .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: { f57: '00700', f58: '腾讯控股', f163: 18, f164: 4, f116: 3.6e12 },
-          }),
-      })
+      .mockResolvedValueOnce(
+        okJsonResponse(
+          rptOk([
+            {
+              SECURITY_CODE: '00700',
+              SECURITY_NAME_ABBR: '腾讯控股',
+              PE_TTM: 18,
+              PB_TTM: 4,
+              TOTAL_MARKET_CAP: 3.6e12,
+            },
+          ]),
+        ),
+      )
       .mockRejectedValueOnce(new Error('timeout'))
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: { f57: 'AAPL', f58: '苹果', f163: 30, f164: 45, f116: 2.8e12 },
-          }),
-      }) as unknown as typeof globalThis.fetch;
+      .mockResolvedValueOnce(
+        okJsonResponse(
+          rptOk([{ SECUCODE: 'AAPL.O', SECURITY_CODE: 'AAPL', SECURITY_NAME_ABBR: '苹果' }]),
+        ),
+      )
+      .mockResolvedValueOnce(
+        okJsonResponse(
+          rptOk([
+            { SECURITY_CODE: 'AAPL', OPERATE_INCOME: 4e11, PARENT_HOLDER_NETPROFIT: 1e11 },
+          ]),
+        ),
+      ) as unknown as typeof globalThis.fetch;
 
     const results = await fetchBatchFundamentals(['00700', '09988', 'AAPL']);
     expect(results).toHaveLength(3);
@@ -311,10 +426,24 @@ describe('fetchBatchFundamentals', () => {
   });
 
   it('超过 BATCH_CONCURRENCY 时仍能正常完成', async () => {
-    // 7 个港美股代码，超过 BATCH_CONCURRENCY=5，验证分批并发不丢结果
-    const mock = mockOkJson({
-      data: { f57: 'X', f58: '测试', f163: 10, f164: 2, f116: 1e11 },
-    });
+    // 7 个港美股代码，超过 BATCH_CONCURRENCY=5，验证分批并发不丢结果。
+    // 统一 mock：HK 每只 1 次请求（MAININDICATOR），US 每只 2 次（ORGPROFILE + GMAININDICATOR）
+    const mock = mockOkJson(
+      rptOk([
+        {
+          SECURITY_CODE: 'X',
+          SECURITY_NAME_ABBR: '测试',
+          PE_TTM: 10,
+          PB_TTM: 2,
+          TOTAL_MARKET_CAP: 1e11,
+          OPERATE_INCOME: 5e9,
+          HOLDER_PROFIT: 1e9,
+          TOTAL_ASSETS: 8e10,
+          TOTAL_LIABILITIES: 3e10,
+          CURRENCY: 'HKD',
+        },
+      ]),
+    );
     globalThis.fetch = mock as unknown as typeof globalThis.fetch;
 
     const codes = ['00700', '09988', '03690', 'AAPL', 'MSFT', 'TSLA', 'GOOG'];
@@ -322,6 +451,7 @@ describe('fetchBatchFundamentals', () => {
     expect(results).toHaveLength(codes.length);
     // 全部成功（响应统一有名称）
     expect(results.every((r) => r.degraded)).toBe(false);
-    expect(mock).toHaveBeenCalledTimes(codes.length);
+    // HK 3 只各 1 次 + US 4 只各 2 次 = 11 次
+    expect(mock).toHaveBeenCalledTimes(11);
   });
 });

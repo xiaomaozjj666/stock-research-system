@@ -119,8 +119,8 @@ function excessKurtosis(xs: number[]): number {
   return m2 > 0 ? m4 / m2 ** 2 - 3 : 0;
 }
 
-/** 标准正态分布 CDF（近似） */
-function normCDF(x: number): number {
+/** 标准正态分布 CDF（近似，Abramowitz-Stegun 7.1.26） */
+export function normCDF(x: number): number {
   // Abramowitz-Stegun 近似
   const t = 1 / (1 + 0.2316419 * Math.abs(x));
   const d = 0.3989423 * Math.exp(-x * x / 2);
@@ -154,31 +154,58 @@ function normInv(p: number): number {
 /**
  * Probabilistic Sharpe Ratio（Bailey-López de Prado 2012）
  * P(真实 SR > 0 | 观察 SR, 样本长度 T, 偏度, 峰度)
+ *
+ * PSR = Φ( SR / σ_SR )
+ * σ_SR² = [1 − γ₃·SR + ((γ₄−1)/4)·SR²] / (T−1)   （Bailey-López de Prado 2012, Mertens 2002）
+ * 其中 γ₃ 为偏度、γ₄ 为常规峰度（正态=3）。本函数入参 kurt 为超额峰度（= γ₄−3），
+ * 故 (γ₄−1)/4 = (超额峰度+2)/4：正态时超额峰度为 0，退化为 (1 + SR²/2)/(T−1)，与 Lo(2002) 一致。
  */
 function probabilisticSharpeRatio(sr: number, T: number, skew: number, kurt: number): number {
   if (T < 2) return 0;
-  const sigmaSR = Math.sqrt((1 - skew * sr + ((kurt) / 4) * sr * sr) / (T - 1));
+  const sigmaSR = Math.sqrt((1 - skew * sr + ((kurt + 2) / 4) * sr * sr) / (T - 1));
   if (sigmaSR <= 0) return 0;
   return normCDF(sr / sigmaSR);
 }
 
 /**
- * Deflated Sharpe Ratio（Bailey-López de Prado 2014）
- * 在 PSR 基础上扣除"试了 N 个策略取最佳"的选择偏差
- * @param sr 观察到的 Sharpe Ratio（年化）
+ * N 次标准正态独立抽样最大值的期望 E[max]（Bailey-López de Prado 2014, Eq.5）
+ *
+ * E[max] = (1−γ)·Φ⁻¹(1 − 1/N) + γ·Φ⁻¹(1 − 1/(N·e))
+ *
+ * 其中 γ ≈ 0.5772 为 Euler-Mascheroni 常数，Φ⁻¹ 为标准正态分位函数，e 为自然对数的底。
+ * 物理含义：在"N 个零真实 alpha 的策略中挑最优"的选择偏差下，最佳策略 Sharpe 的期望抬升（以 σ 为单位）。
+ * 两项各用不同的分位点：Φ⁻¹(1−1/N) 与更大的 Φ⁻¹(1−1/(N·e))，在 N 较小时也保持高精度。
+ *
+ * @param N 策略/搜索次数（≥2；N=1 时无选择偏差，返回 0）
+ */
+export function expectedMaxOfNormals(N: number): number {
+  if (N <= 1) return 0;
+  const gamma = 0.5772156649015329; // Euler-Mascheroni 常数
+  return (1 - gamma) * normInv(1 - 1 / N) + gamma * normInv(1 - 1 / (N * Math.E));
+}
+
+/**
+ * Deflated Sharpe Ratio（Bailey-López de Prado 2014, The Journal of Portfolio Management 40(5)）
+ * 在 PSR 基础上扣除"试了 N 个策略取最佳"的选择偏差。
+ *
+ * DSR = PSR(SR_0) = Φ( (SR − SR_0) / σ_SR )
+ * SR_0 = σ_SR · E[max] = σ_SR · [(1−γ)·Φ⁻¹(1−1/N) + γ·Φ⁻¹(1−1/(N·e))]   （N>1）
+ *
+ * σ_SR 与 PSR 相同（含 (γ₄−1)/4 = (超额峰度+2)/4 项）。E[max] 随 N 增大而单调抬升，
+ * 因此搜索次数越多 SR_0 越高、DSR 越保守，显著阈值越严格。
+ *
+ * @param sr 观察到的 Sharpe Ratio（须与 T 的时间单位一致，compareBacktests 传日频）
  * @param N 试过的策略数（搜索空间大小）
  * @param T 样本长度（日数）
  * @param skew 偏度
- * @param kurt 超额峰度
+ * @param kurt 超额峰度（= 常规峰度 − 3）
  */
-function deflatedSharpeRatio(sr: number, N: number, T: number, skew: number, kurt: number): number {
+export function deflatedSharpeRatio(sr: number, N: number, T: number, skew: number, kurt: number): number {
   if (N < 1 || T < 2) return 0;
-  // SR_0 = E[max of N IID SR]：搜索偏差的期望抬升
-  // 用近似公式：SR_0 ≈ sigmaSR * z(1 - 1/N)
-  const sigmaSR = Math.sqrt((1 - skew * sr + ((kurt) / 4) * sr * sr) / (T - 1));
+  const sigmaSR = Math.sqrt((1 - skew * sr + ((kurt + 2) / 4) * sr * sr) / (T - 1));
   if (sigmaSR <= 0) return 0;
-  const z = N > 1 ? normInv(1 - 1 / N) : 0;
-  const sr0 = sigmaSR * z * (1 - 0.5772) + sigmaSR * z; // Euler-Mascheroni 近似
+  // SR_0 = E[max of N IID SR]：搜索偏差的期望抬升
+  const sr0 = sigmaSR * expectedMaxOfNormals(N);
   // DSR = PSR(sr - sr0)
   const adjustedSR = (sr - sr0) / sigmaSR;
   return normCDF(adjustedSR);
@@ -186,13 +213,13 @@ function deflatedSharpeRatio(sr: number, N: number, T: number, skew: number, kur
 
 /**
  * Minimum Track-Record Length（Bailey-López de Prado 2014）
- * 达到 DSR ≥ 0.95 所需的最短回测年数
+ * 达到 DSR ≥ 1−alpha 所需的最短回测样本长度（单位与 SR 口径对应，年化 SR 则为年数）。
  */
 function minTrackRecordLength(sr: number, skew: number, kurt: number, alpha = 0.05): number {
   if (sr === 0) return Infinity;
-  const z = normInv(1 - alpha);
-  // MinTRL = 1 + [1 - skew*SR + (kurt)/4 * SR^2] * ln(1/alpha) / SR^2
-  const numerator = (1 - skew * sr + (kurt / 4) * sr * sr) * Math.log(1 / alpha);
+  // MinTRL = 1 + [1 - skew*SR + ((超额峰度+2)/4) * SR^2] * ln(1/alpha) / SR^2
+  // 峰度项与 PSR/DSR 一致：(γ₄−1)/4 = (超额峰度+2)/4
+  const numerator = (1 - skew * sr + ((kurt + 2) / 4) * sr * sr) * Math.log(1 / alpha);
   return 1 + numerator / (sr * sr);
 }
 

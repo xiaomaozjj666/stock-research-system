@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { runAnalysis } from '../analysisPipeline.js';
 import type { StockDataSet, FinancialData, ValuationData, StockInfo } from '../../types.js';
+import { buildFinancialGraph } from '../../llm/knowledgeGraph.js';
+import { calculateSectorRotation } from '../../quant/sectorRotation.js';
 
 // 用可控的样例数据替掉真实的网络数据获取，验证流水线装配正确性
 const sampleFinancial: FinancialData = {
@@ -49,6 +51,14 @@ vi.mock('../dataService.js', () => ({
 
 vi.mock('../../quant/dataProvider.js', () => ({
   fetchOHLCVData: vi.fn(async () => []), // 无K线 -> 策略清单为空，不触发网络
+}));
+
+// 可选增强模块默认返回 undefined → 流水线内部降级跳过；成功/失败路径在用例中切换
+vi.mock('../../llm/knowledgeGraph.js', () => ({
+  buildFinancialGraph: vi.fn(),
+}));
+vi.mock('../../quant/sectorRotation.js', () => ({
+  calculateSectorRotation: vi.fn(),
 }));
 
 describe('runAnalysis 流水线', () => {
@@ -115,5 +125,74 @@ describe('runAnalysis 流水线', () => {
     expect(weak.stock_pool[0].total_score).toBeLessThan(100);
     // 高杠杆应拉低风险维度
     expect(weak.stock_pool[0].score_detail.risk_deduction).toBeLessThan(20);
+  });
+});
+
+describe('可选增强：知识图谱 / 行业轮动成功路径', () => {
+  it('增强字段存在且结构合法（不改变现有输出契约）', async () => {
+    // 提供有效返回：知识图谱上下文 + 行业轮动信号
+    vi.mocked(buildFinancialGraph).mockReturnValue({
+      toContextString: () => '【知识图谱】stock:600519 贵州茅台 ->[belongs_to]-> 白酒',
+    } as ReturnType<typeof buildFinancialGraph>);
+    vi.mocked(calculateSectorRotation).mockReturnValue({
+      date: '2026-08-08',
+      signals: [
+        {
+          sector: '白酒',
+          prosperity: 60,
+          trend: 55,
+          crowding: 40,
+          compositeScore: 62,
+          rank: 1,
+          recommendation: 'overweight' as const,
+        },
+      ],
+      topSectors: ['白酒'],
+      bottomSectors: [],
+      summary: '本期共评估 1 个行业。超配：白酒；低配：无。',
+    });
+
+    const result = await runAnalysis('600519');
+    const stock = result.stock_pool[0];
+
+    // 知识图谱上下文（有同业可比数据时附加）
+    expect(stock.knowledgeGraphContext).toContain('【知识图谱】');
+
+    // 行业轮动信号（有行业归属时附加）
+    expect(stock.sectorRotation).toBeDefined();
+    expect(stock.sectorRotation!.sector).toBe('白酒');
+    expect(stock.sectorRotation!.rank).toBe(1);
+    expect(['overweight', 'neutral', 'underweight']).toContain(stock.sectorRotation!.recommendation);
+    expect(typeof stock.sectorRotation!.compositeScore).toBe('number');
+    expect(typeof stock.sectorRotation!.industryBeta).toBe('number');
+    expect(stock.sectorRotation!.date).toBe('2026-08-08');
+
+    // 核心输出契约不受增强影响
+    expect(stock.stock_code).toBe('600519');
+    expect(stock.total_score).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('可选增强：失败降级不崩', () => {
+  it('知识图谱/行业轮动增强抛错时，报告仍正常生成且增强字段缺失', async () => {
+    vi.mocked(buildFinancialGraph).mockImplementation(() => {
+      throw new Error('图谱构建失败');
+    });
+    vi.mocked(calculateSectorRotation).mockImplementation(() => {
+      throw new Error('轮动计算失败');
+    });
+
+    const result = await runAnalysis('600519');
+    const stock = result.stock_pool[0];
+
+    // 输出契约不变：核心字段仍完整
+    expect(stock.stock_code).toBe('600519');
+    expect(stock.rating).toBeTruthy();
+    expect(stock.core_summary).toContain('贵州茅台');
+    expect(stock.expert_opinions.length).toBeGreaterThanOrEqual(6);
+
+    // 增强字段降级为 undefined（try/catch 吞错，不阻断主流程）
+    expect(stock.knowledgeGraphContext).toBeUndefined();
+    expect(stock.sectorRotation).toBeUndefined();
   });
 });

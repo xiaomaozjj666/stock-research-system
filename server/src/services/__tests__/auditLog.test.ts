@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import * as fs from 'node:fs';
 import {
   AuditLogger,
   auditLogger,
@@ -6,8 +7,11 @@ import {
   auditToolCall,
   auditTradeSignal,
   auditDataAccess,
+  filePersistenceHook,
+  AUDIT_LOG_FILE,
   DEFAULT_CIRCUIT_BREAKER_THRESHOLDS,
   type AuditLoggerOptions,
+  type AuditEntry,
 } from '../auditLog.js';
 
 /**
@@ -580,5 +584,62 @@ describe('辅助函数 — 写入全局 auditLogger 单例', () => {
     expect(auditLogger.query({ category: 'tool_call' })).toHaveLength(1);
     expect(auditLogger.query({ category: 'trade_signal' })).toHaveLength(1);
     expect(auditLogger.query({ category: 'data_access' })).toHaveLength(1);
+  });
+});
+
+describe('审计日志落盘持久化（JSON 行追加到 audit.log）', () => {
+  it('filePersistenceHook 把条目追加为一行 JSON', () => {
+    const before = fs.existsSync(AUDIT_LOG_FILE) ? fs.readFileSync(AUDIT_LOG_FILE, 'utf-8') : '';
+    const beforeLines = before ? before.split('\n').filter((l) => l.trim()).length : 0;
+
+    const entry: AuditEntry = {
+      id: 'persist-1',
+      timestamp: 123456,
+      sessionId: 's1',
+      action: 'data.read',
+      category: 'data_access',
+      detail: '测试资源 (read)',
+      riskLevel: 'info',
+    };
+    filePersistenceHook(entry);
+
+    const after = fs.readFileSync(AUDIT_LOG_FILE, 'utf-8');
+    const afterLines = after.split('\n').filter((l) => l.trim());
+    expect(afterLines.length).toBe(beforeLines + 1);
+
+    // 末行即新写入的条目，可反序列化为合法 JSON
+    const parsed = JSON.parse(afterLines[afterLines.length - 1]) as AuditEntry;
+    expect(parsed.id).toBe('persist-1');
+    expect(parsed.category).toBe('data_access');
+    expect(parsed.sessionId).toBe('s1');
+    expect(parsed.riskLevel).toBe('info');
+  });
+
+  it('全局 auditLogger 已配置落盘：辅助函数调用后写入 audit.log', () => {
+    // 内存计数与文件均为追加式；校验末行对应本次调用
+    auditLogger.clear();
+    auditDataAccess('s1', '行情/财务数据接口', 'read');
+
+    const raw = fs.readFileSync(AUDIT_LOG_FILE, 'utf-8');
+    const lines = raw.split('\n').filter((l) => l.trim());
+    const last = JSON.parse(lines[lines.length - 1]) as AuditEntry;
+    expect(last.category).toBe('data_access');
+    expect(last.action).toBe('data.read');
+    expect(last.sessionId).toBe('s1');
+    expect(typeof last.id).toBe('string');
+    expect(typeof last.timestamp).toBe('number');
+  });
+
+  it('落盘钩子抛错不阻断（AuditLogger 内部静默降级）', () => {
+    // 模拟磁盘写失败：注入一个抛错的钩子，log() 不应抛，条目仍保留在内存
+    const throwing = new AuditLogger({
+      persistenceHook: () => {
+        throw new Error('磁盘写失败');
+      },
+    });
+    expect(() => {
+      throwing.log({ sessionId: 's1', action: 'a', category: 'system', detail: '1', riskLevel: 'info' });
+    }).not.toThrow();
+    expect(throwing.size()).toBe(1);
   });
 });

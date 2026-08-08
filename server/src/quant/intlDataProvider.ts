@@ -3,13 +3,20 @@
  *
  * 设计目标：
  * - 补齐 dataProvider.ts（仅支持 A 股财务估值）的港美股缺口
- * - 不硬依赖 AKShare npm 包，直接用 Node.js 内置 fetch 调用东方财富 push2 行情接口
- *   （即 AKShare stock_hk_spot_em / stock_us_spot_em 底层调用的同一组 HTTP 端点）
+ * - 不硬依赖 AKShare npm 包，直接用 Node.js 内置 fetch 调用东方财富数据中心 RPT 网关
+ *   （免费、无 token；即 AKShare stock_hk_financial_abstract_em / stock_us_... 底层调用的同一组 HTTP 端点）
  * - 所有网络请求带 10s 超时；失败降级为 fundamentals=null + degraded=true，绝不抛异常
  *
+ * 数据源（替代原 http://push2.eastmoney.com——本环境 Node fetch 对该域名的 HTTP 明文请求必 TLS 失败）：
+ * - 港股：RPT_HKF10_FN_MAININDICATOR（主要财务指标，按报告期倒序取最新一期，一次取齐
+ *         PE/PB/市值/营收/净利/资产负债/名称） + RPT_HKF10_INFO_SECURITYINFO（证券资料，名称兜底）
+ * - 美股：RPT_USF10_INFO_ORGPROFILE（公司概况，先用 SECURITY_CODE 查 SECUCODE，如 TSLA → TSLA.O）
+ *         + RPT_USF10_FN_GMAININDICATOR（主要财务指标，补营收/净利/名称）。
+ *         数据中心 RPT 网关未提供美股 PE/PB/市值/资产负债等估值快照，故美股该部分字段归零，
+ *         调用方需知悉（港股字段完整）。
+ *
  * 字段量纲（与 A 股 dataFetcher.ts 保持一致）：
- * - 价格字段（f43/f60）以"分"计，需 /100
- * - 市值/营收/净利/资产字段（f116/f173/f187/f193/f184）以"元"计，需 /1e8 转亿元
+ * - 市值/营收/净利/资产字段以"元"（本币）计，需 /1e8 转亿元
  * - PE/PB 等比率字段为无量纲数值，直接四舍五入
  */
 
@@ -52,7 +59,7 @@ export interface IntlFundamentalsResult {
   fundamentals: IntlStockFundamentals | null;
   /** 是否处于降级状态（API 失败或解析失败） */
   degraded: boolean;
-  /** 数据源描述（成功=eastmoney-push2，降级=none） */
+  /** 数据源描述（成功=eastmoney-datacenter，降级=none） */
   source: string;
   /** 抓取时间 ISO 字符串 */
   fetchedAt: string;
@@ -61,11 +68,14 @@ export interface IntlFundamentalsResult {
 /** 单次网络请求超时（毫秒） */
 const FETCH_TIMEOUT_MS = 10_000;
 
-/** 东方财富 push2 单只股票详情接口（与 A 股 dataFetcher 同源） */
-const EM_PUSH2_STOCK_URL = 'http://push2.eastmoney.com/api/qt/stock/get';
+/** 东方财富数据中心 RPT 网关（免费、无 token） */
+const EM_DATACENTER_URL = 'https://datacenter.eastmoney.com/securities/api/data/v1/get';
 
-/** 东方财富固定 ut token（与 A 股 dataFetcher 一致） */
-const EM_UT = 'fa5fd1943c7b386f172d6893dbbd1';
+/** RPT 报表名 */
+const HK_MAIN_INDICATOR = 'RPT_HKF10_FN_MAININDICATOR';
+const HK_SECURITY_INFO = 'RPT_HKF10_INFO_SECURITYINFO';
+const US_ORG_PROFILE = 'RPT_USF10_INFO_ORGPROFILE';
+const US_MAIN_INDICATOR = 'RPT_USF10_FN_GMAININDICATOR';
 
 /** 港股默认计价货币 */
 const HK_CURRENCY = 'HKD';
@@ -73,7 +83,7 @@ const HK_CURRENCY = 'HKD';
 const US_CURRENCY = 'USD';
 
 /** 数据源标识 */
-const DATA_SOURCE = 'eastmoney-push2';
+const DATA_SOURCE = 'eastmoney-datacenter';
 
 /** 单批次最大并发数，避免触发对端限流 */
 const BATCH_CONCURRENCY = 5;
@@ -96,6 +106,7 @@ export function detectMarket(code: string): 'HK' | 'US' | 'A' {
  * 把港美股代码格式化为东方财富 secid。
  * - HK: 5 位数字 → 116.{code}
  * - US: 字母 → 107.{CODE}（强制大写，与 dataProvider.resolveSecid 一致）
+ * 注：RPT 网关改用 SECUCODE（如 00700.HK / TSLA.O）寻址，本函数保留供调用方做代码规范化。
  */
 export function formatIntlCode(code: string, market: IntlMarket): string {
   const c = code.trim();
@@ -117,6 +128,16 @@ function yuanToYi(v: unknown): number {
   return Math.round((n / 1e8) * 100) / 100;
 }
 
+/** 保留 2 位小数（比率类字段） */
+function round2(v: unknown): number {
+  return Math.round(toNum(v) * 100) / 100;
+}
+
+/** 字符串安全取值并 trim */
+function str(v: unknown): string {
+  return String(v ?? '').trim();
+}
+
 /** 带超时的 fetch JSON；HTTP 非 2xx 抛错 */
 async function fetchJsonWithTimeout(
   url: string,
@@ -127,15 +148,45 @@ async function fetchJsonWithTimeout(
   return resp.json();
 }
 
-/** 构造东方财富单只港美股详情请求 URL */
-function buildPush2Url(secid: string): string {
-  // 字段说明（与 A 股 push2 接口字段同语义）：
-  // f57=代码  f58=名称
-  // f116=总市值(元)  f117=流通市值(元)
-  // f162=PE(动)  f163=PE(TTM)  f164=PB(MRQ)
-  // f173=营业收入(元)  f184=总负债(元)  f187=净利润(元)  f193=总资产(元)
-  const fields = 'f57,f58,f116,f117,f162,f163,f164,f173,f184,f187,f193';
-  return `${EM_PUSH2_STOCK_URL}?secid=${secid}&fields=${fields}&ut=${EM_UT}`;
+/**
+ * 构造东方财富数据中心 RPT 网关请求 URL。
+ * - filter 形如 (SECUCODE="00700.HK")，整体 URL 编码
+ * - sortByDate 按 STD_REPORT_DATE 倒序，用于取最新一期财务指标
+ */
+function buildDatacenterUrl(
+  reportName: string,
+  filter: string,
+  opts: { sortByDate?: boolean } = {},
+): string {
+  const sort = opts.sortByDate ? '&sortColumns=STD_REPORT_DATE&sortTypes=-1' : '';
+  return `${EM_DATACENTER_URL}?reportName=${reportName}&columns=ALL&filter=${encodeURIComponent(filter)}&pageNumber=1&pageSize=1${sort}&source=F10&client=PC`;
+}
+
+/** 从 RPT 网关响应中提取第一条记录；空 / 失败返回 null */
+function firstRow(raw: unknown): Record<string, unknown> | null {
+  const result = (raw as { result?: { data?: Array<Record<string, unknown>> | null } } | null)
+    ?.result;
+  const data = result?.data;
+  if (!Array.isArray(data) || data.length === 0) return null;
+  return data[0];
+}
+
+/** 抓取 RPT 报表最新一期记录（按报告期倒序） */
+async function fetchLatestIndicator(
+  reportName: string,
+  filter: string,
+): Promise<Record<string, unknown> | null> {
+  const url = buildDatacenterUrl(reportName, filter, { sortByDate: true });
+  return firstRow(await fetchJsonWithTimeout(url));
+}
+
+/** 抓取 RPT 报表第一条记录（通常为唯一一条） */
+async function fetchFirstRow(
+  reportName: string,
+  filter: string,
+): Promise<Record<string, unknown> | null> {
+  const url = buildDatacenterUrl(reportName, filter);
+  return firstRow(await fetchJsonWithTimeout(url));
 }
 
 /** 构造降级结果（统一日志 + 返回结构） */
@@ -155,9 +206,133 @@ function degradedResult(
   };
 }
 
+/** 成功结果（统一结构） */
+function okResult(
+  fundamentals: IntlStockFundamentals,
+  fetchedAt: string,
+): IntlFundamentalsResult {
+  return {
+    fundamentals,
+    degraded: false,
+    source: DATA_SOURCE,
+    fetchedAt,
+  };
+}
+
+/** 港股 RPT 主要指标行 → 财务估值快照（字段全部由数据中心提供） */
+function hkFundamentals(
+  row: Record<string, unknown>,
+  name: string,
+  code: string,
+): IntlStockFundamentals {
+  return {
+    code: str(row.SECURITY_CODE) || code,
+    market: 'HK',
+    name,
+    pe: round2(row.PE_TTM),
+    pb: round2(row.PB_TTM),
+    marketCap: yuanToYi(row.TOTAL_MARKET_CAP),
+    revenue: yuanToYi(row.OPERATE_INCOME),
+    netIncome: yuanToYi(row.HOLDER_PROFIT),
+    totalAssets: yuanToYi(row.TOTAL_ASSETS),
+    totalLiabilities: yuanToYi(row.TOTAL_LIABILITIES),
+    currency: str(row.CURRENCY) || HK_CURRENCY,
+    dataSource: DATA_SOURCE,
+  };
+}
+
+/** 美股 RPT 主要指标行 → 财务估值快照（数据中心未提供 PE/PB/市值/资产负债，归零） */
+function usFundamentals(
+  row: Record<string, unknown>,
+  name: string,
+  code: string,
+): IntlStockFundamentals {
+  return {
+    code: str(row.SECURITY_CODE) || code,
+    market: 'US',
+    name,
+    pe: 0,
+    pb: 0,
+    marketCap: 0,
+    revenue: yuanToYi(row.OPERATE_INCOME),
+    netIncome: yuanToYi(row.PARENT_HOLDER_NETPROFIT),
+    totalAssets: 0,
+    totalLiabilities: 0,
+    currency: str(row.CURRENCY_ABBR) || US_CURRENCY,
+    dataSource: DATA_SOURCE,
+  };
+}
+
+/** 港股抓取路径：RPT_HKF10_FN_MAININDICATOR 为主，名称兜底走 RPT_HKF10_INFO_SECURITYINFO */
+async function fetchHkFundamentals(
+  code: string,
+  fetchedAt: string,
+): Promise<IntlFundamentalsResult> {
+  const secuCode = `${code}.HK`;
+
+  // 主要财务指标：按报告期倒序取最新一期，一次取齐估值与三大报表金额
+  const row = await fetchLatestIndicator(HK_MAIN_INDICATOR, `(SECUCODE="${secuCode}")`);
+  if (!row) {
+    return degradedResult(code, 'HK', fetchedAt, 'eastmoney 返回空 RPT 数据');
+  }
+
+  // 名称兜底：主要指标缺名称时回查证券资料
+  let name = str(row.SECURITY_NAME_ABBR);
+  if (!name) {
+    const info = await fetchFirstRow(HK_SECURITY_INFO, `(SECUCODE="${secuCode}")`);
+    name = str(info?.SECURITY_NAME_ABBR);
+  }
+  if (!name) {
+    return degradedResult(code, 'HK', fetchedAt, 'eastmoney 返回空名称');
+  }
+
+  return okResult(hkFundamentals(row, name, code), fetchedAt);
+}
+
+/** 美股抓取路径：ORGPROFILE 查 SECUCODE + 名称，GMAININDICATOR 补营收/净利 */
+async function fetchUsFundamentals(
+  code: string,
+  fetchedAt: string,
+): Promise<IntlFundamentalsResult> {
+  // 1. 先用 SECURITY_CODE 查 SECUCODE + 名称（TSLA → TSLA.O）
+  const profile = await fetchFirstRow(US_ORG_PROFILE, `(SECURITY_CODE="${code}")`);
+  if (!profile) {
+    return degradedResult(code, 'US', fetchedAt, 'eastmoney 返回空 RPT 数据');
+  }
+
+  const name = str(profile.SECURITY_NAME_ABBR);
+  if (!name) {
+    return degradedResult(code, 'US', fetchedAt, 'eastmoney 返回空名称');
+  }
+
+  // 2. 主要财务指标：补营收/净利。名称已由 ORGPROFILE 拿到，指标失败不整体降级，仅相关字段归零
+  let row: Record<string, unknown> | null = null;
+  try {
+    row = await fetchLatestIndicator(
+      US_MAIN_INDICATOR,
+      `(SECUCODE="${str(profile.SECUCODE)}")`,
+    );
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    logger.warn('[intlDataProvider] 美股主要指标失败，仅填充名称', { code, reason });
+  }
+
+  const merged: Record<string, unknown> = row
+    ? { ...row, SECURITY_NAME_ABBR: name }
+    : {
+        SECURITY_CODE: str(profile.SECURITY_CODE) || code,
+        SECURITY_NAME_ABBR: name,
+        OPERATE_INCOME: 0,
+        PARENT_HOLDER_NETPROFIT: 0,
+        CURRENCY_ABBR: US_CURRENCY,
+      };
+
+  return okResult(usFundamentals(merged, name, code), fetchedAt);
+}
+
 /**
  * 抓取单只港美股财务估值。
- * - 优先调用东方财富 push2 行情接口（AKShare stock_hk_spot_em / stock_us_spot_em 的 HTTP 等价物）
+ * - 港股走 MAININDICATOR + SECURITYINFO，美股走 ORGPROFILE + GMAININDICATOR（东财数据中心 RPT 网关）
  * - 任何异常（网络/超时/解析/空数据）均降级为 fundamentals=null + degraded=true
  */
 export async function fetchIntlFundamentals(
@@ -168,46 +343,9 @@ export async function fetchIntlFundamentals(
   const trimmedCode = code.trim();
 
   try {
-    const secid = formatIntlCode(trimmedCode, market);
-    const url = buildPush2Url(secid);
-    const raw = (await fetchJsonWithTimeout(url)) as {
-      data?: Record<string, unknown>;
-    } | null;
-
-    const d = raw?.data;
-    if (!d) {
-      return degradedResult(trimmedCode, market, fetchedAt, 'eastmoney 返回空 data');
-    }
-
-    const name = String(d.f58 ?? '').trim();
-    if (!name) {
-      return degradedResult(trimmedCode, market, fetchedAt, 'eastmoney 返回空名称');
-    }
-
-    // PE 优先取 TTM(f163)，缺失则回退到动态 PE(f162)
-    const peRaw = toNum(d.f163) || toNum(d.f162);
-
-    const fundamentals: IntlStockFundamentals = {
-      code: String(d.f57 ?? trimmedCode),
-      market,
-      name,
-      pe: Math.round(peRaw * 100) / 100,
-      pb: Math.round(toNum(d.f164) * 100) / 100,
-      marketCap: yuanToYi(d.f116),
-      revenue: yuanToYi(d.f173),
-      netIncome: yuanToYi(d.f187),
-      totalAssets: yuanToYi(d.f193),
-      totalLiabilities: yuanToYi(d.f184),
-      currency: market === 'HK' ? HK_CURRENCY : US_CURRENCY,
-      dataSource: DATA_SOURCE,
-    };
-
-    return {
-      fundamentals,
-      degraded: false,
-      source: DATA_SOURCE,
-      fetchedAt,
-    };
+    return market === 'HK'
+      ? await fetchHkFundamentals(trimmedCode, fetchedAt)
+      : await fetchUsFundamentals(trimmedCode, fetchedAt);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     return degradedResult(trimmedCode, market, fetchedAt, reason);

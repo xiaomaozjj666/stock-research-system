@@ -9,10 +9,16 @@
  *
  * 二、Walk-Forward 完整评估模式（新 API，基于 equityCurve + compareBacktests）
  *    - runWalkForward / sliceWindows / consistencyScore
- *    - 对每个窗口调用注入的 runBacktest 获取基线+实验组结果
- *    - 用 compareBacktests 做单窗口 IS/OOS 对比
+ *    - 对每个窗口调用注入的 runBacktest 获取同一策略的 IS/OOS 结果
+ *    - 用 compareBacktests 做单窗口 IS vs OOS 对比
  *    - 汇总所有窗口的 OOS 表现（夏普/收益/胜率/一致性）
  *    - 学界标准 OOS 评估方法，对标 Pardo(2008)、Ingram(2014) Walk-Forward Analysis
+ *
+ *    ⚠ 语义澄清（重要）：新 API 的 runWalkForward 回答的是「该策略是否过拟合？」
+ *    （IS 漂亮但 OOS 崩塌 = 过拟合信号），而不是「LLM 信号 vs 无 LLM 基线」的受控对比。
+ *    这里 baseline 槽位装的是同一策略的样本内（IS）结果、experiment 槽位装的是样本外（OOS）
+ *    结果，二者只是存储槽位，并非「信号组 vs 对照组」。需要做信号 vs 基线的受控显著性对比时，
+ *    请直接调用 compareBacktests（见 backtestEvaluator.ts），不要在 runWalkForward 里混用语义。
  *
  * 设计原则：
  *  - 纯函数（runBacktest 由调用方注入），无外部依赖，便于单测
@@ -214,11 +220,11 @@ export interface WalkForwardWindow {
   testStart: string;
   /** 测试期结束日期 */
   testEnd: string;
-  /** 训练期（样本内）回测结果 —— 对应 runBacktest 返回的 baseline */
+  /** 训练期（样本内，IS）回测结果 —— 同一策略，对应 runBacktest 返回的 baseline 槽位 */
   trainResult: BacktestResult;
-  /** 测试期（样本外）回测结果 —— 对应 runBacktest 返回的 experiment */
+  /** 测试期（样本外，OOS）回测结果 —— 同一策略，对应 runBacktest 返回的 experiment 槽位 */
   testResult: BacktestResult;
-  /** 单窗口 IS(train) vs OOS(test) 对比，由 compareBacktests 生成 */
+  /** 单窗口 IS vs OOS 对比（过拟合诊断），由 compareBacktests 生成 */
   comparison: BacktestComparison;
 }
 
@@ -254,8 +260,10 @@ export interface WalkForwardParams {
   config: WalkForwardConfig;
   /**
    * 由调用方注入的回测函数。
-   * 对每个窗口，接收训练/测试数据切片与配置，返回基线（IS）+ 实验组（OOS）结果。
-   * 基线与实验组的语义由调用方决定（例如：无 LLM vs 有 LLM、或 IS vs OOS）。
+   * 对每个窗口，接收训练/测试数据切片与配置，返回该策略在样本内（IS）与样本外（OOS）的结果。
+   * 注意：本模块语义是「同一策略 IS vs OOS」（回答是否过拟合），
+   * baseline 槽位装 IS（trainData）结果、experiment 槽位装 OOS（testData）结果，
+   * 二者不是「无 LLM vs 带 LLM」的信号对比 —— 那种受控对比请直接使用 compareBacktests。
    */
   runBacktest: (
     trainData: WindowDataSlice,
@@ -393,11 +401,13 @@ function buildWalkForwardSummary(
  *
  * 流程：
  *  1. 按 config 切分权益曲线为多个 train/test 窗口
- *  2. 对每个窗口调用注入的 runBacktest，获取基线（IS）+ 实验组（OOS）结果
- *  3. 用 compareBacktests 对每个窗口做 IS vs OOS 对比
+ *  2. 对每个窗口调用注入的 runBacktest，获取同一策略的 IS（baseline 槽位）+ OOS（experiment 槽位）结果
+ *  3. 用 compareBacktests 对每个窗口做 IS vs OOS 对比（过拟合诊断）
  *  4. 汇总所有窗口的 OOS 表现（夏普/收益/胜率）
  *  5. 计算 consistencyScore = 1 - (子期间 Sharpe 标准差 / 子期间 Sharpe 均值)
  *  6. 生成总结与注意事项
+ *
+ * 语义：IS vs OOS 的对比衡量「该策略是否过拟合」，而非「LLM 信号 vs 基线」。
  *
  * @param params Walk-Forward 评估参数
  * @returns Walk-Forward 汇总结果
@@ -471,10 +481,10 @@ export async function runWalkForward(
     const trainData: WindowDataSlice = { equity: trainEquity, benchmark: trainBenchmark };
     const testData: WindowDataSlice = { equity: testEquity, benchmark: testBenchmark };
 
-    // 调用注入的 runBacktest，获取基线（IS）+ 实验组（OOS）
+    // 调用注入的 runBacktest，获取同一策略的 IS（baseline 槽位）+ OOS（experiment 槽位）
     const { baseline, experiment } = await runBacktest(trainData, testData, config);
 
-    // 单窗口 IS vs OOS 对比
+    // 单窗口 IS vs OOS 对比（过拟合诊断）
     const comparison = compareBacktests(baseline, experiment, compareOptions);
 
     wfWindows.push({
@@ -523,16 +533,20 @@ export async function runWalkForward(
     );
   }
 
-  // 单窗口对比结论统计
+  // 单窗口对比结论统计（此处 experiment 槽位 = OOS，baseline 槽位 = IS）：
+  // experiment_wins = OOS 优于 IS；baseline_wins = OOS 劣于 IS（过拟合信号）
   const experimentWins = wfWindows.filter(
     (w) => w.comparison.verdict === 'experiment_wins',
   ).length;
   const baselineWins = wfWindows.filter(
     (w) => w.comparison.verdict === 'baseline_wins',
   ).length;
-  if (baselineWins > experimentWins) {
+  // 仅当 OOS 相对 IS 显著退化（而非任何轻微回退）才提示过拟合，避免把正常回退误判为过拟合。
+  // 阈值 0.7：OOS 平均夏普 < 70% 的 IS 平均夏普才算显著退化。
+  const isOOSSignificantlyWorse = oosSharpe < avgIsSharpe * 0.7;
+  if (baselineWins > experimentWins && isOOSSignificantlyWorse) {
     caveats.push(
-      `${baselineWins}/${wfWindows.length} 个窗口中基线优于实验组，实验组整体未占优`,
+      `${baselineWins}/${wfWindows.length} 个窗口中样本外劣于样本内，策略整体呈过拟合迹象`,
     );
   }
 

@@ -93,7 +93,7 @@ beforeEach(() => {
   mockedOrchestrate.mockResolvedValue({
     dataQuality: { overallScore: 95 } as DataQualityReport,
     audit: { riskScore: 80 } as AuditReport,
-    optimization: { suggestions: [] } as OptimizationReport,
+    optimization: { suggestions: [] } as unknown as OptimizationReport,
   });
   mockedSummary.mockReturnValue('综合摘要文本');
 });

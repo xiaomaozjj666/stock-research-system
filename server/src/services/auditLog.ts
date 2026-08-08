@@ -11,6 +11,8 @@
  * critical 代表需要立即人工介入的合规风险事件。
  */
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 /** 审计条目类别 */
 export type AuditCategory =
@@ -303,8 +305,24 @@ export class AuditLogger {
   }
 }
 
-/** 全局审计日志单例 */
-export const auditLogger = new AuditLogger();
+/** 审计日志落盘文件（JSON 行追加，每行一条审计条目） */
+export const AUDIT_LOG_FILE = path.join(import.meta.dirname, '..', 'data', 'audit.log');
+
+/**
+ * 默认落盘持久化钩子：把每条审计条目追加为一行 JSON 到 AUDIT_LOG_FILE。
+ * IO 失败静默降级（审计主流程不受影响，条目仍保留在内存中）。
+ */
+export function filePersistenceHook(entry: AuditEntry): void {
+  try {
+    fs.mkdirSync(path.dirname(AUDIT_LOG_FILE), { recursive: true });
+    fs.appendFileSync(AUDIT_LOG_FILE, JSON.stringify(entry) + '\n', 'utf-8');
+  } catch {
+    // 磁盘写入失败：静默降级，审计日志仍保留在内存中
+  }
+}
+
+/** 全局审计日志单例（已配置落盘持久化钩子，满足合规留痕要求） */
+export const auditLogger = new AuditLogger({ persistenceHook: filePersistenceHook });
 
 // ============================================================================
 // 辅助函数：为常见审计场景提供便捷入口，均写入全局 auditLogger 单例
