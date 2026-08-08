@@ -1,4 +1,4 @@
-import type { AnalysisResult, ExpertOpinion, DataSource } from '../types.js';
+import type { AnalysisResult, ExpertOpinion, DataSource, SectorRotationSignal } from '../types.js';
 import { getData } from './dataService.js';
 import { fundamentalExpert } from './experts/fundamentalExpert.js';
 import { valuationExpert } from './experts/valuationExpert.js';
@@ -15,6 +15,9 @@ import { safeDiv } from './safeDiv.js';
 import { calculateScores } from './scoreEngine.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
 import { extractNewsSignal, type NewsSignal } from '../quant/newsSignal.js';
+import { auditDataAccess, auditLLMCall, auditTradeSignal } from './auditLog.js';
+import { buildFinancialGraph } from '../llm/knowledgeGraph.js';
+import { calculateSectorRotation, type SectorData } from '../quant/sectorRotation.js';
 import { withTimeout } from '../utils/timeout.js';
 import logger from '../utils/logger.js';
 
@@ -37,6 +40,13 @@ export async function runAnalysis(
   emit({ phase: 'data', message: '正在获取行情与财务数据...' });
   const { info, financial, valuation } = await getData(stockCode);
   const n = financial.years.length;
+
+  // 审计：数据访问完成（合规留痕；runAnalysis 无会话上下文，以股票代码作为审计会话键）
+  try {
+    auditDataAccess(stockCode, '行情/财务数据接口', 'read');
+  } catch (err) {
+    logger.warn('审计记录数据访问失败，降级跳过', { stockCode, err: err as Error });
+  }
 
   // 1.5 抓取最新消息情绪（尽力而为：限时 3s 且不阻塞主流程，失败/超时则视为无新闻）
   emit({ phase: 'data', message: '正在获取最新消息情绪...' });
@@ -126,6 +136,16 @@ export async function runAnalysis(
   });
 
   const allOpinions = [...expertOpinions, finalOpinion];
+
+  // 审计：LLM 专家调用完成（合规留痕；以专家名单与仲裁结论概要作为调用记录）
+  try {
+    const expertSummary = allOpinions
+      .map((o) => `${o.expert}:${o.overallSentiment}(${o.confidence})`)
+      .join(';');
+    auditLLMCall(stockCode, 'multi-expert-arbitration', expertSummary, finalOpinion.overallSentiment);
+  } catch (err) {
+    logger.warn('审计记录 LLM 专家调用失败，降级跳过', { stockCode, err: err as Error });
+  }
 
   // === 提前计算公共指标（后续多处引用） ===
   const revenueGrowthLatest = financial.revenue[n - 2] !== 0
@@ -224,6 +244,13 @@ export async function runAnalysis(
     `最新营收增速${revenueGrowthLatest.toFixed(1)}%、利润增速${profitGrowthLatest.toFixed(1)}%。` +
     `综合评分${totalScore}/100，评级：${rating}。`;
 
+  // 审计：生成交易信号/评级（合规留痕；评级本身作为信号，核心摘要作为决策依据）
+  try {
+    auditTradeSignal(stockCode, info.code, rating, coreSummary);
+  } catch (err) {
+    logger.warn('审计记录交易信号失败，降级跳过', { stockCode, err: err as Error });
+  }
+
   // 9. 优势与风险列表（从专家论点动态提取）
   const actualStrengths = allOpinions.flatMap(o =>
     o.arguments
@@ -318,6 +345,115 @@ export async function runAnalysis(
     logger.warn('策略清单生成失败', { stockCode: info.code, err: e as Error });
   }
 
+  // === 可选增强（不改变现有输出契约；均 try/catch 降级，失败不阻断主流程）===
+
+  // 14. 知识图谱增强：把当前股票与同业可比数据构建为关系图谱上下文，
+  //     供报告/对话引用行业关系（同业、行业均值、上下游）。失败降级为无字段。
+  let knowledgeGraphContext: string | undefined;
+  try {
+    const peers = valuation.peerComparison ?? [];
+    if (peers.length > 0) {
+      const graphStocks = [
+        {
+          code: info.code,
+          name: info.name,
+          sector: info.industry,
+          pe: valuation.pe,
+          pb: valuation.pb,
+          roe: financial.roe[n - 1] ?? 0,
+          grossMargin: financial.grossMargin[n - 1] ?? 0,
+        },
+        ...peers.map((p) => ({
+          code: p.code,
+          name: p.name,
+          sector: info.industry,
+          pe: p.pe,
+          pb: p.pb,
+          roe: p.roe,
+          grossMargin: 0, // 同业无毛利率数据，置 0 避免 NaN
+        })),
+      ];
+      const graph = buildFinancialGraph({
+        stocks: graphStocks,
+        sectors: [
+          {
+            name: info.industry,
+            avgPE: safeDiv(graphStocks.reduce((s, x) => s + x.pe, 0), graphStocks.length),
+            avgPB: safeDiv(graphStocks.reduce((s, x) => s + x.pb, 0), graphStocks.length),
+            avgROE: safeDiv(graphStocks.reduce((s, x) => s + x.roe, 0), graphStocks.length),
+          },
+        ],
+      });
+      knowledgeGraphContext = graph.toContextString(graphStocks.map((s) => `stock:${s.code}`));
+    }
+  } catch (err) {
+    logger.warn('知识图谱增强失败，降级跳过', { stockCode: info.code, err: err as Error });
+  }
+
+  // 15. 行业轮动增强：股票有行业归属时，用其财务特征估算行业轮动信号（beta 曝光 + 轮动排名）。
+  //     单行业截面无法比较，rank 恒为 1、recommendation 恒为 overweight，仅作参考。失败降级为无字段。
+  let sectorRotationSignal: SectorRotationSignal | undefined;
+  try {
+    if (info.industry) {
+      const sectorData: SectorData = {
+        sector: info.industry,
+        revenueGrowth: revenueGrowthLatest,
+        profitGrowth: profitGrowthLatest,
+        roeChange: (financial.roe[n - 1] ?? 0) - (financial.roe[n - 2] ?? 0),
+        momentum20d: 0,
+        momentum60d: 0,
+        turnoverRate: 0,
+        volumeRatio: 0,
+        northboundConcentration: 0,
+        benchmarkMomentum20d: 0,
+      };
+      const rotation = calculateSectorRotation([sectorData]);
+      const sig = rotation.signals[0];
+      // beta 曝光：以资产负债率为杠杆代理做启发式估算（非回归），clamp 到 [0.5, 2]
+      const debtRatio = financial.debtRatio[n - 1] ?? 0;
+      const industryBeta =
+        Math.round(Math.min(2, Math.max(0.5, 0.8 + (debtRatio - 40) / 50)) * 100) / 100;
+      sectorRotationSignal = {
+        sector: sig?.sector ?? info.industry,
+        compositeScore: sig?.compositeScore ?? 0,
+        rank: sig?.rank ?? 1,
+        recommendation: sig?.recommendation ?? 'neutral',
+        prosperity: sig?.prosperity ?? 0,
+        trend: sig?.trend ?? 0,
+        crowding: sig?.crowding ?? 0,
+        industryBeta,
+        summary: rotation.summary,
+        date: rotation.date,
+      };
+    }
+  } catch (err) {
+    logger.warn('行业轮动增强失败，降级跳过', { stockCode: info.code, err: err as Error });
+  }
+
+  // 16. MCP 增强：仅当配置了外部 MCP 服务器时启用（未配置则跳过）。
+  //     拉取外部工具清单作为上下文附加到报告；连接失败降级为无字段。
+  let mcpContext: { serverUrl: string; toolCount: number; tools: string[] } | undefined;
+  if (process.env.MCP_SERVER_URL) {
+    try {
+      const { MCPRegistry } = await import('../llm/mcpClient.js');
+      const registry = new MCPRegistry();
+      registry.register('analysis-mcp', {
+        transport: 'sse',
+        url: process.env.MCP_SERVER_URL,
+      });
+      await registry.connectAll();
+      const tools = await registry.listAllTools();
+      mcpContext = {
+        serverUrl: process.env.MCP_SERVER_URL,
+        toolCount: tools.length,
+        tools: tools.map((t) => t.name),
+      };
+      await registry.disconnectAll();
+    } catch (err) {
+      logger.warn('MCP 增强失败，降级跳过', { stockCode: info.code, err: err as Error });
+    }
+  }
+
   return {
     stock_pool: [{
       stock_code: info.code,
@@ -339,7 +475,10 @@ export async function runAnalysis(
       follow_up_indicators: followUpIndicators,
       scenarios: scenarios,
       strategyList: strategyList,
-      newsSentiment: newsSignal?.hasNews ? newsSignal : undefined
+      newsSentiment: newsSignal?.hasNews ? newsSignal : undefined,
+      knowledgeGraphContext,
+      sectorRotation: sectorRotationSignal,
+      mcpContext
     }],
     data_sources: dataSources,
     research_confidence: `基于${allOpinions.length}位专家独立研判+仲裁综合，整体置信度${Math.round(allOpinions.reduce((s, o) => s + o.confidence, 0) / allOpinions.length)}%。财务数据置信度高（上市公司年报审计），行业判断置信度中等（存在政策不确定性）。`,

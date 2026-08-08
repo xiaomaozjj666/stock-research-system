@@ -134,6 +134,21 @@ export interface StrategyRecommendation {
   };
 }
 
+// 行业轮动信号（来自 quant/sectorRotation，附行业 beta 曝光参考）
+export interface SectorRotationSignal {
+  sector: string;
+  compositeScore: number;
+  rank: number;
+  recommendation: 'overweight' | 'neutral' | 'underweight';
+  prosperity: number;
+  trend: number;
+  crowding: number;
+  /** 行业 beta（杠杆代理估算，非回归结果，仅供 beta 曝光参考） */
+  industryBeta: number;
+  summary: string;
+  date: string;
+}
+
 // 自选股批量"含最新消息回测"结果行
 export interface WatchlistNewsBacktestRow {
   code: string;
@@ -190,6 +205,12 @@ export interface AnalysisResult {
     scenarios?: ScenarioResult[];
     strategyList?: StrategyRecommendation[];
     newsSentiment?: NewsSignal; // 最新消息情绪信号
+    /** 知识图谱增强上下文（可选；由 analysisPipeline 从个股与同业可比数据构建） */
+    knowledgeGraphContext?: string;
+    /** 行业轮动信号（可选；股票有行业归属时附加） */
+    sectorRotation?: SectorRotationSignal;
+    /** MCP 外部工具上下文（可选；仅配置 MCP_SERVER_URL 时附加） */
+    mcpContext?: { serverUrl: string; toolCount: number; tools: string[] };
   }[];
   data_sources: DataSource[];
   research_confidence: string;

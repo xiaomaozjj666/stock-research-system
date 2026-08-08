@@ -70,4 +70,18 @@ describe('API 路由集成（不触网）', () => {
     expect(res.status).toBe(404);
     expect(res.body.error).toBeTruthy();
   });
+
+  it('telemetry 中间件已接线：每个响应都注入 X-Trace-Id', async () => {
+    const res = await request(app).get('/api/does-not-exist');
+    expect(res.status).toBe(404);
+    // expressTracerMiddleware 注册于 index.ts，为每个请求注入 X-Trace-Id 响应头
+    expect(typeof res.headers['x-trace-id']).toBe('string');
+    expect(String(res.headers['x-trace-id'])).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('telemetry 中间件已接线：GET /api/watchlist 同样带 X-Trace-Id', async () => {
+    const res = await request(app).get('/api/watchlist');
+    expect(res.status).toBe(200);
+    expect(typeof res.headers['x-trace-id']).toBe('string');
+  });
 });

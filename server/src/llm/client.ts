@@ -13,6 +13,7 @@ import {
   type LLMTask,
 } from './config.js';
 import { recordUsage } from './cost.js';
+import { getTracer, withSpan, type TelemetrySpan } from '../services/telemetry.js';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -43,49 +44,51 @@ export interface LLMOptions {
  */
 export async function chat(messages: ChatMessage[], options: LLMOptions = {}): Promise<string> {
   if (!isLLMAvailable()) throw new Error('LLM 未配置 API key，请设置 DEEPSEEK_API_KEY');
-  const config = getLLMConfig();
-  const model = options.model ?? selectModel(options.task ?? 'chat');
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-    temperature: options.temperature ?? 0.3,
-    max_tokens: options.maxTokens ?? 2048,
-    stream: false,
-  };
-  if (options.jsonMode) {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeout ?? 60000);
-  // 若外部传入 signal，联动取消
-  if (options.signal) {
-    options.signal.addEventListener('abort', () => controller.abort(), { once: true });
-  }
-
-  try {
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      throw new Error(`LLM 请求失败 (${response.status}): ${errText.slice(0, 300)}`);
-    }
-    const data = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
+  return withSpan('llm.chat', async (_ctx, span) => {
+    const config = getLLMConfig();
+    const model = options.model ?? selectModel(options.task ?? 'chat');
+    const body: Record<string, unknown> = {
+      model,
+      messages,
+      temperature: options.temperature ?? 0.3,
+      max_tokens: options.maxTokens ?? 2048,
+      stream: false,
     };
-    recordUsageFromResponse(model, data, options.task);
-    return data.choices?.[0]?.message?.content || '';
-  } finally {
-    clearTimeout(timer);
-  }
+    if (options.jsonMode) {
+      body.response_format = { type: 'json_object' };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeout ?? 60000);
+    // 若外部传入 signal，联动取消
+    if (options.signal) {
+      options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+
+    try {
+      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        throw new Error(`LLM 请求失败 (${response.status}): ${errText.slice(0, 300)}`);
+      }
+      const data = (await response.json()) as {
+        choices?: { message?: { content?: string } }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      recordLLMUsage(model, data.usage, options.task, span);
+      return data.choices?.[0]?.message?.content || '';
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 }
 
 /**
@@ -97,83 +100,85 @@ export async function chatStream(
   options: LLMOptions = {}
 ): Promise<string> {
   if (!isLLMAvailable()) throw new Error('LLM 未配置 API key，请设置 DEEPSEEK_API_KEY');
-  const config = getLLMConfig();
-  const model = options.model ?? selectModel(options.task ?? 'chat');
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-    temperature: options.temperature ?? 0.3,
-    max_tokens: options.maxTokens ?? 2048,
-    stream: true,
-    // 请求在末尾 chunk 携带 usage，用于成本治理（OpenAI/DeepSeek 兼容）。
-    // 不带此项时流式响应无 usage，调用将完全游离于成本记账之外。
-    stream_options: { include_usage: true },
-  };
-  if (options.jsonMode) {
-    body.response_format = { type: 'json_object' };
-  }
-
-  // 与 chat() 一致的超时控制：默认 60s，外部 signal 联动取消。
-  // 此前直接透传 options.signal 且无超时，连接 stall 会永久挂起。
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeout ?? 60000);
-  if (options.signal) {
-    options.signal.addEventListener('abort', () => controller.abort(), { once: true });
-  }
-
-  try {
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!response.ok || !response.body) {
-      const errText = await response.text().catch(() => '');
-      throw new Error(`LLM 流式请求失败 (${response.status}): ${errText.slice(0, 300)}`);
+  return withSpan('llm.chat', async (_ctx, span) => {
+    const config = getLLMConfig();
+    const model = options.model ?? selectModel(options.task ?? 'chat');
+    const body: Record<string, unknown> = {
+      model,
+      messages,
+      temperature: options.temperature ?? 0.3,
+      max_tokens: options.maxTokens ?? 2048,
+      stream: true,
+      // 请求在末尾 chunk 携带 usage，用于成本治理（OpenAI/DeepSeek 兼容）。
+      // 不带此项时流式响应无 usage，调用将完全游离于成本记账之外。
+      stream_options: { include_usage: true },
+    };
+    if (options.jsonMode) {
+      body.response_format = { type: 'json_object' };
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let full = '';
-    let buffer = '';
-    let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data:')) continue;
-        const data = trimmed.slice(5).trim();
-        if (data === '[DONE]') continue;
-        try {
-          const json = JSON.parse(data) as {
-            choices?: { delta?: { content?: string } }[];
-            usage?: { prompt_tokens?: number; completion_tokens?: number };
-          };
-          // 末尾 chunk（include_usage:true 时）携带 usage，捕获后用于成本记账
-          if (json.usage) usage = json.usage;
-          const token = json.choices?.[0]?.delta?.content || '';
-          if (token) {
-            full += token;
-            onToken(token);
+    // 与 chat() 一致的超时控制：默认 60s，外部 signal 联动取消。
+    // 此前直接透传 options.signal 且无超时，连接 stall 会永久挂起。
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeout ?? 60000);
+    if (options.signal) {
+      options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+
+    try {
+      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) {
+        const errText = await response.text().catch(() => '');
+        throw new Error(`LLM 流式请求失败 (${response.status}): ${errText.slice(0, 300)}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let full = '';
+      let buffer = '';
+      let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith('data:')) continue;
+          const data = trimmed.slice(5).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const json = JSON.parse(data) as {
+              choices?: { delta?: { content?: string } }[];
+              usage?: { prompt_tokens?: number; completion_tokens?: number };
+            };
+            // 末尾 chunk（include_usage:true 时）携带 usage，捕获后用于成本记账
+            if (json.usage) usage = json.usage;
+            const token = json.choices?.[0]?.delta?.content || '';
+            if (token) {
+              full += token;
+              onToken(token);
+            }
+          } catch {
+            // 忽略心跳/不完整行
           }
-        } catch {
-          // 忽略心跳/不完整行
         }
       }
+      if (usage) recordLLMUsage(model, usage, options.task, span);
+      return full;
+    } finally {
+      clearTimeout(timer);
     }
-    if (usage) recordUsageFromResponse(model, { usage }, options.task);
-    return full;
-  } finally {
-    clearTimeout(timer);
-  }
+  });
 }
 
 /**
@@ -341,6 +346,27 @@ function recordUsageFromResponse(
     ((usage.prompt_tokens ?? 0) / 1000) * spec.costPer1kInput +
     ((usage.completion_tokens ?? 0) / 1000) * spec.costPer1kOutput;
   recordUsage(model, usage.prompt_tokens ?? 0, usage.completion_tokens ?? 0, { cost, task });
+}
+
+/**
+ * 通过 telemetry 记录 LLM 调用成本与 token：
+ * 内部复用 recordUsage 落账 cost.ts（单条账目），同时把用量作为事件与累计属性挂到 span。
+ * 无 usage 时安全跳过（与 recordUsageFromResponse 一致，避免 0-token 假账）。
+ */
+function recordLLMUsage(
+  model: string,
+  usage: { prompt_tokens?: number; completion_tokens?: number } | undefined,
+  task?: LLMTask,
+  span?: TelemetrySpan,
+): void {
+  if (!usage || (!usage.prompt_tokens && !usage.completion_tokens)) return;
+  const promptTokens = usage.prompt_tokens ?? 0;
+  const completionTokens = usage.completion_tokens ?? 0;
+  const spec = modelSpec(model);
+  const cost =
+    (promptTokens / 1000) * spec.costPer1kInput +
+    (completionTokens / 1000) * spec.costPer1kOutput;
+  getTracer().recordLLMCall(model, promptTokens, completionTokens, cost, span);
 }
 
 /** 从可能被 markdown 包裹的文本中提取 JSON */

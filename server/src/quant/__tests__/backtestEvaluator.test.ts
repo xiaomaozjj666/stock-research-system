@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compareBacktests } from '../backtestEvaluator.js';
+import { compareBacktests, deflatedSharpeRatio, expectedMaxOfNormals, normCDF } from '../backtestEvaluator.js';
 import type { BacktestResult } from '../types.js';
 
 function makeCurve(start: number, dailyRet: number, days: number): { date: string; value: number }[] {
@@ -237,5 +237,64 @@ describe('compareBacktests — 学界标准增强', () => {
     const experiment = makeResult({ equityCurve: makeCurve(10000, 0.0015, 60) });
     const r = compareBacktests(baseline, experiment, { numStrategiesTried: 10 });
     expect(r.caveats.some((c) => c.includes('10 个策略变体'))).toBe(true);
+  });
+});
+
+describe('Deflated Sharpe — 标准公式（Bailey-López de Prado 2014）', () => {
+  it('SR_0 = E[max of N N(0,1)] 随 N 增大单调递增', () => {
+    const ns = [2, 3, 5, 10, 30, 100, 1000, 10000];
+    for (let i = 1; i < ns.length; i++) {
+      expect(expectedMaxOfNormals(ns[i])).toBeGreaterThan(expectedMaxOfNormals(ns[i - 1]));
+    }
+    // 与极值理论已知值对照：E[max of 100 个标准正态] ≈ 2.5076
+    expect(expectedMaxOfNormals(100)).toBeCloseTo(2.5076, 1);
+    // N=1 无选择偏差，退回 0
+    expect(expectedMaxOfNormals(1)).toBe(0);
+    expect(expectedMaxOfNormals(0)).toBe(0);
+  });
+
+  it('N=1 时 DSR 退化为 PSR（SR_0 = 0，无搜索偏差）', () => {
+    const baseline = makeResult({ equityCurve: makeCurve(10000, 0.001, 100) });
+    const experiment = makeResult({ sharpeRatio: 1.5, equityCurve: makeCurve(10000, 0.0015, 100) });
+    const r = compareBacktests(baseline, experiment); // 默认 numStrategiesTried=1
+    expect(r.deflatedSharpeRatio).toBeDefined();
+    expect(r.probabilisticSharpeRatio).toBeDefined();
+    // 单次预注册检验：SR_0 = 0，DSR 与 PSR 数值一致
+    expect(r.deflatedSharpeRatio!).toBeCloseTo(r.probabilisticSharpeRatio!, 10);
+  });
+
+  it('大 N 时显著阈值抬高：DSR 显著低于单次检验', () => {
+    const sr = 0.15;
+    const T = 252;
+    const skew = 0;
+    const kurt = 0;
+    const dsrSingle = deflatedSharpeRatio(sr, 1, T, skew, kurt);
+    const dsrMany = deflatedSharpeRatio(sr, 100, T, skew, kurt);
+    // N=1：无校正，强 Sharpe 下接近 1
+    expect(dsrSingle).toBeGreaterThan(0.9);
+    // N=100：扣除 E[max] 抬升后显著阈值抬高，DSR 跌破 0.5
+    expect(dsrMany).toBeLessThan(dsrSingle);
+    expect(dsrMany).toBeLessThan(0.5);
+  });
+
+  it('DSR 随 N 增大连续降低（多重检验惩罚单调）', () => {
+    const sr = 0.1;
+    const T = 252;
+    const dsrs = [1, 2, 5, 20, 100].map((n) => deflatedSharpeRatio(sr, n, T, 0, 0));
+    for (let i = 1; i < dsrs.length; i++) {
+      expect(dsrs[i]).toBeLessThan(dsrs[i - 1]);
+    }
+  });
+
+  it('峰度项按标准式 (γ₄−1)/4 = (超额峰度+2)/4 计算（回归旧 bug：超额峰度直接代入 /4）', () => {
+    // 选超额峰度 3（厚尾）：γ₄ = 3+3 = 6，标准项 (6−1)/4 = 5/4，旧实现会误用 3/4
+    const sr = 0.5;
+    const T = 63;
+    const skew = 0;
+    const kurt = 3;
+    const sigma = Math.sqrt((1 - skew * sr + ((kurt + 2) / 4) * sr * sr) / (T - 1));
+    const expectedPsr = normCDF(sr / sigma);
+    // N=1 时 DSR = PSR，应与手工按标准公式算出的数值一致
+    expect(deflatedSharpeRatio(sr, 1, T, skew, kurt)).toBeCloseTo(expectedPsr, 6);
   });
 });

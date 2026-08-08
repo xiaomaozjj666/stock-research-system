@@ -24,6 +24,10 @@ import { extractTextFromPdf } from './quant/pdfExtract.js';
 import { startAutonomousLoop, type AutonomousController } from './services/scheduler.js';
 import { getModelRegistry, selectModel, getCostReport, resetCostTracker, isLLMAvailable, isEmbeddingConfigured } from './llm/index.js';
 import { clearHistory } from './services/chatMemory.js';
+import { configureTracer, expressTracerMiddleware } from './services/telemetry.js';
+import { PaperAccount } from './quant/paperTrading.js';
+import { auditLogger } from './services/auditLog.js';
+import { fetchIntlFundamentals, detectMarket, type IntlMarket } from './quant/intlDataProvider.js';
 
 export const app = express();
 
@@ -119,6 +123,23 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   });
   next();
 });
+
+// === 全链路追踪：为每个 HTTP 请求注入 X-Trace-Id 并采集 span ===
+// span 完成时输出到结构化日志（debug 级，需 LOG_LEVEL=debug 才可见，避免默认噪声）
+configureTracer({
+  exportHook: (span) => {
+    logger.debug('trace.span.completed', {
+      traceId: span.traceId,
+      spanId: span.spanId,
+      parentSpanId: span.parentSpanId,
+      name: span.name,
+      durationMs: span.durationMs,
+      status: span.status,
+      attributes: span.attributes,
+    });
+  },
+});
+app.use(expressTracerMiddleware());
 
 // === Rate Limiting ===
 const windowMs = Number(process.env.RATE_LIMIT_WINDOW_MS) || 60000;
@@ -564,6 +585,119 @@ app.post('/api/watchlist/monitor', watchlistLimiter, async (req, res) => {
   } catch (error) {
     logger.error('Watchlist monitor error', { route: '/api/watchlist/monitor', err: error });
     res.status(500).json({ error: '自选股监控失败', detail: (error as Error).message });
+  }
+});
+
+// === 模拟盘（paper trading）研究闭环：无实盘资金，日 K 收盘撮合 + A 股规则（T+1/涨跌停/整手/费用） ===
+const PAPER_INITIAL_CAPITAL = Number(process.env.PAPER_INITIAL_CAPITAL) || 100_000;
+let _paperAccount: PaperAccount | null = null;
+function getPaperAccount(): PaperAccount {
+  if (!_paperAccount) {
+    _paperAccount = PaperAccount.load(path.join(import.meta.dirname, 'data', 'paperTrading.json')) ?? new PaperAccount(PAPER_INITIAL_CAPITAL, { autoSave: true });
+  }
+  return _paperAccount;
+}
+
+app.get('/api/paper/portfolio', (req, res) => {
+  try {
+    const acct = getPaperAccount();
+    res.json({
+      initialCapital: acct.initialCapital,
+      cash: acct.cash,
+      currentDate: acct.currentTradingDate,
+      positions: [...acct.positions.entries()].map(([, p]) => ({ ...p })),
+      orders: acct.orders.slice(-50),
+      equity: acct.getDailyEquity(),
+    });
+  } catch (error) {
+    logger.error('Paper portfolio error', { route: '/api/paper/portfolio', err: error });
+    res.status(500).json({ error: '模拟盘账户读取失败', detail: (error as Error).message });
+  }
+});
+
+app.post('/api/paper/order', (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const acct = getPaperAccount();
+    if (typeof body.date === 'string') acct.setCurrentDate(body.date);
+    const order = acct.placeOrder({
+      code: String(body.code ?? ''),
+      side: body.side as 'buy' | 'sell',
+      type: body.type as 'market' | 'limit',
+      price: typeof body.price === 'number' ? body.price : undefined,
+      quantity: Number(body.quantity),
+    });
+    acct.save();
+    res.json({ order });
+  } catch (error) {
+    logger.warn('Paper order rejected', { route: '/api/paper/order', err: error });
+    res.status(400).json({ error: '下单失败', detail: (error as Error).message });
+  }
+});
+
+app.post('/api/paper/settle', (req, res) => {
+  try {
+    const body = req.body ?? {};
+    if (typeof body.date !== 'string') {
+      return res.status(400).json({ error: '缺少结算日期 date（YYYY-MM-DD）' });
+    }
+    const acct = getPaperAccount();
+    acct.setCurrentDate(body.date);
+    const closes = new Map<string, number>(Object.entries(body.closePrices ?? {}));
+    const prev = body.prevClosePrices ? new Map<string, number>(Object.entries(body.prevClosePrices)) : undefined;
+    acct.settleDay(closes, prev);
+    acct.save();
+    const equity = acct.getDailyEquity();
+    res.json({ date: body.date, cash: acct.cash, latestEquity: equity.at(-1), history: equity });
+  } catch (error) {
+    logger.error('Paper settle error', { route: '/api/paper/settle', err: error });
+    res.status(500).json({ error: '日终结算失败', detail: (error as Error).message });
+  }
+});
+
+app.get('/api/paper/stats', (req, res) => {
+  try {
+    res.json(getPaperAccount().computeStats());
+  } catch (error) {
+    logger.error('Paper stats error', { route: '/api/paper/stats', err: error });
+    res.status(500).json({ error: '统计失败', detail: (error as Error).message });
+  }
+});
+
+// === 合规审计查询（金融监管 8 号文）：可按类别/风险等级/时间/会话过滤 ===
+app.get('/api/audit', (req, res) => {
+  try {
+    const q = req.query;
+    const filter: Parameters<typeof auditLogger.query>[0] = {
+      ...(q.category ? { category: String(q.category) as never } : {}),
+      ...(q.riskLevel ? { riskLevel: String(q.riskLevel) as never } : {}),
+      ...(q.startTime ? { startTime: Number(q.startTime) } : {}),
+      ...(q.endTime ? { endTime: Number(q.endTime) } : {}),
+      ...(q.sessionId ? { sessionId: String(q.sessionId) } : {}),
+    };
+    const entries = auditLogger.query(filter);
+    res.json({ count: entries.length, entries });
+  } catch (error) {
+    logger.error('Audit query error', { route: '/api/audit', err: error });
+    res.status(500).json({ error: '审计查询失败', detail: (error as Error).message });
+  }
+});
+
+// === 港美股财务估值（东财 datacenter RPT 网关，替代 push2） ===
+app.get('/api/intl/fundamentals', async (req, res) => {
+  try {
+    const code = String(req.query.code ?? '').trim();
+    if (!code) return res.status(400).json({ error: '请提供代码 code' });
+    const rawMarket = req.query.market ? String(req.query.market).toUpperCase() : detectMarket(code);
+    if (rawMarket === 'A') {
+      return res.status(400).json({ error: 'A 股代码请走 /api/analyze 分析接口，本接口仅港美股财务估值' });
+    }
+    const market = rawMarket as IntlMarket;
+    const result = await fetchIntlFundamentals(code, market);
+    res.json(result);
+  } catch (error) {
+    logger.error('Intl fundamentals error', { route: '/api/intl/fundamentals', err: error });
+    res.status(500).json({ error: '港美股数据获取失败', detail: (error as Error).message });
   }
 });
 
