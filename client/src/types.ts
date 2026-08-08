@@ -198,3 +198,133 @@ export interface AnalysisResult {
   limitation_explain: string;
   data_sources?: DataSource[];
 }
+
+// === 模拟盘（paper trading）研究闭环 ===
+// 与 server/src/quant/paperTrading.ts 对齐
+export type PaperOrderSide = 'buy' | 'sell';
+export type PaperOrderType = 'market' | 'limit';
+export type PaperOrderStatus = 'pending' | 'filled' | 'expired' | 'rejected';
+
+/** 持仓（单代码一档：最近一次买入日用于 T+1 校验） */
+export interface PaperPosition {
+  code: string;
+  quantity: number; // 股数（100 整数倍）
+  avgCost: number; // 摊薄成本（含买入佣金）
+  buyDate: string; // 最近一次买入日期 YYYY-MM-DD
+}
+
+/** 订单（含成交/过期/拒绝的完整审计记录） */
+export interface PaperOrder {
+  id: string;
+  code: string;
+  side: PaperOrderSide;
+  type: PaperOrderType;
+  price?: number; // 限价单的申报价
+  quantity: number; // 委托数量（已按整手取整）
+  placedDate: string; // 下单日期 YYYY-MM-DD
+  status: PaperOrderStatus;
+  fillDate?: string;
+  fillPrice?: number;
+  filledQuantity?: number;
+  commission?: number;
+  stampDuty?: number; // 仅卖出产生
+  rejectReason?: string;
+}
+
+/** 每日净值记录 */
+export interface PaperEquityPoint {
+  date: string; // YYYY-MM-DD
+  value: number; // 现金 + 持仓市值
+}
+
+/** GET /api/paper/portfolio 响应 */
+export interface PaperPortfolio {
+  initialCapital: number;
+  cash: number;
+  currentDate: string | null;
+  positions: PaperPosition[];
+  orders: PaperOrder[]; // 最近 50 笔
+  equity: PaperEquityPoint[];
+}
+
+/** 下单入参（POST /api/paper/order） */
+export interface PaperOrderInput {
+  code: string;
+  side: PaperOrderSide;
+  type: PaperOrderType;
+  price?: number; // 限价单必填
+  quantity: number; // 股数，自动向下取整到整手
+  date?: string; // 可选：下单基准交易日
+}
+
+/** 账户绩效统计（GET /api/paper/stats） */
+export interface PaperStats {
+  initialCapital: number;
+  finalEquity: number;
+  totalReturnPct: number | null; // 累计收益率 %
+  maxDrawdownPct: number | null; // 最大回撤 %
+  sharpeRatio: number | null; // 年化夏普（净值点不足时为 null）
+  totalDays: number; // 已结算交易天数（净值点数）
+  dailyReturns: number[]; // 逐日收益率
+}
+
+// === 合规审计（与 server/src/services/auditLog.ts 对齐） ===
+export type AuditCategory =
+  | 'llm_call'
+  | 'tool_call'
+  | 'trade_signal'
+  | 'data_access'
+  | 'user_query'
+  | 'system';
+
+export type AuditRiskLevel = 'info' | 'low' | 'medium' | 'high' | 'critical';
+
+/** 审计条目 */
+export interface AuditEntry {
+  id: string;
+  timestamp: number; // epoch 毫秒
+  sessionId: string;
+  userId?: string;
+  action: string; // 如 "llm.chat" / "tool.run_analysis"
+  category: AuditCategory;
+  detail: string;
+  riskLevel: AuditRiskLevel;
+  traceId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** 审计查询过滤条件（GET /api/audit query） */
+export interface AuditQueryFilter {
+  category?: AuditCategory | AuditCategory[];
+  riskLevel?: AuditRiskLevel | AuditRiskLevel[];
+  startTime?: number; // epoch 毫秒，含
+  endTime?: number; // epoch 毫秒，含
+  sessionId?: string;
+}
+
+// === 港美股财务估值（与 server/src/quant/intlDataProvider.ts 对齐） ===
+export type IntlMarket = 'HK' | 'US';
+
+/** 港美股基础财务估值快照 */
+export interface IntlFundamentals {
+  code: string;
+  market: IntlMarket;
+  name: string;
+  pe: number;
+  pb: number;
+  marketCap: number; // 亿元（按本币计）
+  revenue: number; // 亿元
+  netIncome: number; // 亿元
+  totalAssets: number; // 亿元
+  totalLiabilities: number; // 亿元
+  currency: string; // HK = HKD，US = USD
+  dataSource: string;
+}
+
+/** 港美股财务估值获取结果（含降级标记） */
+export interface IntlFundamentalsResult {
+  fundamentals: IntlFundamentals | null;
+  degraded: boolean;
+  source: string;
+  fetchedAt: string;
+}

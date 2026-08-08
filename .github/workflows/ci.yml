@@ -1,0 +1,56 @@
+# 项目持续集成（GitHub Actions）
+# 触发：push 到 main/master 分支 + 任意 PR
+name: CI
+
+"on":
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  ci:
+    name: Lint / TypeCheck / Build / Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          # 与本地一致（本地 Node v24.19.0 / npm 12.0.2）。
+          # 当前 24.x 均捆绑 npm ≥12，可识别根 package.json 的 allowScripts 字段
+          # 与 --dangerously-allow-all-scripts 参数（见下方 install 说明）。
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        # 参照 ENGINEERING-NOTES 的安装命令（npm ci 按 lockfile 复刻，v3 锁文件）：
+        #   --legacy-peer-deps        绕过 TS7 的 peer 约束
+        #   --dangerously-allow-all-scripts  放行 esbuild 等依赖构建脚本
+        #     （根 package.json 的 allowScripts 已声明 esbuild，参数为兜底）
+        run: npm ci --legacy-peer-deps --dangerously-allow-all-scripts --no-audit --no-fund
+
+      - name: Lint
+        # eslint 只覆盖 JS/JSON 与代码风格（typescript-eslint 暂不支持 TS7，见 ENGINEERING-NOTES）
+        run: npm run lint
+
+      - name: TypeCheck (server)
+        run: npx tsc --noEmit -p server/tsconfig.json
+
+      - name: TypeCheck & Build (client)
+        # client build = `tsc -b && vite build`（tsc -b 即 client 的类型检查门禁）
+        run: npm run build --workspace=client
+
+      - name: Build (server)
+        # server build = `tsc`（NodeNext 编译产出 dist）
+        run: npm run build --workspace=server
+
+      - name: Test
+        # vitest run 全量测试（globals=false，测试内显式 import vi/expect）。
+        # 平台依赖说明：测试均已 mock 网络（不依赖真实行情/东财接口）；
+        #   临时文件用 os.tmpdir() + path.join（跨平台），
+        #   child_process 相关在 http.test.ts 中整体 vi.mock，mcpClient.test.ts 用
+        #   process.execPath 启动自身 Node（跨平台可靠），故 Linux runner 可直接运行。
+        run: npm run test

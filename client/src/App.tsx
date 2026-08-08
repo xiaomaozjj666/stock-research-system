@@ -25,9 +25,10 @@ import ChatPanel from './components/ChatPanel';
 import { useScrollReveal } from './hooks/useScrollReveal';
 import { useCountUp } from './hooks/useCountUp';
 
-// 路由级懒加载：减小首屏体积，量化/对比页按需加载
+// 路由级懒加载：减小首屏体积，量化/对比/模拟盘页按需加载
 const QuantPage = lazy(() => import('./pages/quant/QuantPage'));
 const ComparisonView = lazy(() => import('./components/ComparisonView'));
+const PaperTradingPage = lazy(() => import('./pages/paper/PaperTradingPage'));
 
 /* ===== RevealSection wrapper ===== */
 function RevealSection({ children, id, className = '', delay = 0 }: {
@@ -87,7 +88,7 @@ function App() {
   const [analysisStage, setAnalysisStage] = useState<AnalysisStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState('');
-  const [activeTab, setActiveTab] = useState<'research' | 'quant' | 'compare' | 'watchlist' | 'chat'>('research');
+  const [activeTab, setActiveTab] = useState<'research' | 'quant' | 'compare' | 'watchlist' | 'paper' | 'chat'>('research');
   const [scrollProgress, setScrollProgress] = useState(0);
   /** 最近一次分析的代码，用于失败后一键重试 */
   const lastCodeRef = useRef<string>('');
@@ -204,6 +205,12 @@ function App() {
           onClick={() => setActiveTab('watchlist')}
         >
           自选股
+        </button>
+        <button
+          className={`tab ${activeTab === 'paper' ? 'active' : ''}`}
+          onClick={() => setActiveTab('paper')}
+        >
+          模拟盘
         </button>
         <button
           className={`tab ${activeTab === 'chat' ? 'active' : ''}`}
@@ -348,6 +355,7 @@ function App() {
         {activeTab === 'quant' && <QuantPage />}
         {activeTab === 'compare' && <ComparisonView />}
         {activeTab === 'watchlist' && <WatchlistPage />}
+        {activeTab === 'paper' && <PaperTradingPage />}
         {activeTab === 'chat' && <ChatPanel />}
       </Suspense>
     </div>
