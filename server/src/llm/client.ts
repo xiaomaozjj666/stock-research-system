@@ -105,53 +105,75 @@ export async function chatStream(
     temperature: options.temperature ?? 0.3,
     max_tokens: options.maxTokens ?? 2048,
     stream: true,
+    // 请求在末尾 chunk 携带 usage，用于成本治理（OpenAI/DeepSeek 兼容）。
+    // 不带此项时流式响应无 usage，调用将完全游离于成本记账之外。
+    stream_options: { include_usage: true },
   };
   if (options.jsonMode) {
     body.response_format = { type: 'json_object' };
   }
 
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(body),
-    signal: options.signal,
-  });
-  if (!response.ok || !response.body) {
-    const errText = await response.text().catch(() => '');
-    throw new Error(`LLM 流式请求失败 (${response.status}): ${errText.slice(0, 300)}`);
+  // 与 chat() 一致的超时控制：默认 60s，外部 signal 联动取消。
+  // 此前直接透传 options.signal 且无超时，连接 stall 会永久挂起。
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeout ?? 60000);
+  if (options.signal) {
+    options.signal.addEventListener('abort', () => controller.abort(), { once: true });
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let full = '';
-  let buffer = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('data:')) continue;
-      const data = trimmed.slice(5).trim();
-      if (data === '[DONE]') continue;
-      try {
-        const json = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] };
-        const token = json.choices?.[0]?.delta?.content || '';
-        if (token) {
-          full += token;
-          onToken(token);
+  try {
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`LLM 流式请求失败 (${response.status}): ${errText.slice(0, 300)}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let full = '';
+    let buffer = '';
+    let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+        const data = trimmed.slice(5).trim();
+        if (data === '[DONE]') continue;
+        try {
+          const json = JSON.parse(data) as {
+            choices?: { delta?: { content?: string } }[];
+            usage?: { prompt_tokens?: number; completion_tokens?: number };
+          };
+          // 末尾 chunk（include_usage:true 时）携带 usage，捕获后用于成本记账
+          if (json.usage) usage = json.usage;
+          const token = json.choices?.[0]?.delta?.content || '';
+          if (token) {
+            full += token;
+            onToken(token);
+          }
+        } catch {
+          // 忽略心跳/不完整行
         }
-      } catch {
-        // 忽略心跳/不完整行
       }
     }
+    if (usage) recordUsageFromResponse(model, { usage }, options.task);
+    return full;
+  } finally {
+    clearTimeout(timer);
   }
-  return full;
 }
 
 /**
@@ -201,15 +223,28 @@ export async function chatWithTools(
       tool_choice: 'auto',
     };
 
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    // 每轮请求独立超时控制（与 chat 一致）：此前直接透传 options.signal，
+    // options.timeout 被静默忽略（chatAgent 传入 timeout:60000 实际无效），
+    // 单轮挂死会让整个工具调用回路卡满 5 轮。
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeout ?? 60000);
+    if (options.signal) {
+      options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+    let response: Response;
+    try {
+      response = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
       throw new Error(`LLM 工具调用失败 (${response.status}): ${errText.slice(0, 300)}`);

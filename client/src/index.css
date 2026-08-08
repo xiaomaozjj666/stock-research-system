@@ -2459,6 +2459,11 @@ tr:hover td { background: var(--bg-card-hover); }
 .chat-badge-warn { background: #fef3c7; color: #92400e; }
 .chat-badge-model { background: #e0f2fe; color: #075985; }
 .chat-badge-tool { background: #dcfce7; color: #166534; }
+.chat-badge-plan { background: #ede9fe; color: #5b21b6; }
+.chat-verification { margin-top: 8px; padding: 8px 10px; background: #fff7ed; border: 1px solid #fb923c; border-radius: 8px; font-size: 12px; color: #9a3412; }
+.chat-verification strong { display: block; margin-bottom: 4px; }
+.chat-verification p { margin: 0 0 4px; }
+.chat-verification ul { margin: 0; padding-left: 18px; }
 .chat-evidence-toggle { font-size: 11px; background: none; border: none; color: var(--color-primary, #185fa5); cursor: pointer; padding: 2px 4px; }
 .chat-evidence { list-style: none; margin: 6px 0 0; padding: 8px; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; }
 .chat-evidence li { font-size: 12px; }
@@ -2470,6 +2475,16 @@ tr:hover td { background: var(--bg-card-hover); }
 .chat-debate-bull { background: #fef2f2; }
 .chat-debate-bear { background: #f0fdf4; }
 .chat-debate-synthesis { background: #eff6ff; }
+.chat-calc-errors { margin-top: 8px; padding-top: 6px; border-top: 1px dashed #fb923c; }
+.chat-calc-errors > strong { display: block; margin-bottom: 4px; color: #9a3412; }
+.chat-calc-error { padding: 6px 8px; background: #fef2f2; border-radius: 6px; margin-bottom: 4px; }
+.chat-calc-claim { font-weight: 600; }
+.chat-calc-formula { font-family: var(--font-mono, monospace); font-size: 11px; color: #64748b; }
+.chat-calc-disc { color: #b91c1c; font-size: 11px; }
+.chat-risk-debate { border-top: 2px solid #e5e7eb; padding-top: 6px; }
+.chat-risk-aggressive { background: #fef2f2; border-left: 3px solid #ef4444; }
+.chat-risk-neutral { background: #fffbeb; border-left: 3px solid #f59e0b; }
+.chat-risk-conservative { background: #f0fdf4; border-left: 3px solid #22c55e; }
 .chat-loading { color: #64748b; }
 .chat-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #94a3b8; margin-right: 6px; animation: chatpulse 1s infinite; }
 @keyframes chatpulse { 0%,100% { opacity: .3; } 50% { opacity: 1; } }

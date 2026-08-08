@@ -112,4 +112,31 @@ describe('chatWithTools 工具调用回路', () => {
     expect(res.content).toBe('直接回答');
     expect(res.toolCalls).toHaveLength(0);
   });
+
+  it('options.timeout 生效：超时触发 abort，不再静默忽略', async () => {
+    // 模拟永不返回的 fetch，仅在 signal abort 时 reject。
+    // 修复前：options.timeout 被忽略，fetch 永远 pending，测试会挂到 vitest 超时。
+    // 修复后：30ms 后 controller.abort() 触发，promise 很快 reject。
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: { signal?: AbortSignal }) => {
+      return new Promise((_resolve, reject) => {
+        const sig = init?.signal;
+        const onAbort = () => reject(new Error('The operation was aborted'));
+        if (sig?.aborted) onAbort();
+        else sig?.addEventListener('abort', onAbort, { once: true });
+      });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const start = Date.now();
+    await expect(
+      chatWithTools(
+        [{ role: 'user', content: 'hi' }],
+        [],
+        async () => 'never',
+        { timeout: 30 },
+      ),
+    ).rejects.toThrow(/abort/i);
+    // 确认是超时触发（远小于 vitest 默认 5s 测试超时），而非挂死
+    expect(Date.now() - start).toBeLessThan(2000);
+  });
 });
