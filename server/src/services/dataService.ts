@@ -122,7 +122,7 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
         peers: valuation.peerComparison.map((p) => p.code + p.name),
       });
     } catch (e) {
-      logger.info('[peer] buildPeerComparison error', { err: e as Error });
+      logger.warn('[peer] buildPeerComparison error', { err: e as Error });
     }
 
     const dataSet: StockDataSet = { info, financial, valuation };

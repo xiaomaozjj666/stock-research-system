@@ -25,6 +25,8 @@ export function backtestAuditor(backtest: BacktestResult, strategy: StrategyConf
   }
 
   // --- 3. 幸存者偏差检查 ---
+  // checkSurvivorshipBias 是信息性检查：单股回测无法完全检测幸存者偏差，设计上恒 passed:true。
+  // 下方 if 分支为冗余防御，保留以防未来该检查能返回失败（勿误判为可删除的死代码）。
   const survivorCheck = checkSurvivorshipBias(strategy);
   checks.push(survivorCheck.check);
   if (!survivorCheck.check.passed) {

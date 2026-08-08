@@ -69,6 +69,15 @@ describe('extractTextFromPdf', () => {
   });
 
   it('pdfjs-dist 未安装时抛出清晰错误提示', async () => {
+    // 先探测 pdfjs-dist 是否真实安装（import.meta.resolve 走 Node 解析，不受 vi.mock 影响）；
+    // 一旦将来安装该包，本用例场景消失，直接跳过避免误失败。
+    let installed = true;
+    try {
+      await import.meta.resolve('pdfjs-dist/legacy/build/pdf.mjs');
+    } catch {
+      installed = false;
+    }
+    if (installed) return;
     vi.doUnmock('pdfjs-dist/legacy/build/pdf.mjs');
     await expect(extractTextFromPdf(Buffer.from('x'))).rejects.toThrow(
       'PDF 抽取需要安装 pdfjs-dist',
