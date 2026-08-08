@@ -12,7 +12,7 @@
 - `npm run lint`（JS/风格）0。
 - `server`: `npx tsc --noEmit` 0。
 - `client`: `npm run build` OK。
-- `npm run test`（vitest run）：截至 2026-08-04 为 **599 passed / 0 failed**（57 文件）。
+- `npm run test`（vitest run）：截至 2026-08-09 为 **745 passed / 0 failed**。
 - 整体覆盖率 ~80%。
 
 ## 依赖升级的硬约束（踩过的坑）
@@ -27,7 +27,8 @@
 ## 数据源约束
 
 - 后端拉数只走 `datacenter.eastmoney.com` / `searchapi.eastmoney.com`（Node fetch 正常）。
-- `push2.eastmoney.com` 经 Node `fetch` / 子进程 `curl` 失败（TLS reset）。`stockMaster.loadStockMaster()`（push2 全表）在该环境必然失败，属预期。
+- `push2.eastmoney.com` 经 Node `fetch` / 子进程 `curl` 失败（TLS reset）。仍被 `stockMaster.loadStockMaster()`（push2 分页全表）与 `dataFetcher.ts`（股票基本信息主源，财务/估值兜底）引用，本环境必然失败，属预期：stockMaster 有磁盘缓存 + 搜索兜底链路，dataFetcher 基本信息回退新浪、财务/估值以 datacenter 为主。
+- 港美股财务估值 `quant/intlDataProvider.ts` 已从 push2 换到 `datacenter.eastmoney.com` 的 RPT 网关（免费无 token）：港股 `RPT_HKF10_FN_MAININDICATOR`（+ `RPT_HKF10_INFO_SECURITYINFO` 名称兜底）、美股 `RPT_USF10_INFO_ORGPROFILE`（+ `RPT_USF10_FN_GMAININDICATOR` 补营收/净利），不再"恒降级"；单只失败仍 `degraded=true` 降级不阻断。
 - 估值主源用 `RPT_VALUEANALYSIS_DET`：真实 CLOSE_PRICE / PE_TTM / PB_MRQ / TOTAL_MARKET_CAP / BOARD_NAME。push2 对同业股返回过错误量纲数据（如五粮液 PE=257），仅作 fallback。
 
 ## 搜索与显示名清洗（长鑫科技案例）
@@ -70,19 +71,36 @@
 
 - 工具：`spearmanRankIC`、`informationRatio`、`crossSectionalZScore`、`winsorize`、`compositeZ`、`zToScore`（logistic 映射到 [0,max]）。
 - `selectOptimalFactors`（Grinold-Kahn）：剔除 |IC|<0.02 与 |IR|<0.3 的因子；保留因子按 |IR| 分配权重 Σ=1；全无效回退等权。
-- `walkForwardBacktest`：`oosRatio = avgTestSharpe / avgTrainSharpe`，≥0.5 ⇒ stable（检过拟合）。
+- 旧 API `walkForwardBacktest`：`oosRatio = avgTestSharpe / avgTrainSharpe`，≥0.5 ⇒ stable（检过拟合）。新 API `runWalkForward` 的过拟合判定阈值见「受控评估」节（OOS 夏普 < 70% × IS 夏普才提示）。
 - 单股实时分析无「多股带实现收益的面板」时，最优权重默认走等权先验。
+
+## 模拟盘（quant/paperTrading.ts）
+
+- `PaperAccount` 自建 A 股撮合引擎，构成无实盘资金的研究闭环：策略信号 → 模拟下单 → 日终按收盘价撮合 → 记录每日净值 → 绩效统计。路由：`GET /api/paper/portfolio`、`POST /api/paper/order`、`POST /api/paper/settle`、`GET /api/paper/stats`。
+- 撮合规则：市价单按当日收盘价成交；限价单按收盘价触发（买单：收盘 ≤ 限价；卖单：收盘 ≥ 限价）且均按收盘价成交，当日未成交自动过期。
+- A 股硬规则：T+1（当日买入次日才可卖，`buyDate` 校验）、涨跌停拒单（主板 ±10%，`limitPct` 可配）、整手约束（数量向下取整到 100 股整数倍）、停牌/无收盘价拒单。
+- 费用：佣金默认万三（`commissionRate` 0.0003）、卖出加收印花税 0.1%（`stampDutyRate` 0.001），金额保留 2 位小数。
+- 绩效 `computeStats()`：累计收益 / 最大回撤 / 简单年化夏普（日频收益、无风险利率 2.5%、至少 2 个日收益点）。
+- 持久化：`server/src/data/paperTrading.json`（`PAPER_TRADING_FILE` env 可重定向），「临时文件 + 原子 rename」写入，无 sqlite 依赖；初始资金取 `PAPER_INITIAL_CAPITAL` env（默认 100,000）。
+
+## 受控评估（DSR / CSCV / Walk-Forward）
+
+- `quant/backtestEvaluator.ts` `compareBacktests`：同一数据/区间上「基线 vs 实验」的受控对比。配对 t 检验（Harvey-Liu-Zhu 2016：|t|>3 强显著 / 2-3 边际 / ≤2 不显著）、非正态诊断（|偏度|>1 或超额峰度>3 时以 Bootstrap 为准）、配对 Block Bootstrap CI（Politis-Romano stationary bootstrap，期望块长 2√n，2000 次，seed=42 确定性）、交易成本敏感性（A 股 0.4% round-trip）。
+- DSR 公式要点（Bailey-López de Prado 2014）：`DSR = Φ((SR − SR₀) / σ_SR)`，在 PSR 基础上扣除"试了 N 个策略取最佳"的搜索偏差。`SR₀ = σ_SR · E[max]`，`E[max] = (1−γ)·Φ⁻¹(1−1/N) + γ·Φ⁻¹(1−1/(N·e))`（γ≈0.5772 Euler-Mascheroni）；`σ_SR² = [1 − γ₃·SR + ((超额峰度+2)/4)·SR²] / (T−1)`（Mertens 2002 口径，正态时退化为 Lo(2002)）。DSR∈[0,1]，N 为试过的策略数（`numStrategiesTried`），N 越大越保守；另有 MinTRL（DSR≥0.95 所需最短回测年数）。
+- `quant/cscv.ts` `computePbo`：CSCV 组合对称交叉验证（De Prado et al. 2017）算回测过拟合概率 PBO。T 天切 S 块（默认 8、偶数），枚举 C(S, S/2) 个「取半块做 IS、剩半块做 OOS」组合，PBO = "IS 最优策略在 OOS 相对排名 ω<0.5"的组合占比；PBO≈0.5 表示选优近乎运气，≈0 表示选择有效。
+- `walkForward.ts` `runWalkForward`（新 API）：滚动/扩张窗口 OOS 评估，语义是「策略是否过拟合」（IS vs OOS），**不是**「信号 vs 基线」——信号对比用 `compareBacktests`。过拟合判定：OOS 平均夏普 < 70% × IS 平均夏普（`isOOSSignificantlyWorse`）且多数窗口 OOS 劣于 IS 才提示；另有 `consistencyScore = 1 − (子期间 Sharpe 标准差 / 均值)` 衡量跨窗口稳定性。
 
 ## 环境注意
 
 - 本机有 `http_proxy=http://127.0.0.1:7890` 代理，会干扰 npm/vitest 运行；执行前先 `unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY`。
 - Git Bash 里 `curl -o /tmp/x.json` 的路径映射不可靠，落盘请用项目内相对路径。
 
-## 已完成但未接入运行服务的模块（2026-08-08 巡检确认）
+## 已接线模块说明（2026-08-09 复核）
 
-以下模块测试通过但**尚未接线**到运行中的分析管线/服务，属"完成待接线"状态，接入前跑 `npm run test`（当前 637 passed）确认无回归：
+此前标注"完成待接线"的模块现已接入运行管线/服务，均为可选增强或降级安全（try/catch 包裹，失败不阻断主流程）：
 
-- `services/auditLog.ts`（金融监管 8 号文合规审计/熔断）、`services/telemetry.ts`（链路追踪）：仅内存态存储，生产需配 `persistenceHook`/`exportHook` 落盘才合规。
-- `llm/knowledgeGraph.ts`、`llm/mcpClient.ts`、`quant/sectorRotation.ts`：知识图谱 / MCP 工具 / 板块轮动，功能完整但未启用。
-- `quant/intlDataProvider.ts`（港美股财务估值）：数据源用 `http://push2.eastmoney.com`，本环境 Node fetch 必失败（TLS reset，见上）→ 恒为降级态；若要启用需换 `datacenter.eastmoney.com` 同源 RPT 接口。
-- `utils/env.ts`（环境变量校验）：已实现，接入面待评估。
+- `services/telemetry.ts`（全链路追踪）：`index.ts` 挂 `expressTracerMiddleware()`，为每个 HTTP 请求注入 `X-Trace-Id` root span，`configureTracer({ exportHook })` 将完成的 span 输出到 debug 级日志（`LOG_LEVEL=debug` 可见）；`llm/client.ts` 经 `recordLLMUsage → tracer.recordLLMCall` 记录 LLM span 及成本/token。
+- `services/auditLog.ts`（金融监管 8 号文合规审计）：全局 `auditLogger` 配 `filePersistenceHook` 落盘为 `server/src/data/audit.log`（JSON 行追加，IO 失败静默降级）；`analysisPipeline.ts` 在数据访问 / LLM 专家调用 / 交易信号三处埋审计点；`GET /api/audit` 支持 category/riskLevel/startTime/endTime/sessionId 过滤查询。熔断 `checkCircuitBreaker` 已实现并有单测，但尚未挂到运行时中间件。
+- `llm/knowledgeGraph.ts`、`quant/sectorRotation.ts`、`llm/mcpClient.ts`：作为 `analysisPipeline` 的可选增强接入——知识图谱（步骤 14，当前股票 + 同业可比数据构图）、板块轮动（步骤 15，单行业截面，rank 恒 1 仅作参考）默认启用，失败降级为无字段；MCP（步骤 16）仅当设 `MCP_SERVER_URL` 时启用。
+- `quant/intlDataProvider.ts`（港美股财务估值）：数据源已换 `datacenter.eastmoney.com` RPT 网关（见「数据源约束」），接入 `GET /api/intl/fundamentals?code=&market=`。
+- `utils/env.ts`（环境变量校验）：仍未接线，接入面待评估。

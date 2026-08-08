@@ -1,5 +1,16 @@
 import axios from 'axios';
-import type { AnalysisResult } from '../types';
+import type {
+  AnalysisResult,
+  AuditEntry,
+  AuditQueryFilter,
+  IntlFundamentalsResult,
+  IntlMarket,
+  PaperEquityPoint,
+  PaperOrder,
+  PaperOrderInput,
+  PaperPortfolio,
+  PaperStats,
+} from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -464,4 +475,71 @@ export function analyzeStockStream(
     },
     done,
   };
+}
+
+// === 模拟盘（paper trading）研究闭环 ===
+export async function getPaperPortfolio(): Promise<PaperPortfolio> {
+  try {
+    const response = await api.get('/paper/portfolio', { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '读取模拟盘账户失败');
+  }
+}
+
+export async function placePaperOrder(body: PaperOrderInput): Promise<{ order: PaperOrder }> {
+  try {
+    const response = await api.post('/paper/order', body, { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '模拟下单失败');
+  }
+}
+
+export async function settlePaperDay(body: {
+  date: string;
+  closePrices: Record<string, number>;
+  prevClosePrices?: Record<string, number>;
+}): Promise<{ date: string; cash: number; latestEquity?: PaperEquityPoint; history: PaperEquityPoint[] }> {
+  try {
+    const response = await api.post('/paper/settle', body, { timeout: 30000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '日终结算失败');
+  }
+}
+
+export async function getPaperStats(): Promise<PaperStats> {
+  try {
+    const response = await api.get('/paper/stats', { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '读取模拟盘统计失败');
+  }
+}
+
+// === 合规审计查询（金融监管 8 号文）：可按类别/风险等级/时间/会话过滤 ===
+export async function getAuditLog(query?: AuditQueryFilter): Promise<{ count: number; entries: AuditEntry[] }> {
+  try {
+    const response = await api.get('/audit', { params: query ?? {}, timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '审计查询失败');
+  }
+}
+
+// === 港美股财务估值（东财 datacenter RPT 网关） ===
+export async function getIntlFundamentals(
+  code: string,
+  market?: IntlMarket,
+): Promise<IntlFundamentalsResult> {
+  try {
+    const response = await api.get('/intl/fundamentals', {
+      params: { code, market },
+      timeout: 30000,
+    });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '港美股数据获取失败');
+  }
 }

@@ -591,9 +591,21 @@ app.post('/api/watchlist/monitor', watchlistLimiter, async (req, res) => {
 // === 模拟盘（paper trading）研究闭环：无实盘资金，日 K 收盘撮合 + A 股规则（T+1/涨跌停/整手/费用） ===
 const PAPER_INITIAL_CAPITAL = Number(process.env.PAPER_INITIAL_CAPITAL) || 100_000;
 let _paperAccount: PaperAccount | null = null;
+// 持久化路径可被 PAPER_TRADING_FILE 重定向（与 watchlist 的 WATCHLIST_FILE 同模式），测试据此隔离临时文件
+function paperStoreFile(): string {
+  return (
+    process.env.PAPER_TRADING_FILE && process.env.PAPER_TRADING_FILE.length > 0
+      ? process.env.PAPER_TRADING_FILE
+      : path.join(import.meta.dirname, 'data', 'paperTrading.json')
+  );
+}
 function getPaperAccount(): PaperAccount {
   if (!_paperAccount) {
-    _paperAccount = PaperAccount.load(path.join(import.meta.dirname, 'data', 'paperTrading.json')) ?? new PaperAccount(PAPER_INITIAL_CAPITAL, { autoSave: true });
+    const file = paperStoreFile();
+    // 文件缺失（首次运行/测试临时路径）时回退新建账户，避免 load 抛 ENOENT 导致 500
+    _paperAccount =
+      (fs.existsSync(file) ? PaperAccount.load(file) : null) ??
+      new PaperAccount(PAPER_INITIAL_CAPITAL, { autoSave: true });
   }
   return _paperAccount;
 }
@@ -627,6 +639,10 @@ app.post('/api/paper/order', (req, res) => {
       price: typeof body.price === 'number' ? body.price : undefined,
       quantity: Number(body.quantity),
     });
+    // 校验失败（非法代码/数量/限价等）placeOrder 返回 rejected 订单而非抛错 → 按 400 拒绝
+    if (order.status === 'rejected') {
+      return res.status(400).json({ error: '下单失败', detail: order.rejectReason ?? '无效订单' });
+    }
     acct.save();
     res.json({ order });
   } catch (error) {
