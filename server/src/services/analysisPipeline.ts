@@ -5,6 +5,9 @@ import { valuationExpert } from './experts/valuationExpert.js';
 import { industryExpert, type IndustryExpertResult } from './experts/industryExpert.js';
 import { riskExpert } from './experts/riskExpert.js';
 import { capitalFlowExpert } from './experts/capitalFlowExpert.js';
+import { policyExpert } from './experts/policyExpert.js';
+import { hotMoneyExpert } from './experts/hotMoneyExpert.js';
+import { unlockExpert } from './experts/unlockExpert.js';
 import { arbitrationExpert } from './experts/arbitrationExpert.js';
 import { generateScenarios } from './scenarioEngine.js';
 import { generateStrategyList } from './strategyListEngine.js';
@@ -96,18 +99,21 @@ export async function runAnalysis(
   }
 
   // 2. 多专家独立研判（并行调用，保留并行潜力以备未来异步化）
-  emit({ phase: 'experts', message: '5 位 AI 专家独立研判中...' });
-  const [fundOpinion, valOpinion, indOpinionResult, riskOpinion, capitalOpinion] = await Promise.all([
+  emit({ phase: 'experts', message: '8 位 AI 专家独立研判中...' });
+  const [fundOpinion, valOpinion, indOpinionResult, riskOpinion, capitalOpinion, policyOpinion, hotMoneyOpinion, unlockOpinion] = await Promise.all([
     fundamentalExpert(financial, valuation, info),
     valuationExpert(financial, valuation, info),
     industryExpert(financial, valuation, info),
     riskExpert(financial, valuation, info),
-    capitalFlowExpert(financial, valuation, info)
+    capitalFlowExpert(financial, valuation, info),
+    policyExpert(financial, valuation, info),
+    hotMoneyExpert(financial, valuation, info),
+    unlockExpert(financial, valuation, info),
   ]);
 
   // 提取行业专家结果和景气度建议
   const indOpinion: IndustryExpertResult = indOpinionResult;
-  const expertOpinions: ExpertOpinion[] = [fundOpinion, valOpinion, indOpinion, riskOpinion, capitalOpinion];
+  const expertOpinions: ExpertOpinion[] = [fundOpinion, valOpinion, indOpinion, riskOpinion, capitalOpinion, policyOpinion, hotMoneyOpinion, unlockOpinion];
 
   // 3. 辩论仲裁
   emit({ phase: 'arbitration', message: '多专家辩论仲裁中...' });

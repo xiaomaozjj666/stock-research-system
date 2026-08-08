@@ -159,11 +159,43 @@ export interface ChatDebate {
   synthesis: string;
 }
 
+export interface RiskDebateResult {
+  aggressive: string;
+  neutral: string;
+  conservative: string;
+  synthesis: string;
+}
+
+export interface AgentPlan {
+  action: 'direct' | 'tools' | 'debate';
+  reason: string;
+}
+
+export interface CalculationError {
+  claim: string;
+  reconstructedFormula: string;
+  recomputedValue: string;
+  claimedValue: string;
+  discrepancy: string;
+}
+
+export interface AnswerVerification {
+  verified: boolean;
+  unverified: string[];
+  calculationErrors: CalculationError[];
+  warning: string;
+}
+
 export interface ChatAgentResponse {
   answer: string;
   toolsUsed: string[];
   evidence: ChatEvidence[];
   debate?: ChatDebate;
+  riskDebate?: RiskDebateResult;
+  /** 路由规划结果（LLM 可用时返回） */
+  plan?: AgentPlan;
+  /** 幻觉防护校验结果 */
+  verification?: AnswerVerification;
   /** true = LLM 未配置，规则降级 */
   degraded: boolean;
   model?: string;
@@ -311,27 +343,36 @@ export async function getAutonomousStatus(): Promise<AutonomousState> {
  * 流式对话（SSE，事件式：最终以 {phase:'done', ...response} 推回）。
  * onEvent 在每次事件回调；返回的 cancel 可中断。
  */
+export type ChatStreamEvent =
+  | { phase: 'planning'; message: string }
+  | { phase: 'retrieving'; message: string }
+  | { phase: 'tool_calling'; message: string; tools?: string[] }
+  | { phase: 'debating'; message: string }
+  | { phase: 'verifying'; message: string }
+  | { phase: 'done'; message: string; response: ChatAgentResponse }
+  | { phase: 'error'; message: string };
+
 export function chatWithAgentStream(
   message: string,
-  onEvent: (event: { phase: 'done' | 'error'; answer?: string; [k: string]: unknown }) => void,
+  onEvent: (event: ChatStreamEvent) => void,
 ): { cancel: () => void } {
   const es = new EventSource(`/api/chat/stream?message=${encodeURIComponent(message)}`);
   let settled = false;
-  const finish = (data: { phase: 'done' | 'error' }) => {
+  const finish = (evt: ChatStreamEvent) => {
     if (settled) return;
     settled = true;
     es.close();
-    onEvent(data);
+    onEvent(evt);
   };
   es.onmessage = (e) => {
     try {
-      const data = JSON.parse(e.data) as { phase: 'done' | 'error' };
+      const data = JSON.parse(e.data) as ChatStreamEvent;
       if (data.phase === 'done' || data.phase === 'error') finish(data);
-      else onEvent(data as never);
-    } catch { /* 忽略 */ }
+      else onEvent(data);
+    } catch { /* 忽略偶发解析错误 */ }
   };
   es.onerror = () => {
-    if (!settled) finish({ phase: 'error' } as { phase: 'error' });
+    if (!settled) finish({ phase: 'error', message: '连接中断，对话未完成，请重试' });
   };
   return { cancel: () => { settled = true; es.close(); } };
 }

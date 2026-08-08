@@ -25,26 +25,92 @@ import { getModelRegistry, selectModel, getCostReport, resetCostTracker, isLLMAv
 import { clearHistory } from './services/chatMemory.js';
 
 export const app = express();
-app.use(cors());
 
-// === 安全响应头（OWASP 最佳实践，等效 helmet 核心） ===
+// === CORS 配置：生产环境限制来源，开发环境允许所有 ===
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+  : null;
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // 开发环境或无 origin（如 curl/测试）时允许
+      if (process.env.NODE_ENV !== 'production' || !origin) {
+        callback(null, true);
+        return;
+      }
+      // 生产环境：白名单校验
+      if (allowedOrigins && allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+    maxAge: 86400, // 预检请求缓存 24 小时
+  }),
+);
+
+// === 安全响应头（OWASP 最佳实践） ===
 app.use((_req: Request, res: Response, next: NextFunction) => {
+  // 基础安全头
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '0'); // 现代浏览器建议禁用旧 XSS Auditor，改用 CSP
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('X-XSS-Protection', '0'); // 现代浏览器建议禁用旧 XSS Auditor
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+
+  // 下载安全：防止 IE 执行下载的文件
+  res.setHeader('X-Download-Options', 'noopen');
+
+  // DNS 预取控制
+  res.setHeader('X-DNS-Prefetch-Control', 'off');
+
+  // HSTS：仅在生产环境且通过 HTTPS 访问时启用
+  if (process.env.NODE_ENV === 'production' && process.env.ENABLE_HSTS === 'true') {
+    res.setHeader(
+      'Strict-Transport-Security',
+      'max-age=63072000; includeSubDomains; preload', // 2 年
+    );
+  }
+
+  // CSP：内容安全策略（适度严格，允许内联样式以兼容 ECharts 等库）
+  const cspDirectives = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https:",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ];
+  res.setHeader('Content-Security-Policy', cspDirectives.join('; '));
+
   next();
 });
 
-app.use(express.json());
+// === 请求体大小限制：防止 DoS ===
+app.use(express.json({ limit: '100kb' }));
+
+// === 请求 ID 中间件：便于日志追踪 ===
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const reqId = (req.headers['x-request-id'] as string) || crypto.randomUUID();
+  res.setHeader('X-Request-ID', reqId);
+  (req as Request & { reqId: string }).reqId = reqId;
+  next();
+});
 
 // === 请求日志中间件 ===
 app.use((req: Request, res: Response, next: NextFunction) => {
   const start = Date.now();
+  const reqId = (req as Request & { reqId?: string }).reqId || '-';
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`);
+    console.log(
+      `[${new Date().toISOString()}] [${reqId}] ${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`,
+    );
   });
   next();
 });
@@ -367,6 +433,50 @@ app.post('/api/watchlist/news-backtest', watchlistLimiter, async (req, res) => {
   }
 });
 
+// 受控回测评估：基线(无新闻叠加) vs 实验(带新闻情绪叠加)，量化 LLM 信号是否真增 alpha
+// 复用 /api/analyze 的限流器（analysisLimiter），同属重计算端点
+app.post('/api/backtest/evaluate', watchlistLimiter, async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const stockCode = String(body.stockCode ?? '').trim();
+    if (!/^\d{6}$/.test(stockCode)) {
+      return res.status(400).json({ error: '请提供有效的6位股票代码' });
+    }
+    const strategyName = String(body.strategy ?? 'ma_cross').trim();
+    const startDate = String(body.startDate ?? new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0]);
+    const endDate = String(body.endDate ?? new Date().toISOString().split('T')[0]);
+
+    const parsed = parseStrategyInput(strategyName) as unknown as StrategyConfig;
+    const baseCfg: StrategyConfig = { ...parsed, stockCode, startDate, endDate };
+    const ohlcv = await fetchOHLCVData(stockCode, startDate, endDate);
+    if (!ohlcv || ohlcv.length === 0) {
+      return res.status(500).json({ error: `无法获取 ${stockCode} 的 K 线数据` });
+    }
+
+    // 基线：无新闻叠加
+    const baseline = runBacktest(ohlcv, baseCfg);
+    // 实验组：叠加新闻情绪信号
+    let expCfg: StrategyConfig = { ...baseCfg };
+    try {
+      const ns = await extractNewsSignal(stockCode);
+      if (ns.signal.hasNews) {
+        expCfg = { ...expCfg, newsOverlay: { polarity: ns.signal.polarity } };
+      }
+    } catch {
+      // 新闻抓取失败：实验组退化为基线，评估器会判 inconclusive/tie
+    }
+    const experiment = runBacktest(ohlcv, expCfg);
+
+    const { compareBacktests } = await import('./quant/backtestEvaluator.js');
+    const comparison = compareBacktests(baseline, experiment);
+    res.json({ baseline, experiment, comparison, newsSource: expCfg.newsOverlay ? 'live' : 'none' });
+  } catch (error) {
+    console.error('Backtest evaluate error:', error);
+    const message = error instanceof Error ? error.message : '受控回测评估失败';
+    res.status(500).json({ error: '受控回测评估失败', detail: message });
+  }
+});
+
 // === Chat Agent Rate Limiter (10 req/min) ===
 const chatLimiter = rateLimit({
   windowMs,
@@ -400,7 +510,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
   }
 });
 
-// === 流式对话接口（SSE） ===
+// === 流式对话接口（SSE，真流式：逐阶段推送执行进度） ===
 app.get('/api/chat/stream', chatLimiter, async (req: Request, res: Response) => {
   const message = String(req.query.message || '').trim();
   if (!message) {
@@ -418,11 +528,13 @@ app.get('/api/chat/stream', chatLimiter, async (req: Request, res: Response) => 
   };
 
   try {
-    const result = await chatAgent.run({
-      message,
-      sessionId: typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined,
-    });
-    send({ phase: 'done', ...result });
+    await chatAgent.runStream(
+      {
+        message,
+        sessionId: typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined,
+      },
+      (event) => send(event),
+    );
   } catch (error) {
     send({ phase: 'error', message: (error as Error).message || '对话处理失败' });
   } finally {
@@ -552,9 +664,35 @@ app.use((req: Request, res: Response) => {
 });
 
 // === 统一错误处理中间件（须放在所有路由之后，4 个参数触发错误处理） ===
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('[Unhandled Error]', err);
-  res.status(500).json({ error: '服务器内部错误', detail: err.message });
+app.use((err: Error & { statusCode?: number; type?: string }, req: Request, res: Response, _next: NextFunction) => {
+  const reqId = (req as Request & { reqId?: string }).reqId || '-';
+
+  // CORS 错误
+  if (err.message === 'Not allowed by CORS') {
+    console.warn(`[${reqId}] CORS blocked: ${req.headers.origin}`);
+    res.status(403).json({ error: 'CORS 拒绝：来源不在白名单中' });
+    return;
+  }
+
+  // 速率限制错误（express-rate-limit 会设置 statusCode）
+  if (err.statusCode === 429) {
+    res.status(429).json({ error: '请求过于频繁，请稍后再试' });
+    return;
+  }
+
+  // payload 过大
+  if (err.type === 'entity.too.large') {
+    res.status(413).json({ error: '请求体过大' });
+    return;
+  }
+
+  // 通用 500
+  console.error(`[${reqId}] [Unhandled Error]`, err);
+  res.status(500).json({
+    error: '服务器内部错误',
+    detail: process.env.NODE_ENV === 'production' ? undefined : err.message,
+    requestId: reqId,
+  });
 });
 
 // === Start Server（仅作为进程入口直接运行时监听端口；测试通过 supertest 引用导出的 app，不监听） ===

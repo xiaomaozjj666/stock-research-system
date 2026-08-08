@@ -34,6 +34,8 @@ export interface ToolDeps {
   runBacktest?: (ohlcv: unknown, strategy: unknown) => Promise<unknown>;
   parseStrategyInput?: (input: unknown) => { stockCode: string; startDate?: string; endDate?: string; [k: string]: unknown };
   fetchOHLCVData?: (code: string, start: string, end: string) => Promise<unknown[]>;
+  /** 提取新闻情绪信号（受控评估用：实验组叠加 newsOverlay） */
+  extractNewsSignal?: (code: string) => Promise<{ signal: { polarity: number; hasNews: boolean }; source: string }>;
 }
 
 function truncate(s: string, n = 4000): string {
@@ -79,6 +81,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         properties: {
           stockCode: { type: 'string', description: '6 位股票代码' },
           strategy: { type: 'string', description: '策略名，如 ma_cross / momentum / mean_reversion' },
+          startDate: { type: 'string', description: '起始日期 YYYY-MM-DD' },
+          endDate: { type: 'string', description: '结束日期 YYYY-MM-DD' },
+        },
+        required: ['stockCode', 'strategy'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'evaluate_backtest',
+      description: '受控回测评估：对同一股票同一区间跑两轮回测——基线(无新闻叠加) vs 实验(带新闻情绪叠加)，量化 LLM 信号是否真增 alpha，给出统计显著性结论。',
+      parameters: {
+        type: 'object',
+        properties: {
+          stockCode: { type: 'string', description: '6 位股票代码' },
+          strategy: { type: 'string', description: '策略名，如 ma_cross' },
           startDate: { type: 'string', description: '起始日期 YYYY-MM-DD' },
           endDate: { type: 'string', description: '结束日期 YYYY-MM-DD' },
         },
@@ -140,6 +159,42 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       if (!ohlcv || ohlcv.length === 0) return `无法获取 ${code} 的 K 线数据`;
       const r = await deps.runBacktest(ohlcv, cfg);
       return truncate(JSON.stringify(r, null, 2));
+    }
+    if (call.function.name === 'evaluate_backtest') {
+      if (!deps.runBacktest || !deps.parseStrategyInput || !deps.fetchOHLCVData) {
+        return 'evaluate_backtest 未配置';
+      }
+      const code = String(args.stockCode || '');
+      const strategy = String(args.strategy || 'ma_cross');
+      const start = String(args.startDate || new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0]);
+      const end = String(args.endDate || new Date().toISOString().split('T')[0]);
+      if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
+      const parsed = deps.parseStrategyInput(strategy) as Record<string, unknown>;
+      const baseCfg: Record<string, unknown> = { ...parsed, stockCode: code, startDate: start, endDate: end };
+      const ohlcv = await deps.fetchOHLCVData(code, start, end);
+      if (!ohlcv || ohlcv.length === 0) return `无法获取 ${code} 的 K 线数据`;
+      // 基线：无新闻叠加
+      const baseline = await deps.runBacktest(ohlcv, baseCfg);
+      // 实验组：叠加新闻情绪信号（若无可新闻则降级为基线，对比将判 tie）
+      let expCfg: Record<string, unknown> = { ...baseCfg };
+      if (deps.extractNewsSignal) {
+        try {
+          const ns = await deps.extractNewsSignal(code);
+          if (ns.signal.hasNews) {
+            expCfg = { ...expCfg, newsOverlay: { polarity: ns.signal.polarity } };
+          }
+        } catch {
+          // 新闻抓取失败：实验组退化为基线，评估器会判 inconclusive/tie
+        }
+      }
+      const experiment = await deps.runBacktest(ohlcv, expCfg);
+      // 动态导入评估器（避免工具注册表强耦合量化模块）
+      const { compareBacktests } = await import('../quant/backtestEvaluator.js');
+      const comparison = compareBacktests(
+        baseline as import('../quant/types.js').BacktestResult,
+        experiment as import('../quant/types.js').BacktestResult,
+      );
+      return truncate(JSON.stringify(comparison, null, 2));
     }
     return `工具 ${call.function.name} 无处理器`;
   } catch (err) {
