@@ -1,5 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import request from 'supertest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { app } from '../index.js';
 import type { OHLCVData } from '../quant/types.js';
 import type { NewsSignal } from '../quant/newsSignal.js';
@@ -91,6 +94,17 @@ vi.mock('../services/stockMaster.js', () => ({
   getSupportedStocks: vi.fn(() => []),
   searchStocks: vi.fn(() => []),
 }));
+
+// 测试隔离：把 watchlist 持久化重定向到临时文件，避免污染真实数据
+// （曾导致 server/src/data/watchlist.json 残留 600519，进而让"空清单→400"测试误判）。
+const _watchlistTmpDir = mkdtempSync(join(tmpdir(), 'watchlist-e2e-'));
+beforeAll(() => {
+  process.env.WATCHLIST_FILE = join(_watchlistTmpDir, 'watchlist.json');
+});
+afterAll(() => {
+  delete process.env.WATCHLIST_FILE;
+  rmSync(_watchlistTmpDir, { recursive: true, force: true });
+});
 
 beforeEach(() => {
   // 默认：所有代码都能取到行情；仅 600519 命中最新消息（看多）

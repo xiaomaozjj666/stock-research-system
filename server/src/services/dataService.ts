@@ -22,6 +22,35 @@ if (!fs.existsSync(CACHE_DIR)) {
 const CACHE_TTL_HOURS = Number(process.env.CACHE_TTL_HOURS) || 24;
 const CACHE_TTL = CACHE_TTL_HOURS * 60 * 60 * 1000;
 
+// 内存 LRU 缓存：避免热股票反复触发文件 I/O + JSON 解析。
+// 容量上限后淘汰最久未用；与文件缓存共用同一 TTL（CACHE_TTL）。
+interface MemCacheEntry { data: StockDataSet; timestamp: number; }
+const memCache = new Map<string, MemCacheEntry>();
+const MEM_CACHE_MAX = Number(process.env.MEM_CACHE_MAX) || 500;
+
+function memCacheGet(code: string): StockDataSet | null {
+  const entry = memCache.get(code);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL) {
+    memCache.delete(code);
+    return null;
+  }
+  // LRU：命中后移到末尾（最近使用）
+  memCache.delete(code);
+  memCache.set(code, entry);
+  return entry.data;
+}
+
+function memCacheSet(code: string, data: StockDataSet): void {
+  memCache.set(code, { data, timestamp: Date.now() });
+  // 容量超限：淘汰最久未用（Map 头部为最旧）
+  while (memCache.size > MEM_CACHE_MAX) {
+    const oldestKey = memCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    memCache.delete(oldestKey);
+  }
+}
+
 // 品牌名/常用名 → 上市简称 的别名映射。东方财富搜索 API 只认上市主体简称，
 // 用户输入品牌名（如「长鑫存储」）时需改写为上市主体名（「长鑫科技」）才能命中。
 export const SEARCH_ALIASES: Record<string, string> = {
@@ -42,7 +71,11 @@ export function cleanDisplayName(name: string, code?: string): string {
 }
 
 export async function getData(stockCode: string): Promise<StockDataSet> {
-  // 1. 检查缓存（异步文件 I/O）
+  // 0. 内存 LRU 缓存（最热路径，避免文件 I/O）
+  const memHit = memCacheGet(stockCode);
+  if (memHit) return memHit;
+
+  // 1. 检查文件缓存（异步文件 I/O）
   const cacheFile = path.join(CACHE_DIR, `${stockCode}.json`);
   try {
     if (fs.existsSync(cacheFile)) {
@@ -50,7 +83,9 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
       const cached = JSON.parse(cachedContent);
       const cacheAge = Date.now() - cached.timestamp;
       if (cacheAge < CACHE_TTL) {
-        return cached.data as StockDataSet;
+        const data = cached.data as StockDataSet;
+        memCacheSet(stockCode, data); // 预热到内存 LRU
+        return data;
       }
     }
   } catch {
@@ -88,7 +123,8 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
 
     const dataSet: StockDataSet = { info, financial, valuation };
 
-    // 写入缓存（异步）
+    // 写入缓存（内存 LRU + 异步文件）
+    memCacheSet(stockCode, dataSet);
     try {
       await fs.promises.writeFile(
         cacheFile,

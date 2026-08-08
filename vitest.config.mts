@@ -22,7 +22,6 @@ export default defineConfig({
         '**/*.d.ts',
         'server/src/index.ts', // Express 路由/中间件，由集成与手动验证覆盖
         'server/src/llm/**', // 外部 LLM 调用，网络相关，单独集成测试覆盖
-        'server/src/quant/**', // K线/回测，重度依赖行情网络，单测价值低
         'client/src/main.tsx',
         'client/src/vite-env.d.ts',
       ],
