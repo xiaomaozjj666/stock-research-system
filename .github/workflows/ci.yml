@@ -94,6 +94,12 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium
 
+      # 构建两端产物（关键）：Playwright 的 webServer 作为插件在 globalSetup 之前启动，
+      # 因此 e2e/global-setup.ts 里的"dist 不存在时自动构建"来不及生效（曾导致 CI
+      # 报 Cannot find module server/dist/index.js）。dist 存在时 globalSetup 会跳过。
+      - name: Build (server + client)
+        run: npm run build
+
       # globalSetup 会自动构建 server dist + client dist，
       # 然后 webServer 以生产模式启动服务（Express 同源托管前端），跑真实浏览器冒烟
       - name: Run E2E smoke tests
