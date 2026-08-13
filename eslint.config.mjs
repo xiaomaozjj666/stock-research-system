@@ -12,7 +12,6 @@ export default [
       '**/build/**',
       '**/node_modules/**',
       '**/cache/**',
-      '**/.workbuddy/**',
       '**/coverage/**',
       // TypeScript 文件交由 tsc 静态分析，避免 ESLint 用 espree 解析 TS 语法报错
       '**/*.ts',
