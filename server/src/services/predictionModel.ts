@@ -235,7 +235,14 @@ export interface NewsBacktestReport {
 export function backtestNewsImpact(panel: NewsBacktestRow[]): NewsBacktestReport {
   const empty = (n: number): PredictionValidationReport => ({ directionalAccuracy: 0, rmse: 0, n });
   if (panel.length < 3) {
-    return { baseline: empty(panel.length), withNews: empty(panel.length), deltaAccuracy: 0, deltaRmse: 0, newsIC: 0, n: panel.length };
+    return {
+      baseline: empty(panel.length),
+      withNews: empty(panel.length),
+      deltaAccuracy: 0,
+      deltaRmse: 0,
+      newsIC: 0,
+      n: panel.length,
+    };
   }
 
   const names = Array.from(new Set(panel.flatMap((r) => Object.keys(r.factors))));
@@ -258,8 +265,16 @@ export function backtestNewsImpact(panel: NewsBacktestRow[]): NewsBacktestReport
     const nz = row.newsZ ?? 0;
     const erNews = expectedForwardReturn({ zByFactor, pePercentile: row.pePercentile, newsZ: nz });
 
-    if (Math.sign(erBase.expectedReturn) === Math.sign(row.forwardReturn) && erBase.expectedReturn !== 0) baseCorrect++;
-    if (Math.sign(erNews.expectedReturn) === Math.sign(row.forwardReturn) && erNews.expectedReturn !== 0) newsCorrect++;
+    if (
+      Math.sign(erBase.expectedReturn) === Math.sign(row.forwardReturn) &&
+      erBase.expectedReturn !== 0
+    )
+      baseCorrect++;
+    if (
+      Math.sign(erNews.expectedReturn) === Math.sign(row.forwardReturn) &&
+      erNews.expectedReturn !== 0
+    )
+      newsCorrect++;
     baseSq.push((erBase.expectedReturn - row.forwardReturn) ** 2);
     newsSq.push((erNews.expectedReturn - row.forwardReturn) ** 2);
 

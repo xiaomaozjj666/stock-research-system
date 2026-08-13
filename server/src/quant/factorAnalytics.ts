@@ -169,7 +169,10 @@ export function selectOptimalFactors(
  * 组合 z 分数：对若干因子的 z 值按权重加权求和（最优组合），返回合成 z（未裁剪）。
  * 缺失因子自动跳过；权重和为 0 时返回 0。
  */
-export function compositeZ(zByFactor: Record<string, number>, weights: Record<string, number>): number {
+export function compositeZ(
+  zByFactor: Record<string, number>,
+  weights: Record<string, number>,
+): number {
   let s = 0;
   let wsum = 0;
   for (const [name, w] of Object.entries(weights)) {
@@ -233,13 +236,20 @@ export function validateFactorModel(
   const names = Array.from(new Set(panel.flatMap((row) => Object.keys(row.factors))));
   const forward = panel.map((row) => row.forwardReturn);
   const fwdStd = Math.sqrt(
-    forward.reduce((s, v) => s + (v - forward.reduce((a, b) => a + b, 0) / forward.length) ** 2, 0) /
-      forward.length,
+    forward.reduce(
+      (s, v) => s + (v - forward.reduce((a, b) => a + b, 0) / forward.length) ** 2,
+      0,
+    ) / forward.length,
   );
 
   const candidates: FactorCandidate[] = names.map((name) => ({
     name,
-    icSeries: [spearmanRankIC(panel.map((row) => row.factors[name] ?? 0), forward)],
+    icSeries: [
+      spearmanRankIC(
+        panel.map((row) => row.factors[name] ?? 0),
+        forward,
+      ),
+    ],
   }));
   const selected = selectOptimalFactors(candidates, opts);
   const weightMap: Record<string, number> = {};

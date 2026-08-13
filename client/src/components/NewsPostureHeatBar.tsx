@@ -77,7 +77,10 @@ export default function NewsPostureHeatBar({
   const labels = vm.map((r) => r.label);
   const data = vm.map((r) => ({
     value: Number(r.polarity.toFixed(3)),
-    itemStyle: { color: postureColor(r.polarity, r.weightedImpact, r.hasNews), borderRadius: [3, 3, 3, 3] },
+    itemStyle: {
+      color: postureColor(r.polarity, r.weightedImpact, r.hasNews),
+      borderRadius: [3, 3, 3, 3],
+    },
     _extra: r,
   }));
 

@@ -200,9 +200,7 @@ export default function WatchlistPage() {
                       </td>
                       <td>{best?.newsAware ? best.newsAware.sharpeRatio.toFixed(2) : '—'}</td>
                       <td>
-                        {best?.newsAware
-                          ? `${(best.newsAware.posture * 100).toFixed(0)}%`
-                          : '—'}
+                        {best?.newsAware ? `${(best.newsAware.posture * 100).toFixed(0)}%` : '—'}
                       </td>
                     </tr>
                   );

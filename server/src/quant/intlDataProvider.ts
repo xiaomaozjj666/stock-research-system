@@ -207,10 +207,7 @@ function degradedResult(
 }
 
 /** 成功结果（统一结构） */
-function okResult(
-  fundamentals: IntlStockFundamentals,
-  fetchedAt: string,
-): IntlFundamentalsResult {
+function okResult(fundamentals: IntlStockFundamentals, fetchedAt: string): IntlFundamentalsResult {
   return {
     fundamentals,
     degraded: false,
@@ -308,10 +305,7 @@ async function fetchUsFundamentals(
   // 2. 主要财务指标：补营收/净利。名称已由 ORGPROFILE 拿到，指标失败不整体降级，仅相关字段归零
   let row: Record<string, unknown> | null = null;
   try {
-    row = await fetchLatestIndicator(
-      US_MAIN_INDICATOR,
-      `(SECUCODE="${str(profile.SECUCODE)}")`,
-    );
+    row = await fetchLatestIndicator(US_MAIN_INDICATOR, `(SECUCODE="${str(profile.SECUCODE)}")`);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     logger.warn('[intlDataProvider] 美股主要指标失败，仅填充名称', { code, reason });
@@ -358,9 +352,7 @@ export async function fetchIntlFundamentals(
  * - 控制并发为 BATCH_CONCURRENCY，避免触发对端限流
  * - 单只失败不影响其余，逐项返回降级结果
  */
-export async function fetchBatchFundamentals(
-  codes: string[],
-): Promise<IntlFundamentalsResult[]> {
+export async function fetchBatchFundamentals(codes: string[]): Promise<IntlFundamentalsResult[]> {
   const results: IntlFundamentalsResult[] = [];
 
   for (let i = 0; i < codes.length; i += BATCH_CONCURRENCY) {

@@ -16,7 +16,11 @@ export interface LLMConfig {
 export function getLLMConfig(): LLMConfig {
   return {
     apiKey: process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || '',
-    baseUrl: (process.env.DEEPSEEK_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/+$/, ''),
+    baseUrl: (
+      process.env.DEEPSEEK_BASE_URL ||
+      process.env.OPENAI_BASE_URL ||
+      'https://api.deepseek.com/v1'
+    ).replace(/\/+$/, ''),
     model: process.env.DEEPSEEK_MODEL || process.env.OPENAI_MODEL || 'deepseek-chat',
   };
 }
@@ -121,8 +125,8 @@ export function getEmbedBaseUrl(): string {
 export function isEmbeddingConfigured(): boolean {
   return Boolean(
     process.env.LLM_EMBED_MODEL ||
-      process.env.OPENAI_EMBED_MODEL ||
-      process.env.LLM_EMBED_BASE_URL ||
-      process.env.OPENAI_EMBED_BASE_URL,
+    process.env.OPENAI_EMBED_MODEL ||
+    process.env.LLM_EMBED_BASE_URL ||
+    process.env.OPENAI_EMBED_BASE_URL,
   );
 }

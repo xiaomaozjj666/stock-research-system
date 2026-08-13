@@ -8,7 +8,8 @@ import type { FinancialData, ValuationData, StockInfo, ExpertOpinion } from '../
 export function formatFinancialBrief(financial: FinancialData): string {
   const n = financial.years.length;
   const latest = (arr: number[]) => arr[n - 1];
-  const fmtArr = (arr: number[]) => arr.map(v => typeof v === 'number' ? v.toFixed(2) : String(v)).join('、');
+  const fmtArr = (arr: number[]) =>
+    arr.map((v) => (typeof v === 'number' ? v.toFixed(2) : String(v))).join('、');
 
   const lines: string[] = [];
   lines.push(`【财务数据（${n}年）】`);
@@ -20,23 +21,33 @@ export function formatFinancialBrief(financial: FinancialData): string {
   lines.push(`ROE(%): ${fmtArr(financial.roe)}`);
   lines.push(`经营现金流(亿): ${fmtArr(financial.operatingCashFlow)}`);
   lines.push(`EPS(元): ${fmtArr(financial.eps)}`);
-  if (financial.equity && financial.equity.length === n) lines.push(`净资产(亿): ${fmtArr(financial.equity)}`);
-  if (financial.totalAssets && financial.totalAssets.length === n) lines.push(`总资产(亿): ${fmtArr(financial.totalAssets)}`);
-  if (financial.debtRatio && financial.debtRatio.length === n) lines.push(`资产负债率(%): ${fmtArr(financial.debtRatio)}`);
-  if (financial.accountsReceivable && financial.accountsReceivable.every(v => v !== 0)) {
+  if (financial.equity && financial.equity.length === n)
+    lines.push(`净资产(亿): ${fmtArr(financial.equity)}`);
+  if (financial.totalAssets && financial.totalAssets.length === n)
+    lines.push(`总资产(亿): ${fmtArr(financial.totalAssets)}`);
+  if (financial.debtRatio && financial.debtRatio.length === n)
+    lines.push(`资产负债率(%): ${fmtArr(financial.debtRatio)}`);
+  if (financial.accountsReceivable && financial.accountsReceivable.every((v) => v !== 0)) {
     lines.push(`应收账款(亿): ${fmtArr(financial.accountsReceivable)}`);
   } else {
     lines.push(`应收账款: 数据缺失`);
   }
-  if (financial.goodwill && financial.goodwill.some(v => v !== 0)) {
+  if (financial.goodwill && financial.goodwill.some((v) => v !== 0)) {
     lines.push(`商誉(亿): ${fmtArr(financial.goodwill)}`);
   }
 
   // 增长速算
   if (n >= 2 && financial.revenue[n - 2] !== 0) {
-    const revG = (latest(financial.revenue) - financial.revenue[n - 2]) / Math.abs(financial.revenue[n - 2]) * 100;
-    const profG = financial.netProfit[n - 2] !== 0
-      ? (latest(financial.netProfit) - financial.netProfit[n - 2]) / Math.abs(financial.netProfit[n - 2]) * 100 : 0;
+    const revG =
+      ((latest(financial.revenue) - financial.revenue[n - 2]) /
+        Math.abs(financial.revenue[n - 2])) *
+      100;
+    const profG =
+      financial.netProfit[n - 2] !== 0
+        ? ((latest(financial.netProfit) - financial.netProfit[n - 2]) /
+            Math.abs(financial.netProfit[n - 2])) *
+          100
+        : 0;
     lines.push(`最新营收增速: ${revG.toFixed(1)}%`);
     lines.push(`最新净利润增速: ${profG.toFixed(1)}%`);
   }
@@ -51,15 +62,18 @@ export function formatValuationBrief(valuation: ValuationData): string {
   lines.push(`PE: ${valuation.pe}, PB: ${valuation.pb}, PS: ${valuation.ps}`);
   lines.push(`总市值(亿): ${valuation.marketCap.toFixed(0)}`);
   if (valuation.historicalPE.length > 0) {
-    const peArr = valuation.historicalPE.map(h => h.pe);
+    const peArr = valuation.historicalPE.map((h) => h.pe);
     lines.push(`历史PE(近${peArr.length}年): ${peArr.join('、')}`);
     const sorted = [...peArr].sort((a, b) => a - b);
-    const pct = sorted.filter(p => p <= valuation.pe).length / sorted.length * 100;
+    const pct = (sorted.filter((p) => p <= valuation.pe).length / sorted.length) * 100;
     lines.push(`当前PE历史分位: ${pct.toFixed(0)}%`);
   }
   if (valuation.peerComparison.length > 0) {
-    const peerAvgPE = valuation.peerComparison.reduce((s, p) => s + p.pe, 0) / valuation.peerComparison.length;
-    lines.push(`同业平均PE: ${peerAvgPE.toFixed(1)}, 同业公司: ${valuation.peerComparison.map(p => `${p.name}(PE${p.pe})`).join('、')}`);
+    const peerAvgPE =
+      valuation.peerComparison.reduce((s, p) => s + p.pe, 0) / valuation.peerComparison.length;
+    lines.push(
+      `同业平均PE: ${peerAvgPE.toFixed(1)}, 同业公司: ${valuation.peerComparison.map((p) => `${p.name}(PE${p.pe})`).join('、')}`,
+    );
   }
   return lines.join('\n');
 }
@@ -70,8 +84,16 @@ export function formatInfoBrief(info: StockInfo): string {
 }
 
 /** 完整上下文摘要 */
-export function formatContext(financial: FinancialData, valuation: ValuationData, info: StockInfo): string {
-  return [formatInfoBrief(info), formatFinancialBrief(financial), formatValuationBrief(valuation)].join('\n\n');
+export function formatContext(
+  financial: FinancialData,
+  valuation: ValuationData,
+  info: StockInfo,
+): string {
+  return [
+    formatInfoBrief(info),
+    formatFinancialBrief(financial),
+    formatValuationBrief(valuation),
+  ].join('\n\n');
 }
 
 /**
@@ -102,35 +124,43 @@ export function normalizeExpertOpinion(raw: {
   keyPoints?: unknown[];
 }): ExpertOpinion {
   const validSentiments = ['bullish', 'neutral', 'bearish'] as const;
-  const sentiment = validSentiments.includes(raw.overallSentiment as typeof validSentiments[number])
+  const sentiment = validSentiments.includes(
+    raw.overallSentiment as (typeof validSentiments)[number],
+  )
     ? (raw.overallSentiment as 'bullish' | 'neutral' | 'bearish')
     : 'neutral';
 
   const validTypes = ['support', 'oppose'] as const;
   const validEvidence = ['fact', 'inference', 'hypothesis'] as const;
   const arguments_ = Array.isArray(raw.arguments)
-    ? raw.arguments.map((a) => {
-        const arg = a as Record<string, unknown>;
-        const type = validTypes.includes(arg.type as typeof validTypes[number])
-          ? (arg.type as 'support' | 'oppose') : 'support';
-        const evidenceType = validEvidence.includes(arg.evidenceType as typeof validEvidence[number])
-          ? (arg.evidenceType as 'fact' | 'inference' | 'hypothesis') : 'inference';
-        return {
-          text: String(arg.text || ''),
-          confidence: clampInt(arg.confidence, 0, 100, 50),
-          type,
-          evidenceType,
-        };
-      }).filter(a => a.text.length > 0)
+    ? raw.arguments
+        .map((a) => {
+          const arg = a as Record<string, unknown>;
+          const type = validTypes.includes(arg.type as (typeof validTypes)[number])
+            ? (arg.type as 'support' | 'oppose')
+            : 'support';
+          const evidenceType = validEvidence.includes(
+            arg.evidenceType as (typeof validEvidence)[number],
+          )
+            ? (arg.evidenceType as 'fact' | 'inference' | 'hypothesis')
+            : 'inference';
+          return {
+            text: String(arg.text || ''),
+            confidence: clampInt(arg.confidence, 0, 100, 50),
+            type,
+            evidenceType,
+          };
+        })
+        .filter((a) => a.text.length > 0)
     : [];
 
   const keyPoints = Array.isArray(raw.keyPoints)
-    ? raw.keyPoints.map(p => String(p)).filter(p => p.length > 0)
+    ? raw.keyPoints.map((p) => String(p)).filter((p) => p.length > 0)
     : [];
 
   // 确保 support 与 oppose 都存在
-  const hasSupport = arguments_.some(a => a.type === 'support');
-  const hasOppose = arguments_.some(a => a.type === 'oppose');
+  const hasSupport = arguments_.some((a) => a.type === 'support');
+  const hasOppose = arguments_.some((a) => a.type === 'oppose');
 
   return {
     expert: raw.expert,

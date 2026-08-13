@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
   AuditLogger,
   auditLogger,
@@ -8,7 +10,6 @@ import {
   auditTradeSignal,
   auditDataAccess,
   filePersistenceHook,
-  AUDIT_LOG_FILE,
   DEFAULT_CIRCUIT_BREAKER_THRESHOLDS,
   type AuditLoggerOptions,
   type AuditEntry,
@@ -98,14 +99,38 @@ describe('AuditLogger — 审计条目创建和查询', () => {
   });
 
   it('query({}) 返回全部条目', () => {
-    logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: '1', riskLevel: 'info' });
-    logger.log({ sessionId: 's1', action: 'b', category: 'system', detail: '2', riskLevel: 'info' });
+    logger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: '1',
+      riskLevel: 'info',
+    });
+    logger.log({
+      sessionId: 's1',
+      action: 'b',
+      category: 'system',
+      detail: '2',
+      riskLevel: 'info',
+    });
     expect(logger.query({})).toHaveLength(2);
   });
 
   it('query() 按 sessionId 过滤', () => {
-    logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: '1', riskLevel: 'info' });
-    logger.log({ sessionId: 's2', action: 'b', category: 'system', detail: '2', riskLevel: 'info' });
+    logger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: '1',
+      riskLevel: 'info',
+    });
+    logger.log({
+      sessionId: 's2',
+      action: 'b',
+      category: 'system',
+      detail: '2',
+      riskLevel: 'info',
+    });
     const r = logger.query({ sessionId: 's1' });
     expect(r).toHaveLength(1);
     expect(r[0].sessionId).toBe('s1');
@@ -113,12 +138,24 @@ describe('AuditLogger — 审计条目创建和查询', () => {
 
   it('size() 返回当前条目数', () => {
     expect(logger.size()).toBe(0);
-    logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: '1', riskLevel: 'info' });
+    logger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: '1',
+      riskLevel: 'info',
+    });
     expect(logger.size()).toBe(1);
   });
 
   it('clear() 清空所有条目', () => {
-    logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: '1', riskLevel: 'info' });
+    logger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: '1',
+      riskLevel: 'info',
+    });
     logger.clear();
     expect(logger.size()).toBe(0);
     expect(logger.query({})).toHaveLength(0);
@@ -136,23 +173,43 @@ describe('AuditLogger — 按条件过滤', () => {
     // 填充测试数据：4 条不同类别/等级/会话/用户/traceId 的条目
     // tick(1) 使时间戳为 1000000, 1000001, 1000002, 1000003
     logger.log({
-      sessionId: 's1', userId: 'u1', action: 'a', category: 'llm_call',
-      detail: 'd', riskLevel: 'low', traceId: 't1',
+      sessionId: 's1',
+      userId: 'u1',
+      action: 'a',
+      category: 'llm_call',
+      detail: 'd',
+      riskLevel: 'low',
+      traceId: 't1',
     });
     tick(1); // t=1000001
     logger.log({
-      sessionId: 's1', userId: 'u2', action: 'b', category: 'tool_call',
-      detail: 'd', riskLevel: 'high', traceId: 't2',
+      sessionId: 's1',
+      userId: 'u2',
+      action: 'b',
+      category: 'tool_call',
+      detail: 'd',
+      riskLevel: 'high',
+      traceId: 't2',
     });
     tick(1); // t=1000002
     logger.log({
-      sessionId: 's2', userId: 'u1', action: 'c', category: 'trade_signal',
-      detail: 'd', riskLevel: 'critical', traceId: 't1',
+      sessionId: 's2',
+      userId: 'u1',
+      action: 'c',
+      category: 'trade_signal',
+      detail: 'd',
+      riskLevel: 'critical',
+      traceId: 't1',
     });
     tick(1); // t=1000003
     logger.log({
-      sessionId: 's2', userId: 'u2', action: 'd', category: 'data_access',
-      detail: 'd', riskLevel: 'info', traceId: 't2',
+      sessionId: 's2',
+      userId: 'u2',
+      action: 'd',
+      category: 'data_access',
+      detail: 'd',
+      riskLevel: 'info',
+      traceId: 't2',
     });
   });
 
@@ -220,8 +277,20 @@ describe('AuditLogger — 按条件过滤', () => {
 describe('AuditLogger — 导出', () => {
   it('export() 导出全部条目为 JSON', () => {
     const { logger } = createLogger();
-    logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: '1', riskLevel: 'info' });
-    logger.log({ sessionId: 's2', action: 'b', category: 'system', detail: '2', riskLevel: 'info' });
+    logger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: '1',
+      riskLevel: 'info',
+    });
+    logger.log({
+      sessionId: 's2',
+      action: 'b',
+      category: 'system',
+      detail: '2',
+      riskLevel: 'info',
+    });
     const parsed = JSON.parse(logger.export()) as {
       exportedAt: string;
       count: number;
@@ -236,9 +305,27 @@ describe('AuditLogger — 导出', () => {
 
   it('export(sessionId) 只导出指定会话', () => {
     const { logger } = createLogger();
-    logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: '1', riskLevel: 'info' });
-    logger.log({ sessionId: 's2', action: 'b', category: 'system', detail: '2', riskLevel: 'info' });
-    logger.log({ sessionId: 's1', action: 'c', category: 'system', detail: '3', riskLevel: 'info' });
+    logger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: '1',
+      riskLevel: 'info',
+    });
+    logger.log({
+      sessionId: 's2',
+      action: 'b',
+      category: 'system',
+      detail: '2',
+      riskLevel: 'info',
+    });
+    logger.log({
+      sessionId: 's1',
+      action: 'c',
+      category: 'system',
+      detail: '3',
+      riskLevel: 'info',
+    });
     const parsed = JSON.parse(logger.export('s1')) as {
       count: number;
       entries: Array<{ sessionId: string }>;
@@ -263,16 +350,22 @@ describe('AuditLogger — 熔断检查', () => {
     // 阈值是 >3 才熔断，3 个不触发
     for (let i = 0; i < 3; i++) {
       logger.log({
-        sessionId: 's1', action: 'test', category: 'system',
-        detail: `critical-${i}`, riskLevel: 'critical',
+        sessionId: 's1',
+        action: 'test',
+        category: 'system',
+        detail: `critical-${i}`,
+        riskLevel: 'critical',
       });
     }
     expect(logger.checkCircuitBreaker().tripped).toBe(false);
 
     // 第 4 个 critical → 熔断
     logger.log({
-      sessionId: 's1', action: 'test', category: 'system',
-      detail: 'critical-3', riskLevel: 'critical',
+      sessionId: 's1',
+      action: 'test',
+      category: 'system',
+      detail: 'critical-3',
+      riskLevel: 'critical',
     });
     const result = logger.checkCircuitBreaker();
     expect(result.tripped).toBe(true);
@@ -289,16 +382,22 @@ describe('AuditLogger — 熔断检查', () => {
     // 5 个 high 不触发（阈值 >5）
     for (let i = 0; i < 5; i++) {
       logger.log({
-        sessionId: 's1', action: 'test', category: 'system',
-        detail: `high-${i}`, riskLevel: 'high',
+        sessionId: 's1',
+        action: 'test',
+        category: 'system',
+        detail: `high-${i}`,
+        riskLevel: 'high',
       });
     }
     expect(logger.checkCircuitBreaker().tripped).toBe(false);
 
     // 第 6 个 high → 熔断
     logger.log({
-      sessionId: 's1', action: 'test', category: 'system',
-      detail: 'high-5', riskLevel: 'high',
+      sessionId: 's1',
+      action: 'test',
+      category: 'system',
+      detail: 'high-5',
+      riskLevel: 'high',
     });
     const result = logger.checkCircuitBreaker();
     expect(result.tripped).toBe(true);
@@ -312,8 +411,11 @@ describe('AuditLogger — 熔断检查', () => {
     const { logger } = createLogger();
     for (let i = 0; i < 20; i++) {
       logger.log({
-        sessionId: 's1', action: 'test', category: 'system',
-        detail: `normal-${i}`, riskLevel: i % 2 === 0 ? 'info' : 'low',
+        sessionId: 's1',
+        action: 'test',
+        category: 'system',
+        detail: `normal-${i}`,
+        riskLevel: i % 2 === 0 ? 'info' : 'low',
       });
     }
     const result = logger.checkCircuitBreaker();
@@ -330,8 +432,11 @@ describe('AuditLogger — 熔断检查', () => {
     // 在窗口起点记录 10 个 critical
     for (let i = 0; i < 10; i++) {
       logger.log({
-        sessionId: 's1', action: 'test', category: 'system',
-        detail: `old-critical-${i}`, riskLevel: 'critical',
+        sessionId: 's1',
+        action: 'test',
+        category: 'system',
+        detail: `old-critical-${i}`,
+        riskLevel: 'critical',
       });
     }
     // 推进时间到窗口之外（5 分钟 + 1 毫秒）
@@ -349,14 +454,20 @@ describe('AuditLogger — 熔断检查', () => {
     // s1 有 4 个 critical（应熔断）
     for (let i = 0; i < 4; i++) {
       logger.log({
-        sessionId: 's1', action: 'test', category: 'system',
-        detail: `s1-c-${i}`, riskLevel: 'critical',
+        sessionId: 's1',
+        action: 'test',
+        category: 'system',
+        detail: `s1-c-${i}`,
+        riskLevel: 'critical',
       });
     }
     // s2 有 0 个 critical
     logger.log({
-      sessionId: 's2', action: 'test', category: 'system',
-      detail: 's2-info', riskLevel: 'info',
+      sessionId: 's2',
+      action: 'test',
+      category: 'system',
+      detail: 's2-info',
+      riskLevel: 'info',
     });
     expect(logger.checkCircuitBreaker('s1').tripped).toBe(true);
     expect(logger.checkCircuitBreaker('s2').tripped).toBe(false);
@@ -371,14 +482,20 @@ describe('AuditLogger — 熔断检查', () => {
     // 同时超过 critical 和 high 阈值
     for (let i = 0; i < 6; i++) {
       logger.log({
-        sessionId: 's1', action: 'test', category: 'system',
-        detail: `high-${i}`, riskLevel: 'high',
+        sessionId: 's1',
+        action: 'test',
+        category: 'system',
+        detail: `high-${i}`,
+        riskLevel: 'high',
       });
     }
     for (let i = 0; i < 4; i++) {
       logger.log({
-        sessionId: 's1', action: 'test', category: 'system',
-        detail: `critical-${i}`, riskLevel: 'critical',
+        sessionId: 's1',
+        action: 'test',
+        category: 'system',
+        detail: `critical-${i}`,
+        riskLevel: 'critical',
       });
     }
     const result = logger.checkCircuitBreaker();
@@ -392,13 +509,37 @@ describe('AuditLogger — 熔断检查', () => {
   it('getHighRiskEntries 返回 high 和 critical 条目', () => {
     const { logger, tick, clock } = createLogger();
     // tick(1) 使时间戳为 1000000, 1000001, 1000002, 1000003
-    logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: 'info', riskLevel: 'info' });
+    logger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: 'info',
+      riskLevel: 'info',
+    });
     tick(1);
-    logger.log({ sessionId: 's1', action: 'b', category: 'system', detail: 'high', riskLevel: 'high' });
+    logger.log({
+      sessionId: 's1',
+      action: 'b',
+      category: 'system',
+      detail: 'high',
+      riskLevel: 'high',
+    });
     tick(1);
-    logger.log({ sessionId: 's1', action: 'c', category: 'system', detail: 'critical', riskLevel: 'critical' });
+    logger.log({
+      sessionId: 's1',
+      action: 'c',
+      category: 'system',
+      detail: 'critical',
+      riskLevel: 'critical',
+    });
     tick(1);
-    logger.log({ sessionId: 's1', action: 'd', category: 'system', detail: 'low', riskLevel: 'low' });
+    logger.log({
+      sessionId: 's1',
+      action: 'd',
+      category: 'system',
+      detail: 'low',
+      riskLevel: 'low',
+    });
 
     // 全部高风险
     const all = logger.getHighRiskEntries();
@@ -414,7 +555,13 @@ describe('AuditLogger — 熔断检查', () => {
 
   it('getHighRiskEntries(since) 无匹配返回空数组', () => {
     const { logger, clock } = createLogger();
-    logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: 'high', riskLevel: 'high' });
+    logger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: 'high',
+      riskLevel: 'high',
+    });
     // since 在未来 → 无匹配
     expect(logger.getHighRiskEntries(clock() + 99999)).toHaveLength(0);
   });
@@ -423,7 +570,13 @@ describe('AuditLogger — 熔断检查', () => {
     const { logger } = createLogger({
       thresholds: { windowMs: 300000, criticalThreshold: 3, highThreshold: 10 },
     });
-    logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: 'h', riskLevel: 'high' });
+    logger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: 'h',
+      riskLevel: 'high',
+    });
     const result = logger.checkCircuitBreaker();
     expect(result).toHaveProperty('tripped');
     expect(result).toHaveProperty('windowMs', 300000);
@@ -439,8 +592,20 @@ describe('AuditLogger — 持久化钩子与内存上限', () => {
   it('持久化钩子每条记录调用一次', () => {
     const hook = vi.fn();
     const logger = new AuditLogger({ persistenceHook: hook });
-    logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: '1', riskLevel: 'info' });
-    logger.log({ sessionId: 's1', action: 'b', category: 'system', detail: '2', riskLevel: 'info' });
+    logger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: '1',
+      riskLevel: 'info',
+    });
+    logger.log({
+      sessionId: 's1',
+      action: 'b',
+      category: 'system',
+      detail: '2',
+      riskLevel: 'info',
+    });
     expect(hook).toHaveBeenCalledTimes(2);
     expect(hook.mock.calls[0][0].sessionId).toBe('s1');
     expect(hook.mock.calls[1][0].action).toBe('b');
@@ -453,7 +618,13 @@ describe('AuditLogger — 持久化钩子与内存上限', () => {
     const logger = new AuditLogger({ persistenceHook: hook });
     // 不应抛出
     expect(() => {
-      logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: '1', riskLevel: 'info' });
+      logger.log({
+        sessionId: 's1',
+        action: 'a',
+        category: 'system',
+        detail: '1',
+        riskLevel: 'info',
+      });
     }).not.toThrow();
     // 条目仍保留在内存中
     expect(logger.size()).toBe(1);
@@ -462,12 +633,36 @@ describe('AuditLogger — 持久化钩子与内存上限', () => {
 
   it('超过 maxEntries 上限时丢弃最旧条目', () => {
     const { logger } = createLogger({ maxEntries: 3 });
-    logger.log({ sessionId: 's1', action: 'a', category: 'system', detail: '1', riskLevel: 'info' });
-    logger.log({ sessionId: 's1', action: 'b', category: 'system', detail: '2', riskLevel: 'info' });
-    logger.log({ sessionId: 's1', action: 'c', category: 'system', detail: '3', riskLevel: 'info' });
+    logger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: '1',
+      riskLevel: 'info',
+    });
+    logger.log({
+      sessionId: 's1',
+      action: 'b',
+      category: 'system',
+      detail: '2',
+      riskLevel: 'info',
+    });
+    logger.log({
+      sessionId: 's1',
+      action: 'c',
+      category: 'system',
+      detail: '3',
+      riskLevel: 'info',
+    });
     expect(logger.size()).toBe(3);
     // 第 4 条 → 最旧的 'a' 被丢弃
-    logger.log({ sessionId: 's1', action: 'd', category: 'system', detail: '4', riskLevel: 'info' });
+    logger.log({
+      sessionId: 's1',
+      action: 'd',
+      category: 'system',
+      detail: '4',
+      riskLevel: 'info',
+    });
     expect(logger.size()).toBe(3);
     const actions = logger.query({}).map((e) => e.action);
     expect(actions).toEqual(['b', 'c', 'd']);
@@ -588,8 +783,26 @@ describe('辅助函数 — 写入全局 auditLogger 单例', () => {
 });
 
 describe('审计日志落盘持久化（JSON 行追加到 audit.log）', () => {
+  // 测试隔离：重定向到进程专属临时文件，避免与其他测试文件的并行 worker 竞态写同一真实 audit.log
+  let tmpDir: string;
+  let tmpFile: string;
+  let origEnv: string | undefined;
+
+  beforeAll(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-log-'));
+    tmpFile = path.join(tmpDir, 'audit.log');
+    origEnv = process.env.AUDIT_LOG_FILE;
+    process.env.AUDIT_LOG_FILE = tmpFile;
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (origEnv === undefined) delete process.env.AUDIT_LOG_FILE;
+    else process.env.AUDIT_LOG_FILE = origEnv;
+  });
+
   it('filePersistenceHook 把条目追加为一行 JSON', () => {
-    const before = fs.existsSync(AUDIT_LOG_FILE) ? fs.readFileSync(AUDIT_LOG_FILE, 'utf-8') : '';
+    const before = fs.existsSync(tmpFile) ? fs.readFileSync(tmpFile, 'utf-8') : '';
     const beforeLines = before ? before.split('\n').filter((l) => l.trim()).length : 0;
 
     const entry: AuditEntry = {
@@ -603,7 +816,7 @@ describe('审计日志落盘持久化（JSON 行追加到 audit.log）', () => {
     };
     filePersistenceHook(entry);
 
-    const after = fs.readFileSync(AUDIT_LOG_FILE, 'utf-8');
+    const after = fs.readFileSync(tmpFile, 'utf-8');
     const afterLines = after.split('\n').filter((l) => l.trim());
     expect(afterLines.length).toBe(beforeLines + 1);
 
@@ -620,7 +833,7 @@ describe('审计日志落盘持久化（JSON 行追加到 audit.log）', () => {
     auditLogger.clear();
     auditDataAccess('s1', '行情/财务数据接口', 'read');
 
-    const raw = fs.readFileSync(AUDIT_LOG_FILE, 'utf-8');
+    const raw = fs.readFileSync(tmpFile, 'utf-8');
     const lines = raw.split('\n').filter((l) => l.trim());
     const last = JSON.parse(lines[lines.length - 1]) as AuditEntry;
     expect(last.category).toBe('data_access');
@@ -638,7 +851,13 @@ describe('审计日志落盘持久化（JSON 行追加到 audit.log）', () => {
       },
     });
     expect(() => {
-      throwing.log({ sessionId: 's1', action: 'a', category: 'system', detail: '1', riskLevel: 'info' });
+      throwing.log({
+        sessionId: 's1',
+        action: 'a',
+        category: 'system',
+        detail: '1',
+        riskLevel: 'info',
+      });
     }).not.toThrow();
     expect(throwing.size()).toBe(1);
   });

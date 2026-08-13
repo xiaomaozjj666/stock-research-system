@@ -43,8 +43,7 @@ describe('extractTextFromPdf', () => {
   it('多页拼接：每页换行分隔', async () => {
     installPdf({
       numPages: 2,
-      getPage: async (n) =>
-        page([{ str: n === 1 ? 'Page one' : 'Page two' }]),
+      getPage: async (n) => page([{ str: n === 1 ? 'Page one' : 'Page two' }]),
     });
     const text = await extractTextFromPdf(Buffer.from('x'));
     expect(text).toBe('Page one\nPage two\n');

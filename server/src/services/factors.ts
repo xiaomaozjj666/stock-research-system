@@ -109,9 +109,12 @@ export function extractFactors(
   // —— 成长性 ——
   const revenueCAGR = safeCAGR(financial.revenue[0], financial.revenue[idx], n - 1);
   const profitCAGR = safeCAGR(financial.netProfit[0], financial.netProfit[idx], n - 1);
-  const latestProfitGrowth = financial.netProfit[idx - 1] !== 0
-    ? ((financial.netProfit[idx] - financial.netProfit[idx - 1]) / Math.abs(financial.netProfit[idx - 1])) * 100
-    : 0;
+  const latestProfitGrowth =
+    financial.netProfit[idx - 1] !== 0
+      ? ((financial.netProfit[idx] - financial.netProfit[idx - 1]) /
+          Math.abs(financial.netProfit[idx - 1])) *
+        100
+      : 0;
   const revG = revenueGrowthRates(financial);
   const avgRevGrowth = revG.length ? avg(revG) : 0;
   const revGStd = revG.length
@@ -133,9 +136,8 @@ export function extractFactors(
         valuation.peerComparison.length,
       )
     : valuation.pe;
-  const peerPEratio = isFinite(peerAvgPE / valuation.pe) && valuation.pe > 0
-    ? peerAvgPE / valuation.pe
-    : 1;
+  const peerPEratio =
+    isFinite(peerAvgPE / valuation.pe) && valuation.pe > 0 ? peerAvgPE / valuation.pe : 1;
   const benchmarkPE = industryPEBenchmark(info.industry);
   const peVsBenchmark = safeDiv(valuation.pe, benchmarkPE);
   const peg = latestProfitGrowth > 0 ? safeDiv(valuation.pe, latestProfitGrowth) : 1;
@@ -148,9 +150,10 @@ export function extractFactors(
 
   // —— 风险 ——
   const debtRiskScore = scoreDebtRisk(financial.debtRatio[idx], info.industry); // 0-7
-  const goodwillRatio = financial.equity[idx] !== 0
-    ? (financial.goodwill[idx] / Math.abs(financial.equity[idx])) * 100
-    : 0;
+  const goodwillRatio =
+    financial.equity[idx] !== 0
+      ? (financial.goodwill[idx] / Math.abs(financial.equity[idx])) * 100
+      : 0;
   const arRisk = arRatioPct(financial, idx);
   const revVol = calculateVolatility(financial.revenue);
   const profitVol = calculateVolatility(financial.netProfit);
@@ -158,48 +161,183 @@ export function extractFactors(
   // 异常信号：应收暴增 + 现金流长期背离
   let anomalyRaw = 3;
   if (n >= 2 && financial.accountsReceivable[idx - 1] !== 0) {
-    const arGrowth = ((financial.accountsReceivable[idx] - financial.accountsReceivable[idx - 1]) /
-      Math.abs(financial.accountsReceivable[idx - 1])) * 100;
+    const arGrowth =
+      ((financial.accountsReceivable[idx] - financial.accountsReceivable[idx - 1]) /
+        Math.abs(financial.accountsReceivable[idx - 1])) *
+      100;
     if (arGrowth > revG[revG.length - 1] * 1.5 && arGrowth > 20) anomalyRaw -= 1.5;
   }
-  const cfDivorce = financial.operatingCashFlow.filter((cf, i) =>
-    financial.netProfit[i] !== 0 && isFinite(cf / financial.netProfit[i]) && cf < financial.netProfit[i] * 0.7,
+  const cfDivorce = financial.operatingCashFlow.filter(
+    (cf, i) =>
+      financial.netProfit[i] !== 0 &&
+      isFinite(cf / financial.netProfit[i]) &&
+      cf < financial.netProfit[i] * 0.7,
   ).length;
   if (cfDivorce >= 3) anomalyRaw -= 1.5;
   const anomaly = Math.max(0, anomalyRaw); // 0-3，越高越干净
 
   return [
     // 盈利质量
-    { name: 'grossMargin', dimension: 'profit', direction: 1, value: avgGM, neutral: 30, scale: 30 },
-    { name: 'roe', dimension: 'profit', direction: 1, value: avg(financial.roe), neutral: 10, scale: 15 },
+    {
+      name: 'grossMargin',
+      dimension: 'profit',
+      direction: 1,
+      value: avgGM,
+      neutral: 30,
+      scale: 30,
+    },
+    {
+      name: 'roe',
+      dimension: 'profit',
+      direction: 1,
+      value: avg(financial.roe),
+      neutral: 10,
+      scale: 15,
+    },
     { name: 'cashFlowRatio', dimension: 'profit', direction: 1, value: cfr, neutral: 1, scale: 1 },
-    { name: 'arRatioProfit', dimension: 'profit', direction: -1, value: arRatio, neutral: 20, scale: 30 },
-    { name: 'gmStability', dimension: 'profit', direction: -1, value: gmRange, neutral: 5, scale: 12 },
+    {
+      name: 'arRatioProfit',
+      dimension: 'profit',
+      direction: -1,
+      value: arRatio,
+      neutral: 20,
+      scale: 30,
+    },
+    {
+      name: 'gmStability',
+      dimension: 'profit',
+      direction: -1,
+      value: gmRange,
+      neutral: 5,
+      scale: 12,
+    },
     // 成长性
-    { name: 'revenueCAGR', dimension: 'growth', direction: 1, value: revenueCAGR, neutral: 10, scale: 15 },
-    { name: 'profitCAGR', dimension: 'growth', direction: 1, value: profitCAGR, neutral: 12, scale: 18 },
-    { name: 'latestProfitGrowth', dimension: 'growth', direction: 1, value: latestProfitGrowth, neutral: 10, scale: 20 },
-    { name: 'growthStability', dimension: 'growth', direction: 1, value: growthStability, neutral: 0.5, scale: 0.5 },
+    {
+      name: 'revenueCAGR',
+      dimension: 'growth',
+      direction: 1,
+      value: revenueCAGR,
+      neutral: 10,
+      scale: 15,
+    },
+    {
+      name: 'profitCAGR',
+      dimension: 'growth',
+      direction: 1,
+      value: profitCAGR,
+      neutral: 12,
+      scale: 18,
+    },
+    {
+      name: 'latestProfitGrowth',
+      dimension: 'growth',
+      direction: 1,
+      value: latestProfitGrowth,
+      neutral: 10,
+      scale: 20,
+    },
+    {
+      name: 'growthStability',
+      dimension: 'growth',
+      direction: 1,
+      value: growthStability,
+      neutral: 0.5,
+      scale: 0.5,
+    },
     // 估值
-    { name: 'pePercentile', dimension: 'valuation', direction: -1, value: pePercentile, neutral: 50, scale: 35 },
-    { name: 'peerPEratio', dimension: 'valuation', direction: 1, value: peerPEratio, neutral: 1, scale: 0.5 },
-    { name: 'peVsBenchmark', dimension: 'valuation', direction: -1, value: peVsBenchmark, neutral: 1, scale: 0.6 },
+    {
+      name: 'pePercentile',
+      dimension: 'valuation',
+      direction: -1,
+      value: pePercentile,
+      neutral: 50,
+      scale: 35,
+    },
+    {
+      name: 'peerPEratio',
+      dimension: 'valuation',
+      direction: 1,
+      value: peerPEratio,
+      neutral: 1,
+      scale: 0.5,
+    },
+    {
+      name: 'peVsBenchmark',
+      dimension: 'valuation',
+      direction: -1,
+      value: peVsBenchmark,
+      neutral: 1,
+      scale: 0.6,
+    },
     { name: 'peg', dimension: 'valuation', direction: -1, value: peg, neutral: 1, scale: 1 },
-    { name: 'peMomentum', dimension: 'valuation', direction: 1, value: peMomentum, neutral: 0, scale: 0.3 },
+    {
+      name: 'peMomentum',
+      dimension: 'valuation',
+      direction: 1,
+      value: peMomentum,
+      neutral: 0,
+      scale: 0.3,
+    },
     // 行业景气
-    { name: 'avgRevenueGrowth', dimension: 'industry', direction: 1, value: avgRevGrowth, neutral: 10, scale: 15 },
+    {
+      name: 'avgRevenueGrowth',
+      dimension: 'industry',
+      direction: 1,
+      value: avgRevGrowth,
+      neutral: 10,
+      scale: 15,
+    },
     { name: 'gmTrend', dimension: 'industry', direction: 1, value: gmTrend, neutral: 0, scale: 5 },
     // 风险（因子值越高代表风险越低 → direction +1）
-    { name: 'debtRiskScore', dimension: 'risk', direction: 1, value: debtRiskScore, neutral: 3.5, scale: 3.5 },
-    { name: 'goodwillRatio', dimension: 'risk', direction: -1, value: goodwillRatio, neutral: 10, scale: 30 },
-    { name: 'arRatioRisk', dimension: 'risk', direction: -1, value: arRisk, neutral: 20, scale: 30 },
-    { name: 'volatility', dimension: 'risk', direction: -1, value: volatility, neutral: 0.2, scale: 0.5 },
-    { name: 'anomalyScore', dimension: 'risk', direction: 1, value: anomaly, neutral: 1.5, scale: 1.5 },
+    {
+      name: 'debtRiskScore',
+      dimension: 'risk',
+      direction: 1,
+      value: debtRiskScore,
+      neutral: 3.5,
+      scale: 3.5,
+    },
+    {
+      name: 'goodwillRatio',
+      dimension: 'risk',
+      direction: -1,
+      value: goodwillRatio,
+      neutral: 10,
+      scale: 30,
+    },
+    {
+      name: 'arRatioRisk',
+      dimension: 'risk',
+      direction: -1,
+      value: arRisk,
+      neutral: 20,
+      scale: 30,
+    },
+    {
+      name: 'volatility',
+      dimension: 'risk',
+      direction: -1,
+      value: volatility,
+      neutral: 0.2,
+      scale: 0.5,
+    },
+    {
+      name: 'anomalyScore',
+      dimension: 'risk',
+      direction: 1,
+      value: anomaly,
+      neutral: 1.5,
+      scale: 1.5,
+    },
   ];
 }
 
 export const FACTOR_DIMENSIONS: FactorDimension[] = [
-  'profit', 'growth', 'valuation', 'industry', 'risk',
+  'profit',
+  'growth',
+  'valuation',
+  'industry',
+  'risk',
 ];
 
 /**
@@ -234,7 +372,11 @@ export function groupFactorsByDimension(
   factors: FactorDef[],
 ): Record<FactorDimension, FactorDef[]> {
   const grouped = {
-    profit: [], growth: [], valuation: [], industry: [], risk: [],
+    profit: [],
+    growth: [],
+    valuation: [],
+    industry: [],
+    risk: [],
   } as Record<FactorDimension, FactorDef[]>;
   for (const f of factors) grouped[f.dimension].push(f);
   return grouped;

@@ -14,8 +14,8 @@ export type { NewsSignal, NewsItem };
 
 // 数据质量标记
 export interface DataQualityFlags {
-  estimatedFields: string[];  // 估算字段列表
-  missingFields: string[];    // 缺失字段列表
+  estimatedFields: string[]; // 估算字段列表
+  missingFields: string[]; // 缺失字段列表
 }
 
 // 财务数据（多年）
@@ -35,8 +35,8 @@ export interface FinancialData {
   inventory: number[];
   goodwill: number[];
   debtRatio: number[];
-  capEx?: number[];  // 资本支出（亿元），可选字段
-  dataQuality?: DataQualityFlags;  // 数据质量标记
+  capEx?: number[]; // 资本支出（亿元），可选字段
+  dataQuality?: DataQualityFlags; // 数据质量标记
 }
 
 // 估值数据
@@ -74,7 +74,12 @@ export interface StockDataSet {
 // 专家观点
 export interface ExpertOpinion {
   expert: string;
-  arguments: { text: string; confidence: number; type: 'support' | 'oppose'; evidenceType: 'fact' | 'inference' | 'hypothesis' }[];
+  arguments: {
+    text: string;
+    confidence: number;
+    type: 'support' | 'oppose';
+    evidenceType: 'fact' | 'inference' | 'hypothesis';
+  }[];
   overallSentiment: 'bullish' | 'neutral' | 'bearish';
   confidence: number;
   keyPoints: string[];
@@ -125,7 +130,8 @@ export interface StrategyRecommendation {
   applicableMarket: string; // 适用行情描述
   fatalWeakness: string; // 致命弱点
   backtestWarning: string; // 回测风险提醒
-  newsAware?: { // 含最新消息情绪叠加层的回测对比
+  newsAware?: {
+    // 含最新消息情绪叠加层的回测对比
     totalReturn: number;
     sharpeRatio: number;
     maxDrawdown: number;

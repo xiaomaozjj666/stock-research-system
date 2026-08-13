@@ -34,7 +34,9 @@ export default function PipelineProgress({ currentStage, completedStages, stageE
             {isDone && elapsed != null && (
               <span className="quant-pipeline-time">{formatElapsed(elapsed)}</span>
             )}
-            {isActive && <span className="quant-pipeline-time quant-pipeline-running">执行中...</span>}
+            {isActive && (
+              <span className="quant-pipeline-time quant-pipeline-running">执行中...</span>
+            )}
           </div>
         );
       })}

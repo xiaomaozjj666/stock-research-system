@@ -10,7 +10,15 @@
  *
  * 所有外部依赖通过 deps 注入，便于单测 mock；生产默认 deps 在文件底部组装。
  */
-import { isLLMAvailable, getLLMConfig, chat, chatWithTools, chatJSON, embed, type ChatMessage } from '../llm/index.js';
+import {
+  isLLMAvailable,
+  getLLMConfig,
+  chat,
+  chatWithTools,
+  chatJSON,
+  embed,
+  type ChatMessage,
+} from '../llm/index.js';
 import { retrieveEvidence, type EvidenceDoc, type Embedder } from '../llm/rag.js';
 import { TOOL_DEFINITIONS, executeToolCall, type ToolDeps } from '../llm/tools.js';
 import { loadHistory, appendTurn } from './chatMemory.js';
@@ -106,9 +114,17 @@ export type ChatStreamEvent =
 export interface ChatAgentDeps {
   runAnalysis: (code: string) => Promise<unknown>;
   runBacktest: (ohlcv: unknown, strategy: unknown) => Promise<unknown>;
-  parseStrategyInput: (input: unknown) => { stockCode: string; startDate?: string; endDate?: string; [k: string]: unknown };
+  parseStrategyInput: (input: unknown) => {
+    stockCode: string;
+    startDate?: string;
+    endDate?: string;
+    [k: string]: unknown;
+  };
   fetchOHLCVData: (code: string, start: string, end: string) => Promise<unknown[]>;
-  retrieveEvidence: (q: string, opts?: { topK?: number; stockCode?: string; embedder?: Embedder }) => Promise<EvidenceDoc[]>;
+  retrieveEvidence: (
+    q: string,
+    opts?: { topK?: number; stockCode?: string; embedder?: Embedder },
+  ) => Promise<EvidenceDoc[]>;
   /** 嵌入函数（语义检索用）；不提供则 RAG 回退 BM25 */
   embedder?: Embedder;
   /** 加载历史（持久记忆）；不提供则不使用持久记忆 */
@@ -126,7 +142,9 @@ export interface ChatAgentDeps {
   /** 结构化 JSON 调用（用于路由规划与幻觉防护）；不提供则降级为默认路径 */
   chatJSON?: (msgs: ChatMessage[], opts?: Record<string, unknown>) => Promise<unknown>;
   /** 提取新闻情绪信号（受控回测评估工具用）；不提供则 evaluate_backtest 退化为无叠加 */
-  extractNewsSignal?: (code: string) => Promise<{ signal: { polarity: number; hasNews: boolean }; source: string }>;
+  extractNewsSignal?: (
+    code: string,
+  ) => Promise<{ signal: { polarity: number; hasNews: boolean }; source: string }>;
   runDebate?: (analysisText: string) => Promise<DebateResult>;
   /** 风控三分视角辩论（激进/中性/保守）；不提供时用默认实现 */
   runRiskDebate?: (analysisText: string) => Promise<RiskDebateResult>;
@@ -147,18 +165,37 @@ function buildSystemPrompt(evidenceText: string): string {
 
 function defaultDebate(deps: ChatAgentDeps): (text: string) => Promise<DebateResult> {
   return async (analysisText: string) => {
-    const bull = await deps.chat([
-      { role: 'system', content: '你是看多研究员：基于下列分析给出 3-5 条买入理由，激进但须有依据，禁止编造数据。' },
-      { role: 'user', content: analysisText },
-    ], { temperature: 0.5, maxTokens: 800, timeout: 40000 });
-    const bear = await deps.chat([
-      { role: 'system', content: '你是看空研究员：基于下列分析给出 3-5 条风险/卖出理由，严谨克制。' },
-      { role: 'user', content: analysisText },
-    ], { temperature: 0.5, maxTokens: 800, timeout: 40000 });
-    const synthesis = await deps.chat([
-      { role: 'system', content: '你是首席：综合多空双方，给出平衡结论、关键分歧与置信度（高/中/低）。' },
-      { role: 'user', content: `【看多】\n${bull}\n\n【看空】\n${bear}` },
-    ], { temperature: 0.3, maxTokens: 800, timeout: 40000 });
+    const bull = await deps.chat(
+      [
+        {
+          role: 'system',
+          content:
+            '你是看多研究员：基于下列分析给出 3-5 条买入理由，激进但须有依据，禁止编造数据。',
+        },
+        { role: 'user', content: analysisText },
+      ],
+      { temperature: 0.5, maxTokens: 800, timeout: 40000 },
+    );
+    const bear = await deps.chat(
+      [
+        {
+          role: 'system',
+          content: '你是看空研究员：基于下列分析给出 3-5 条风险/卖出理由，严谨克制。',
+        },
+        { role: 'user', content: analysisText },
+      ],
+      { temperature: 0.5, maxTokens: 800, timeout: 40000 },
+    );
+    const synthesis = await deps.chat(
+      [
+        {
+          role: 'system',
+          content: '你是首席：综合多空双方，给出平衡结论、关键分歧与置信度（高/中/低）。',
+        },
+        { role: 'user', content: `【看多】\n${bull}\n\n【看空】\n${bear}` },
+      ],
+      { temperature: 0.3, maxTokens: 800, timeout: 40000 },
+    );
     return { bull, bear, synthesis };
   };
 }
@@ -166,22 +203,53 @@ function defaultDebate(deps: ChatAgentDeps): (text: string) => Promise<DebateRes
 /** 默认风控三分视角辩论：激进/中性/保守三方各自给出风控视角，首席综合 */
 function defaultRiskDebate(deps: ChatAgentDeps): (text: string) => Promise<RiskDebateResult> {
   return async (analysisText: string) => {
-    const aggressive = await deps.chat([
-      { role: 'system', content: '你是激进风控经理：关注机会成本与上行空间，认为过度风控本身也是一种风险。基于下列分析给出 3-4 条激进风控建议（如提高仓位上限、放宽止损、利用波动），须有依据，禁止编造数据。' },
-      { role: 'user', content: analysisText },
-    ], { temperature: 0.5, maxTokens: 600, timeout: 40000 });
-    const neutral = await deps.chat([
-      { role: 'system', content: '你是中性风控经理：以数据为准，平衡风险与收益，关注风险调整后收益（夏普/索提诺）。基于下列分析给出 3-4 条中性风控建议（如仓位动态调整、分批建仓、设置最大回撤阈值），须有依据。' },
-      { role: 'user', content: analysisText },
-    ], { temperature: 0.4, maxTokens: 600, timeout: 40000 });
-    const conservative = await deps.chat([
-      { role: 'system', content: '你是保守风控经理：以本金安全为第一优先级，关注尾部风险与最大回撤，宁可错过也不可做错。基于下列分析给出 3-4 条保守风控建议（如严格止损、降低仓位、对冲尾部风险），须有依据。' },
-      { role: 'user', content: analysisText },
-    ], { temperature: 0.3, maxTokens: 600, timeout: 40000 });
-    const synthesis = await deps.chat([
-      { role: 'system', content: '你是首席风控官：综合激进/中性/保守三方意见，给出统一风控决策建议，包含：建议仓位区间、止损/止盈参考、关键风险监控指标、三方分歧点。' },
-      { role: 'user', content: `【激进】\n${aggressive}\n\n【中性】\n${neutral}\n\n【保守】\n${conservative}` },
-    ], { temperature: 0.3, maxTokens: 800, timeout: 40000 });
+    const aggressive = await deps.chat(
+      [
+        {
+          role: 'system',
+          content:
+            '你是激进风控经理：关注机会成本与上行空间，认为过度风控本身也是一种风险。基于下列分析给出 3-4 条激进风控建议（如提高仓位上限、放宽止损、利用波动），须有依据，禁止编造数据。',
+        },
+        { role: 'user', content: analysisText },
+      ],
+      { temperature: 0.5, maxTokens: 600, timeout: 40000 },
+    );
+    const neutral = await deps.chat(
+      [
+        {
+          role: 'system',
+          content:
+            '你是中性风控经理：以数据为准，平衡风险与收益，关注风险调整后收益（夏普/索提诺）。基于下列分析给出 3-4 条中性风控建议（如仓位动态调整、分批建仓、设置最大回撤阈值），须有依据。',
+        },
+        { role: 'user', content: analysisText },
+      ],
+      { temperature: 0.4, maxTokens: 600, timeout: 40000 },
+    );
+    const conservative = await deps.chat(
+      [
+        {
+          role: 'system',
+          content:
+            '你是保守风控经理：以本金安全为第一优先级，关注尾部风险与最大回撤，宁可错过也不可做错。基于下列分析给出 3-4 条保守风控建议（如严格止损、降低仓位、对冲尾部风险），须有依据。',
+        },
+        { role: 'user', content: analysisText },
+      ],
+      { temperature: 0.3, maxTokens: 600, timeout: 40000 },
+    );
+    const synthesis = await deps.chat(
+      [
+        {
+          role: 'system',
+          content:
+            '你是首席风控官：综合激进/中性/保守三方意见，给出统一风控决策建议，包含：建议仓位区间、止损/止盈参考、关键风险监控指标、三方分歧点。',
+        },
+        {
+          role: 'user',
+          content: `【激进】\n${aggressive}\n\n【中性】\n${neutral}\n\n【保守】\n${conservative}`,
+        },
+      ],
+      { temperature: 0.3, maxTokens: 800, timeout: 40000 },
+    );
     return { aggressive, neutral, conservative, synthesis };
   };
 }
@@ -194,7 +262,15 @@ async function runFallback(
   const m = req.message.match(/\b(\d{6})\b/);
   if (m) {
     try {
-      const r = await deps.runAnalysis(m[1]) as { stock_pool?: { stock_name?: string; total_score?: number; rating?: string; valuation?: { currentPrice?: number; pe?: number }; risk_list?: string[] }[] };
+      const r = (await deps.runAnalysis(m[1])) as {
+        stock_pool?: {
+          stock_name?: string;
+          total_score?: number;
+          rating?: string;
+          valuation?: { currentPrice?: number; pe?: number };
+          risk_list?: string[];
+        }[];
+      };
       const s = r?.stock_pool?.[0];
       if (s) {
         const lines = [
@@ -242,7 +318,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
       return { action: 'tools', reason: '规划器未配置，默认走工具调用路径' };
     }
     try {
-      const raw = await deps.chatJSON(
+      const raw = (await deps.chatJSON(
         [
           {
             role: 'system',
@@ -254,7 +330,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
           { role: 'user', content: message.slice(0, 500) },
         ],
         { temperature: 0, maxTokens: 200, timeout: 15000, task: 'chat' },
-      ) as { action?: string; reason?: string };
+      )) as { action?: string; reason?: string };
       const valid = ['direct', 'tools', 'debate'] as const;
       const action = valid.includes(raw.action as (typeof valid)[number])
         ? (raw.action as (typeof valid)[number])
@@ -282,10 +358,13 @@ export function createChatAgent(deps: ChatAgentDeps) {
     if (!deps.chatJSON) return null;
     if (!answer.trim()) return null;
     if (toolCalls.length === 0 && evidence.length === 0) return null;
-    const evidenceText = evidence.map((e) => `[${e.source}] ${e.text.slice(0, 400)}`).join('\n').slice(0, 2000);
+    const evidenceText = evidence
+      .map((e) => `[${e.source}] ${e.text.slice(0, 400)}`)
+      .join('\n')
+      .slice(0, 2000);
     const toolsText = toolCalls.map((t) => `${t.name}(${JSON.stringify(t.args)})`).join(', ');
     try {
-      const raw = await deps.chatJSON(
+      const raw = (await deps.chatJSON(
         [
           {
             role: 'system',
@@ -310,9 +389,17 @@ export function createChatAgent(deps: ChatAgentDeps) {
           },
         ],
         { temperature: 0, maxTokens: 600, timeout: 25000, task: 'reasoning' },
-      ) as { verified?: boolean; unverified?: unknown; calculationErrors?: unknown; warning?: unknown };
+      )) as {
+        verified?: boolean;
+        unverified?: unknown;
+        calculationErrors?: unknown;
+        warning?: unknown;
+      };
       const unverified = Array.isArray(raw.unverified)
-        ? raw.unverified.map((u) => String(u)).filter((s) => s.length > 0).slice(0, 6)
+        ? raw.unverified
+            .map((u) => String(u))
+            .filter((s) => s.length > 0)
+            .slice(0, 6)
         : [];
       const calcErrors: CalculationError[] = Array.isArray(raw.calculationErrors)
         ? (raw.calculationErrors as Record<string, unknown>[])
@@ -335,7 +422,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
         verified,
         unverified,
         calculationErrors: calcErrors,
-        warning: verified ? '' : (warning || `回答中存在${parts.join('、')}，请注意甄别`),
+        warning: verified ? '' : warning || `回答中存在${parts.join('、')}，请注意甄别`,
       };
     } catch {
       return null; // 核查失败不阻断回答
@@ -350,7 +437,10 @@ export function createChatAgent(deps: ChatAgentDeps) {
    * 流式执行：onEvent 逐阶段推送进度（真流式，替代"跑完才回"）。
    * onEvent 为空时等同于 run（供 POST /api/chat 非流式调用）。
    */
-  async function runStream(req: ChatAgentRequest, onEvent?: (e: ChatStreamEvent) => void): Promise<ChatAgentResponse> {
+  async function runStream(
+    req: ChatAgentRequest,
+    onEvent?: (e: ChatStreamEvent) => void,
+  ): Promise<ChatAgentResponse> {
     const emit = onEvent ?? (() => {});
     try {
       emit({ phase: 'retrieving', message: '正在检索相关证据…' });
@@ -360,10 +450,14 @@ export function createChatAgent(deps: ChatAgentDeps) {
           ? { stockCode: req.stockCode, embedder: deps.embedder }
           : { embedder: deps.embedder },
       );
-      const evidenceText = evidence.map((e) => `[${e.source}] ${e.text}`).join('\n').slice(0, 3000);
+      const evidenceText = evidence
+        .map((e) => `[${e.source}] ${e.text}`)
+        .join('\n')
+        .slice(0, 3000);
 
       // 历史：优先用请求内联 history，否则从持久记忆加载
-      const history = req.history ?? (req.sessionId && deps.loadHistory ? deps.loadHistory(req.sessionId) : []);
+      const history =
+        req.history ?? (req.sessionId && deps.loadHistory ? deps.loadHistory(req.sessionId) : []);
 
       if (!deps.isLLMAvailable()) {
         const resp = await runFallback(req, deps, evidence);
@@ -400,7 +494,12 @@ export function createChatAgent(deps: ChatAgentDeps) {
 
       if (plan.action === 'direct') {
         // 闲聊/概念：直接 chat，不走工具回路，省开销
-        content = await deps.chat(messages, { temperature: 0.4, maxTokens: 1500, timeout: 45000, task: 'chat' });
+        content = await deps.chat(messages, {
+          temperature: 0.4,
+          maxTokens: 1500,
+          timeout: 45000,
+          task: 'chat',
+        });
       } else {
         // tools / debate：先走工具回路拿真实数据
         emit({ phase: 'tool_calling', message: '正在调用工具获取数据…' });
@@ -408,7 +507,14 @@ export function createChatAgent(deps: ChatAgentDeps) {
           messages,
           TOOL_DEFINITIONS,
           (name, args) =>
-            executeToolCall({ id: `call_${name}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }, toolDeps),
+            executeToolCall(
+              {
+                id: `call_${name}`,
+                type: 'function',
+                function: { name, arguments: JSON.stringify(args) },
+              },
+              toolDeps,
+            ),
           { temperature: 0.3, maxTokens: 2000, timeout: 60000, task: 'analysis' },
         );
         content = result.content;

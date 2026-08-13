@@ -1,4 +1,11 @@
-import type { StrategyConfig, DataQualityReport, BacktestResult, AuditReport, OptimizationReport, OHLCVData } from '../types.js';
+import type {
+  StrategyConfig,
+  DataQualityReport,
+  BacktestResult,
+  AuditReport,
+  OptimizationReport,
+  OHLCVData,
+} from '../types.js';
 import { dataEngineer } from './dataEngineer.js';
 import { backtestAuditor } from './backtestAuditor.js';
 import { strategyOptimizer } from './strategyOptimizer.js';
@@ -33,8 +40,10 @@ export function parseStrategyInput(input: string | StrategyConfig): StrategyConf
     config.type = 'ma_cross';
     config.name = '均线交叉策略';
     // 尝试提取参数
-    const shortMatch = input.match(/(\d+)\s*[日天]?\s*(?:短|快速|short)/i) || input.match(/(?:短|快速).*?(\d+)/);
-    const longMatch = input.match(/(\d+)\s*[日天]?\s*(?:长|慢速|long)/i) || input.match(/(?:长|慢速).*?(\d+)/);
+    const shortMatch =
+      input.match(/(\d+)\s*[日天]?\s*(?:短|快速|short)/i) || input.match(/(?:短|快速).*?(\d+)/);
+    const longMatch =
+      input.match(/(\d+)\s*[日天]?\s*(?:长|慢速|long)/i) || input.match(/(?:长|慢速).*?(\d+)/);
     if (shortMatch) config.params.shortPeriod = parseInt(shortMatch[1]);
     if (longMatch) config.params.longPeriod = parseInt(longMatch[1]);
   }
@@ -51,9 +60,12 @@ export async function orchestrate(
   strategy: StrategyConfig,
   data: OHLCVData[],
   backtestResult: BacktestResult,
-  onProgress?: (stage: string, percent: number) => void
-): Promise<{ dataQuality: DataQualityReport; audit: AuditReport; optimization: OptimizationReport }> {
-
+  onProgress?: (stage: string, percent: number) => void,
+): Promise<{
+  dataQuality: DataQualityReport;
+  audit: AuditReport;
+  optimization: OptimizationReport;
+}> {
   // Step 1: 数据质量检查
   onProgress?.('data_check', 40);
   const dataQuality = dataEngineer(data);
@@ -76,12 +88,14 @@ export function generateSummary(
   dataQuality: DataQualityReport,
   backtest: BacktestResult,
   audit: AuditReport,
-  optimization: OptimizationReport
+  optimization: OptimizationReport,
 ): string {
-  const returnDesc = backtest.totalReturn > 0
-    ? `正收益${backtest.totalReturn.toFixed(1)}%`
-    : `亏损${Math.abs(backtest.totalReturn).toFixed(1)}%`;
-  const riskDesc = audit.riskScore >= 70 ? '风险可控' : audit.riskScore >= 50 ? '存在一定风险' : '风险较高';
+  const returnDesc =
+    backtest.totalReturn > 0
+      ? `正收益${backtest.totalReturn.toFixed(1)}%`
+      : `亏损${Math.abs(backtest.totalReturn).toFixed(1)}%`;
+  const riskDesc =
+    audit.riskScore >= 70 ? '风险可控' : audit.riskScore >= 50 ? '存在一定风险' : '风险较高';
   const dataDesc = dataQuality.overallScore >= 80 ? '数据质量良好' : '数据存在质量问题';
 
   return `${strategy.name}在${strategy.stockCode}上的回测显示${returnDesc}，年化${backtest.annualizedReturn.toFixed(1)}%，夏普比率${backtest.sharpeRatio.toFixed(2)}，最大回撤${backtest.maxDrawdown.toFixed(1)}%。${dataDesc}（评分${dataQuality.overallScore}），回测${riskDesc}（审计评分${audit.riskScore}）。${optimization.suggestions.length > 0 ? `发现${optimization.suggestions.length}项优化建议。` : ''}`;

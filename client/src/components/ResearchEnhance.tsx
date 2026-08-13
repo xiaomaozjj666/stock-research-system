@@ -142,7 +142,9 @@ export default function ResearchEnhance({ sessionId }: Props) {
         {/* 文档入库 */}
         <section className="enhance-card">
           <h3 className="enhance-title">研究资料库</h3>
-          <p className="enhance-hint">粘贴研报 / 财报 / 公告文本，或上传 PDF，抽取要点后注入 RAG，对话时可被引用为证据。</p>
+          <p className="enhance-hint">
+            粘贴研报 / 财报 / 公告文本，或上传 PDF，抽取要点后注入 RAG，对话时可被引用为证据。
+          </p>
           <input
             className="enhance-input"
             placeholder="文档标题（必填）"
@@ -265,7 +267,9 @@ export default function ResearchEnhance({ sessionId }: Props) {
               清空记忆
             </button>
           </div>
-          <p className="enhance-hint">记忆按会话持久化，第二轮提问无需重复股票代码即可延续上下文。</p>
+          <p className="enhance-hint">
+            记忆按会话持久化，第二轮提问无需重复股票代码即可延续上下文。
+          </p>
         </section>
       </div>
       {msg && <div className="enhance-msg">{msg}</div>}

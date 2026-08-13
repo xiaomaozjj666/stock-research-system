@@ -16,7 +16,7 @@ interface Props {
 
 export default function LoadingScreen({ stage }: Props) {
   // 根据后端推送的真实阶段确定当前索引与目标进度
-  const currentIndex = stage ? STAGE_ORDER.findIndex(s => s.phase === stage.phase) : -1;
+  const currentIndex = stage ? STAGE_ORDER.findIndex((s) => s.phase === stage.phase) : -1;
   const activeIndex = currentIndex >= 0 ? currentIndex : 0;
   const targetProgress = currentIndex >= 0 ? STAGE_ORDER[currentIndex].progress : 5;
 
@@ -58,9 +58,7 @@ export default function LoadingScreen({ stage }: Props) {
                 <div className="loading-stage-dot" />
                 <div className="loading-stage-text">
                   <span className="loading-stage-label">{s.label}</span>
-                  {i === activeIndex && (
-                    <span className="loading-stage-sub">{stageMessage}</span>
-                  )}
+                  {i === activeIndex && <span className="loading-stage-sub">{stageMessage}</span>}
                 </div>
               </div>
             );

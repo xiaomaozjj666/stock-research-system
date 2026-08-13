@@ -3,7 +3,15 @@ import { resolveStockIndustry, buildPeerComparison } from '../peerService.js';
 
 // 路径与 dataService.getData.test.ts 保持一致的模式：从测试文件出发解析到真实模块
 vi.mock('../dataFetcher.js', () => ({
-  fetchValuationData: vi.fn(async () => ({ pe: 30, pb: 4, ps: 5, marketCap: 1000, currentPrice: 100, historicalPE: [], peerComparison: [] })),
+  fetchValuationData: vi.fn(async () => ({
+    pe: 30,
+    pb: 4,
+    ps: 5,
+    marketCap: 1000,
+    currentPrice: 100,
+    historicalPE: [],
+    peerComparison: [],
+  })),
   fetchBoardInfo: vi.fn(async (code: string) => ({ name: `公司${code}`, boardName: '半导体Ⅱ' })),
 }));
 vi.mock('../../data/industryPeers.js', () => ({
@@ -14,7 +22,7 @@ vi.mock('../../data/industryPeers.js', () => ({
     return undefined;
   }),
   getPeerCodes: vi.fn((industry: string | undefined) =>
-    industry === '半导体' ? ['688981', '603501'] : []
+    industry === '半导体' ? ['688981', '603501'] : [],
   ),
 }));
 
@@ -48,8 +56,19 @@ describe('resolveStockIndustry', () => {
 describe('buildPeerComparison', () => {
   it('按行业取同业代码并实时补齐估值与简称', async () => {
     mockGetPeerCodes.mockReturnValue(['688981', '603501']);
-    mockFetchBoard.mockImplementation(async (code: string) => ({ name: `公司${code}`, boardName: '半导体Ⅱ' }));
-    mockFetchValuation.mockResolvedValue({ pe: 30, pb: 4, ps: 5, marketCap: 1000, currentPrice: 100, historicalPE: [], peerComparison: [] });
+    mockFetchBoard.mockImplementation(async (code: string) => ({
+      name: `公司${code}`,
+      boardName: '半导体Ⅱ',
+    }));
+    mockFetchValuation.mockResolvedValue({
+      pe: 30,
+      pb: 4,
+      ps: 5,
+      marketCap: 1000,
+      currentPrice: 100,
+      historicalPE: [],
+      peerComparison: [],
+    });
     const peers = await buildPeerComparison('688825', '半导体');
     expect(peers).toHaveLength(2);
     expect(peers[0]).toMatchObject({ code: '688981', pe: 30, pb: 4, marketCap: 1000, roe: 0 });
@@ -66,10 +85,19 @@ describe('buildPeerComparison', () => {
 
   it('单个同业拉取失败时跳过该条（不整体失败）', async () => {
     mockGetPeerCodes.mockReturnValue(['688981', '603501']);
-    mockFetchBoard.mockImplementation(async (code: string) => ({ name: `公司${code}`, boardName: '半导体Ⅱ' }));
-    mockFetchValuation
-      .mockRejectedValueOnce(new Error('timeout'))
-      .mockResolvedValueOnce({ pe: 20, pb: 3, ps: 4, marketCap: 800, currentPrice: 50, historicalPE: [], peerComparison: [] });
+    mockFetchBoard.mockImplementation(async (code: string) => ({
+      name: `公司${code}`,
+      boardName: '半导体Ⅱ',
+    }));
+    mockFetchValuation.mockRejectedValueOnce(new Error('timeout')).mockResolvedValueOnce({
+      pe: 20,
+      pb: 3,
+      ps: 4,
+      marketCap: 800,
+      currentPrice: 50,
+      historicalPE: [],
+      peerComparison: [],
+    });
     const peers = await buildPeerComparison('688825', '半导体');
     expect(peers).toHaveLength(1);
     expect(peers[0].code).toBe('603501');

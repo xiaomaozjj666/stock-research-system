@@ -7,7 +7,16 @@
 export async function extractTextFromPdf(buffer: Buffer): Promise<string> {
   // 用变量持有 specifier，使 tsc 不解析该模块路径（未安装也不报错）
   const spec = 'pdfjs-dist/legacy/build/pdf.mjs';
-  let mod: { getDocument: (p: unknown) => { promise: Promise<{ numPages: number; getPage: (n: number) => Promise<{ getTextContent: () => Promise<{ items: { str?: string }[] }> }> }> } };
+  let mod: {
+    getDocument: (p: unknown) => {
+      promise: Promise<{
+        numPages: number;
+        getPage: (
+          n: number,
+        ) => Promise<{ getTextContent: () => Promise<{ items: { str?: string }[] }> }>;
+      }>;
+    };
+  };
   try {
     mod = (await import(spec)) as unknown as typeof mod;
   } catch {

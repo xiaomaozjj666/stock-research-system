@@ -78,7 +78,14 @@ describe('研究增强接口（前端 API 层）', () => {
         id: 'x',
         title: 't',
         ingested: true,
-        insight: { summary: '', positives: [], risks: [], catalysts: [], confidence: 0, source: 'heuristic' },
+        insight: {
+          summary: '',
+          positives: [],
+          risks: [],
+          catalysts: [],
+          confidence: 0,
+          source: 'heuristic',
+        },
       },
     });
     const r = await ingestDocument({ title: 't', text: 'x' });
@@ -111,6 +118,10 @@ describe('研究增强接口（前端 API 层）', () => {
   it('clearChatHistory 调 /chat/history/clear 并带 sessionId', async () => {
     axiosInst.post.mockResolvedValue({ data: { ok: true } });
     await clearChatHistory('s1');
-    expect(axiosInst.post).toHaveBeenCalledWith('/chat/history/clear', { sessionId: 's1' }, expect.any(Object));
+    expect(axiosInst.post).toHaveBeenCalledWith(
+      '/chat/history/clear',
+      { sessionId: 's1' },
+      expect.any(Object),
+    );
   });
 });

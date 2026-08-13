@@ -189,10 +189,7 @@ export class MCPClient {
   private async connectWithSdk(sdk: SdkLike): Promise<void> {
     const ClientCtor = sdk.Client ?? sdk.default?.Client;
     if (!ClientCtor) throw new Error('SDK 缺少 Client 导出');
-    const client = new ClientCtor(
-      { name: this.name, version: '1.0.0' },
-      { capabilities: {} },
-    );
+    const client = new ClientCtor({ name: this.name, version: '1.0.0' }, { capabilities: {} });
     let transport: unknown;
     if (this.config.transport === 'stdio') {
       const StdioCtor = sdk.StdioClientTransport ?? sdk.default?.StdioClientTransport;
@@ -362,8 +359,7 @@ export class MCPClient {
     if (this.child?.stdin?.writable) {
       this.child.stdin.write(JSON.stringify(msg) + '\n');
     } else if (this.postEndpoint) {
-      const headers =
-        this.config.transport === 'sse' ? this.config.headers : undefined;
+      const headers = this.config.transport === 'sse' ? this.config.headers : undefined;
       void fetch(this.postEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(headers ?? {}) },
@@ -405,8 +401,7 @@ export class MCPClient {
       return;
     }
     if (this.postEndpoint) {
-      const headers =
-        this.config.transport === 'sse' ? this.config.headers : undefined;
+      const headers = this.config.transport === 'sse' ? this.config.headers : undefined;
       const resp = await fetch(this.postEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(headers ?? {}) },
@@ -625,9 +620,7 @@ export function mcpToolToOpenAI(tool: MCPTool): ToolDefinition {
  * 从 registry 聚合所有 MCP 工具，并转换为 OpenAI 兼容的工具定义数组。
  * 用于把外部工具注入到 chatWithTools 的 tools 参数中。
  */
-export async function createMCPToolsFromRegistry(
-  registry: MCPRegistry,
-): Promise<ToolDefinition[]> {
+export async function createMCPToolsFromRegistry(registry: MCPRegistry): Promise<ToolDefinition[]> {
   const tools = await registry.listAllTools();
   return tools.map(mcpToolToOpenAI);
 }

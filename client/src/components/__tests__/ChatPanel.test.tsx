@@ -12,6 +12,21 @@ vi.mock('../../api/client', () => ({
     debate: undefined,
     degraded: false,
   })),
+  // 流式优先路径：同步推送 done 事件即完成
+  chatWithAgentStream: vi.fn((_message: string, onEvent: (e: unknown) => void) => {
+    onEvent({
+      phase: 'done',
+      message: '完成',
+      response: {
+        answer: '这是回复',
+        toolsUsed: ['run_analysis'],
+        evidence: [{ id: 'e1', source: 'cache:x', text: '证据内容片段' }],
+        debate: undefined,
+        degraded: false,
+      },
+    });
+    return { cancel: vi.fn() };
+  }),
 }));
 
 describe('ChatPanel', () => {

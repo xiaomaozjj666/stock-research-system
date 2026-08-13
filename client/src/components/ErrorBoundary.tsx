@@ -27,7 +27,8 @@ export class ErrorBoundary extends Component<Props, State> {
     this.setState({ componentStack: info.componentStack ?? undefined });
   }
 
-  private reset = () => this.setState({ hasError: false, error: undefined, componentStack: undefined });
+  private reset = () =>
+    this.setState({ hasError: false, error: undefined, componentStack: undefined });
 
   render() {
     if (!this.state.hasError) return this.props.children;

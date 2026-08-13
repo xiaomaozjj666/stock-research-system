@@ -1,0 +1,29 @@
+# Dependabot：定期扫描 npm 依赖的安全更新与版本升级。
+# 与 `npm audit`（点查）互补——Dependabot 会主动提 PR 修复已知漏洞依赖。
+# npm 生态在 monorepo workspaces 下只需在根目录声明一个 ecosystem。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 10
+    # 分组提 PR，减少噪音；安全更新不受分组限制、单独提
+    groups:
+      production-dependencies:
+        dependency-type: production
+      development-dependencies:
+        dependency-type: development
+    # TS7 与部分依赖 peer 冲突，升级需人工验证；ignore 由 CI 门禁兜底
+    labels:
+      - dependencies
+
+  # GitHub Actions 自身版本也纳入维护
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels:
+      - dependencies

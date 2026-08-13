@@ -31,15 +31,19 @@ const SYSTEM_PROMPT = `你是资深 A 股解禁压力分析师，专注限售股
 
 /** 上市年限阈值（年） */
 const LISTING_YEAR_THRESHOLDS = {
-  firstUnlock: 1,    // 首次解禁窗口（战投/Pre-IPO 到期）
-  secondUnlock: 3,   // 二次解禁窗口（控股股东到期）
-  mature: 5,         // 解禁基本完毕
+  firstUnlock: 1, // 首次解禁窗口（战投/Pre-IPO 到期）
+  secondUnlock: 3, // 二次解禁窗口（控股股东到期）
+  mature: 5, // 解禁基本完毕
 };
 
 /**
  * 规则引擎研判（LLM 不可用时降级）
  */
-function unlockExpertRule(_financial: FinancialData, valuation: ValuationData, info: StockInfo): ExpertOpinion {
+function unlockExpertRule(
+  _financial: FinancialData,
+  valuation: ValuationData,
+  info: StockInfo,
+): ExpertOpinion {
   const arguments_: ExpertOpinion['arguments'] = [];
   const keyPoints: string[] = [];
 
@@ -149,7 +153,9 @@ function unlockExpertRule(_financial: FinancialData, valuation: ValuationData, i
     overallSentiment = 'neutral';
   }
 
-  const avgConfidence = Math.round(arguments_.reduce((s, a) => s + a.confidence, 0) / arguments_.length);
+  const avgConfidence = Math.round(
+    arguments_.reduce((s, a) => s + a.confidence, 0) / arguments_.length,
+  );
 
   return {
     expert: EXPERT_NAME,
@@ -164,7 +170,11 @@ function unlockExpertRule(_financial: FinancialData, valuation: ValuationData, i
  * 解禁分析师
  * LLM 可用时调用 LLM 进行深度研判；不可用或失败时降级规则引擎。
  */
-export async function unlockExpert(financial: FinancialData, valuation: ValuationData, info: StockInfo): Promise<ExpertOpinion> {
+export async function unlockExpert(
+  financial: FinancialData,
+  valuation: ValuationData,
+  info: StockInfo,
+): Promise<ExpertOpinion> {
   return runExpertWithLLM({
     expertName: EXPERT_NAME,
     systemPrompt: SYSTEM_PROMPT,

@@ -162,25 +162,22 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
       setShowDropdown(true);
       debounceRef.current = setTimeout(() => runSearch(trimmed, isCode), isCode ? 200 : 300);
     },
-    [selectedName, runSearch]
+    [selectedName, runSearch],
   );
 
-  const selectStock = useCallback(
-    (stock: Stock) => {
-      const displayName = stock.name || stock.code;
-      seqRef.current++; // 作废在途请求，避免选中后又被搜索结果覆盖
-      setSelectedCode(stock.code);
-      setSelectedName(displayName);
-      setSearchQuery(displayName);
-      setShowDropdown(false);
-      setShowHistory(false);
-      setSearching(false);
-      setSearchResults([]);
-      setActiveIndex(-1);
-      addToHistory(stock.code, displayName);
-    },
-    []
-  );
+  const selectStock = useCallback((stock: Stock) => {
+    const displayName = stock.name || stock.code;
+    seqRef.current++; // 作废在途请求，避免选中后又被搜索结果覆盖
+    setSelectedCode(stock.code);
+    setSelectedName(displayName);
+    setSearchQuery(displayName);
+    setShowDropdown(false);
+    setShowHistory(false);
+    setSearching(false);
+    setSearchResults([]);
+    setActiveIndex(-1);
+    addToHistory(stock.code, displayName);
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     const options = showHistory
@@ -226,7 +223,8 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
   }, [activeIndex]);
 
   /** 允许直接对合法 6 位代码发起分析，即使用户没点选下拉项 */
-  const effectiveCode = selectedCode || (CODE_RE.test(searchQuery.trim()) ? searchQuery.trim() : '');
+  const effectiveCode =
+    selectedCode || (CODE_RE.test(searchQuery.trim()) ? searchQuery.trim() : '');
 
   const handleAnalyze = () => {
     if (effectiveCode && !loading) onAnalyze(effectiveCode);
@@ -269,7 +267,12 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
 
             {/* Search History */}
             {showHistory && searchHistory.length > 0 && (
-              <div className="stock-search-dropdown" ref={listRef} id="stock-search-listbox" role="listbox">
+              <div
+                className="stock-search-dropdown"
+                ref={listRef}
+                id="stock-search-listbox"
+                role="listbox"
+              >
                 <div className="search-history">
                   <div className="search-history-header">
                     <span>搜索历史</span>
@@ -309,7 +312,12 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
 
             {/* Search Results / Loading / Empty */}
             {showDropdown && (searching || searchResults.length > 0 || showEmptyState) && (
-              <div className="stock-search-dropdown" ref={listRef} id="stock-search-listbox" role="listbox">
+              <div
+                className="stock-search-dropdown"
+                ref={listRef}
+                id="stock-search-listbox"
+                role="listbox"
+              >
                 {searching && (
                   <div className="search-status-row">正在检索「{searchQuery.trim()}」…</div>
                 )}
@@ -332,9 +340,9 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
                   <div className="search-empty">
                     <div className="search-empty-title">未找到「{searchQuery.trim()}」</div>
                     <div className="search-empty-hint">
-                      本系统覆盖 A 股上市公司。若未找到，可尝试：① 直接输入 <b>6 位股票代码</b>；
-                      ② 改用<b>上市集团简称</b>搜索（部分企业以集团/科技主体上市，如「长鑫科技 688825」而非品牌名「长鑫存储」）；
-                      ③ 查看相关行业 ETF 或其供应链上市公司。
+                      本系统覆盖 A 股上市公司。若未找到，可尝试：① 直接输入 <b>6 位股票代码</b>； ②
+                      改用<b>上市集团简称</b>搜索（部分企业以集团/科技主体上市，如「长鑫科技
+                      688825」而非品牌名「长鑫存储」）； ③ 查看相关行业 ETF 或其供应链上市公司。
                     </div>
                   </div>
                 )}

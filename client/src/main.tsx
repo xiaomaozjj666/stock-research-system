@@ -14,5 +14,5 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ErrorBoundary level="app" label="应用">
       <App />
     </ErrorBoundary>
-  </React.StrictMode>
+  </React.StrictMode>,
 );

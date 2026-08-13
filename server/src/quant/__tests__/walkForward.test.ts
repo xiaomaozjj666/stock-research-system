@@ -66,12 +66,11 @@ describe('rollingWindows', () => {
 describe('walkForwardBacktest', () => {
   it('样本外稳定：oosRatio 接近 1 → stable=true', () => {
     // 训练与测试都给出相近夏普
-    const report = walkForwardBacktest(
-      () => result(1.4),
-      ohlcv,
-      baseStrategy,
-      { trainSize: 30, testSize: 15, step: 15 },
-    );
+    const report = walkForwardBacktest(() => result(1.4), ohlcv, baseStrategy, {
+      trainSize: 30,
+      testSize: 15,
+      step: 15,
+    });
     expect(report.insufficient).toBe(false);
     expect(report.folds).toHaveLength(2);
     expect(report.avgTrainSharpe).toBeCloseTo(1.4);
@@ -101,24 +100,22 @@ describe('walkForwardBacktest', () => {
 
   it('数据不足以构成一个完整窗口 → insufficient=true，无折', () => {
     const short = ohlcv.slice(0, 10);
-    const report = walkForwardBacktest(
-      () => result(1),
-      short,
-      baseStrategy,
-      { trainSize: 30, testSize: 15, step: 15 },
-    );
+    const report = walkForwardBacktest(() => result(1), short, baseStrategy, {
+      trainSize: 30,
+      testSize: 15,
+      step: 15,
+    });
     expect(report.insufficient).toBe(true);
     expect(report.folds).toHaveLength(0);
     expect(report.stable).toBe(false);
   });
 
   it('窗口策略的起止日期对齐到切片数据', () => {
-    const report = walkForwardBacktest(
-      () => result(1),
-      ohlcv,
-      baseStrategy,
-      { trainSize: 30, testSize: 15, step: 15 },
-    );
+    const report = walkForwardBacktest(() => result(1), ohlcv, baseStrategy, {
+      trainSize: 30,
+      testSize: 15,
+      step: 15,
+    });
     const f0 = report.folds[0];
     expect(f0.train.start).toBe(ohlcv[0].date);
     expect(f0.train.end).toBe(ohlcv[29].date);
@@ -228,8 +225,9 @@ describe('sliceWindows', () => {
     expect(rolling[1].train[0]).toBe(15);
     expect(anchored[1].train[0]).toBe(0);
     // anchored 训练窗更长
-    expect(anchored[1].train[1] - anchored[1].train[0])
-      .toBeGreaterThan(rolling[1].train[1] - rolling[1].train[0]);
+    expect(anchored[1].train[1] - anchored[1].train[0]).toBeGreaterThan(
+      rolling[1].train[1] - rolling[1].train[0],
+    );
   });
 
   it('step < testSize：测试窗重叠，窗口数增加', () => {
@@ -445,7 +443,10 @@ describe('runWalkForward — 窗口切分（anchored vs rolling）', () => {
       equityCurve: equity,
       benchmarkCurve: [],
       config: { trainSize: 30, testSize: 15, step: 15, anchored: false },
-      runBacktest: createMockRunBacktest(() => makeResult({}), () => makeResult({})),
+      runBacktest: createMockRunBacktest(
+        () => makeResult({}),
+        () => makeResult({}),
+      ),
     });
     expect(rollingRes.summary).toContain('rolling window');
 
@@ -453,7 +454,10 @@ describe('runWalkForward — 窗口切分（anchored vs rolling）', () => {
       equityCurve: equity,
       benchmarkCurve: [],
       config: { trainSize: 30, testSize: 15, step: 15, anchored: true },
-      runBacktest: createMockRunBacktest(() => makeResult({}), () => makeResult({})),
+      runBacktest: createMockRunBacktest(
+        () => makeResult({}),
+        () => makeResult({}),
+      ),
     });
     expect(anchoredRes.summary).toContain('expanding window');
   });
@@ -467,7 +471,10 @@ describe('runWalkForward — 窗口数计算', () => {
       equityCurve: makeEquity(60),
       benchmarkCurve: [],
       config: { trainSize: 30, testSize: 15, step: 15 },
-      runBacktest: createMockRunBacktest(() => makeResult({}), () => makeResult({})),
+      runBacktest: createMockRunBacktest(
+        () => makeResult({}),
+        () => makeResult({}),
+      ),
     });
     expect(res.windows).toHaveLength(2);
   });
@@ -477,7 +484,10 @@ describe('runWalkForward — 窗口数计算', () => {
       equityCurve: makeEquity(120),
       benchmarkCurve: [],
       config: { trainSize: 60, testSize: 30, step: 30 },
-      runBacktest: createMockRunBacktest(() => makeResult({}), () => makeResult({})),
+      runBacktest: createMockRunBacktest(
+        () => makeResult({}),
+        () => makeResult({}),
+      ),
     });
     // testStart: 60, 90; 90+30=120<=120 → 2 窗口
     expect(res.windows).toHaveLength(2);
@@ -488,7 +498,10 @@ describe('runWalkForward — 窗口数计算', () => {
       equityCurve: makeEquity(100),
       benchmarkCurve: [],
       config: { trainSize: 30, testSize: 15, step: 10 },
-      runBacktest: createMockRunBacktest(() => makeResult({}), () => makeResult({})),
+      runBacktest: createMockRunBacktest(
+        () => makeResult({}),
+        () => makeResult({}),
+      ),
     });
     expect(res.windows).toHaveLength(6);
   });
@@ -518,7 +531,10 @@ describe('runWalkForward — 空数据/数据不足', () => {
       equityCurve: [],
       benchmarkCurve: [],
       config: { trainSize: 30, testSize: 15 },
-      runBacktest: createMockRunBacktest(() => makeResult({}), () => makeResult({})),
+      runBacktest: createMockRunBacktest(
+        () => makeResult({}),
+        () => makeResult({}),
+      ),
     });
     expect(res.windows).toHaveLength(0);
     expect(res.oosSharpe).toBe(0);
@@ -533,7 +549,10 @@ describe('runWalkForward — 空数据/数据不足', () => {
       equityCurve: makeEquity(20),
       benchmarkCurve: [],
       config: { trainSize: 30, testSize: 15 },
-      runBacktest: createMockRunBacktest(() => makeResult({}), () => makeResult({})),
+      runBacktest: createMockRunBacktest(
+        () => makeResult({}),
+        () => makeResult({}),
+      ),
     });
     expect(res.windows).toHaveLength(0);
     expect(res.caveats.some((c) => c.includes('不足以'))).toBe(true);
@@ -545,7 +564,10 @@ describe('runWalkForward — 空数据/数据不足', () => {
       equityCurve: makeEquity(45),
       benchmarkCurve: [],
       config: { trainSize: 30, testSize: 15 },
-      runBacktest: createMockRunBacktest(() => makeResult({}), () => makeResult({})),
+      runBacktest: createMockRunBacktest(
+        () => makeResult({}),
+        () => makeResult({}),
+      ),
     });
     expect(res.windows).toHaveLength(1);
   });
@@ -573,7 +595,10 @@ describe('runWalkForward — caveats 提示', () => {
       equityCurve: makeEquity(60),
       benchmarkCurve: [],
       config: { trainSize: 30, testSize: 15, step: 15 },
-      runBacktest: createMockRunBacktest(() => makeResult({}), () => makeResult({})),
+      runBacktest: createMockRunBacktest(
+        () => makeResult({}),
+        () => makeResult({}),
+      ),
     });
     expect(res.windows).toHaveLength(2);
     expect(res.caveats.some((c) => c.includes('统计显著性有限'))).toBe(true);
@@ -625,7 +650,10 @@ describe('runWalkForward — caveats 提示', () => {
       equityCurve: makeEquity(60),
       benchmarkCurve: makeEquity(50),
       config: { trainSize: 30, testSize: 15, step: 15 },
-      runBacktest: createMockRunBacktest(() => makeResult({}), () => makeResult({})),
+      runBacktest: createMockRunBacktest(
+        () => makeResult({}),
+        () => makeResult({}),
+      ),
     });
     expect(res.caveats.some((c) => c.includes('基准曲线长度') && c.includes('不一致'))).toBe(true);
   });

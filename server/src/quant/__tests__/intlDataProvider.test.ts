@@ -162,9 +162,7 @@ describe('fetchIntlFundamentals', () => {
       .fn()
       .mockResolvedValueOnce(
         okJsonResponse(
-          rptOk([
-            { SECUCODE: 'AAPL.O', SECURITY_CODE: 'AAPL', SECURITY_NAME_ABBR: '苹果' },
-          ]),
+          rptOk([{ SECUCODE: 'AAPL.O', SECURITY_CODE: 'AAPL', SECURITY_NAME_ABBR: '苹果' }]),
         ),
       )
       .mockResolvedValueOnce(
@@ -232,9 +230,7 @@ describe('fetchIntlFundamentals', () => {
       )
       .mockResolvedValueOnce(
         okJsonResponse(
-          rptOk([
-            { SECUCODE: '09988.HK', SECURITY_CODE: '09988', SECURITY_NAME_ABBR: '阿里巴巴' },
-          ]),
+          rptOk([{ SECUCODE: '09988.HK', SECURITY_CODE: '09988', SECURITY_NAME_ABBR: '阿里巴巴' }]),
         ),
       );
     globalThis.fetch = mock as unknown as typeof globalThis.fetch;
@@ -305,9 +301,7 @@ describe('fetchIntlFundamentals', () => {
     // 模拟 AbortSignal.timeout 触发的 TIMEOUT 错误
     const timeoutErr = new Error('The operation was aborted due to timeout');
     timeoutErr.name = 'TimeoutError';
-    globalThis.fetch = vi
-      .fn()
-      .mockRejectedValue(timeoutErr) as unknown as typeof globalThis.fetch;
+    globalThis.fetch = vi.fn().mockRejectedValue(timeoutErr) as unknown as typeof globalThis.fetch;
 
     const r = await fetchIntlFundamentals('00700', 'HK');
     expect(r.degraded).toBe(true);
@@ -351,9 +345,7 @@ describe('fetchBatchFundamentals', () => {
       )
       .mockResolvedValueOnce(
         okJsonResponse(
-          rptOk([
-            { SECURITY_CODE: 'AAPL', OPERATE_INCOME: 4e11, PARENT_HOLDER_NETPROFIT: 1e11 },
-          ]),
+          rptOk([{ SECURITY_CODE: 'AAPL', OPERATE_INCOME: 4e11, PARENT_HOLDER_NETPROFIT: 1e11 }]),
         ),
       );
     globalThis.fetch = mock as unknown as typeof globalThis.fetch;
@@ -397,9 +389,7 @@ describe('fetchBatchFundamentals', () => {
       )
       .mockResolvedValueOnce(
         okJsonResponse(
-          rptOk([
-            { SECURITY_CODE: 'AAPL', OPERATE_INCOME: 4e11, PARENT_HOLDER_NETPROFIT: 1e11 },
-          ]),
+          rptOk([{ SECURITY_CODE: 'AAPL', OPERATE_INCOME: 4e11, PARENT_HOLDER_NETPROFIT: 1e11 }]),
         ),
       ) as unknown as typeof globalThis.fetch;
 

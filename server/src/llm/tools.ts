@@ -32,10 +32,17 @@ export interface ToolCall {
 export interface ToolDeps {
   runAnalysis?: (code: string) => Promise<unknown>;
   runBacktest?: (ohlcv: unknown, strategy: unknown) => Promise<unknown>;
-  parseStrategyInput?: (input: unknown) => { stockCode: string; startDate?: string; endDate?: string; [k: string]: unknown };
+  parseStrategyInput?: (input: unknown) => {
+    stockCode: string;
+    startDate?: string;
+    endDate?: string;
+    [k: string]: unknown;
+  };
   fetchOHLCVData?: (code: string, start: string, end: string) => Promise<unknown[]>;
   /** 提取新闻情绪信号（受控评估用：实验组叠加 newsOverlay） */
-  extractNewsSignal?: (code: string) => Promise<{ signal: { polarity: number; hasNews: boolean }; source: string }>;
+  extractNewsSignal?: (
+    code: string,
+  ) => Promise<{ signal: { polarity: number; hasNews: boolean }; source: string }>;
 }
 
 function truncate(s: string, n = 4000): string {
@@ -47,7 +54,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'run_analysis',
-      description: '对单只 A 股做深度研究分析（财务/估值/专家观点/情景/评分/量化策略）。输入 6 位股票代码。',
+      description:
+        '对单只 A 股做深度研究分析（财务/估值/专家观点/情景/评分/量化策略）。输入 6 位股票代码。',
       parameters: {
         type: 'object',
         properties: {
@@ -65,7 +73,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: 'object',
         properties: {
-          stockCodes: { type: 'array', items: { type: 'string' }, description: '2-3 个 6 位股票代码' },
+          stockCodes: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '2-3 个 6 位股票代码',
+          },
         },
         required: ['stockCodes'],
       },
@@ -80,7 +92,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         type: 'object',
         properties: {
           stockCode: { type: 'string', description: '6 位股票代码' },
-          strategy: { type: 'string', description: '策略名，如 ma_cross / momentum / mean_reversion' },
+          strategy: {
+            type: 'string',
+            description: '策略名，如 ma_cross / momentum / mean_reversion',
+          },
           startDate: { type: 'string', description: '起始日期 YYYY-MM-DD' },
           endDate: { type: 'string', description: '结束日期 YYYY-MM-DD' },
         },
@@ -92,7 +107,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'evaluate_backtest',
-      description: '受控回测评估：对同一股票同一区间跑两轮回测——基线(无新闻叠加) vs 实验(带新闻情绪叠加)，量化 LLM 信号是否真增 alpha，给出统计显著性结论。',
+      description:
+        '受控回测评估：对同一股票同一区间跑两轮回测——基线(无新闻叠加) vs 实验(带新闻情绪叠加)，量化 LLM 信号是否真增 alpha，给出统计显著性结论。',
       parameters: {
         type: 'object',
         properties: {
@@ -149,7 +165,10 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       }
       const code = String(args.stockCode || '');
       const strategy = String(args.strategy || 'ma_cross');
-      const start = String(args.startDate || new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0]);
+      const start = String(
+        args.startDate ||
+          new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
+      );
       const end = String(args.endDate || new Date().toISOString().split('T')[0]);
       // parseStrategyInput 接收策略描述串（如 'ma_cross'），返回完整策略配置；
       // 随后覆盖股票代码与起止日期，得到回测所需的 StrategyConfig。
@@ -166,11 +185,19 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       }
       const code = String(args.stockCode || '');
       const strategy = String(args.strategy || 'ma_cross');
-      const start = String(args.startDate || new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0]);
+      const start = String(
+        args.startDate ||
+          new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
+      );
       const end = String(args.endDate || new Date().toISOString().split('T')[0]);
       if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
       const parsed = deps.parseStrategyInput(strategy) as Record<string, unknown>;
-      const baseCfg: Record<string, unknown> = { ...parsed, stockCode: code, startDate: start, endDate: end };
+      const baseCfg: Record<string, unknown> = {
+        ...parsed,
+        stockCode: code,
+        startDate: start,
+        endDate: end,
+      };
       const ohlcv = await deps.fetchOHLCVData(code, start, end);
       if (!ohlcv || ohlcv.length === 0) return `无法获取 ${code} 的 K 线数据`;
       // 基线：无新闻叠加

@@ -31,22 +31,62 @@ const SYSTEM_PROMPT = `你是资深 A 股政策分析师，专注产业政策与
 
 /** 政策支持行业关键词 */
 const POLICY_SUPPORT_KEYWORDS = [
-  '新能源', '光伏', '风电', '储能', '锂电', '半导体', '芯片', '集成电路',
-  '人工智能', 'AI', '机器人', '智能制造', '高端制造', '军工', '国防',
-  '生物医药', '创新药', '医疗器械', '数字经济', '信创', '数据中心',
-  '新材料', '碳纤维', '稀土', '节能环保', '氢能', '核电',
+  '新能源',
+  '光伏',
+  '风电',
+  '储能',
+  '锂电',
+  '半导体',
+  '芯片',
+  '集成电路',
+  '人工智能',
+  'AI',
+  '机器人',
+  '智能制造',
+  '高端制造',
+  '军工',
+  '国防',
+  '生物医药',
+  '创新药',
+  '医疗器械',
+  '数字经济',
+  '信创',
+  '数据中心',
+  '新材料',
+  '碳纤维',
+  '稀土',
+  '节能环保',
+  '氢能',
+  '核电',
 ];
 
 /** 政策限制/高风险行业关键词 */
 const POLICY_RISK_KEYWORDS = [
-  '房地产', '地产', '教培', '教育', '游戏', '电竞', '直播', '网红',
-  '网贷', 'P2P', '小额贷款', '电子烟', '高耗能', '钢铁', '煤炭',
+  '房地产',
+  '地产',
+  '教培',
+  '教育',
+  '游戏',
+  '电竞',
+  '直播',
+  '网红',
+  '网贷',
+  'P2P',
+  '小额贷款',
+  '电子烟',
+  '高耗能',
+  '钢铁',
+  '煤炭',
 ];
 
 /**
  * 规则引擎研判（LLM 不可用时降级）
  */
-function policyExpertRule(financial: FinancialData, _valuation: ValuationData, info: StockInfo): ExpertOpinion {
+function policyExpertRule(
+  financial: FinancialData,
+  _valuation: ValuationData,
+  info: StockInfo,
+): ExpertOpinion {
   const arguments_: ExpertOpinion['arguments'] = [];
   const keyPoints: string[] = [];
   const industry = info.industry || '';
@@ -84,7 +124,8 @@ function policyExpertRule(financial: FinancialData, _valuation: ValuationData, i
   // === 补贴依赖度评估（无补贴数据时用经营现金流/净利比近似） ===
   const n = financial.years.length;
   if (n >= 1) {
-    const latestCashFlowRatio = safeDiv(financial.operatingCashFlow[n - 1], financial.netProfit[n - 1]) * 100;
+    const latestCashFlowRatio =
+      safeDiv(financial.operatingCashFlow[n - 1], financial.netProfit[n - 1]) * 100;
     // 经营现金流远低于净利时，可能存在补贴/非经常性损益支撑
     if (latestCashFlowRatio > 0 && latestCashFlowRatio < 50) {
       arguments_.push({
@@ -128,7 +169,9 @@ function policyExpertRule(financial: FinancialData, _valuation: ValuationData, i
     overallSentiment = 'neutral';
   }
 
-  const avgConfidence = Math.round(arguments_.reduce((s, a) => s + a.confidence, 0) / arguments_.length);
+  const avgConfidence = Math.round(
+    arguments_.reduce((s, a) => s + a.confidence, 0) / arguments_.length,
+  );
 
   return {
     expert: EXPERT_NAME,
@@ -143,7 +186,11 @@ function policyExpertRule(financial: FinancialData, _valuation: ValuationData, i
  * 政策分析师
  * LLM 可用时调用 LLM 进行深度研判；不可用或失败时降级规则引擎。
  */
-export async function policyExpert(financial: FinancialData, valuation: ValuationData, info: StockInfo): Promise<ExpertOpinion> {
+export async function policyExpert(
+  financial: FinancialData,
+  valuation: ValuationData,
+  info: StockInfo,
+): Promise<ExpertOpinion> {
   return runExpertWithLLM({
     expertName: EXPERT_NAME,
     systemPrompt: SYSTEM_PROMPT,

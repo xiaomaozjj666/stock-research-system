@@ -30,7 +30,9 @@ export default function CoreSummary({ data }: CoreSummaryProps) {
           </div>
           <ul className="factor-list">
             {strengths.map((s, i) => (
-              <li key={i} className="factor-item factor-item--bull">{s}</li>
+              <li key={i} className="factor-item factor-item--bull">
+                {s}
+              </li>
             ))}
           </ul>
         </div>
@@ -42,7 +44,9 @@ export default function CoreSummary({ data }: CoreSummaryProps) {
           </div>
           <ul className="factor-list">
             {risks.map((r, i) => (
-              <li key={i} className="factor-item factor-item--bear">{r}</li>
+              <li key={i} className="factor-item factor-item--bear">
+                {r}
+              </li>
             ))}
           </ul>
         </div>

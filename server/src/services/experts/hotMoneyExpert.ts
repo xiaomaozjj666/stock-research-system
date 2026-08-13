@@ -41,7 +41,11 @@ const HIGH_PE_THRESHOLD = 60;
 /**
  * 规则引擎研判（LLM 不可用时降级）
  */
-function hotMoneyExpertRule(_financial: FinancialData, valuation: ValuationData, info: StockInfo): ExpertOpinion {
+function hotMoneyExpertRule(
+  _financial: FinancialData,
+  valuation: ValuationData,
+  info: StockInfo,
+): ExpertOpinion {
   const arguments_: ExpertOpinion['arguments'] = [];
   const keyPoints: string[] = [];
   const marketCap = valuation.marketCap || 0;
@@ -150,7 +154,9 @@ function hotMoneyExpertRule(_financial: FinancialData, valuation: ValuationData,
     overallSentiment = 'neutral';
   }
 
-  const avgConfidence = Math.round(arguments_.reduce((s, a) => s + a.confidence, 0) / arguments_.length);
+  const avgConfidence = Math.round(
+    arguments_.reduce((s, a) => s + a.confidence, 0) / arguments_.length,
+  );
 
   return {
     expert: EXPERT_NAME,
@@ -165,7 +171,11 @@ function hotMoneyExpertRule(_financial: FinancialData, valuation: ValuationData,
  * 游资分析师
  * LLM 可用时调用 LLM 进行深度研判；不可用或失败时降级规则引擎。
  */
-export async function hotMoneyExpert(financial: FinancialData, valuation: ValuationData, info: StockInfo): Promise<ExpertOpinion> {
+export async function hotMoneyExpert(
+  financial: FinancialData,
+  valuation: ValuationData,
+  info: StockInfo,
+): Promise<ExpertOpinion> {
   return runExpertWithLLM({
     expertName: EXPERT_NAME,
     systemPrompt: SYSTEM_PROMPT,

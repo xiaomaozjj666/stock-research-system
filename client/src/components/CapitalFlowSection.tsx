@@ -60,9 +60,7 @@ export default function CapitalFlowSection({ data }: Props) {
                   {evidenceTagLabel(arg.evidenceType)}
                 </span>
               )}
-              <span className="confidence-badge confidence-badge-spaced">
-                {arg.confidence}%
-              </span>
+              <span className="confidence-badge confidence-badge-spaced">{arg.confidence}%</span>
             </div>
           ))}
         </div>

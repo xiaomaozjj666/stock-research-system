@@ -12,7 +12,10 @@ import {
 let tmpFile: string;
 
 beforeEach(() => {
-  tmpFile = path.join(os.tmpdir(), `watchlist-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+  tmpFile = path.join(
+    os.tmpdir(),
+    `watchlist-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`,
+  );
   process.env.WATCHLIST_FILE = tmpFile;
 });
 

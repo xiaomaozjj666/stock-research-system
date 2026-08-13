@@ -42,10 +42,7 @@ export default function ExpertOpinions({ data = [] }: ExpertOpinionsProps) {
       <div className="section-title">专家观点</div>
       {data.map((exp, i) => (
         <div className="expert-panel" key={i}>
-          <div
-            className="expert-header"
-            onClick={() => setOpenIndex(openIndex === i ? null : i)}
-          >
+          <div className="expert-header" onClick={() => setOpenIndex(openIndex === i ? null : i)}>
             <span className="expert-name">{exp.expert}</span>
             <div className="expert-header-right">
               <span className="confidence-badge">{exp.confidence}%</span>
@@ -55,7 +52,9 @@ export default function ExpertOpinions({ data = [] }: ExpertOpinionsProps) {
               <span className="expert-arrow">{openIndex === i ? '▾' : '▸'}</span>
             </div>
           </div>
-          <div className={`expert-body ${openIndex === i ? 'expert-body-open' : 'expert-body-closed'}`}>
+          <div
+            className={`expert-body ${openIndex === i ? 'expert-body-open' : 'expert-body-closed'}`}
+          >
             <div className="expert-args">
               {exp.arguments.map((arg, j) => (
                 <div key={j} className={`arg-item ${arg.type}`}>

@@ -13,13 +13,55 @@ import type { StrategyConfig, QuantResearchReport, PipelineStage, NewsItem } fro
 const STAGE_ORDER: PipelineStage[] = ['fetch', 'quality', 'backtest', 'audit'];
 
 /** 含最新消息回测 vs 不含新闻基准回测 的对比 */
-function NewsBacktestCompare({ aware, baseline }: { aware: QuantResearchReport['backtest']; baseline: QuantResearchReport['backtest'] }) {
-  const rows: { label: string; aware: number; base: number; betterWhenHigher: boolean; fmt: (v: number) => string }[] = [
-    { label: '总收益率', aware: aware.totalReturn, base: baseline.totalReturn, betterWhenHigher: true, fmt: (v) => v.toFixed(2) + '%' },
-    { label: '年化收益', aware: aware.annualizedReturn, base: baseline.annualizedReturn, betterWhenHigher: true, fmt: (v) => (v ?? 0).toFixed(2) + '%' },
-    { label: '夏普比率', aware: aware.sharpeRatio, base: baseline.sharpeRatio, betterWhenHigher: true, fmt: (v) => v.toFixed(2) },
-    { label: '最大回撤', aware: aware.maxDrawdown, base: baseline.maxDrawdown, betterWhenHigher: false, fmt: (v) => v.toFixed(2) + '%' },
-    { label: '胜率', aware: aware.winRate, base: baseline.winRate, betterWhenHigher: true, fmt: (v) => v.toFixed(2) + '%' },
+function NewsBacktestCompare({
+  aware,
+  baseline,
+}: {
+  aware: QuantResearchReport['backtest'];
+  baseline: QuantResearchReport['backtest'];
+}) {
+  const rows: {
+    label: string;
+    aware: number;
+    base: number;
+    betterWhenHigher: boolean;
+    fmt: (v: number) => string;
+  }[] = [
+    {
+      label: '总收益率',
+      aware: aware.totalReturn,
+      base: baseline.totalReturn,
+      betterWhenHigher: true,
+      fmt: (v) => v.toFixed(2) + '%',
+    },
+    {
+      label: '年化收益',
+      aware: aware.annualizedReturn,
+      base: baseline.annualizedReturn,
+      betterWhenHigher: true,
+      fmt: (v) => (v ?? 0).toFixed(2) + '%',
+    },
+    {
+      label: '夏普比率',
+      aware: aware.sharpeRatio,
+      base: baseline.sharpeRatio,
+      betterWhenHigher: true,
+      fmt: (v) => v.toFixed(2),
+    },
+    {
+      label: '最大回撤',
+      aware: aware.maxDrawdown,
+      base: baseline.maxDrawdown,
+      betterWhenHigher: false,
+      fmt: (v) => v.toFixed(2) + '%',
+    },
+    {
+      label: '胜率',
+      aware: aware.winRate,
+      base: baseline.winRate,
+      betterWhenHigher: true,
+      fmt: (v) => v.toFixed(2) + '%',
+    },
   ];
   return (
     <div className="card quant-panel news-compare">
@@ -43,7 +85,10 @@ function NewsBacktestCompare({ aware, baseline }: { aware: QuantResearchReport['
                 <td>{r.label}</td>
                 <td>{r.fmt(r.aware)}</td>
                 <td>{r.fmt(r.base)}</td>
-                <td className={deltaCls}>{delta > 0 ? '+' : ''}{r.fmt(delta)}</td>
+                <td className={deltaCls}>
+                  {delta > 0 ? '+' : ''}
+                  {r.fmt(delta)}
+                </td>
               </tr>
             );
           })}
@@ -51,7 +96,8 @@ function NewsBacktestCompare({ aware, baseline }: { aware: QuantResearchReport['
       </table>
       {typeof aware.newsPosture === 'number' && (
         <p className="news-compare-note">
-          新闻姿态仓位系数：{(aware.newsPosture * 100).toFixed(0)}%（看多新闻满仓、中性半仓、利空不建仓）。
+          新闻姿态仓位系数：{(aware.newsPosture * 100).toFixed(0)}
+          %（看多新闻满仓、中性半仓、利空不建仓）。
         </p>
       )}
     </div>
@@ -91,8 +137,8 @@ export default function QuantPage() {
       if (stageIdx < STAGE_ORDER.length - 1) {
         const doneStage = STAGE_ORDER[stageIdx];
         const elapsed = Date.now() - stageStartRef.current;
-        setCompletedStages(prev => [...prev, doneStage]);
-        setStageElapsed(prev => ({ ...prev, [doneStage]: elapsed - (prev[doneStage] ?? 0) }));
+        setCompletedStages((prev) => [...prev, doneStage]);
+        setStageElapsed((prev) => ({ ...prev, [doneStage]: elapsed - (prev[doneStage] ?? 0) }));
         stageIdx++;
         setCurrentStage(STAGE_ORDER[stageIdx]);
       }
@@ -102,11 +148,14 @@ export default function QuantPage() {
       // 解析用户粘贴的最新消息（每行一条），优先于实时抓取
       const trimmed = newsText.trim();
       const newsItems: NewsItem[] | undefined = trimmed
-        ? trimmed.split('\n').map((line, i) => ({
-            id: `pasted-${i}`,
-            title: line.trim(),
-            publishedAt: new Date().toISOString(),
-          })).filter((n) => n.title.length > 0)
+        ? trimmed
+            .split('\n')
+            .map((line, i) => ({
+              id: `pasted-${i}`,
+              title: line.trim(),
+              publishedAt: new Date().toISOString(),
+            }))
+            .filter((n) => n.title.length > 0)
         : undefined;
 
       const result = await runQuantAnalysis({
@@ -114,20 +163,26 @@ export default function QuantPage() {
         useNews: useNews || !newsItems,
         newsItems,
       });
-      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
 
       // 标记所有阶段完成
       const allElapsed: Record<string, number> = {};
       const totalMs = Date.now() - stageStartRef.current;
       STAGE_ORDER.forEach((s) => {
-        allElapsed[s] = Math.round(totalMs / STAGE_ORDER.length * (0.8 + Math.random() * 0.4));
+        allElapsed[s] = Math.round((totalMs / STAGE_ORDER.length) * (0.8 + Math.random() * 0.4));
       });
       setCompletedStages([...STAGE_ORDER]);
       setStageElapsed(allElapsed);
       setCurrentStage(null);
       setReport(result);
     } catch {
-      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
       setError('量化研究失败，请检查后端服务是否启动');
       setCurrentStage(null);
     } finally {
@@ -137,7 +192,7 @@ export default function QuantPage() {
 
   return (
     <div className="quant-page">
-        <aside className="quant-sidebar">
+      <aside className="quant-sidebar">
         <h3 className="quant-sidebar-title">策略配置</h3>
         <StrategyInput onSubmit={handleStart} loading={loading} />
 

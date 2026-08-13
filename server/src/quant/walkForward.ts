@@ -67,8 +67,20 @@ export function rollingWindows(
 
 export interface WalkForwardFold {
   index: number;
-  train: { start: string; end: string; sharpeRatio: number; totalReturn: number; maxDrawdown: number };
-  test: { start: string; end: string; sharpeRatio: number; totalReturn: number; maxDrawdown: number };
+  train: {
+    start: string;
+    end: string;
+    sharpeRatio: number;
+    totalReturn: number;
+    maxDrawdown: number;
+  };
+  test: {
+    start: string;
+    end: string;
+    sharpeRatio: number;
+    totalReturn: number;
+    maxDrawdown: number;
+  };
 }
 
 export interface WalkForwardReport {
@@ -380,15 +392,9 @@ function buildWalkForwardSummary(
   oosWinRate: number,
   consistency: number,
 ): string {
-  const mode = anchored
-    ? 'expanding window（扩张窗口）'
-    : 'rolling window（滚动窗口）';
+  const mode = anchored ? 'expanding window（扩张窗口）' : 'rolling window（滚动窗口）';
   const stability =
-    consistency >= 0.7
-      ? '较为稳定'
-      : consistency >= 0.4
-        ? '稳定性一般'
-        : '稳定性较差';
+    consistency >= 0.7 ? '较为稳定' : consistency >= 0.4 ? '稳定性一般' : '稳定性较差';
   return (
     `Walk-Forward 评估完成（${mode}）：共 ${windowCount} 个窗口，` +
     `OOS 平均夏普 ${oosSharpe.toFixed(2)}，平均收益 ${oosReturn.toFixed(2)}%，` +
@@ -412,9 +418,7 @@ function buildWalkForwardSummary(
  * @param params Walk-Forward 评估参数
  * @returns Walk-Forward 汇总结果
  */
-export async function runWalkForward(
-  params: WalkForwardParams,
-): Promise<WalkForwardResult> {
+export async function runWalkForward(params: WalkForwardParams): Promise<WalkForwardResult> {
   const { equityCurve, benchmarkCurve, config, runBacktest, compareOptions } = params;
   const caveats: string[] = [];
   const anchored = config.anchored ?? false;
@@ -470,13 +474,9 @@ export async function runWalkForward(
     const trainEquity = equityCurve.slice(w.train[0], w.train[1] + 1);
     const testEquity = equityCurve.slice(w.test[0], w.test[1] + 1);
     const trainBenchmark =
-      benchmarkCurve.length > 0
-        ? benchmarkCurve.slice(w.train[0], w.train[1] + 1)
-        : [];
+      benchmarkCurve.length > 0 ? benchmarkCurve.slice(w.train[0], w.train[1] + 1) : [];
     const testBenchmark =
-      benchmarkCurve.length > 0
-        ? benchmarkCurve.slice(w.test[0], w.test[1] + 1)
-        : [];
+      benchmarkCurve.length > 0 ? benchmarkCurve.slice(w.test[0], w.test[1] + 1) : [];
 
     const trainData: WindowDataSlice = { equity: trainEquity, benchmark: trainBenchmark };
     const testData: WindowDataSlice = { equity: testEquity, benchmark: testBenchmark };
@@ -535,12 +535,8 @@ export async function runWalkForward(
 
   // 单窗口对比结论统计（此处 experiment 槽位 = OOS，baseline 槽位 = IS）：
   // experiment_wins = OOS 优于 IS；baseline_wins = OOS 劣于 IS（过拟合信号）
-  const experimentWins = wfWindows.filter(
-    (w) => w.comparison.verdict === 'experiment_wins',
-  ).length;
-  const baselineWins = wfWindows.filter(
-    (w) => w.comparison.verdict === 'baseline_wins',
-  ).length;
+  const experimentWins = wfWindows.filter((w) => w.comparison.verdict === 'experiment_wins').length;
+  const baselineWins = wfWindows.filter((w) => w.comparison.verdict === 'baseline_wins').length;
   // 仅当 OOS 相对 IS 显著退化（而非任何轻微回退）才提示过拟合，避免把正常回退误判为过拟合。
   // 阈值 0.7：OOS 平均夏普 < 70% 的 IS 平均夏普才算显著退化。
   const isOOSSignificantlyWorse = oosSharpe < avgIsSharpe * 0.7;

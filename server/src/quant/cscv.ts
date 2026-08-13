@@ -125,14 +125,14 @@ export function computePbo(returns: number[][], options: CscvOptions = {}): Cscv
   const T = returns.length;
   const M = T > 0 ? returns[0].length : 0;
   if (T < 4 || M < 2) {
-    throw new Error(
-      `computePbo：收益矩阵过小（${T} 行 × ${M} 列），需要至少 4 个时点与 2 个策略`,
-    );
+    throw new Error(`computePbo：收益矩阵过小（${T} 行 × ${M} 列），需要至少 4 个时点与 2 个策略`);
   }
   // 要求矩形矩阵，避免逐行长度不一致导致静默错位
   for (const row of returns) {
     if (row.length !== M) {
-      throw new Error(`computePbo：收益矩阵不是矩形（第 ${returns.indexOf(row)} 行列数为 ${row.length}，期望 ${M}）`);
+      throw new Error(
+        `computePbo：收益矩阵不是矩形（第 ${returns.indexOf(row)} 行列数为 ${row.length}，期望 ${M}）`,
+      );
     }
   }
 

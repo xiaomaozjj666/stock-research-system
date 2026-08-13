@@ -10,13 +10,45 @@ import { safeDiv } from './safeDiv.js';
  * 行业名与 data/industryPeers.ts 的 `industry` 字段对齐，未覆盖的行业回落到 20。
  */
 export const INDUSTRY_PE_BENCHMARK: Record<string, number> = {
-  银行: 6, 保险: 10, 证券: 18, 房地产: 10, 建筑: 8, 钢铁: 12, 煤炭: 10,
-  石油石化: 11, 电力: 18, 公用事业: 15, 航空机场: 25, 物流: 18, 汽车: 20,
-  工程机械: 18, 化工: 20, 建材: 15, 家电: 15, 纺织服装: 18, 造纸: 16,
-  农业: 25, 零售: 22, 食品饮料: 28, 白酒: 30, 啤酒: 32, 消费品: 25,
-  传媒: 30, 通信: 25, 计算机: 40, 消费电子: 30, 半导体: 55, 光伏: 20,
-  新能源车: 30, 新能源: 45, 军工: 45, 有色金属: 18, 医药: 32,
-  医疗器械: 35, 科技: 40, 制造业: 20,
+  银行: 6,
+  保险: 10,
+  证券: 18,
+  房地产: 10,
+  建筑: 8,
+  钢铁: 12,
+  煤炭: 10,
+  石油石化: 11,
+  电力: 18,
+  公用事业: 15,
+  航空机场: 25,
+  物流: 18,
+  汽车: 20,
+  工程机械: 18,
+  化工: 20,
+  建材: 15,
+  家电: 15,
+  纺织服装: 18,
+  造纸: 16,
+  农业: 25,
+  零售: 22,
+  食品饮料: 28,
+  白酒: 30,
+  啤酒: 32,
+  消费品: 25,
+  传媒: 30,
+  通信: 25,
+  计算机: 40,
+  消费电子: 30,
+  半导体: 55,
+  光伏: 20,
+  新能源车: 30,
+  新能源: 45,
+  军工: 45,
+  有色金属: 18,
+  医药: 32,
+  医疗器械: 35,
+  科技: 40,
+  制造业: 20,
 };
 
 /**
@@ -25,9 +57,23 @@ export const INDUSTRY_PE_BENCHMARK: Record<string, number> = {
  * 会导致整个板块的风险维度被系统性判为 0 分，评分完全失去区分度。
  */
 export const INDUSTRY_DEBT_BENCHMARK: Record<string, number> = {
-  银行: 92, 保险: 88, 证券: 78, 房地产: 78, 建筑: 76, 航空机场: 70,
-  钢铁: 60, 汽车: 60, 工程机械: 58, 电力: 60, 物流: 55, 零售: 58,
-  家电: 60, 建材: 50, 化工: 50, 石油石化: 52, 煤炭: 50,
+  银行: 92,
+  保险: 88,
+  证券: 78,
+  房地产: 78,
+  建筑: 76,
+  航空机场: 70,
+  钢铁: 60,
+  汽车: 60,
+  工程机械: 58,
+  电力: 60,
+  物流: 55,
+  零售: 58,
+  家电: 60,
+  建材: 50,
+  化工: 50,
+  石油石化: 52,
+  煤炭: 50,
 };
 const DEFAULT_DEBT_BENCHMARK = 45;
 
@@ -67,8 +113,14 @@ export function calculateVolatility(values: number[]): number {
     }
   }
   if (returns.length === 0) return 0;
-  const mean = safeDiv(returns.reduce((a, b) => a + b, 0), returns.length);
-  const variance = safeDiv(returns.reduce((s, r) => s + (r - mean) ** 2, 0), returns.length);
+  const mean = safeDiv(
+    returns.reduce((a, b) => a + b, 0),
+    returns.length,
+  );
+  const variance = safeDiv(
+    returns.reduce((s, r) => s + (r - mean) ** 2, 0),
+    returns.length,
+  );
   return Math.sqrt(variance);
 }
 

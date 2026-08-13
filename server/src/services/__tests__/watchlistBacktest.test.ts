@@ -115,9 +115,7 @@ describe('runWatchlistNewsBacktest', () => {
   });
 
   it('模拟 K 线（isSimulated）被标记 simulatedKline', async () => {
-    vi.mocked(fetchOHLCVData).mockResolvedValue([
-      { ...baseKline[0], isSimulated: true },
-    ]);
+    vi.mocked(fetchOHLCVData).mockResolvedValue([{ ...baseKline[0], isSimulated: true }]);
     const report = await runWatchlistNewsBacktest(['600519']);
     expect(report.results[0].simulatedKline).toBe(true);
   });

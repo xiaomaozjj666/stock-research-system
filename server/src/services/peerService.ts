@@ -15,7 +15,10 @@ export interface PeerComparisonEntry {
  * 优先级：传入的 industryHint（生产环境下来自主数据）-> datacenter BOARD_NAME 反查 -> 代码反查。
  * 返回标准行业名（与 industryPeers 参考表一致），未命中返回空串。
  */
-export async function resolveStockIndustry(selfCode: string, industryHint?: string): Promise<string> {
+export async function resolveStockIndustry(
+  selfCode: string,
+  industryHint?: string,
+): Promise<string> {
   const hint = industryHint && industryHint.trim() ? industryHint.trim() : undefined;
   if (hint) {
     const norm = resolveIndustry(undefined, selfCode) ?? resolveIndustry(hint, selfCode);
@@ -34,7 +37,7 @@ export async function resolveStockIndustry(selfCode: string, industryHint?: stri
  */
 export async function buildPeerComparison(
   selfCode: string,
-  industryHint?: string
+  industryHint?: string,
 ): Promise<PeerComparisonEntry[]> {
   const industry = await resolveStockIndustry(selfCode, industryHint);
   const codes = getPeerCodes(industry || undefined, selfCode, 4);
@@ -50,12 +53,12 @@ export async function buildPeerComparison(
           pe: v.pe || 0,
           pb: v.pb || 0,
           roe: 0,
-          marketCap: v.marketCap || 0
+          marketCap: v.marketCap || 0,
         };
       } catch {
         return null;
       }
-    })
+    }),
   );
 
   return peers.filter((p): p is PeerComparisonEntry => p !== null);

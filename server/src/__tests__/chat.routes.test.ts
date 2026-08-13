@@ -17,7 +17,9 @@ describe('POST /api/chat', () => {
   });
 
   it('超长内容返回 400', async () => {
-    const r = await request(app).post('/api/chat').send({ message: 'x'.repeat(2001) });
+    const r = await request(app)
+      .post('/api/chat')
+      .send({ message: 'x'.repeat(2001) });
     expect(r.status).toBe(400);
   });
 

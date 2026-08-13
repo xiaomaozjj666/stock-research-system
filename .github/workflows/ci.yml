@@ -7,6 +7,11 @@ name: CI
     branches: [main, master]
   pull_request:
 
+# 同一分支的新提交自动取消旧的运行，节省 Actions 额度
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     name: Lint / TypeCheck / Build / Test
@@ -36,6 +41,10 @@ jobs:
         # eslint 只覆盖 JS/JSON 与代码风格（typescript-eslint 暂不支持 TS7，见 ENGINEERING-NOTES）
         run: npm run lint
 
+      - name: Format check (Prettier)
+        # 2026-08-12 起格式门禁归零（.gitattributes 防 CRLF 复发），此处保持门禁
+        run: npm run format:check
+
       - name: TypeCheck (server)
         run: npx tsc --noEmit -p server/tsconfig.json
 
@@ -47,10 +56,53 @@ jobs:
         # server build = `tsc`（NodeNext 编译产出 dist）
         run: npm run build --workspace=server
 
-      - name: Test
-        # vitest run 全量测试（globals=false，测试内显式 import vi/expect）。
+      - name: Test with coverage
+        # vitest run 全量测试（globals=false，测试内显式 import vi/expect）+ 覆盖率阈值门禁
+        # （vitest.config.mts thresholds：lines 68 / statements 66 / functions 60 / branches 54）。
         # 平台依赖说明：测试均已 mock 网络（不依赖真实行情/东财接口）；
         #   临时文件用 os.tmpdir() + path.join（跨平台），
         #   child_process 相关在 http.test.ts 中整体 vi.mock，mcpClient.test.ts 用
         #   process.execPath 启动自身 Node（跨平台可靠），故 Linux runner 可直接运行。
-        run: npm run test
+        run: npm run test -- --coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+  e2e:
+    name: E2E smoke (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --dangerously-allow-all-scripts --no-audit --no-fund
+
+      # Chromium 浏览器二进制（版本与 @playwright/test 对应）
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      # globalSetup 会自动构建 server dist + client dist，
+      # 然后 webServer 以生产模式启动服务（Express 同源托管前端），跑真实浏览器冒烟
+      - name: Run E2E smoke tests
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

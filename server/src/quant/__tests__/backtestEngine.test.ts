@@ -9,7 +9,14 @@ function uptrendSeries(n = 80, flat = 25, low = 100, high = 220): OHLCVData[] {
   for (let i = 0; i < n; i++) {
     const price = i < flat ? low : low + ((high - low) * (i - flat)) / (n - 1 - flat);
     const d = new Date(base + i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    out.push({ date: d, open: price, close: Math.round(price * 100) / 100, high: price + 1, low: price - 1, volume: 1_000_000 });
+    out.push({
+      date: d,
+      open: price,
+      close: Math.round(price * 100) / 100,
+      high: price + 1,
+      low: price - 1,
+      volume: 1_000_000,
+    });
   }
   return out;
 }

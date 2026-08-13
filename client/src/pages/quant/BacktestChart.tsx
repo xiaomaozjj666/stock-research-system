@@ -19,9 +19,9 @@ export default function BacktestChart({ data }: Props) {
     if (!chartRef.current) return;
     chartInstance.current = echarts.init(chartRef.current, undefined, { renderer: 'canvas' });
 
-    const dates = data.equityCurve.map(p => p.date);
-    const strategyVals = data.equityCurve.map(p => p.value);
-    const benchmarkVals = data.benchmark.map(p => p.value);
+    const dates = data.equityCurve.map((p) => p.date);
+    const strategyVals = data.equityCurve.map((p) => p.value);
+    const benchmarkVals = data.benchmark.map((p) => p.value);
 
     chartInstance.current.setOption({
       backgroundColor: 'transparent',
@@ -32,12 +32,20 @@ export default function BacktestChart({ data }: Props) {
         borderColor: '#2a2a2a',
         textStyle: { color: '#f0f0f0', fontSize: 12 },
         formatter: (params: unknown) => {
-          const p = params as { axisValue: string; seriesName: string; value: number; color: string }[];
+          const p = params as {
+            axisValue: string;
+            seriesName: string;
+            value: number;
+            color: string;
+          }[];
           if (!Array.isArray(p)) return '';
           const date = p[0]?.axisValue ?? '';
-          const rows = p.map(s =>
-            `<span style="color:${s.color}">●</span> ${s.seriesName}: <b>${s.value?.toFixed(4)}</b>`
-          ).join('<br/>');
+          const rows = p
+            .map(
+              (s) =>
+                `<span style="color:${s.color}">●</span> ${s.seriesName}: <b>${s.value?.toFixed(4)}</b>`,
+            )
+            .join('<br/>');
           return `${date}<br/>${rows}`;
         },
       },
@@ -92,7 +100,11 @@ export default function BacktestChart({ data }: Props) {
 
   const metrics = [
     { label: '总收益率', value: formatPct(data.totalReturn), positive: data.totalReturn >= 0 },
-    { label: '年化收益', value: formatPct(data.annualizedReturn), positive: data.annualizedReturn >= 0 },
+    {
+      label: '年化收益',
+      value: formatPct(data.annualizedReturn),
+      positive: data.annualizedReturn >= 0,
+    },
     { label: '夏普比率', value: data.sharpeRatio.toFixed(2), positive: data.sharpeRatio >= 1 },
     { label: '最大回撤', value: formatPct(data.maxDrawdown), positive: false },
     { label: '胜率', value: formatPct(data.winRate), positive: data.winRate >= 50 },
@@ -107,7 +119,7 @@ export default function BacktestChart({ data }: Props) {
         </div>
       )}
       <div className="quant-metrics">
-        {metrics.map(m => (
+        {metrics.map((m) => (
           <div key={m.label} className="quant-metric-card">
             <div className={`quant-metric-value ${m.positive ? 'positive' : 'negative'}`}>
               {m.value}

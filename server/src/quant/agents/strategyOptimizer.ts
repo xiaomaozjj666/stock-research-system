@@ -6,7 +6,7 @@ import type { BacktestResult, AuditReport, StrategyConfig, OptimizationReport } 
 export function strategyOptimizer(
   backtest: BacktestResult,
   audit: AuditReport,
-  strategy: StrategyConfig
+  strategy: StrategyConfig,
 ): OptimizationReport {
   // --- 1. 性能评分 ---
   const performanceScore = calcPerformanceScore(backtest);
@@ -68,7 +68,7 @@ function calcPerformanceScore(backtest: BacktestResult): number {
 function generateSuggestions(
   backtest: BacktestResult,
   audit: AuditReport,
-  _strategy: StrategyConfig
+  _strategy: StrategyConfig,
 ): OptimizationReport['suggestions'] {
   const suggestions: OptimizationReport['suggestions'] = [];
   const maxDD = Math.abs(backtest.maxDrawdown ?? 0);
@@ -164,7 +164,7 @@ function generateSuggestions(
 /** 参数敏感性分析 */
 function analyzeParameterSensitivity(
   strategy: StrategyConfig,
-  backtest: BacktestResult
+  backtest: BacktestResult,
 ): OptimizationReport['parameterSensitivity'] {
   const result: OptimizationReport['parameterSensitivity'] = [];
   const params = strategy.params;
@@ -183,7 +183,8 @@ function analyzeParameterSensitivity(
       suggestedMin = Math.max(2, Math.round(value * 0.6));
       suggestedMax = Math.round(value * 1.5);
       optimal = value;
-      sensitivity = Math.abs(winRate - 50) > 15 ? 'high' : Math.abs(winRate - 50) > 8 ? 'medium' : 'low';
+      sensitivity =
+        Math.abs(winRate - 50) > 15 ? 'high' : Math.abs(winRate - 50) > 8 ? 'medium' : 'low';
     } else if (key === 'longPeriod') {
       // 长期周期类参数
       suggestedMin = Math.max(10, Math.round(value * 0.7));
@@ -240,8 +241,8 @@ function calcRiskMetrics(backtest: BacktestResult): OptimizationReport['riskMetr
   const trades = backtest.trades ?? [];
   // 配对交易计算盈亏
   for (let i = 0; i < trades.length - 1; i += 2) {
-    const buyTrade = trades.find(t => t.type === 'buy' && t.date === trades[i].date);
-    const sellTrade = trades.find(t => t.type === 'sell' && t.date === trades[i + 1]?.date);
+    const buyTrade = trades.find((t) => t.type === 'buy' && t.date === trades[i].date);
+    const sellTrade = trades.find((t) => t.type === 'sell' && t.date === trades[i + 1]?.date);
     if (buyTrade && sellTrade) {
       const pnl = (sellTrade.price - buyTrade.price) * buyTrade.shares;
       if (pnl < 0) {
@@ -277,7 +278,7 @@ function calcRiskMetrics(backtest: BacktestResult): OptimizationReport['riskMetr
 function generateIterationDirections(
   backtest: BacktestResult,
   audit: AuditReport,
-  performanceScore: number
+  performanceScore: number,
 ): string[] {
   const directions: string[] = [];
   const maxDD = Math.abs(backtest.maxDrawdown ?? 0);

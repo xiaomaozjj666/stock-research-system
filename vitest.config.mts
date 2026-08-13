@@ -13,10 +13,20 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reportsDirectory: './coverage',
+      // json-summary 供 CI 读取整体覆盖率；text-summary 在终端直接打印
+      reporter: ['html', 'text-summary', 'json-summary', 'lcov'],
       include: [
         'server/src/**/*.ts',
         'client/src/**/*.{ts,tsx}',
       ],
+      // 覆盖率阈值门禁：低于阈值测试失败，防止覆盖率倒退。
+      // 基线（2026-08-13，793 tests）：lines 71.99% / statements 70.67% / functions 63.76% / branches 56.55%
+      thresholds: {
+        lines: 70,
+        statements: 68,
+        functions: 62,
+        branches: 55,
+      },
       exclude: [
         '**/*.test.ts',
         '**/*.d.ts',

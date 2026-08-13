@@ -15,9 +15,7 @@ export function runBacktest(data: OHLCVData[], strategy: StrategyConfig): Backte
   //   polarity=−1(全面利空) → 0 不建仓。仅在「建仓」时缩放仓位，平仓不受影响。
   const newsOverlay = strategy.newsOverlay;
   const newsAware = !!newsOverlay;
-  const newsPosture = newsOverlay
-    ? Math.max(0, Math.min(1, 0.5 + 0.5 * newsOverlay.polarity))
-    : 1;
+  const newsPosture = newsOverlay ? Math.max(0, Math.min(1, 0.5 + 0.5 * newsOverlay.polarity)) : 1;
 
   let cash = initialCapital;
   let position = 0; // 持仓股数
@@ -57,7 +55,9 @@ export function runBacktest(data: OHLCVData[], strategy: StrategyConfig): Backte
             price: Math.round(price * 100) / 100,
             shares,
             commission: Math.round(shares * price * commission * 100) / 100,
-            reason: getSignalReason(strategy, 'buy') + (newsAware ? `（新闻姿态${(newsPosture * 100).toFixed(0)}%）` : '')
+            reason:
+              getSignalReason(strategy, 'buy') +
+              (newsAware ? `（新闻姿态${(newsPosture * 100).toFixed(0)}%）` : ''),
           });
         }
       }
@@ -71,14 +71,17 @@ export function runBacktest(data: OHLCVData[], strategy: StrategyConfig): Backte
         price: Math.round(price * 100) / 100,
         shares: position,
         commission: Math.round(position * price * commission * 100) / 100,
-        reason: getSignalReason(strategy, 'sell')
+        reason: getSignalReason(strategy, 'sell'),
       });
       position = 0;
     }
 
     // 记录权益
     const equity = cash + position * bar.close;
-    equityCurve.push({ date: bar.date, value: Math.round(equity / initialCapital * 10000) / 100 });
+    equityCurve.push({
+      date: bar.date,
+      value: Math.round((equity / initialCapital) * 10000) / 100,
+    });
   }
 
   // 计算绩效指标
@@ -95,15 +98,18 @@ export function runBacktest(data: OHLCVData[], strategy: StrategyConfig): Backte
   }
   const avgDailyReturn = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
   const excessAvgReturn = avgDailyReturn - dailyRiskFree;
-  const dailyStdDev = Math.sqrt(dailyReturns.reduce((s, r) => s + (r - avgDailyReturn) ** 2, 0) / dailyReturns.length);
+  const dailyStdDev = Math.sqrt(
+    dailyReturns.reduce((s, r) => s + (r - avgDailyReturn) ** 2, 0) / dailyReturns.length,
+  );
   const sharpeRatio = dailyStdDev > 0 ? (excessAvgReturn / dailyStdDev) * Math.sqrt(252) : 0;
 
   // 索提诺比率（只考虑下行风险）
-  const excessReturns = dailyReturns.map(r => r - dailyRiskFree);
-  const downsideReturns = excessReturns.filter(r => r < 0);
-  const downsideDev = downsideReturns.length > 0
-    ? Math.sqrt(downsideReturns.reduce((s, r) => s + r * r, 0) / downsideReturns.length)
-    : 0;
+  const excessReturns = dailyReturns.map((r) => r - dailyRiskFree);
+  const downsideReturns = excessReturns.filter((r) => r < 0);
+  const downsideDev =
+    downsideReturns.length > 0
+      ? Math.sqrt(downsideReturns.reduce((s, r) => s + r * r, 0) / downsideReturns.length)
+      : 0;
   const sortinoRatio = downsideDev > 0 ? (excessAvgReturn / downsideDev) * Math.sqrt(252) : 0;
 
   // 最大回撤
@@ -111,26 +117,30 @@ export function runBacktest(data: OHLCVData[], strategy: StrategyConfig): Backte
   let peak = equityCurve[0].value;
   for (const point of equityCurve) {
     if (point.value > peak) peak = point.value;
-    const drawdown = (peak - point.value) / peak * 100;
+    const drawdown = ((peak - point.value) / peak) * 100;
     if (drawdown > maxDrawdown) maxDrawdown = drawdown;
   }
 
   // 胜率（考虑交易成本）
   const transactionCostRate = 0.001; // 单次交易成本（佣金+滑点）
-  const sellTrades = trades.filter(t => t.type === 'sell');
-  const buyTrades = trades.filter(t => t.type === 'buy');
+  const sellTrades = trades.filter((t) => t.type === 'sell');
+  const buyTrades = trades.filter((t) => t.type === 'buy');
   let wins = 0;
   for (let i = 0; i < Math.min(buyTrades.length, sellTrades.length); i++) {
     // 考虑买卖双向交易成本
-    const netReturn = sellTrades[i].price * (1 - transactionCostRate) - buyTrades[i].price * (1 + transactionCostRate);
+    const netReturn =
+      sellTrades[i].price * (1 - transactionCostRate) -
+      buyTrades[i].price * (1 + transactionCostRate);
     if (netReturn > 0) wins++;
   }
   const winRate = sellTrades.length > 0 ? (wins / sellTrades.length) * 100 : 0;
 
   // 盈亏比
-  const totalProfit = sellTrades.filter((t, i) => t.price > buyTrades[i]?.price)
+  const totalProfit = sellTrades
+    .filter((t, i) => t.price > buyTrades[i]?.price)
     .reduce((s, t, i) => s + (t.price - buyTrades[i].price) * t.shares, 0);
-  const totalLoss = sellTrades.filter((t, i) => t.price <= buyTrades[i]?.price)
+  const totalLoss = sellTrades
+    .filter((t, i) => t.price <= buyTrades[i]?.price)
     .reduce((s, t, i) => s + (buyTrades[i].price - t.price) * t.shares, 0);
   const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? 99 : 0;
 
@@ -147,7 +157,7 @@ export function runBacktest(data: OHLCVData[], strategy: StrategyConfig): Backte
     trades,
     benchmark: getBenchmarkCurve(data),
     newsAware,
-    newsPosture
+    newsPosture,
   };
 }
 
@@ -155,7 +165,12 @@ export function runBacktest(data: OHLCVData[], strategy: StrategyConfig): Backte
  * 生成交易信号
  * 严格按时间顺序，只使用 i 及之前的数据
  */
-function generateSignal(data: OHLCVData[], index: number, strategy: StrategyConfig, maAt: (i: number, p: number) => number): 'buy' | 'sell' | 'hold' {
+function generateSignal(
+  data: OHLCVData[],
+  index: number,
+  strategy: StrategyConfig,
+  maAt: (i: number, p: number) => number,
+): 'buy' | 'sell' | 'hold' {
   switch (strategy.type) {
     case 'ma_cross':
       return maCrossSignal(data, index, strategy.params, maAt);
@@ -169,7 +184,12 @@ function generateSignal(data: OHLCVData[], index: number, strategy: StrategyConf
 }
 
 // 均线交叉信号
-function maCrossSignal(data: OHLCVData[], index: number, params: Record<string, number>, maAt: (i: number, p: number) => number): 'buy' | 'sell' | 'hold' {
+function maCrossSignal(
+  data: OHLCVData[],
+  index: number,
+  params: Record<string, number>,
+  maAt: (i: number, p: number) => number,
+): 'buy' | 'sell' | 'hold' {
   const shortPeriod = params.shortPeriod || 5;
   const longPeriod = params.longPeriod || 20;
 
@@ -189,14 +209,19 @@ function maCrossSignal(data: OHLCVData[], index: number, params: Record<string, 
 }
 
 // 动量信号
-function momentumSignal(data: OHLCVData[], index: number, params: Record<string, number>): 'buy' | 'sell' | 'hold' {
+function momentumSignal(
+  data: OHLCVData[],
+  index: number,
+  params: Record<string, number>,
+): 'buy' | 'sell' | 'hold' {
   const lookback = params.lookback || 20;
   const buyThreshold = (params.buyThreshold || 5) / 100;
   const sellThreshold = (params.sellThreshold || -3) / 100;
 
   if (index < lookback) return 'hold';
 
-  const momentum = (data[index].close - data[index - lookback].close) / data[index - lookback].close;
+  const momentum =
+    (data[index].close - data[index - lookback].close) / data[index - lookback].close;
 
   if (momentum > buyThreshold) return 'buy';
   if (momentum < sellThreshold) return 'sell';
@@ -205,7 +230,12 @@ function momentumSignal(data: OHLCVData[], index: number, params: Record<string,
 }
 
 // 均值回归信号
-function meanReversionSignal(data: OHLCVData[], index: number, params: Record<string, number>, maAt: (i: number, p: number) => number): 'buy' | 'sell' | 'hold' {
+function meanReversionSignal(
+  data: OHLCVData[],
+  index: number,
+  params: Record<string, number>,
+  maAt: (i: number, p: number) => number,
+): 'buy' | 'sell' | 'hold' {
   const maPeriod = params.maPeriod || 20;
   const buyDev = (params.buyDeviation || -3) / 100;
   const sellDev = (params.sellDeviation || 3) / 100;
@@ -215,8 +245,8 @@ function meanReversionSignal(data: OHLCVData[], index: number, params: Record<st
   const ma = maAt(index, maPeriod);
   const deviation = (data[index].close - ma) / ma;
 
-  if (deviation < buyDev) return 'buy';   // 价格低于均线过多，买入
-  if (deviation > sellDev) return 'sell';  // 价格高于均线过多，卖出
+  if (deviation < buyDev) return 'buy'; // 价格低于均线过多，买入
+  if (deviation > sellDev) return 'sell'; // 价格高于均线过多，卖出
 
   return 'hold';
 }

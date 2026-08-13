@@ -2,11 +2,27 @@ import { describe, it, expect } from 'vitest';
 import { detectAlerts } from '../alerts.js';
 
 const rows = [
-  { code: '600519', name: '茅台', newsSentiment: { polarity: 0.8, weightedImpact: 0.7, hasNews: true } },
-  { code: '000001', name: '平安', newsSentiment: { polarity: -0.6, weightedImpact: 0.3, hasNews: true } },
-  { code: '300750', name: '宁德', newsSentiment: { polarity: 0.1, weightedImpact: 0.9, hasNews: true } },
+  {
+    code: '600519',
+    name: '茅台',
+    newsSentiment: { polarity: 0.8, weightedImpact: 0.7, hasNews: true },
+  },
+  {
+    code: '000001',
+    name: '平安',
+    newsSentiment: { polarity: -0.6, weightedImpact: 0.3, hasNews: true },
+  },
+  {
+    code: '300750',
+    name: '宁德',
+    newsSentiment: { polarity: 0.1, weightedImpact: 0.9, hasNews: true },
+  },
   { code: '600000', name: null, newsSentiment: null },
-  { code: '600519', name: '茅台', newsSentiment: { polarity: 0.1, weightedImpact: 0.2, hasNews: true } },
+  {
+    code: '600519',
+    name: '茅台',
+    newsSentiment: { polarity: 0.1, weightedImpact: 0.2, hasNews: true },
+  },
 ];
 
 describe('detectAlerts', () => {

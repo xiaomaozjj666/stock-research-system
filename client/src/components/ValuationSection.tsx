@@ -34,12 +34,19 @@ function formatCap(cap?: number) {
   return cap.toFixed(0) + '亿';
 }
 
-export default function ValuationSection({ data, valuation_level, stockName }: ValuationSectionProps) {
+export default function ValuationSection({
+  data,
+  valuation_level,
+  stockName,
+}: ValuationSectionProps) {
   const levelClass = getValLevelClass(valuation_level);
 
   return (
     <div className="card">
-      <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+      <div
+        className="section-title"
+        style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}
+      >
         估值分析
         {valuation_level && (
           <span className={`val-level-tag ${levelClass}`} style={{ marginLeft: 'auto' }}>
@@ -69,7 +76,9 @@ export default function ValuationSection({ data, valuation_level, stockName }: V
 
       {data.peerComparison && data.peerComparison.length > 0 && (
         <>
-          <h4 style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 10 }}>同业估值对比</h4>
+          <h4 style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 10 }}>
+            同业估值对比
+          </h4>
           <table className="peer-table">
             <thead>
               <tr>

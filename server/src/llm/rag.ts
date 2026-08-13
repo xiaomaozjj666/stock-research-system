@@ -68,19 +68,21 @@ export function retrieveEvidenceFromDocs(
   const qTerms = new Set(tokenize(query));
   if (qTerms.size === 0 || docs.length === 0) return [];
 
-  const scored = docs.map((doc) => {
-    const docTerms = tokenize(doc.text);
-    const freq = new Map<string, number>();
-    for (const t of docTerms) freq.set(t, (freq.get(t) ?? 0) + 1);
-    let score = 0;
-    for (const qt of qTerms) {
-      const f = freq.get(qt) ?? 0;
-      if (f > 0) score += (f * (1 + 1)) / (f + 1.2); // BM25-lite 饱和
-    }
-    // 股票代码匹配加权
-    if (opts.stockCode && doc.stockCode === opts.stockCode) score += 2;
-    return { doc, score };
-  }).filter((s) => s.score > 0);
+  const scored = docs
+    .map((doc) => {
+      const docTerms = tokenize(doc.text);
+      const freq = new Map<string, number>();
+      for (const t of docTerms) freq.set(t, (freq.get(t) ?? 0) + 1);
+      let score = 0;
+      for (const qt of qTerms) {
+        const f = freq.get(qt) ?? 0;
+        if (f > 0) score += (f * (1 + 1)) / (f + 1.2); // BM25-lite 饱和
+      }
+      // 股票代码匹配加权
+      if (opts.stockCode && doc.stockCode === opts.stockCode) score += 2;
+      return { doc, score };
+    })
+    .filter((s) => s.score > 0);
 
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, topK).map((s) => s.doc);
@@ -108,9 +110,13 @@ export function indexCorpus(): EvidenceDoc[] {
           if (text.trim().length > 0) {
             docs.push({ id: f, source: `cache:${f}`, text, stockCode: code || undefined });
           }
-        } catch { /* 单文件损坏忽略 */ }
+        } catch {
+          /* 单文件损坏忽略 */
+        }
       }
-    } catch { /* 目录不可读忽略 */ }
+    } catch {
+      /* 目录不可读忽略 */
+    }
   }
   return docs;
 }

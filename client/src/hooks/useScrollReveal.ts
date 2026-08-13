@@ -9,7 +9,7 @@ export function useScrollReveal(threshold = 0.1) {
       ([entry]) => {
         if (entry.isIntersecting) setIsVisible(true);
       },
-      { threshold }
+      { threshold },
     );
     if (ref.current) observer.observe(ref.current);
     return () => observer.disconnect();

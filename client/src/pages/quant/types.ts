@@ -43,7 +43,14 @@ export interface BacktestResult {
   tradeCount: number;
   profitFactor: number;
   equityCurve: { date: string; value: number }[];
-  trades: { date: string; type: 'buy' | 'sell'; price: number; shares: number; commission: number; reason: string }[];
+  trades: {
+    date: string;
+    type: 'buy' | 'sell';
+    price: number;
+    shares: number;
+    commission: number;
+    reason: string;
+  }[];
   benchmark: { date: string; value: number }[];
   newsAware?: boolean;
   newsPosture?: number;
@@ -67,7 +74,12 @@ export interface AuditReport {
   futureFunctionRisk: 'low' | 'medium' | 'high';
   overfittingRisk: 'low' | 'medium' | 'high';
   survivorshipBias: 'low' | 'medium' | 'high';
-  checks: { name: string; passed: boolean; detail: string; severity: 'info' | 'warning' | 'critical' }[];
+  checks: {
+    name: string;
+    passed: boolean;
+    detail: string;
+    severity: 'info' | 'warning' | 'critical';
+  }[];
   issues: string[];
   reliability: string;
 }
@@ -75,8 +87,18 @@ export interface AuditReport {
 // 优化报告
 export interface OptimizationReport {
   performanceScore: number;
-  suggestions: { category: string; title: string; detail: string; impact: 'high' | 'medium' | 'low' }[];
-  parameterSensitivity: { param: string; currentValue: number; suggestedRange: { min: number; max: number; optimal: number }; sensitivity: string }[];
+  suggestions: {
+    category: string;
+    title: string;
+    detail: string;
+    impact: 'high' | 'medium' | 'low';
+  }[];
+  parameterSensitivity: {
+    param: string;
+    currentValue: number;
+    suggestedRange: { min: number; max: number; optimal: number };
+    sensitivity: string;
+  }[];
   riskMetrics: { var95: number; maxConsecutiveLoss: number; avgHoldingDays: number };
   iterationDirections: string[];
 }

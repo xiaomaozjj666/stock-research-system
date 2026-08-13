@@ -62,11 +62,16 @@ export function loadEnv(): EnvConfig {
     // CORS 白名单
     const allowedOriginsRaw = process.env.ALLOWED_ORIGINS?.trim();
     const allowedOrigins = allowedOriginsRaw
-      ? allowedOriginsRaw.split(',').map((o) => o.trim()).filter(Boolean)
+      ? allowedOriginsRaw
+          .split(',')
+          .map((o) => o.trim())
+          .filter(Boolean)
       : null;
 
     if (isProd && !allowedOrigins) {
-      logger.warn('[env] 警告：生产环境未设置 ALLOWED_ORIGINS，CORS 将允许所有来源。建议设置 ALLOWED_ORIGINS 以收紧安全策略。');
+      logger.warn(
+        '[env] 警告：生产环境未设置 ALLOWED_ORIGINS，CORS 将允许所有来源。建议设置 ALLOWED_ORIGINS 以收紧安全策略。',
+      );
     }
 
     // 缓存 TTL

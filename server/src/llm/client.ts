@@ -70,7 +70,7 @@ export async function chat(messages: ChatMessage[], options: LLMOptions = {}): P
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.apiKey}`,
+          Authorization: `Bearer ${config.apiKey}`,
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -97,7 +97,7 @@ export async function chat(messages: ChatMessage[], options: LLMOptions = {}): P
 export async function chatStream(
   messages: ChatMessage[],
   onToken: (token: string) => void,
-  options: LLMOptions = {}
+  options: LLMOptions = {},
 ): Promise<string> {
   if (!isLLMAvailable()) throw new Error('LLM 未配置 API key，请设置 DEEPSEEK_API_KEY');
   return withSpan('llm.chat', async (_ctx, span) => {
@@ -130,7 +130,7 @@ export async function chatStream(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.apiKey}`,
+          Authorization: `Bearer ${config.apiKey}`,
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -242,7 +242,7 @@ export async function chatWithTools(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.apiKey}`,
+          Authorization: `Bearer ${config.apiKey}`,
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -255,7 +255,12 @@ export async function chatWithTools(
       throw new Error(`LLM 工具调用失败 (${response.status}): ${errText.slice(0, 300)}`);
     }
     const data = (await response.json()) as {
-      choices?: { message?: { content?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[];
+      choices?: {
+        message?: {
+          content?: string;
+          tool_calls?: { id: string; function: { name: string; arguments: string } }[];
+        };
+      }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
     recordUsageFromResponse(model, data, options.task);
@@ -275,7 +280,11 @@ export async function chatWithTools(
     if (msg.tool_calls && msg.tool_calls.length > 0) {
       for (const tc of msg.tool_calls) {
         let parsed: Record<string, unknown> = {};
-        try { parsed = JSON.parse(tc.function.arguments || '{}'); } catch { parsed = {}; }
+        try {
+          parsed = JSON.parse(tc.function.arguments || '{}');
+        } catch {
+          parsed = {};
+        }
         used.push({ name: tc.function.name, args: parsed });
         let result: string;
         try {
@@ -364,8 +373,7 @@ function recordLLMUsage(
   const completionTokens = usage.completion_tokens ?? 0;
   const spec = modelSpec(model);
   const cost =
-    (promptTokens / 1000) * spec.costPer1kInput +
-    (completionTokens / 1000) * spec.costPer1kOutput;
+    (promptTokens / 1000) * spec.costPer1kInput + (completionTokens / 1000) * spec.costPer1kOutput;
   getTracer().recordLLMCall(model, promptTokens, completionTokens, cost, span);
 }
 
