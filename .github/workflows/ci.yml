@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           # 与本地一致（本地 Node v24.19.0 / npm 12.0.2）。
           # 当前 24.x 均捆绑 npm ≥12，可识别根 package.json 的 allowScripts 字段
@@ -82,7 +82,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
