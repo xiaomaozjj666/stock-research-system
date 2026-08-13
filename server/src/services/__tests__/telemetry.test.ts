@@ -10,6 +10,7 @@ import {
   type TraceContext,
 } from '../telemetry.js';
 import { resetCostTracker, getCostReport } from '../../llm/cost.js';
+import { setLogLevel } from '../../utils/logger.js';
 
 // 每个用例独立的 tracer 实例，避免相互污染；同时清理全局单例与成本账本
 beforeEach(() => {
@@ -216,17 +217,23 @@ describe('TelemetryTracer — trace 导出', () => {
   });
 
   it('logToConsole 在 span 结束时输出精简日志', () => {
+    // 全局测试 setup 会把日志级别静音到 error；本用例断言 info 输出，需显式恢复
+    setLogLevel('info');
     // telemetry 输出经结构化 logger（logger.info → process.stdout.write），原 console.log
     const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const tracer = new TelemetryTracer({ logToConsole: true });
-    const { span } = tracer.startSpan('logged');
-    tracer.endSpan(span);
-    const line = writeSpy.mock.calls.map((c) => String(c[0])).join('');
-    expect(line).toContain('"level":"info"');
-    expect(line).toContain('[telemetry]');
-    expect(line).toContain('span=logged');
-    expect(line).toContain('status=ok');
-    writeSpy.mockRestore();
+    try {
+      const tracer = new TelemetryTracer({ logToConsole: true });
+      const { span } = tracer.startSpan('logged');
+      tracer.endSpan(span);
+      const line = writeSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(line).toContain('"level":"info"');
+      expect(line).toContain('[telemetry]');
+      expect(line).toContain('span=logged');
+      expect(line).toContain('status=ok');
+    } finally {
+      // 断言失败也要恢复 spy，避免残留吞掉后续用例的 stdout
+      writeSpy.mockRestore();
+    }
   });
 });
 

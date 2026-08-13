@@ -71,10 +71,12 @@ describe('模拟盘路由（/api/paper）', () => {
   it('GET /api/paper/portfolio → 200，返回 initialCapital/cash/positions/equity', async () => {
     const res = await request(app).get('/api/paper/portfolio');
     expect(res.status).toBe(200);
-    // 全新账户：现金 = 初始资金，无持仓无净值
     expect(typeof res.body.initialCapital).toBe('number');
     expect(res.body.initialCapital).toBeGreaterThan(0);
-    expect(res.body.cash).toBe(res.body.initialCapital);
+    // 注意：_paperAccount 为模块级单例，order/settle 用例会永久改变账户状态，
+    // 这里不断言 cash === initialCapital（"全新账户"语义依赖用例声明序，shuffle/重跑即破）
+    expect(typeof res.body.cash).toBe('number');
+    expect(res.body.cash).toBeGreaterThanOrEqual(0);
     expect(Array.isArray(res.body.positions)).toBe(true);
     expect(Array.isArray(res.body.equity)).toBe(true);
   });

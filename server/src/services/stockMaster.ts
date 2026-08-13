@@ -8,8 +8,18 @@ export interface SecurityMasterEntry {
   industry?: string;
 }
 
-const MASTER_CACHE = path.join(import.meta.dirname, '..', 'data', 'stockMaster.json');
+const DEFAULT_MASTER_CACHE = path.join(import.meta.dirname, '..', 'data', 'stockMaster.json');
 const MASTER_TTL = 24 * 60 * 60 * 1000; // 1 天
+
+/**
+ * 运行时解析缓存路径：支持 MASTER_CACHE env 重定向（与 watchlist/paper/audit 同模式）。
+ * 惰性解析而非模块级常量，测试可在 beforeEach 中设置 env 后生效。
+ */
+function getMasterCacheFile(): string {
+  return process.env.MASTER_CACHE && process.env.MASTER_CACHE.length > 0
+    ? process.env.MASTER_CACHE
+    : DEFAULT_MASTER_CACHE;
+}
 
 let masterCache: SecurityMasterEntry[] | null = null;
 let masterLoadPromise: Promise<SecurityMasterEntry[]> | null = null;
@@ -37,8 +47,8 @@ export async function loadStockMaster(force = false): Promise<SecurityMasterEntr
   masterLoadPromise = (async () => {
     // 1. 磁盘缓存（校验含 industry 字段，避免旧格式缓存）
     try {
-      if (fs.existsSync(MASTER_CACHE)) {
-        const raw = JSON.parse(await fs.promises.readFile(MASTER_CACHE, 'utf-8'));
+      if (fs.existsSync(getMasterCacheFile())) {
+        const raw = JSON.parse(await fs.promises.readFile(getMasterCacheFile(), 'utf-8'));
         if (
           Date.now() - raw.timestamp < MASTER_TTL &&
           Array.isArray(raw.data) &&
@@ -99,7 +109,7 @@ export async function loadStockMaster(force = false): Promise<SecurityMasterEntr
 
     try {
       await fs.promises.writeFile(
-        MASTER_CACHE,
+        getMasterCacheFile(),
         JSON.stringify({ timestamp: Date.now(), data: all }),
         'utf-8',
       );

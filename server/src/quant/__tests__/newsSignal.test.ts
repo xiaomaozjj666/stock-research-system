@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   lexiconPolarity,
   aggregateNewsSentiment,
@@ -104,14 +104,45 @@ describe('aggregateNewsSentiment', () => {
 });
 
 describe('fetchLatestNews / extractNewsSignal（尽力而为，不抛错）', () => {
-  it('fetchLatestNews 返回数组且不抛错', async () => {
-    await expect(fetchLatestNews('600519')).resolves.toBeInstanceOf(Array);
+  const origFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    // mock 公告端点（np-anotice-stock 的 json.data.list 结构），
+    // 避免直连真实东财端点（此前未 mock fetch，会真实抓取、慢且结果非确定）
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: { list: [{ title: '公司发布超预期业绩公告', ei_time: '2026-01-01 10:00:00' }] },
+      }),
+    }) as unknown as typeof fetch;
   });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('fetchLatestNews 返回解析后的公告数组且不抛错', async () => {
+    const items = await fetchLatestNews('600519');
+    expect(Array.isArray(items)).toBe(true);
+    expect(items.length).toBeGreaterThan(0);
+    expect(items[0].source).toBe('东方财富公告');
+  });
+
   it('extractNewsSignal 返回 {signal, source} 结构', async () => {
     const r = await extractNewsSignal('600519');
     expect(r).toHaveProperty('signal');
     expect(r).toHaveProperty('source');
     expect(['live', 'none']).toContain(r.source);
     expect(r.signal).toHaveProperty('hasNews');
+  });
+
+  it('fetch 全部失败 → [] 且 source=none（不抛错）', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('offline')) as unknown as typeof fetch;
+    await expect(fetchLatestNews('600519')).resolves.toEqual([]);
+    const r = await extractNewsSignal('600519');
+    expect(r.source).toBe('none');
+    expect(r.signal.hasNews).toBe(false);
   });
 });

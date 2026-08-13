@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runAnalysis } from '../analysisPipeline.js';
 import type { StockDataSet, FinancialData, ValuationData, StockInfo } from '../../types.js';
 import { buildFinancialGraph } from '../../llm/knowledgeGraph.js';
@@ -65,7 +65,18 @@ vi.mock('../../quant/sectorRotation.js', () => ({
   calculateSectorRotation: vi.fn(),
 }));
 
+// 静态取 mock 的 getData（vi.mock hoisted），供 beforeEach 重置默认返回值
+import { getData } from '../dataService.js';
+
 describe('runAnalysis 流水线', () => {
+  beforeEach(() => {
+    // 重置 mock 默认值：此前"不同财务特征"用例把 getData 永久替换为 weakData、
+    // 增强 mock 跨 describe 改写且无还原，依赖文件内声明顺序（乱序/重跑即破）
+    vi.mocked(getData).mockResolvedValue(sampleData);
+    vi.mocked(buildFinancialGraph).mockReturnValue(undefined as never);
+    vi.mocked(calculateSectorRotation).mockReturnValue(undefined as never);
+  });
+
   it('装配出结构合法的分析结果', async () => {
     const result = await runAnalysis('600519');
     const stock = result.stock_pool[0];

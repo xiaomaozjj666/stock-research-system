@@ -1,14 +1,30 @@
 // @vitest-environment node
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { isEmbeddingConfigured, getEmbedBaseUrl } from '../config.js';
 
+const ENV_KEYS = [
+  'LLM_EMBED_MODEL',
+  'OPENAI_EMBED_MODEL',
+  'LLM_EMBED_BASE_URL',
+  'OPENAI_EMBED_BASE_URL',
+  'DEEPSEEK_BASE_URL',
+  'OPENAI_BASE_URL',
+] as const;
+
+// beforeEach 快照 + afterEach 恢复：此前只 delete 不恢复，会污染宿主环境变量
+// （宿主若已设 LLM_EMBED_MODEL，首用例"默认 false"会环境相关失败）
+const originalEnv: Record<string, string | undefined> = {};
+beforeEach(() => {
+  for (const k of ENV_KEYS) {
+    originalEnv[k] = process.env[k];
+    delete process.env[k];
+  }
+});
 afterEach(() => {
-  delete process.env.LLM_EMBED_MODEL;
-  delete process.env.OPENAI_EMBED_MODEL;
-  delete process.env.LLM_EMBED_BASE_URL;
-  delete process.env.OPENAI_EMBED_BASE_URL;
-  delete process.env.DEEPSEEK_BASE_URL;
-  delete process.env.OPENAI_BASE_URL;
+  for (const k of ENV_KEYS) {
+    if (originalEnv[k] === undefined) delete process.env[k];
+    else process.env[k] = originalEnv[k];
+  }
 });
 
 describe('isEmbeddingConfigured', () => {

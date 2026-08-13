@@ -200,6 +200,8 @@ function circuitBreakerGuard(req: Request, res: Response, next: NextFunction) {
     logger.warn('[circuit-breaker] 熔断触发，拒绝分析请求', { reason: cb.reason });
     res
       .status(503)
+      // Retry-After = 熔断窗口剩余重置时间（ENGINEERING-NOTES 承诺的 503 + Retry-After）
+      .set('Retry-After', String(Math.ceil(cb.windowMs / 1000)))
       .json({ error: '合规熔断触发：高风险操作数超过阈值，请稍后再试', detail: cb.reason });
     return;
   }

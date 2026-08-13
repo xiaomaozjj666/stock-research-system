@@ -19,8 +19,14 @@ describe('retrieveEvidenceFromDocs', () => {
   });
 
   it('boosts stock code match', () => {
-    const r = retrieveEvidenceFromDocs('营收', docs, { stockCode: '600519' });
-    expect(r[0]?.stockCode).toBe('600519');
+    // 查询 '电池 技术'：tokenize 后 bigram 为 {电池, 池技, 技术}，只命中 doc2 的 '电池'/'技术'
+    // （BM25-lite ≈ 1.82）；doc1 命中 0 词。加权（+2，见 rag.ts retrieveEvidenceFromDocs）
+    // 后同代码 doc1 反超 → 真正验证加权分支。（此前查询只命中单一文档，恒通过）
+    const q = '电池 技术';
+    const r1 = retrieveEvidenceFromDocs(q, docs);
+    const r2 = retrieveEvidenceFromDocs(q, docs, { stockCode: '600519' });
+    expect(r1[0]?.id).toBe('2');
+    expect(r2[0]?.id).toBe('1');
   });
 
   it('supports chinese bigram matching', () => {

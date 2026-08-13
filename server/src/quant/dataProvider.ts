@@ -3,11 +3,16 @@ import logger from '../utils/logger.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const CACHE_DIR = path.join(import.meta.dirname, 'cache');
+const DEFAULT_CACHE_DIR = path.join(import.meta.dirname, 'cache');
 
-// 确保缓存目录存在
-if (!fs.existsSync(CACHE_DIR)) {
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
+/**
+ * 运行时解析缓存目录：支持 DATA_CACHE_DIR env 重定向（与 services/dataService 同模式）。
+ * 惰性解析而非模块级常量，测试可在 beforeEach 中设置 env 后生效。
+ */
+function getCacheDir(): string {
+  return process.env.DATA_CACHE_DIR && process.env.DATA_CACHE_DIR.length > 0
+    ? process.env.DATA_CACHE_DIR
+    : DEFAULT_CACHE_DIR;
 }
 
 function getSecId(code: string): string {
@@ -50,7 +55,9 @@ export async function fetchOHLCVData(
 ): Promise<OHLCVData[]> {
   // 1. 检查缓存
   const cacheKey = `${stockCode}_${startDate}_${endDate}`;
-  const cacheFile = path.join(CACHE_DIR, `${cacheKey}.json`);
+  const cacheDir = getCacheDir();
+  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+  const cacheFile = path.join(cacheDir, `${cacheKey}.json`);
   if (fs.existsSync(cacheFile)) {
     const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
     const age = Date.now() - cached.timestamp;

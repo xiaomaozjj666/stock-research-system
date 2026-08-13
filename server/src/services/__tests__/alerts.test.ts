@@ -34,11 +34,12 @@ describe('detectAlerts', () => {
     expect(a.some((x) => x.level === 'high-impact' && x.code === '300750')).toBe(true);
   });
 
-  it('ignores no-news and low-signal rows', () => {
-    expect(a.find((x) => x.code === '600000')).toBeUndefined();
-    // 600519 impact 0.7 -> high-impact; but the low-signal row (impact 0.2) yields nothing
-    expect(a.find((x) => x.code === '600519' && x.level === 'high-impact')).toBeTruthy();
-    expect(a.filter((x) => x.code === '600519' && x.level === 'strong-bull').length).toBe(1);
+  it('忽略无新闻行；低信号行不产生告警', () => {
+    expect(a.find((x) => x.code === '600000')).toBeUndefined(); // 无新闻 → 无告警
+    // 600519 有两条：impact 0.7 → high-impact；impact 0.2 低信号 → 不产生任何告警
+    expect(a.filter((x) => x.code === '600519' && x.level === 'high-impact')).toHaveLength(1);
+    // 600519 全部告警 = strong-bull(1) + high-impact(1)，无低信号噪音
+    expect(a.filter((x) => x.code === '600519')).toHaveLength(2);
   });
 
   it('total alert count matches thresholds', () => {

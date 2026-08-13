@@ -139,19 +139,25 @@ describe('compareBacktests — 基础对比', () => {
 
 describe('compareBacktests — 学界标准增强', () => {
   it('t 阈值分级：2<|t|≤3 → significant_marginal 带 caveat', () => {
-    // 构造 t 约 2-3 的场景：差值小但方向一致
-    const baseline = makeResult({ equityCurve: makeCurve(10000, 0.001, 100) });
-    const experiment = makeResult({ equityCurve: makeCurve(10000, 0.0012, 100) });
-    const r = compareBacktests(baseline, experiment);
-    // 0.0002 的日收益差，100 样本，t 可能落在 2-3
-    if (r.tStatistic > 2 && r.tStatistic <= 3) {
-      expect(r.significance).toBe('significant_marginal');
-      expect(r.caveats.some((c) => c.includes('2-3 区间'))).toBe(true);
+    // 构造 t≈2.5：基线确定性 0.001 日收益，实验叠加交替噪声 ±0.0008，
+    // 差异序列 mean=0.0002、std≈0.0008、n=100 → t = 0.0002/(0.0008/10) = 2.5。
+    // 此前差异序列恒定（方差≈0 → t≈34），if 条件断言恒不触发 marginal 分支，用例空转通过。
+    const baselineCurve = makeCurve(10000, 0.001, 100);
+    const expCurve: { date: string; value: number }[] = [];
+    let v = 10000;
+    for (let i = 0; i < 100; i++) {
+      v *= 1 + 0.0012 + (i % 2 === 0 ? 0.0008 : -0.0008);
+      expCurve.push({ date: `2024-01-${String(i + 1).padStart(2, '0')}`, value: Math.round(v) });
     }
-    // 如果 t>3 也算通过（边界场景），核心是不报 significant_strong 之外的错误类型
-    expect(['significant_strong', 'significant_marginal', 'not_significant']).toContain(
-      r.significance,
+    const r = compareBacktests(
+      makeResult({ equityCurve: baselineCurve }),
+      makeResult({ equityCurve: expCurve }),
     );
+    // 前置条件必须成立（否则数据构造失败，测试应红而非空转）
+    expect(r.tStatistic).toBeGreaterThan(2);
+    expect(r.tStatistic).toBeLessThanOrEqual(3);
+    expect(r.significance).toBe('significant_marginal');
+    expect(r.caveats.some((c) => c.includes('2-3 区间'))).toBe(true);
   });
 
   it('DSR/PSR 在样本充足时输出', () => {

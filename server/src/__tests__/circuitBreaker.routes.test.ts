@@ -26,11 +26,15 @@ describe('合规熔断中间件（circuitBreakerGuard）', () => {
     }
   }
 
-  it('窗口内 high 条目超阈值（>10）→ 分析类请求被熔断 503', async () => {
+  it('窗口内 high 条目超阈值（>10）→ 分析类请求被熔断 503 并带 Retry-After', async () => {
     logHigh(11);
     const res = await request(app).post('/api/chat').send({});
     expect(res.status).toBe(503);
     expect(res.body.error).toContain('熔断');
+    // 503 必须带 Retry-After（熔断窗口秒数），此前实现缺失、文档承诺不实
+    const retryAfter = Number(res.headers['retry-after']);
+    expect(Number.isFinite(retryAfter)).toBe(true);
+    expect(retryAfter).toBeGreaterThan(0);
   });
 
   it('窗口内 high 条目未超阈值 → 放行到业务层（空消息 400）', async () => {
@@ -40,7 +44,7 @@ describe('合规熔断中间件（circuitBreakerGuard）', () => {
     expect(res.body.error).toContain('对话内容');
   });
 
-  it('窗口内 critical 条目超阈值（>3）→ 分析类请求被熔断 503', async () => {
+  it('窗口内 critical 条目超阈值（>3）→ 分析类请求被熔断 503 并带 Retry-After', async () => {
     for (let i = 0; i < 4; i++) {
       auditLogger.log({
         sessionId: `cb-critical-${i}`,
@@ -53,6 +57,7 @@ describe('合规熔断中间件（circuitBreakerGuard）', () => {
     const res = await request(app).post('/api/chat').send({});
     expect(res.status).toBe(503);
     expect(res.body.error).toContain('熔断');
+    expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
   });
 
   it('info/medium 条目不计入熔断', async () => {

@@ -1,19 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { scoreNewsWithLLM, extractNewsSignal } from '../newsSignal.js';
 
 describe('newsSignal LLM enhancement', () => {
-  it('scoreNewsWithLLM returns null (or safe array) when LLM unavailable', async () => {
-    delete process.env.DEEPSEEK_API_KEY;
-    delete process.env.OPENAI_API_KEY;
+  beforeEach(() => {
+    // 双 key 清空 + afterEach 还原：此前只 delete 不还原，会污染同 worker 后续用例
+    vi.stubEnv('DEEPSEEK_API_KEY', '');
+    vi.stubEnv('OPENAI_API_KEY', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('scoreNewsWithLLM 在 LLM 不可用时返回 null', async () => {
     const r = await scoreNewsWithLLM([
       { id: '1', title: '利好', publishedAt: new Date().toISOString() },
     ]);
-    expect(r === null || (Array.isArray(r) && r.length === 1)).toBe(true);
+    // 收紧：LLM 不可用 → 恒 null（此前"null 或数组"双分支宽断言，数组分支是死代码）
+    expect(r).toBeNull();
   });
 
   it('extractNewsSignal degrades to neutral when no live news (sandbox)', async () => {
-    delete process.env.DEEPSEEK_API_KEY;
-    delete process.env.OPENAI_API_KEY;
     // 沙箱可访问 datacenter.eastmoney.com，需显式让 fetch 失败，才能验证"无实时新闻→中性"分支
     const origFetch = globalThis.fetch;
     globalThis.fetch = (async () => {
