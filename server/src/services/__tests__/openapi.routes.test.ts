@@ -96,7 +96,7 @@ describe('GET /api/openapi.json 路由', () => {
   it('返回 200 且为合法 OpenAPI 文档', async () => {
     const res = await request(app).get('/api/openapi.json');
     expect(res.status).toBe(200);
-    expect(res.body.openapi).toBe('3.1.0');
+    expect(res.body.openapi).toBe(OPENAPI_VERSION); // 引常量而非硬编码 '3.1.0'
     expect(res.body.paths['/api/analyze']).toBeTruthy();
   });
 });

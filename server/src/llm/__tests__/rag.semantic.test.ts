@@ -11,7 +11,9 @@ import {
 
 const docs: EvidenceDoc[] = [
   { id: 'a', source: 's', text: '贵州茅台 白酒 龙头 业绩增长', stockCode: '600519' },
-  { id: 'b', source: 's', text: '宁德时代 电池 新能源 扩产' },
+  // b 保持 2 词短向量：查询 '白酒 电池' 时 b 命中 1 词且归一化后 cosine 略高于 a（0.5 vs 0.408），
+  // 加权 +0.2 后 a 反超 → 加权分支真正被验证
+  { id: 'b', source: 's', text: '宁德时代 电池' },
   { id: 'c', source: 's', text: '完全无关 天气 足球' },
 ];
 
@@ -28,19 +30,24 @@ describe('向量语义检索', () => {
   });
 
   it('股票代码匹配加权（语义）', async () => {
-    // 查询与 b 语义相近但带 600519，应优先返回 a（同代码加权）
-    const res = await retrieveEvidence('白酒 龙头', {
+    // 查询 '白酒 电池'：b 命中 '电池'（cosine≈0.5）、a 命中 '白酒'（cosine≈0.408），无加权时 b 在前；
+    // semanticSearch 加权（+0.2，见 rag.ts semanticSearch）后 a 反超 → 真正验证加权逻辑。
+    // （此前查询只命中单一文档，加权与否结果不变，用例恒通过却从未触达加权分支）
+    const q = '白酒 电池';
+    const without = await retrieveEvidence(q, { embedder, docs, topK: 2 });
+    expect(without[0].id).toBe('b');
+    const withCode = await retrieveEvidence(q, {
       embedder,
       docs,
       topK: 2,
       stockCode: '600519',
     });
-    expect(res[0].id).toBe('a');
+    expect(withCode[0].id).toBe('a');
   });
 
-  it('无 embedder 时安全回退（BM25 或空）', async () => {
+  it('无 embedder 时安全回退（BM25 实际召回文档）', async () => {
     const res = await retrieveEvidence('茅台', { docs, topK: 3 });
-    expect(Array.isArray(res)).toBe(true);
+    expect(res.some((d) => d.id === 'a')).toBe(true);
   });
 });
 

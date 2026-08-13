@@ -3,8 +3,10 @@ import { resolveIndustry, getPeerCodes, CODE_TO_INDUSTRY } from '../industryPeer
 
 describe('resolveIndustry', () => {
   it('通过 BOARD_NAME 反查行业（含罗马数字序号）', () => {
-    expect(resolveIndustry('白酒Ⅱ', '600519')).toBe('白酒');
-    expect(resolveIndustry('股份制银行Ⅲ', '600036')).toBe('银行');
+    // 用未知 code 强制走 BOARD_NAME 关键词匹配 + 罗马数字剥离分支
+    // （此前传 600519/600036 会命中 CODE_TO_INDUSTRY 代码优先分支，本用例恒通过却从未触达 BOARD_NAME 逻辑）
+    expect(resolveIndustry('白酒Ⅱ', '999999')).toBe('白酒');
+    expect(resolveIndustry('股份制银行Ⅲ', '999999')).toBe('银行');
   });
 
   it('通过代码反查行业优先于 BOARD_NAME', () => {
@@ -30,9 +32,9 @@ describe('getPeerCodes', () => {
     expect(peers).not.toContain('600519'); // 排除自身
   });
 
-  it('不超过请求数量上限', () => {
+  it('不超过请求数量上限（白酒 6 只排除自身后截断到 4）', () => {
     const peers = getPeerCodes('白酒', '600519', 4);
-    expect(peers.length).toBeLessThanOrEqual(4);
+    expect(peers).toHaveLength(4);
   });
 
   it('未知行业返回空数组', () => {

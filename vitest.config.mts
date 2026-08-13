@@ -9,7 +9,7 @@ export default defineConfig({
     // 测试经 supertest 直接引用导出的 app，不应真正监听，否则进程不退出。
     // RATE_LIMIT_MAX_WATCHLIST 在测试中放大，避免批量回测端到端集成测试触发限流（429）。
     env: { NODE_ENV: 'test', RATE_LIMIT_MAX_WATCHLIST: '100' },
-    setupFiles: ['./client/src/test/setup.ts'],
+    setupFiles: ['./client/src/test/setup.ts', './server/src/test/setup.ts'],
     coverage: {
       provider: 'v8',
       reportsDirectory: './coverage',

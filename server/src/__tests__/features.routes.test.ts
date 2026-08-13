@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import request from 'supertest';
 
 // 隔离真实 LLM 与网络依赖
@@ -24,9 +24,26 @@ vi.mock('../services/watchlistBacktest.js', () => ({
 import { app } from '../index.js';
 
 // 确保测试环境不走真实 LLM（避免网络/长连接导致 vitest 无法干净退出）
+const origDeepSeekKey = process.env.DEEPSEEK_API_KEY;
+const origOpenaiKey = process.env.OPENAI_API_KEY;
 beforeAll(() => {
   process.env.DEEPSEEK_API_KEY = '';
   process.env.OPENAI_API_KEY = '';
+});
+afterAll(() => {
+  if (origDeepSeekKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+  else process.env.DEEPSEEK_API_KEY = origDeepSeekKey;
+  if (origOpenaiKey === undefined) delete process.env.OPENAI_API_KEY;
+  else process.env.OPENAI_API_KEY = origOpenaiKey;
+});
+
+// embeddingEnabled 用例依赖"宿主未配置任何嵌入类 env"：统一清空，避免开发者环境导出
+// LLM_EMBED_MODEL/OPENAI_EMBED_MODEL 等导致首用例环境相关失败
+beforeEach(() => {
+  delete process.env.LLM_EMBED_MODEL;
+  delete process.env.OPENAI_EMBED_MODEL;
+  delete process.env.LLM_EMBED_BASE_URL;
+  delete process.env.OPENAI_EMBED_BASE_URL;
 });
 
 describe('文档入库与 RAG', () => {
@@ -48,7 +65,8 @@ describe('文档入库与 RAG', () => {
     await request(app).post('/api/ingest').send({ title: 'd2', text: '新能源 扩产' });
     const r = await request(app).get('/api/documents');
     expect(r.status).toBe(200);
-    expect(r.body.count).toBeGreaterThan(0);
+    // 精确断言 d2 真正入库（count>0 过弱：前一用例已入库一条，POST 静默失败也会过）
+    expect(r.body.docs.some((d: { source: string }) => d.source === 'doc:d2')).toBe(true);
   });
 });
 
@@ -64,9 +82,13 @@ describe('多模型路由 / 成本治理', () => {
 
   it('配置 LLM_EMBED_MODEL 后 embeddingEnabled 为 true', async () => {
     process.env.LLM_EMBED_MODEL = 'text-embedding-3-small';
-    const r = await request(app).get('/api/models');
-    expect(r.body.embeddingEnabled).toBe(true);
-    delete process.env.LLM_EMBED_MODEL;
+    try {
+      const r = await request(app).get('/api/models');
+      expect(r.body.embeddingEnabled).toBe(true);
+    } finally {
+      // 断言失败也要还原，避免 env 泄漏影响后续用例
+      delete process.env.LLM_EMBED_MODEL;
+    }
   });
 
   it('GET /api/cost 返回成本报告', async () => {

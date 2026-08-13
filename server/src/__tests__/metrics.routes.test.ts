@@ -1,6 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import { app } from '../index.js';
+
+// /api/health 会对外网发 HEAD 请求，stub fetch 隔离网络（离线 CI 下避免撞 5s 超时）
+beforeAll(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(null, { status: 200 })),
+  );
+});
+afterAll(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('GET /api/metrics 路由', () => {
   it('返回 200、Prometheus 文本格式与核心指标', async () => {

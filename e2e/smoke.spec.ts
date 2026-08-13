@@ -18,6 +18,13 @@ test.describe('应用加载与导航', () => {
   test('六个 Tab 均可切换并渲染对应页面标题', async ({ page }) => {
     await page.goto('/');
 
+    // 深度研究（默认 tab，首屏即渲染搜索区）
+    await expect(page.getByPlaceholder(/输入股票代码或名称/)).toBeVisible();
+
+    // 对比分析
+    await page.getByRole('button', { name: '对比分析' }).click();
+    await expect(page.getByRole('heading', { name: '股票对比' })).toBeVisible();
+
     // 量化研究（懒加载，Suspense fallback 后出现）
     await page.getByRole('button', { name: '量化研究' }).click();
     await expect(page.getByText('量化研究', { exact: false })).toBeVisible();

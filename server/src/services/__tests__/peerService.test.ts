@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { resolveStockIndustry, buildPeerComparison } from '../peerService.js';
 
 // 路径与 dataService.getData.test.ts 保持一致的模式：从测试文件出发解析到真实模块
@@ -32,6 +32,20 @@ const mockFetchValuation = vi.mocked(fetchValuationData);
 const mockFetchBoard = vi.mocked(fetchBoardInfo);
 const mockResolveIndustry = vi.mocked(resolveIndustry);
 const mockGetPeerCodes = vi.mocked(getPeerCodes);
+
+// 恢复 mock 默认实现：此前"代码与板名均无命中"用例把 mock 改成返回 undefined 后不重置，
+// 乱序/重跑时会让"优先代码反查"用例误失败
+beforeEach(() => {
+  mockResolveIndustry.mockImplementation(
+    (boardName: string | undefined, code: string | undefined) => {
+      if (code === '688825') return '半导体';
+      if (code === '600519') return '白酒';
+      if (boardName && boardName.includes('半导体')) return '半导体';
+      return undefined;
+    },
+  );
+  mockFetchBoard.mockResolvedValue({ name: 'x', boardName: '半导体Ⅱ' });
+});
 
 describe('resolveStockIndustry', () => {
   it('优先用代码反查行业（提供 hint 时无需触达网络）', async () => {

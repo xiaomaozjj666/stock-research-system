@@ -93,6 +93,8 @@ vi.mock('../services/stockMaster.js', () => ({
   loadStockMaster: mocks.loadStockMaster,
   getSupportedStocks: vi.fn(() => []),
   searchStocks: vi.fn(() => []),
+  // dataService.searchStocks 内部会调 fuzzyMatch，缺了会在未来链路触达时 TypeError
+  fuzzyMatch: vi.fn(() => []),
 }));
 
 // 测试隔离：把 watchlist 持久化重定向到临时文件，避免污染真实数据

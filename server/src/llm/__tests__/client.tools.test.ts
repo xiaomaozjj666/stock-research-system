@@ -72,12 +72,15 @@ describe('chatWithTools 工具调用回路', () => {
       return makeResponse({ choices: [{ message: { content: '分析完成', tool_calls: [] } }] });
     });
 
+    const toolExecutions: Array<{ name: string; args: unknown }> = [];
     const res = await chatWithTools(
       [{ role: 'user', content: '分析 600519' }],
       tools,
       async (name, args) => {
-        expect(name).toBe('run_analysis');
-        expect(args).toEqual({ code: '600519' });
+        // 注意：断言不能放在回调内——client.ts 的 executeTool 调用包在 try/catch 里，
+        // 回调抛错会被转成 '工具执行出错: ...' 字符串，expect 失败会被吞掉（假阴性）。
+        // 这里只记录，返回后统一断言。
+        toolExecutions.push({ name, args });
         return JSON.stringify({ summary: 'ok' });
       },
     );
@@ -85,6 +88,9 @@ describe('chatWithTools 工具调用回路', () => {
     expect(res.content).toBe('分析完成');
     expect(res.toolCalls).toHaveLength(1);
     expect(res.toolCalls[0].name).toBe('run_analysis');
+    expect(res.toolCalls[0].args).toEqual({ code: '600519' });
+    // 工具执行回调收到的 name/args 与回传一致
+    expect(toolExecutions).toEqual([{ name: 'run_analysis', args: { code: '600519' } }]);
 
     // 第二轮请求应包含：user + assistant(tool_calls) + tool
     const secondReq = captured[1];

@@ -1,7 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { loadHistory, appendTurn, clearHistory, MAX_TURNS } from '../chatMemory.js';
 
 const SID = 'test-session-memory';
+
+// 落盘重定向到进程专属临时文件，避免读写真实 server/src/data/chatHistory.json
+const tmpDir = mkdtempSync(join(tmpdir(), 'chat-memory-'));
+const tmpFile = join(tmpDir, 'chatHistory.json');
+beforeAll(() => {
+  process.env.CHAT_HISTORY_FILE = tmpFile;
+});
+afterAll(() => {
+  delete process.env.CHAT_HISTORY_FILE;
+  rmSync(tmpDir, { recursive: true, force: true });
+});
 
 beforeEach(() => clearHistory(SID));
 afterEach(() => clearHistory(SID));

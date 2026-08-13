@@ -78,6 +78,80 @@ describe('tool registry', () => {
     expect(r).toContain('sharpe');
   });
 
+  it('run_backtest 校验 6 位代码（与 run_analysis/evaluate_backtest 对齐）', async () => {
+    const deps: ToolDeps = {
+      parseStrategyInput: () => ({ stockCode: '', strategy: 'ma_cross' }),
+      fetchOHLCVData: async () => [],
+      runBacktest: async () => ({}),
+    };
+    const r = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: {
+          name: 'run_backtest',
+          arguments: JSON.stringify({ stockCode: 'abc', strategy: 'ma_cross' }),
+        },
+      },
+      deps,
+    );
+    expect(r).toContain('6 位');
+  });
+
+  it('compare_stocks 并行分析 2-3 只股票', async () => {
+    const analyzed: string[] = [];
+    const deps: ToolDeps = {
+      runAnalysis: async (c) => {
+        analyzed.push(c);
+        return { stock_pool: [{ stock_name: c, total_score: 80 }] };
+      },
+    };
+    const r = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: {
+          name: 'compare_stocks',
+          arguments: JSON.stringify({ stockCodes: ['600519', '000001'] }),
+        },
+      },
+      deps,
+    );
+    expect(analyzed).toEqual(['600519', '000001']); // 每只各分析一次
+    expect(r).toContain('600519');
+    expect(r).toContain('000001');
+  });
+
+  it('compare_stocks 数量非 2-3 时拒绝', async () => {
+    const deps: ToolDeps = { runAnalysis: async () => ({}) };
+    for (const codes of [['600519'], ['600519', '000001', '300750', '601318']]) {
+      const r = await executeToolCall(
+        {
+          id: '1',
+          type: 'function',
+          function: { name: 'compare_stocks', arguments: JSON.stringify({ stockCodes: codes }) },
+        },
+        deps,
+      );
+      expect(r).toContain('请选择 2-3 只股票');
+    }
+  });
+
+  it('compare_stocks 未配置 deps 时返回错误', async () => {
+    const r = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: {
+          name: 'compare_stocks',
+          arguments: JSON.stringify({ stockCodes: ['600519', '000001'] }),
+        },
+      },
+      {},
+    );
+    expect(r).toContain('compare_stocks 未配置');
+  });
+
   it('evaluate_backtest 跑基线+实验对比，返回 comparison 结构', async () => {
     let callCount = 0;
     const deps: ToolDeps = {

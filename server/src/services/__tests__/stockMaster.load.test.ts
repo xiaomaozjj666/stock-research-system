@@ -1,14 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, rmSync } from 'node:fs';
+import { writeFileSync, rmSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadStockMaster, fuzzyMatch, type SecurityMasterEntry } from '../stockMaster.js';
+import type { SecurityMasterEntry } from '../stockMaster.js';
 
-// 磁盘缓存用「真实临时文件」控制（MASTER_CACHE 固定为 server/src/data/stockMaster.json，
-// 运行时数据、已 gitignore），网络边界用 mock 全局 fetch（fetchJson 内部走 fetch）。
-const CACHE_FILE = join(process.cwd(), 'server', 'src', 'data', 'stockMaster.json');
+// 磁盘缓存经 MASTER_CACHE env 重定向到进程专属临时文件（此前直接读写删除真实
+// server/src/data/stockMaster.json，会破坏开发者机器上真实下载的证券全表缓存）。
+// 网络边界用 mock 全局 fetch（fetchJson 内部走 fetch）。
+const tmpDir = mkdtempSync(join(tmpdir(), 'stock-master-'));
+const CACHE_FILE = join(tmpDir, 'stockMaster.json');
 const originalFetch = globalThis.fetch;
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
+
+// 动态 import + resetModules：loadStockMaster 的 masterCache/masterLoadPromise 是模块级
+// 状态，逐用例重新加载模块可消除"内存缓存跨用例存续"的顺序依赖
+let loadStockMaster: (force?: boolean) => Promise<SecurityMasterEntry[]>;
+let fuzzyMatch: (query: string, master: SecurityMasterEntry[]) => SecurityMasterEntry[];
 
 /** 构造一页 diff（模拟东方财富 clist 返回结构） */
 function pageItems(
@@ -37,12 +45,18 @@ function writeCache(payload: unknown): void {
 }
 
 describe('loadStockMaster', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules(); // 重置模块级内存缓存（masterCache）
+    const mod = await import('../stockMaster.js');
+    loadStockMaster = mod.loadStockMaster;
+    fuzzyMatch = mod.fuzzyMatch;
+    process.env.MASTER_CACHE = CACHE_FILE;
     globalThis.fetch = mocks.fetch;
     mocks.fetch.mockReset();
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    delete process.env.MASTER_CACHE;
     try {
       rmSync(CACHE_FILE, { force: true });
     } catch {

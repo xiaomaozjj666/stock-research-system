@@ -17,7 +17,7 @@ describe('mapWithConcurrency', () => {
     expect(out).toEqual([0, 10, 20, 30]);
   });
 
-  it('限制并发数：同时进行的任务不超过 limit', async () => {
+  it('限制并发数：同时进行的任务不超过 limit（且实际达到 limit）', async () => {
     let active = 0;
     let maxActive = 0;
     await mapWithConcurrency(Array.from({ length: 12 }), 3, async () => {
@@ -26,7 +26,20 @@ describe('mapWithConcurrency', () => {
       await new Promise((r) => setTimeout(r, 10));
       active--;
     });
-    expect(maxActive).toBeLessThanOrEqual(3);
+    // 精确断言：12 个任务 limit=3 必然达到峰值 3（此前 toBeLessThanOrEqual(3) 在实现退化为 2 时也过）
+    expect(maxActive).toBe(3);
+  });
+
+  it('limit 为 NaN 时钳制为 1 不崩溃', async () => {
+    let active = 0;
+    let maxActive = 0;
+    await mapWithConcurrency(Array.from({ length: 5 }), Number.NaN, async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 10));
+      active--;
+    });
+    expect(maxActive).toBe(1);
   });
 
   it('limit 超过数组长度时退化为全并发', async () => {

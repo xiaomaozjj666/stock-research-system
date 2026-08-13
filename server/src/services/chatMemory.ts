@@ -12,16 +12,27 @@ export interface ChatTurn {
   content: string;
 }
 
-const HISTORY_FILE = path.join(import.meta.dirname, '..', 'data', 'chatHistory.json');
+const DEFAULT_HISTORY_FILE = path.join(import.meta.dirname, '..', 'data', 'chatHistory.json');
 /** 每个 session 保留的最大轮次数（1 轮 = user+assistant） */
 export const MAX_TURNS = 40;
 
 type Store = Record<string, ChatTurn[]>;
 
+/**
+ * 运行时解析落盘路径：支持 CHAT_HISTORY_FILE 环境变量重定向（与 watchlist/paper/audit 同模式）。
+ * 惰性解析而非模块级常量，测试可在 beforeAll 中设置 env 后生效。
+ */
+function getHistoryFile(): string {
+  return process.env.CHAT_HISTORY_FILE && process.env.CHAT_HISTORY_FILE.length > 0
+    ? process.env.CHAT_HISTORY_FILE
+    : DEFAULT_HISTORY_FILE;
+}
+
 function readStore(): Store {
   try {
-    if (!fs.existsSync(HISTORY_FILE)) return {};
-    const raw = fs.readFileSync(HISTORY_FILE, 'utf-8');
+    const file = getHistoryFile();
+    if (!fs.existsSync(file)) return {};
+    const raw = fs.readFileSync(file, 'utf-8');
     const parsed = JSON.parse(raw) as Store;
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
@@ -31,8 +42,9 @@ function readStore(): Store {
 
 function writeStore(store: Store): void {
   try {
-    fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true });
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(store, null, 2), 'utf-8');
+    const file = getHistoryFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(store, null, 2), 'utf-8');
   } catch {
     // 磁盘写入失败：静默降级（不阻断对话）
   }

@@ -153,3 +153,47 @@
 - **根因**：`auditLog.test.ts` 落盘用例直接读写真实 `server/src/data/audit.log` 并断言精确行数/末行，而其他测试文件（熔断/路由等）在并行 worker 中通过全局 `auditLogger` 往同一文件追加 → 行数断言偶发失败（flaky，约 1/5 轮复现）。
 - **修复**：落盘路径改为运行时解析，支持 `AUDIT_LOG_FILE` 环境变量重定向（与 watchlist/paper/cache 同模式）；测试改用 `beforeAll` 设置进程专属临时文件、`afterAll` 清理并还原环境变量。`AUDIT_LOG_FILE` 保留为默认路径的兼容导出。
 - **验证**：连续 6 轮全量测试全绿（修复前约 1/5 轮失败），793 tests / 0 failed。
+
+## 2026-08-14 全量测试质量审查与修复记录
+
+- **审查范围**：74 个测试文件 / 793 用例（services 28 / quant 17 / llm 9 / 路由级 8 / utils 3 / data 1 / client 8），4 路并行审查 + 源码逐项交叉验证。基线：793 tests 全绿 / 36.61s。
+- **🔴 Critical 修复（2）**：
+  1. `quant/agentEval.test.ts` — fixture 用错字段名（`strategyType` 而非 `type`），引擎落 `default→hold` 分支零交易，两用例恒通过测错东西；修复字段 + 连续日期 + 强化断言（tradeCount>0、avgSharpe≠0）。
+  2. `quant/newsSignal.test.ts` — 末尾两条用例未 mock fetch，直连真实东财端点（网络 + 非确定）；修复为 mock 公告端点 + 新增"fetch 全失败→[]/none"用例。
+- **🟠 High 修复（6）**：
+  1. `services/experts.test.ts` — unlockExpert 用例用硬编码年份（2029 必破的定时炸弹）→ 动态相对年份；14 处只 stub `DEEPSEEK_API_KEY`（宿主有 OPENAI_API_KEY 会走真实 LLM 网络）→ describe 级双 key stub。
+  2. `services/documentInsights.test.ts` — 同 OPENAI_API_KEY 残留问题 → beforeEach 双 key 清空。
+  3. `services/stockMaster.ts` + `stockMaster.load.test.ts` — 缓存路径硬编码（测试读写删除真实 `server/src/data/stockMaster.json`）→ 源码支持 `MASTER_CACHE` env 重定向；测试改用临时文件 + `vi.resetModules()` 动态 import（消除内存缓存跨用例顺序依赖）。
+  4. `quant/dataProvider.ts` + `dataProvider.extra.test.ts` — 缓存目录硬编码（写真实 quant/cache + afterEach rmSync 残留污染）→ 源码支持 `DATA_CACHE_DIR` env（与 services/dataService 对齐）；测试重定向到 mkdtemp 临时目录，弃用 rmSync 清理；缓存命中用例的 fetch spy 补 mock 实现（防缓存 bug 时真发网络）。
+  5. `quant/factorOptimizer.test.ts` — `Math.random()` 未 seed（概率性 flake）+ else 分支恒真（空转通过）→ mulberry32 固定 seed + 强断言。
+  6. `services/analysisPipeline.test.ts` — mock 状态跨用例/跨 describe 泄漏（依赖声明序）→ describe 级 beforeEach 重置默认值。
+- **🟡 精选修复（路由/集成侧）**：
+  - `security.routes.test.ts` + `metrics.routes.test.ts` — `GET /api/health` 触发真实外网请求（10+1 次，离线 CI 撞 vitest 默认 5s 超时）→ 文件级 `vi.stubGlobal('fetch')` 隔离。
+  - `circuitBreaker.routes.test.ts` + `index.ts` — 503 缺 `Retry-After` 头（ENGINEERING-NOTES 承诺不实）→ 实现补 `Retry-After: windowMs/1000` + 测试断言。
+  - `chat.routes.test.ts` — chatAgent mock 缺 `runStream`（流式路径零覆盖）→ 补 mock + SSE happy path 用例（断言 done 事件 + message 透传）。
+  - `features.routes.test.ts` — `LLM_EMBED_MODEL` env 无 finally 还原 + 首用例依赖宿主环境干净 → beforeEach 清 4 个嵌入 env + try/finally；`/api/documents` 弱断言 `count>0` → 精确断言 `doc:d2` 入库。
+  - `routes.paper.test.ts` — `_paperAccount` 模块级单例导致 `cash===initialCapital` 断言依赖用例声明序（shuffle 必挂）→ 放宽为状态合法断言。
+  - `watchlistNewsBacktest.e2e.test.ts` — stockMaster mock 缺 `fuzzyMatch`（未来链路触达即 TypeError）→ 补全 mock 形状。
+  - `alerts.test.ts` — 用例名不符 + `toBeTruthy` 泛泛断言 → 改名 + 精确计数断言。
+  - `telemetry.test.ts` / `env.test.ts` — `process.stdout.write` spy 的 `mockRestore()` 不在 finally（断言失败残留吞 stdout）→ try/finally。
+- **🟡 精选修复（utils/llm/quant 侧）**：
+  - `utils/concurrency.ts` — `limit=NaN` 时 `Math.max(1,Math.floor(NaN))`=NaN → `Array.from({length:NaN})` 抛 RangeError（真实崩溃点）→ `Number.isFinite` 钳制 + NaN 用例；并发上限弱断言 `<=3` → 精确 `toBe(3)`。
+  - `utils/http.test.ts` — vi.mock 工厂引用外层 let（TDZ 脆弱）→ `vi.hoisted`；恒真断言 `mockedExecFile.not.toHaveBeenCalled()` 删除。
+  - `llm/tools.ts` + `tools.test.ts` — `run_backtest` 不校验 6 位代码（与 run_analysis/evaluate_backtest 不一致）→ 源码补齐校验；补 `compare_stocks` 全覆盖（合法 2 只并行 / 数量非 2-3 拒绝 / deps 未配置）。
+  - `llm/config.test.ts` — env 只 delete 不恢复（污染宿主环境）→ beforeEach 快照 + afterEach 恢复。
+  - `quant/newsSignalLlm.test.ts` — env 不还原 + "null 或数组"宽断言（数组分支死代码）→ stubEnv 托管还原 + 收紧 `toBeNull()`。
+  - `quant/backtestEvaluator.test.ts` — "t 阈值分级"条件断言（合成数据 t≈34 恒走 strong，marginal 分支从未被测）→ 交替噪声构造 t≈2.5，强断言 `significant_marginal` + caveat。
+  - `client/src/api/__tests__/client.test.ts` — 删多余 `@vitest-environment node`（默认即 node）。
+  - `services/peerService.test.ts` — mock 无 beforeEach 重置（乱序/重跑时"优先代码反查"用例误失败）→ 恢复默认实现；`services/openapi.routes.test.ts` 硬编码 '3.1.0' → 引 `OPENAPI_VERSION` 常量；`services/dataService.getData.test.ts` 删原样返回 actual 的死代码 vi.mock；`services/dataService.test.ts` 别名改写断言从 fetch mock 内部移到测试体（失败定位清晰）。
+- **测试基础设施**：
+  - 新增 `server/src/test/setup.ts`（挂入 vitest setupFiles）：全局把 `AUDIT_LOG_FILE`/`CHAT_HISTORY_FILE` 重定向到 per-worker 临时目录（此前路由级测试每次写入真实 `server/src/data/audit.log` 713KB）；`setLogLevel('error')` 静音结构化日志（HTTP request/warn 刷屏），依赖日志输出的用例（env/telemetry）显式恢复级别。
+  - `services/chatMemory.ts` — `CHAT_HISTORY_FILE` env 惰性重定向（与 audit/watchlist/paper 同模式）；`chatMemory.test.ts` 自管理临时文件。
+  - `e2e/smoke.spec.ts` — "六个 Tab"用例此前只测 4 个 → 补默认页深度研究 + 对比分析，覆盖全部 6 个 tab。
+  - 测试总时长 36.61s → ~11s（日志静音 + 网络 stub 后并行更充分）。
+- **遗留项（未修，记录在案）**：
+  - `backtestEvaluator.test.ts` "Bootstrap CI 跨 0 但 t 显著"条件断言——强偏态差异序列构造困难，分支仍未被真实触发（条件断言已存在，不会误报）。
+  - `quant/agents.test.ts` dataEngineer 无 A 股法定节假日用例（春节/国庆会误报"缺失交易日"，产品级缺陷待交易日历）。
+  - `pdfExtract.test.ts` `if (installed) return` 静默跳过（装 pdfjs-dist 后错误路径测试无声失效）。
+  - `mcpClient.test.ts` 连接失败用例依赖真实 spawn/网络（127.0.0.1:1），慢网环境可能卡 30s。
+  - `predictionModel.test.ts` 区间对称包络容差 25% 过松；`factors.test.ts` 硬编码因子数（21）新增因子即破。
+  - 测试隔离底线约定：**所有运行时数据文件（watchlist/paper/cache/audit/chatHistory/masterCache）均已支持 env 重定向**，新增落盘服务必须沿用此模式，禁止测试写默认路径。

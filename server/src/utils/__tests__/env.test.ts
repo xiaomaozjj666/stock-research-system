@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { loadEnv, getEnv, _resetEnvCache } from '../env.js';
+import { setLogLevel } from '../logger.js';
 
 describe('env 环境变量校验', () => {
   const originalEnv = process.env;
@@ -180,21 +181,26 @@ describe('env 环境变量校验', () => {
   });
 
   it('生产环境缺少 ALLOWED_ORIGINS 时给出警告但不崩溃', () => {
+    // 全局测试 setup 会把日志级别静音到 error；本用例断言 warn 输出，需显式恢复（仅放行 warn，info 仍过滤）
+    setLogLevel('warn');
     process.env.NODE_ENV = 'production';
     delete process.env.ALLOWED_ORIGINS;
 
     // loadEnv 的警告现经结构化 logger（logger.warn → process.stdout.write）输出，原 console.warn
     const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
-    const env = loadEnv();
+    try {
+      const env = loadEnv();
 
-    expect(env.nodeEnv).toBe('production');
-    expect(env.allowedOrigins).toBeNull();
-    const output = writeSpy.mock.calls.map((c) => String(c[0])).join('');
-    expect(output).toContain('"level":"warn"');
-    expect(output).toContain('生产环境未设置 ALLOWED_ORIGINS');
-
-    writeSpy.mockRestore();
+      expect(env.nodeEnv).toBe('production');
+      expect(env.allowedOrigins).toBeNull();
+      const output = writeSpy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('"level":"warn"');
+      expect(output).toContain('生产环境未设置 ALLOWED_ORIGINS');
+    } finally {
+      // 断言失败也要恢复 spy，避免残留吞掉后续用例的 stdout
+      writeSpy.mockRestore();
+    }
   });
 
   it('生产环境配置 ALLOWED_ORIGINS 时正常', () => {

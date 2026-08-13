@@ -3,14 +3,20 @@ import { extractDocumentInsights } from '../documentInsights.js';
 
 const origFetch = global.fetch;
 const origKey = process.env.DEEPSEEK_API_KEY;
+const origOpenaiKey = process.env.OPENAI_API_KEY;
 
 beforeEach(() => {
   process.env.DEEPSEEK_API_KEY = 'test-key';
+  // 同时清空 OPENAI：isLLMAvailable 只要任一 key 存在即 true，宿主有 OPENAI_API_KEY
+  // 时"无 LLM 回退词典法"用例会打真实网络
+  process.env.OPENAI_API_KEY = '';
 });
 afterEach(() => {
   global.fetch = origFetch;
   if (origKey === undefined) delete process.env.DEEPSEEK_API_KEY;
   else process.env.DEEPSEEK_API_KEY = origKey;
+  if (origOpenaiKey === undefined) delete process.env.OPENAI_API_KEY;
+  else process.env.OPENAI_API_KEY = origOpenaiKey;
 });
 
 describe('文档洞察抽取', () => {

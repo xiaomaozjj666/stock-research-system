@@ -42,24 +42,23 @@ describe('searchStocks', () => {
   });
 
   it('品牌名「长鑫存储」经别名改写后命中 688825，且名称规范化', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string | URL) => {
-        const u = decodeURIComponent(String(url));
-        // 别名把「长鑫存储」改写为「长鑫科技」后查询
-        expect(u).toContain('长鑫科技');
-        return new Response(
-          JSON.stringify({
-            QuotationCodeTable: {
-              Data: [{ MktNum: '1', Code: '688825', Name: 'C长鑫' }],
-            },
-          }),
-          { status: 200 },
-        );
-      }),
-    );
+    const fetchSpy = vi.fn(async (url: string | URL) => {
+      const u = decodeURIComponent(String(url));
+      return new Response(
+        JSON.stringify({
+          QuotationCodeTable: {
+            Data: [{ MktNum: '1', Code: '688825', Name: 'C长鑫' }],
+          },
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal('fetch', fetchSpy);
     const r = await searchStocks('长鑫存储');
     expect(r).toEqual([{ code: '688825', name: '长鑫科技' }]);
+    // 别名改写断言移到测试体（此前在 mock 内部，失败时定位不清）
+    const calledUrl = decodeURIComponent(String(fetchSpy.mock.calls[0][0]));
+    expect(calledUrl).toContain('长鑫科技');
   });
 
   it('直接输入上市简称正常返回', async () => {

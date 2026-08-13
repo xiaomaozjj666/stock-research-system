@@ -12,7 +12,10 @@ export async function mapWithConcurrency<T, R>(
 ): Promise<R[]> {
   const n = items.length;
   if (n === 0) return [];
-  const safeLimit = Math.max(1, Math.floor(limit));
+  // limit 非法（NaN/负无穷）时钳制为 1：Math.floor(NaN)=NaN → Math.max(1,NaN)=NaN，
+  // 会传导到 Array.from({length:NaN}) 抛 RangeError（曾是真崩溃点）
+  const floorLimit = Math.floor(limit);
+  const safeLimit = Number.isFinite(floorLimit) ? Math.max(1, floorLimit) : 1;
   const results = new Array<R>(n);
   let cursor = 0;
 

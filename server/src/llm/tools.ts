@@ -164,6 +164,8 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
         return 'run_backtest 未配置';
       }
       const code = String(args.stockCode || '');
+      // 与 run_analysis/evaluate_backtest 对齐：校验 6 位代码（此前缺失，行为不一致）
+      if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
       const strategy = String(args.strategy || 'ma_cross');
       const start = String(
         args.startDate ||

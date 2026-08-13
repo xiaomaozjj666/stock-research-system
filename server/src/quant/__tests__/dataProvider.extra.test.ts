@@ -1,15 +1,29 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fetchOHLCVData, getBenchmarkCurve, marketOf, resolveSecid } from '../dataProvider.js';
 import type { OHLCVData } from '../types.js';
 
 /**
  * dataProvider 补充测试：覆盖 K 线拉取的缓存/解析/降级路径与基准曲线。
- * 缓存文件写入真实 quant/cache 目录（已 gitignore），用例用专属代码段（999xxx）并在
- * afterEach 清理，避免污染真实缓存。
+ * 缓存目录经 DATA_CACHE_DIR 重定向到进程专属临时目录（dataProvider.ts 现支持 env 重定向），
+ * 不再写真实 quant/cache，也不依赖 afterEach 删除（残留由 OS 清理，杜绝跨运行污染）。
  */
-const CACHE_DIR = path.join(import.meta.dirname, '..', 'cache');
+let CACHE_DIR = '';
+
+const origCacheDir = process.env.DATA_CACHE_DIR;
+beforeAll(() => {
+  CACHE_DIR = mkdtempSync(join(tmpdir(), 'srs-quant-cache-'));
+  process.env.DATA_CACHE_DIR = CACHE_DIR;
+});
+afterAll(() => {
+  if (origCacheDir === undefined) delete process.env.DATA_CACHE_DIR;
+  else process.env.DATA_CACHE_DIR = origCacheDir;
+  rmSync(CACHE_DIR, { recursive: true, force: true });
+});
 
 /** 用例专属的缓存键，避免与真实数据冲突 */
 const cacheFileFor = (code: string, start: string, end: string) =>
@@ -22,6 +36,7 @@ describe('fetchOHLCVData — 缓存路径', () => {
 
   afterEach(() => {
     fs.rmSync(cacheFileFor(code, start, end), { force: true });
+    vi.restoreAllMocks();
   });
 
   it('12 小时内的缓存命中直接返回，不触发网络请求', async () => {
@@ -34,12 +49,15 @@ describe('fetchOHLCVData — 缓存路径', () => {
       'utf-8',
     );
 
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    // spy 必须给 mock 实现：若缓存命中逻辑出 bug（如 timestamp 解析异常判失效），
+    // call-through 会真发网络请求
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue({ ok: true, status: 200, json: async () => ({}) } as Response);
     const result = await fetchOHLCVData(code, start, end);
 
     expect(result).toEqual(cached);
     expect(fetchSpy).not.toHaveBeenCalled();
-    fetchSpy.mockRestore();
   });
 
   it('超过 12 小时的缓存视为失效，走网络路径', async () => {

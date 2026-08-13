@@ -16,8 +16,13 @@ type CurlImpl = (
   args: string[],
   opts: unknown,
 ) => Promise<{ stdout: string; stderr: string }>;
-let curlImpl: CurlImpl = async () => ({ stdout: '', stderr: '' });
-const callLog: Array<{ file: string; args: string[]; opts: unknown }> = [];
+
+// vi.mock 工厂被 hoisted 到文件顶部执行，直接引用外层 let/const 有 TDZ 风险；
+// 用 vi.hoisted 在工厂之前创建共享状态（此前依赖"import 位于声明之后"才能跑，重构即碎）
+const { curlImplRef, callLog } = vi.hoisted(() => ({
+  curlImplRef: { impl: (async () => ({ stdout: '', stderr: '' })) as CurlImpl },
+  callLog: [] as Array<{ file: string; args: string[]; opts: unknown }>,
+}));
 
 vi.mock('node:child_process', () => {
   const execFile = vi.fn((...args: unknown[]) => {
@@ -27,34 +32,31 @@ vi.mock('node:child_process', () => {
   Object.defineProperty(execFile, promisify.custom, {
     value: async (file: string, args: string[], opts: unknown) => {
       callLog.push({ file, args, opts });
-      return curlImpl(file, args, opts);
+      return curlImplRef.impl(file, args, opts);
     },
   });
   return { execFile };
 });
 
-import { execFile } from 'node:child_process';
-const mockedExecFile = vi.mocked(execFile);
-
 /** 让 curl 回退返回给定 stdout */
 function mockCurl(stdout: string, stderr = '') {
-  curlImpl = async () => ({ stdout, stderr });
+  curlImplRef.impl = async () => ({ stdout, stderr });
 }
 /** 让 curl 回退直接抛错（模拟 curl 进程失败） */
 function mockCurlError(err: Error) {
-  curlImpl = async () => {
+  curlImplRef.impl = async () => {
     throw err;
   };
 }
 /** 让 curl 回退返回空响应（fetchJson 视为失败并继续重试） */
 function mockCurlEmpty() {
-  curlImpl = async () => ({ stdout: '', stderr: '' });
+  curlImplRef.impl = async () => ({ stdout: '', stderr: '' });
 }
 
 describe('fetchJson', () => {
   beforeEach(() => {
     callLog.length = 0;
-    curlImpl = async () => ({ stdout: '', stderr: '' });
+    curlImplRef.impl = async () => ({ stdout: '', stderr: '' });
     vi.restoreAllMocks();
   });
   afterEach(() => {
@@ -68,9 +70,9 @@ describe('fetchJson', () => {
     );
     const data = await fetchJson('https://example.com/api');
     expect(data).toEqual({ ok: 1 });
-    // 成功路径不应触发 curl 回退
+    // 成功路径不应触发 curl 回退（callLog 是权威记录；mockedExecFile 包装器恒不被调用，
+    // 对它的 not.toHaveBeenCalled 断言恒真无意义，已删除）
     expect(callLog.length).toBe(0);
-    expect(mockedExecFile).not.toHaveBeenCalled();
   });
 
   it('非 2xx 响应视为失败并回退 curl', async () => {
