@@ -4,11 +4,25 @@ import { walkForwardBacktest } from '../walkForward.js';
 import type { StrategyConfig } from '../types.js';
 
 function makeOHLCV(n: number) {
-  const a: { date: string; open: number; close: number; high: number; low: number; volume: number }[] = [];
+  const a: {
+    date: string;
+    open: number;
+    close: number;
+    high: number;
+    low: number;
+    volume: number;
+  }[] = [];
   for (let i = 0; i < n; i++) {
     const p = 100 * (1 + Math.sin(i / 6) * 0.02);
     const day = String((i % 28) + 1).padStart(2, '0');
-    a.push({ date: `2023-01-${day}`, open: p, close: p, high: p * 1.01, low: p * 0.99, volume: 1000 });
+    a.push({
+      date: `2023-01-${day}`,
+      open: p,
+      close: p,
+      high: p * 1.01,
+      low: p * 0.99,
+      volume: 1000,
+    });
   }
   return a;
 }
@@ -36,7 +50,11 @@ describe('agent eval harness', () => {
 
   it('walk-forward 产出样本外稳健性指标', () => {
     const data = makeOHLCV(220);
-    const wf = walkForwardBacktest(runBacktest, data, cfg, { trainSize: 60, testSize: 30, step: 30 });
+    const wf = walkForwardBacktest(runBacktest, data, cfg, {
+      trainSize: 60,
+      testSize: 30,
+      step: 30,
+    });
     expect(wf.folds.length).toBeGreaterThan(0);
     expect(typeof wf.oosRatio).toBe('number');
     expect(wf.oosRatio).toBeGreaterThanOrEqual(0);

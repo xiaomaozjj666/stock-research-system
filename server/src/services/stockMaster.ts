@@ -39,8 +39,12 @@ export async function loadStockMaster(force = false): Promise<SecurityMasterEntr
     try {
       if (fs.existsSync(MASTER_CACHE)) {
         const raw = JSON.parse(await fs.promises.readFile(MASTER_CACHE, 'utf-8'));
-        if (Date.now() - raw.timestamp < MASTER_TTL && Array.isArray(raw.data) &&
-            raw.data.length > 1000 && (raw.data[0] as SecurityMasterEntry)?.industry !== undefined) {
+        if (
+          Date.now() - raw.timestamp < MASTER_TTL &&
+          Array.isArray(raw.data) &&
+          raw.data.length > 1000 &&
+          (raw.data[0] as SecurityMasterEntry)?.industry !== undefined
+        ) {
           masterCache = raw.data as SecurityMasterEntry[];
           return masterCache;
         }
@@ -54,21 +58,31 @@ export async function loadStockMaster(force = false): Promise<SecurityMasterEntr
     const pageSize = 500;
     const all: SecurityMasterEntry[] = [];
 
-    const fetchPage = async (pn: number, retries = 3): Promise<{ total: number; items: SecurityMasterEntry[] }> => {
+    const fetchPage = async (
+      pn: number,
+      retries = 3,
+    ): Promise<{ total: number; items: SecurityMasterEntry[] }> => {
       const url = `https://push2.eastmoney.com/api/qt/clist/get?pn=${pn}&pz=${pageSize}&fs=${fsFilter}&fields=f12,f14,f100&_=${Date.now()}`;
       const json = (await fetchJson(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': 'https://quote.eastmoney.com/',
+          Referer: 'https://quote.eastmoney.com/',
         },
         timeoutMs: 12000,
         retries,
       })) as {
-        data?: { total?: number; diff?: Record<string, { f12: string; f14: string; f100?: string }> };
+        data?: {
+          total?: number;
+          diff?: Record<string, { f12: string; f14: string; f100?: string }>;
+        };
       };
       const diff = json?.data?.diff;
       if (!diff) throw new Error(`证券全表第 ${pn} 页获取失败`);
-      const items = Object.values(diff).map((it) => ({ code: it.f12, name: it.f14, industry: it.f100 || '' }));
+      const items = Object.values(diff).map((it) => ({
+        code: it.f12,
+        name: it.f14,
+        industry: it.f100 || '',
+      }));
       return { total: json.data?.total ?? items.length, items };
     };
 
@@ -84,7 +98,11 @@ export async function loadStockMaster(force = false): Promise<SecurityMasterEntr
     masterCache = all;
 
     try {
-      await fs.promises.writeFile(MASTER_CACHE, JSON.stringify({ timestamp: Date.now(), data: all }), 'utf-8');
+      await fs.promises.writeFile(
+        MASTER_CACHE,
+        JSON.stringify({ timestamp: Date.now(), data: all }),
+        'utf-8',
+      );
     } catch {
       /* 写入失败，忽略 */
     }

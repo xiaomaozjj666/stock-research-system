@@ -11,9 +11,7 @@ describe('RiskSection', () => {
   });
 
   it('非空渲染风险清单项', () => {
-    const { getByText, container } = render(
-      <RiskSection data={['流动性风险', '政策风险']} />,
-    );
+    const { getByText, container } = render(<RiskSection data={['流动性风险', '政策风险']} />);
     expect(getByText('风险清单')).toBeInTheDocument();
     expect(container.querySelectorAll('.risk-item')).toHaveLength(2);
   });

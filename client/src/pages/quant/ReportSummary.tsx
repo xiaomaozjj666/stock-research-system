@@ -7,13 +7,35 @@ interface Props {
 function getOverallScore(data: QuantResearchReport): number {
   // 注意：后端返回的 totalReturn/maxDrawdown/winRate 都是百分比值（如 15.5 表示 15.5%）
   // maxDrawdown 是正数（如 20 表示 20% 回撤）
-  const backtestScore = Math.min(100, Math.max(0,
-    (data.backtest.sharpeRatio >= 1.5 ? 30 : data.backtest.sharpeRatio >= 1 ? 25 : data.backtest.sharpeRatio >= 0.5 ? 15 : 5) +
-    (data.backtest.totalReturn >= 30 ? 25 : data.backtest.totalReturn >= 15 ? 20 : data.backtest.totalReturn >= 0 ? 10 : 0) +
-    (data.backtest.maxDrawdown <= 10 ? 20 : data.backtest.maxDrawdown <= 20 ? 15 : data.backtest.maxDrawdown <= 30 ? 8 : 0) +
-    (data.backtest.winRate >= 60 ? 15 : data.backtest.winRate >= 50 ? 10 : 5) +
-    (data.dataQuality.overallScore >= 80 ? 10 : data.dataQuality.overallScore >= 60 ? 7 : 3)
-  ));
+  const backtestScore = Math.min(
+    100,
+    Math.max(
+      0,
+      (data.backtest.sharpeRatio >= 1.5
+        ? 30
+        : data.backtest.sharpeRatio >= 1
+          ? 25
+          : data.backtest.sharpeRatio >= 0.5
+            ? 15
+            : 5) +
+        (data.backtest.totalReturn >= 30
+          ? 25
+          : data.backtest.totalReturn >= 15
+            ? 20
+            : data.backtest.totalReturn >= 0
+              ? 10
+              : 0) +
+        (data.backtest.maxDrawdown <= 10
+          ? 20
+          : data.backtest.maxDrawdown <= 20
+            ? 15
+            : data.backtest.maxDrawdown <= 30
+              ? 8
+              : 0) +
+        (data.backtest.winRate >= 60 ? 15 : data.backtest.winRate >= 50 ? 10 : 5) +
+        (data.dataQuality.overallScore >= 80 ? 10 : data.dataQuality.overallScore >= 60 ? 7 : 3),
+    ),
+  );
   return backtestScore;
 }
 
@@ -40,7 +62,13 @@ export default function ReportSummary({ data }: Props) {
       <div className="quant-summary-header">
         <div>
           <h3 className="quant-panel-title">{data.strategy.name}</h3>
-          <span className="chip chip-neutral">{data.strategy.type === 'ma_cross' ? '均线交叉' : data.strategy.type === 'momentum' ? '动量策略' : '均值回归'}</span>
+          <span className="chip chip-neutral">
+            {data.strategy.type === 'ma_cross'
+              ? '均线交叉'
+              : data.strategy.type === 'momentum'
+                ? '动量策略'
+                : '均值回归'}
+          </span>
         </div>
         <div className="quant-summary-score-block" style={{ color: scoreColor }}>
           <div className="quant-summary-score">{score}</div>
@@ -48,9 +76,7 @@ export default function ReportSummary({ data }: Props) {
         </div>
       </div>
 
-      {data.summary && (
-        <p className="quant-summary-text">{data.summary}</p>
-      )}
+      {data.summary && <p className="quant-summary-text">{data.summary}</p>}
 
       <div className="quant-summary-meta">
         {data.confidence && (

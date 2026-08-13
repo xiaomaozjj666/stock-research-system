@@ -41,12 +41,23 @@ const valuation: ValuationData = {
   ps: 8,
   marketCap: 2000,
   historicalPE: [
-    { year: '2021', pe: 25 }, { year: '2022', pe: 24 }, { year: '2023', pe: 23 },
-    { year: '2024', pe: 22 }, { year: '2025', pe: 21 }, { year: '2026', pe: 20 },
+    { year: '2021', pe: 25 },
+    { year: '2022', pe: 24 },
+    { year: '2023', pe: 23 },
+    { year: '2024', pe: 22 },
+    { year: '2025', pe: 21 },
+    { year: '2026', pe: 20 },
   ],
   peerComparison: [],
 };
-const info: StockInfo = { code: '600519', name: '测试股', industry: '白酒', market: '上交所主板', listingDate: '', description: '' };
+const info: StockInfo = {
+  code: '600519',
+  name: '测试股',
+  industry: '白酒',
+  market: '上交所主板',
+  listingDate: '',
+  description: '',
+};
 
 describe('meanReversionComponent', () => {
   it('低估(分位<50)为正，高估(分位>50)为负', () => {
@@ -63,7 +74,11 @@ describe('meanReversionComponent', () => {
 describe('expectedForwardReturn', () => {
   it('优质因子(全正z)给出正期望收益', () => {
     const z: Record<string, number> = { a: 1, b: 0.5, c: 0.8 };
-    const r = expectedForwardReturn({ zByFactor: z, pePercentile: 20, weights: { a: 1, b: 1, c: 1 } });
+    const r = expectedForwardReturn({
+      zByFactor: z,
+      pePercentile: 20,
+      weights: { a: 1, b: 1, c: 1 },
+    });
     expect(r.expectedReturn).toBeGreaterThan(0);
     expect(r.factorComponent).toBeGreaterThan(0);
     expect(r.meanReversion).toBeGreaterThan(0);
@@ -126,7 +141,12 @@ describe('scenarioProbabilities + 新闻微调', () => {
 
 describe('scenarioProbabilities', () => {
   it('概率始终和为 1 且各 ∈ [0,1]', () => {
-    for (const [er, pct] of [[0.3, 10], [-0.3, 90], [0, 50], [0.1, 40]] as const) {
+    for (const [er, pct] of [
+      [0.3, 10],
+      [-0.3, 90],
+      [0, 50],
+      [0.1, 40],
+    ] as const) {
       const p = scenarioProbabilities(er, pct);
       const sum = p.optimistic + p.neutral + p.pessimistic;
       expect(sum).toBeCloseTo(1, 6);
@@ -165,8 +185,8 @@ describe('targetPriceRange', () => {
 describe('validatePredictionModel', () => {
   // 面板：因子A与收益正相关，低估(低分位)对应正收益
   const panel: PredictionValidationRow[] = [
-    { factors: { A: 5, B: 1 }, pePercentile: 10, forwardReturn: 0.30 },
-    { factors: { A: 4, B: 9 }, pePercentile: 20, forwardReturn: 0.20 },
+    { factors: { A: 5, B: 1 }, pePercentile: 10, forwardReturn: 0.3 },
+    { factors: { A: 4, B: 9 }, pePercentile: 20, forwardReturn: 0.2 },
     { factors: { A: 3, B: 3 }, pePercentile: 50, forwardReturn: 0.05 },
     { factors: { A: 2, B: 7 }, pePercentile: 80, forwardReturn: -0.15 },
     { factors: { A: 1, B: 2 }, pePercentile: 90, forwardReturn: -0.25 },
@@ -188,8 +208,8 @@ describe('validatePredictionModel', () => {
 describe('backtestNewsImpact（根据最新消息进行回测）', () => {
   // 面板：因子A与收益正相关；newsZ 与收益同号（利好新闻对应正收益）
   const panel: NewsBacktestRow[] = [
-    { factors: { A: 5, B: 1 }, pePercentile: 10, forwardReturn: 0.30, newsZ: 1.2 },
-    { factors: { A: 4, B: 9 }, pePercentile: 20, forwardReturn: 0.20, newsZ: 0.8 },
+    { factors: { A: 5, B: 1 }, pePercentile: 10, forwardReturn: 0.3, newsZ: 1.2 },
+    { factors: { A: 4, B: 9 }, pePercentile: 20, forwardReturn: 0.2, newsZ: 0.8 },
     { factors: { A: 3, B: 3 }, pePercentile: 50, forwardReturn: 0.05, newsZ: 0.1 },
     { factors: { A: 2, B: 7 }, pePercentile: 80, forwardReturn: -0.15, newsZ: -0.9 },
     { factors: { A: 1, B: 2 }, pePercentile: 90, forwardReturn: -0.25, newsZ: -1.3 },
@@ -197,7 +217,9 @@ describe('backtestNewsImpact（根据最新消息进行回测）', () => {
   it('含新闻的方向准确率不低于不含新闻（新闻同向于收益）', () => {
     const rep = backtestNewsImpact(panel);
     expect(rep.n).toBe(5);
-    expect(rep.withNews.directionalAccuracy).toBeGreaterThanOrEqual(rep.baseline.directionalAccuracy);
+    expect(rep.withNews.directionalAccuracy).toBeGreaterThanOrEqual(
+      rep.baseline.directionalAccuracy,
+    );
     expect(rep.deltaAccuracy).toBeGreaterThanOrEqual(0);
   });
   it('newsIC 与新闻-收益同向时为正', () => {

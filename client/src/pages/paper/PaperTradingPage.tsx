@@ -282,14 +282,20 @@ export default function PaperTradingPage() {
             </div>
             <div className="paper-field">
               <label>方向</label>
-              <select value={orderSide} onChange={(e) => setOrderSide(e.target.value as 'buy' | 'sell')}>
+              <select
+                value={orderSide}
+                onChange={(e) => setOrderSide(e.target.value as 'buy' | 'sell')}
+              >
                 <option value="buy">买入</option>
                 <option value="sell">卖出</option>
               </select>
             </div>
             <div className="paper-field">
               <label>类型</label>
-              <select value={orderType} onChange={(e) => setOrderType(e.target.value as 'market' | 'limit')}>
+              <select
+                value={orderType}
+                onChange={(e) => setOrderType(e.target.value as 'market' | 'limit')}
+              >
                 <option value="market">市价</option>
                 <option value="limit">限价</option>
               </select>
@@ -419,7 +425,11 @@ export default function PaperTradingPage() {
                     <tr key={e.date}>
                       <td className="mono">{e.date}</td>
                       <td>¥{fmtMoney(e.value)}</td>
-                      <td className={daily !== null ? (daily >= 0 ? 'val-positive' : 'val-negative') : 'muted'}>
+                      <td
+                        className={
+                          daily !== null ? (daily >= 0 ? 'val-positive' : 'val-negative') : 'muted'
+                        }
+                      >
                         {daily !== null ? `${daily >= 0 ? '+' : ''}${daily.toFixed(2)}%` : '—'}
                       </td>
                     </tr>
@@ -495,7 +505,10 @@ export default function PaperTradingPage() {
           </div>
           <div className="paper-field">
             <label>市场</label>
-            <select value={intlMarket} onChange={(e) => setIntlMarket(e.target.value as '' | 'HK' | 'US')}>
+            <select
+              value={intlMarket}
+              onChange={(e) => setIntlMarket(e.target.value as '' | 'HK' | 'US')}
+            >
               <option value="">自动识别</option>
               <option value="HK">港股</option>
               <option value="US">美股</option>

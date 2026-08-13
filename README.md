@@ -32,26 +32,28 @@ npm run dev:client    # → http://localhost:5173
 
 ## API 概览
 
-| 分类 | 接口 | 说明 |
-| --- | --- | --- |
-| 分析 | `POST /api/analyze` | 6 位 A 股代码多专家 AI 研判 |
-| | `GET /api/analyze/stream` | SSE 流式分析（逐阶段推送进度） |
-| | `POST /api/compare` | 2-3 只股票横向对比 |
-| | `GET /api/stocks`、`GET /api/stocks/search` | 支持股票列表 / 搜索 |
-| 量化 | `POST /api/quant/analyze` | 量化研究（回测 + 数据质量 + 回测审计 + 优化 + 摘要） |
-| | `POST /api/backtest/evaluate` | 受控评估：新闻叠加 vs 基线（DSR / Bootstrap CI） |
-| **模拟盘** | `GET /api/paper/portfolio` | 模拟盘账户：现金 / 持仓 / 订单 / 每日净值 |
-| | `POST /api/paper/order` | 模拟下单（市价/限价，A 股规则撮合） |
-| | `POST /api/paper/settle` | 日终结算：按收盘价撮合挂单 + 记录当日净值 |
-| | `GET /api/paper/stats` | 累计收益 / 最大回撤 / 年化夏普 |
-| **审计** | `GET /api/audit` | 合规审计查询（支持 `category` / `riskLevel` / `startTime` / `endTime` / `sessionId` 过滤） |
-| **港美股** | `GET /api/intl/fundamentals?code=&market=` | 港美股财务估值（`market=HK/US`；A 股代码走 `/api/analyze`） |
-| 对话 | `POST /api/chat`、`GET /api/chat/stream` | 自然语言智能体（SSE 流式） |
-| 自选股 | `GET/POST/DELETE /api/watchlist`、`POST /api/watchlist/news-backtest`、`POST /api/watchlist/monitor` | 清单管理 / 批量新闻回测 / 异动监控 |
-| 自治循环 | `POST /api/autonomous/start`、`/stop`、`GET /api/autonomous/status` | 主动监控自治循环 |
-| 文档 RAG | `POST /api/ingest`、`GET /api/documents` | 研报/财报/公告 PDF/文本入库 + 洞察抽取 |
-| 模型/成本 | `GET /api/models`、`GET /api/cost`、`POST /api/cost/reset` | 多模型路由 / 成本治理 |
-| 其他 | `GET /api/health` | 健康检查（外部 API 可达性 + 缓存目录） |
+| 分类       | 接口                                                                                                 | 说明                                                                                       |
+| ---------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 分析       | `POST /api/analyze`                                                                                  | 6 位 A 股代码多专家 AI 研判                                                                |
+|            | `GET /api/analyze/stream`                                                                            | SSE 流式分析（逐阶段推送进度）                                                             |
+|            | `POST /api/compare`                                                                                  | 2-3 只股票横向对比                                                                         |
+|            | `GET /api/stocks`、`GET /api/stocks/search`                                                          | 支持股票列表 / 搜索                                                                        |
+| 量化       | `POST /api/quant/analyze`                                                                            | 量化研究（回测 + 数据质量 + 回测审计 + 优化 + 摘要）                                       |
+|            | `POST /api/backtest/evaluate`                                                                        | 受控评估：新闻叠加 vs 基线（DSR / Bootstrap CI）                                           |
+| **模拟盘** | `GET /api/paper/portfolio`                                                                           | 模拟盘账户：现金 / 持仓 / 订单 / 每日净值                                                  |
+|            | `POST /api/paper/order`                                                                              | 模拟下单（市价/限价，A 股规则撮合）                                                        |
+|            | `POST /api/paper/settle`                                                                             | 日终结算：按收盘价撮合挂单 + 记录当日净值                                                  |
+|            | `GET /api/paper/stats`                                                                               | 累计收益 / 最大回撤 / 年化夏普                                                             |
+| **审计**   | `GET /api/audit`                                                                                     | 合规审计查询（支持 `category` / `riskLevel` / `startTime` / `endTime` / `sessionId` 过滤） |
+| **港美股** | `GET /api/intl/fundamentals?code=&market=`                                                           | 港美股财务估值（`market=HK/US`；A 股代码走 `/api/analyze`）                                |
+| 对话       | `POST /api/chat`、`GET /api/chat/stream`                                                             | 自然语言智能体（SSE 流式）                                                                 |
+| 自选股     | `GET/POST/DELETE /api/watchlist`、`POST /api/watchlist/news-backtest`、`POST /api/watchlist/monitor` | 清单管理 / 批量新闻回测 / 异动监控                                                         |
+| 自治循环   | `POST /api/autonomous/start`、`/stop`、`GET /api/autonomous/status`                                  | 主动监控自治循环                                                                           |
+| 文档 RAG   | `POST /api/ingest`、`GET /api/documents`                                                             | 研报/财报/公告 PDF/文本入库 + 洞察抽取                                                     |
+| 模型/成本  | `GET /api/models`、`GET /api/cost`、`POST /api/cost/reset`                                           | 多模型路由 / 成本治理                                                                      |
+| 其他       | `GET /api/health`                                                                                    | 健康检查（外部 API 可达性 + 缓存目录）                                                     |
+|            | `GET /api/metrics`                                                                                   | Prometheus 指标导出（HTTP 计数/耗时直方图 / 进程内存 / LLM 成本 / 熔断状态）               |
+|            | `GET /api/openapi.json`                                                                              | OpenAPI 3.1 机器可读 API 契约（与 `server/src/services/openapi.ts` 同源维护）              |
 
 ## Features
 

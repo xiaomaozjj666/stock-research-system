@@ -54,9 +54,9 @@ describe('searchStocks', () => {
               Data: [{ MktNum: '1', Code: '688825', Name: 'C长鑫' }],
             },
           }),
-          { status: 200 }
+          { status: 200 },
         );
-      })
+      }),
     );
     const r = await searchStocks('长鑫存储');
     expect(r).toEqual([{ code: '688825', name: '长鑫科技' }]);
@@ -65,14 +65,15 @@ describe('searchStocks', () => {
   it('直接输入上市简称正常返回', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            QuotationCodeTable: { Data: [{ MktNum: '1', Code: '600519', Name: '贵州茅台' }] },
-          }),
-          { status: 200 }
-        )
-      )
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              QuotationCodeTable: { Data: [{ MktNum: '1', Code: '600519', Name: '贵州茅台' }] },
+            }),
+            { status: 200 },
+          ),
+      ),
     );
     const r = await searchStocks('贵州茅台');
     expect(r[0].code).toBe('600519');
@@ -82,14 +83,19 @@ describe('searchStocks', () => {
   it('上游无结果时返回空数组（不抛错）', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({}), { status: 200 }))
+      vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })),
     );
     const r = await searchStocks('量子计算xyz');
     expect(r).toEqual([]);
   });
 
   it('东方财富 suggest 失败（网络异常）时降级为空而非抛错', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network'); }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('network');
+      }),
+    );
     const r = await searchStocks('任何词');
     expect(r).toEqual([]);
   });

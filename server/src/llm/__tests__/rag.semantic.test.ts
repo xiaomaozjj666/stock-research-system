@@ -29,7 +29,12 @@ describe('向量语义检索', () => {
 
   it('股票代码匹配加权（语义）', async () => {
     // 查询与 b 语义相近但带 600519，应优先返回 a（同代码加权）
-    const res = await retrieveEvidence('白酒 龙头', { embedder, docs, topK: 2, stockCode: '600519' });
+    const res = await retrieveEvidence('白酒 龙头', {
+      embedder,
+      docs,
+      topK: 2,
+      stockCode: '600519',
+    });
     expect(res[0].id).toBe('a');
   });
 
@@ -47,7 +52,10 @@ describe('向量数学/索引', () => {
   });
 
   it('零向量被过滤', () => {
-    const idx = buildVectorIndex(docs, docs.map(() => [0, 0]));
+    const idx = buildVectorIndex(
+      docs,
+      docs.map(() => [0, 0]),
+    );
     expect(idx.items.length).toBe(0);
   });
 

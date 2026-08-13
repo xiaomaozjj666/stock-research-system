@@ -132,13 +132,13 @@ export interface NewsItem {
 
 // 最新消息情绪信号
 export interface NewsSignal {
-  polarity: number;       // 加权极性 ∈ [−1,1]
-  sentimentZ: number;     // 情绪 z 分
-  bullishRatio: number;   // 看多占比 ∈ [0,1]
-  newsCount: number;      // 新闻条数
-  freshness: number;      // 新鲜度 ∈ (0,1]
+  polarity: number; // 加权极性 ∈ [−1,1]
+  sentimentZ: number; // 情绪 z 分
+  bullishRatio: number; // 看多占比 ∈ [0,1]
+  newsCount: number; // 新闻条数
+  freshness: number; // 新鲜度 ∈ (0,1]
   weightedImpact: number; // 影响强度 ∈ [0,1]
-  items: NewsItem[];      // 按时效排序
+  items: NewsItem[]; // 按时效排序
   hasNews: boolean;
 }
 
@@ -270,12 +270,7 @@ export interface PaperStats {
 
 // === 合规审计（与 server/src/services/auditLog.ts 对齐） ===
 export type AuditCategory =
-  | 'llm_call'
-  | 'tool_call'
-  | 'trade_signal'
-  | 'data_access'
-  | 'user_query'
-  | 'system';
+  'llm_call' | 'tool_call' | 'trade_signal' | 'data_access' | 'user_query' | 'system';
 
 export type AuditRiskLevel = 'info' | 'low' | 'medium' | 'high' | 'critical';
 

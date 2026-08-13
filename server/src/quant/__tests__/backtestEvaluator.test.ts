@@ -1,8 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { compareBacktests, deflatedSharpeRatio, expectedMaxOfNormals, normCDF } from '../backtestEvaluator.js';
+import {
+  compareBacktests,
+  deflatedSharpeRatio,
+  expectedMaxOfNormals,
+  normCDF,
+} from '../backtestEvaluator.js';
 import type { BacktestResult } from '../types.js';
 
-function makeCurve(start: number, dailyRet: number, days: number): { date: string; value: number }[] {
+function makeCurve(
+  start: number,
+  dailyRet: number,
+  days: number,
+): { date: string; value: number }[] {
   const curve: { date: string; value: number }[] = [];
   let v = 10000;
   for (let i = 0; i < days; i++) {
@@ -140,7 +149,9 @@ describe('compareBacktests — 学界标准增强', () => {
       expect(r.caveats.some((c) => c.includes('2-3 区间'))).toBe(true);
     }
     // 如果 t>3 也算通过（边界场景），核心是不报 significant_strong 之外的错误类型
-    expect(['significant_strong', 'significant_marginal', 'not_significant']).toContain(r.significance);
+    expect(['significant_strong', 'significant_marginal', 'not_significant']).toContain(
+      r.significance,
+    );
   });
 
   it('DSR/PSR 在样本充足时输出', () => {
@@ -209,8 +220,16 @@ describe('compareBacktests — 学界标准增强', () => {
   });
 
   it('交易成本敏感性：实验组交易更频繁且成本占比高时给出 caveat', () => {
-    const baseline = makeResult({ tradeCount: 5, totalReturn: 20, equityCurve: makeCurve(10000, 0.001, 60) });
-    const experiment = makeResult({ tradeCount: 50, totalReturn: 15, equityCurve: makeCurve(10000, 0.0012, 60) });
+    const baseline = makeResult({
+      tradeCount: 5,
+      totalReturn: 20,
+      equityCurve: makeCurve(10000, 0.001, 60),
+    });
+    const experiment = makeResult({
+      tradeCount: 50,
+      totalReturn: 15,
+      equityCurve: makeCurve(10000, 0.0012, 60),
+    });
     const r = compareBacktests(baseline, experiment);
     // 50 笔 * 0.4% = 20% 成本 / 15% 收益 = 133% 占比 > 30%
     expect(r.caveats.some((c) => c.includes('成本占比'))).toBe(true);

@@ -33,7 +33,10 @@ async function fetchStockInfoFromEastMoney(code: string): Promise<StockInfo | nu
   try {
     const secid = getSecId(code);
     const url = `http://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f57,f58,f127,f162,f173,f187,f188,f190,f191,f192,f193&ut=fa5fd1943c7b386f172d6893dbbd1`;
-    const data = await fetchJsonWithTimeout(url) as { rc?: number; data?: Record<string, unknown> } | null;
+    const data = (await fetchJsonWithTimeout(url)) as {
+      rc?: number;
+      data?: Record<string, unknown>;
+    } | null;
 
     if (!data?.data) return null;
 
@@ -46,7 +49,7 @@ async function fetchStockInfoFromEastMoney(code: string): Promise<StockInfo | nu
       industry: String(d.f127 ?? ''),
       market,
       listingDate: '',
-      description: ''
+      description: '',
     };
   } catch {
     return null;
@@ -73,7 +76,7 @@ async function fetchStockInfoFromSina(code: string): Promise<StockInfo | null> {
       industry: '',
       market,
       listingDate: '',
-      description: ''
+      description: '',
     };
   } catch {
     return null;
@@ -99,7 +102,7 @@ async function fetchFinancialFromEastMoney(code: string): Promise<FinancialData 
     // 东方财富财务指标 API - 获取最近6年年报
     const url = `https://datacenter.eastmoney.com/api/data/get?type=RPT_F10_FINANCE_MAINFINADATA&sty=ALL&filter=(SECUCODE="${code}.${code.startsWith('6') ? 'SH' : 'SZ'}")(REPORT_TYPE="年报")&p=1&ps=6&sr=-1&st=REPORT_DATE&source=HSF10&client=PC&v=099415855`;
 
-    const data = await fetchJsonWithTimeout(url) as {
+    const data = (await fetchJsonWithTimeout(url)) as {
       success?: boolean;
       result?: { data?: Array<Record<string, unknown>> };
     } | null;
@@ -147,7 +150,7 @@ async function fetchFinancialFromEastMoney(code: string): Promise<FinancialData 
       // 每股经营现金流 × 总股本 ≈ 经营现金流总额（亿元）
       const mgjyxjje = toNum(r.MGJYXJJE);
       const totalShare = toNum(r.TOTAL_SHARE);
-      const opCashFlow = mgjyxjje * totalShare / 1e8; // 转为亿元
+      const opCashFlow = (mgjyxjje * totalShare) / 1e8; // 转为亿元
       operatingCashFlow.push(Math.round(opCashFlow * 100) / 100);
       eps.push(toNum(r.EPSJB));
       totalAssets.push(yuanToYi(r.TOTAL_ASSETS_PK));
@@ -159,11 +162,9 @@ async function fetchFinancialFromEastMoney(code: string): Promise<FinancialData 
       const gmRatio = toPercent(r.XSMLL) / 100;
       const yszkDays = toNum(r.YSZKZZTS);
       const chDays = toNum(r.CHZZTS);
-      const ar = revYi > 0 && yszkDays > 0
-        ? Math.round(revYi / 365 * yszkDays * 100) / 100 : 0;
+      const ar = revYi > 0 && yszkDays > 0 ? Math.round((revYi / 365) * yszkDays * 100) / 100 : 0;
       const cogsYi = revYi * (1 - gmRatio);
-      const inv = cogsYi > 0 && chDays > 0
-        ? Math.round(cogsYi / 365 * chDays * 100) / 100 : 0;
+      const inv = cogsYi > 0 && chDays > 0 ? Math.round((cogsYi / 365) * chDays * 100) / 100 : 0;
       accountsReceivable.push(ar);
       inventory.push(inv);
       // 商誉：免费API无可靠来源，保留0并由 dataQuality 标注缺失
@@ -176,18 +177,31 @@ async function fetchFinancialFromEastMoney(code: string): Promise<FinancialData 
     // F1.4: 标记缺失字段的数据质量
     const dataQuality: FinancialData['dataQuality'] = {
       estimatedFields: [],
-      missingFields: []
+      missingFields: [],
     };
-    if (accountsReceivable.every(v => v === 0)) dataQuality.missingFields.push('accountsReceivable');
-    if (inventory.every(v => v === 0)) dataQuality.missingFields.push('inventory');
+    if (accountsReceivable.every((v) => v === 0))
+      dataQuality.missingFields.push('accountsReceivable');
+    if (inventory.every((v) => v === 0)) dataQuality.missingFields.push('inventory');
     // 商誉：免费API无可靠数据源，始终标注缺失（诚实声明而非编造）
     dataQuality.missingFields.push('goodwill');
 
     return {
-      years, revenue, netProfit, grossMargin, netMargin, roe,
-      operatingCashFlow, eps, totalAssets, totalLiabilities, equity,
-      accountsReceivable, inventory, goodwill, debtRatio,
-      dataQuality
+      years,
+      revenue,
+      netProfit,
+      grossMargin,
+      netMargin,
+      roe,
+      operatingCashFlow,
+      eps,
+      totalAssets,
+      totalLiabilities,
+      equity,
+      accountsReceivable,
+      inventory,
+      goodwill,
+      debtRatio,
+      dataQuality,
     };
   } catch {
     return null;
@@ -201,7 +215,7 @@ async function fetchFinancialFallback(code: string): Promise<FinancialData | nul
   try {
     const secid = getSecId(code);
     const url = `http://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f57,f58,f162,f167,f173,f187,f188,f190,f191,f192,f193&ut=fa5fd1943c7b386f172d6893dbbd1`;
-    const data = await fetchJsonWithTimeout(url) as { data?: Record<string, unknown> } | null;
+    const data = (await fetchJsonWithTimeout(url)) as { data?: Record<string, unknown> } | null;
 
     if (!data?.data) return null;
 
@@ -228,8 +242,15 @@ async function fetchFinancialFallback(code: string): Promise<FinancialData | nul
       debtRatio: [toPercent(d.f162)],
       dataQuality: {
         estimatedFields: [],
-        missingFields: ['accountsReceivable', 'inventory', 'goodwill', 'operatingCashFlow', 'totalLiabilities', 'equity']
-      }
+        missingFields: [
+          'accountsReceivable',
+          'inventory',
+          'goodwill',
+          'operatingCashFlow',
+          'totalLiabilities',
+          'equity',
+        ],
+      },
     };
   } catch {
     return null;
@@ -254,16 +275,16 @@ async function fetchValuationFromEastMoney(code: string): Promise<ValuationData 
   try {
     const secid = getSecId(code);
     const url = `http://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f55,f57,f58,f116,f117,f162,f163,f164,f167,f170,f171,f173,f183,f184,f185,f186,f187,f188,f190,f191,f192,f193,f292&ut=fa5fd1943c7b386f172d6893dbbd1`;
-    const data = await fetchJsonWithTimeout(url) as { data?: Record<string, unknown> } | null;
+    const data = (await fetchJsonWithTimeout(url)) as { data?: Record<string, unknown> } | null;
 
     if (!data?.data) return null;
 
     const d = data.data;
     // F1.2: push2 API 所有价格字段(f43-f48)均以分(cents)为单位，无条件除以100
-    const currentPrice = priceField(d, 'f43');  // 最新价
+    const currentPrice = priceField(d, 'f43'); // 最新价
     // F1.1: f167(PE), f164(PB) 作为原始回退值，实际会在 pipeline 中被覆盖
-    const pe = toNum(d.f167);  // raw fallback, will be overridden in pipeline
-    const pb = toNum(d.f164);  // raw fallback, will be overridden in pipeline
+    const pe = toNum(d.f167); // raw fallback, will be overridden in pipeline
+    const pb = toNum(d.f164); // raw fallback, will be overridden in pipeline
     const marketCap = yuanToYi(d.f116);
     const totalRevenue = yuanToYi(d.f173);
     // PS = 市值/营收，两者单位一致（亿元），直接相除
@@ -278,7 +299,7 @@ async function fetchValuationFromEastMoney(code: string): Promise<ValuationData 
       const year = (currentYear - i).toString();
       // 基于种子的确定性伪随机波动，范围 ±15%
       const hash = ((seed * (i + 1) * 2654435761) >>> 0) % 1000;
-      const variation = (hash - 500) / 500 * 0.15; // -15% ~ +15%
+      const variation = ((hash - 500) / 500) * 0.15; // -15% ~ +15%
       const trendFactor = 1 + (i - 2.5) * 0.03; // 轻微趋势
       const estimatedPe = Math.round(pe * trendFactor * (1 + variation) * 10) / 10;
       historicalPE.push({ year, pe: Math.max(estimatedPe, 1), isEstimated: true });
@@ -291,7 +312,7 @@ async function fetchValuationFromEastMoney(code: string): Promise<ValuationData 
       ps,
       marketCap: Math.round(marketCap),
       historicalPE,
-      peerComparison: []
+      peerComparison: [],
     };
   } catch {
     return null;
@@ -323,7 +344,7 @@ async function fetchValueAnalysisRow(code: string): Promise<Record<string, unkno
   try {
     const secucode = `${code}.${code.startsWith('6') ? 'SH' : 'SZ'}`;
     const url = `https://datacenter.eastmoney.com/api/data/get?type=RPT_VALUEANALYSIS_DET&sty=ALL&filter=(SECUCODE="${secucode}")&p=1&ps=1&source=HSF10&client=PC&v=099415855`;
-    const data = await fetchJsonWithTimeout(url) as {
+    const data = (await fetchJsonWithTimeout(url)) as {
       result?: { data?: Array<Record<string, unknown>> };
     } | null;
     const row = data?.result?.data?.[0] ?? null;
@@ -357,7 +378,7 @@ async function fetchValuationFromDatacenter(code: string): Promise<ValuationData
     ps: 0,
     marketCap: marketCapYi,
     historicalPE: [],
-    peerComparison: []
+    peerComparison: [],
   };
 }
 
@@ -365,12 +386,14 @@ async function fetchValuationFromDatacenter(code: string): Promise<ValuationData
  * F1.5: 获取股票所属行业板块名（datacenter BOARD_NAME）与证券简称。
  * 复用 fetchValueAnalysisRow 缓存，避免重复请求同一接口。
  */
-export async function fetchBoardInfo(code: string): Promise<{ name?: string; boardName?: string } | null> {
+export async function fetchBoardInfo(
+  code: string,
+): Promise<{ name?: string; boardName?: string } | null> {
   const row = await fetchValueAnalysisRow(code);
   if (!row) return null;
   return {
     name: row.SECURITY_NAME_ABBR ? String(row.SECURITY_NAME_ABBR) : undefined,
-    boardName: row.BOARD_NAME ? String(row.BOARD_NAME) : undefined
+    boardName: row.BOARD_NAME ? String(row.BOARD_NAME) : undefined,
   };
 }
 
@@ -403,7 +426,7 @@ export function toNum(v: unknown): number {
 export function yuanToYi(v: unknown): number {
   const n = toNum(v);
   if (n === 0) return 0;
-  return Math.round(n / 1e8 * 100) / 100;
+  return Math.round((n / 1e8) * 100) / 100;
 }
 
 /**

@@ -46,7 +46,7 @@ export function resolveSecid(code: string): string {
 export async function fetchOHLCVData(
   stockCode: string,
   startDate: string,
-  endDate: string
+  endDate: string,
 ): Promise<OHLCVData[]> {
   // 1. 检查缓存
   const cacheKey = `${stockCode}_${startDate}_${endDate}`;
@@ -54,7 +54,8 @@ export async function fetchOHLCVData(
   if (fs.existsSync(cacheFile)) {
     const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
     const age = Date.now() - cached.timestamp;
-    if (age < 12 * 60 * 60 * 1000) { // 12小时缓存
+    if (age < 12 * 60 * 60 * 1000) {
+      // 12小时缓存
       return cached.data;
     }
   }
@@ -94,17 +95,13 @@ export async function fetchOHLCVData(
   // 3. 降级：生成模拟数据（用于演示）
   // F1.6: 模拟数据标记 isSimulated=true，下游策略引擎应检查此标志
   const simulated = generateSimulatedData(stockCode, startDate, endDate);
-  return simulated.map(d => ({ ...d, isSimulated: true }));
+  return simulated.map((d) => ({ ...d, isSimulated: true }));
 }
 
 /**
  * 生成模拟K线数据（当API不可用时降级使用）
  */
-function generateSimulatedData(
-  stockCode: string,
-  startDate: string,
-  endDate: string
-): OHLCVData[] {
+function generateSimulatedData(stockCode: string, startDate: string, endDate: string): OHLCVData[] {
   const data: OHLCVData[] = [];
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -122,10 +119,10 @@ function generateSimulatedData(
       price = price * (1 + change);
       price = Math.max(price, 5);
 
-      const open = price * (1 + (daySeed % 5 - 2) / 200);
+      const open = price * (1 + ((daySeed % 5) - 2) / 200);
       const high = Math.max(open, price) * (1 + (daySeed % 3) / 100);
       const low = Math.min(open, price) * (1 - (daySeed % 3) / 100);
-      const volume = 1000000 + (daySeed * 50000);
+      const volume = 1000000 + daySeed * 50000;
 
       data.push({
         date: current.toISOString().split('T')[0],
@@ -148,8 +145,8 @@ function generateSimulatedData(
 export function getBenchmarkCurve(data: OHLCVData[]): { date: string; value: number }[] {
   if (data.length === 0) return [];
   const basePrice = data[0].close;
-  return data.map(d => ({
+  return data.map((d) => ({
     date: d.date,
-    value: Math.round((d.close / basePrice) * 10000) / 100 // 归一化为百分比
+    value: Math.round((d.close / basePrice) * 10000) / 100, // 归一化为百分比
   }));
 }

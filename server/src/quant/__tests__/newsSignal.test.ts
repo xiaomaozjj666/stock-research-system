@@ -40,7 +40,9 @@ describe('aggregateNewsSentiment', () => {
   });
 
   it('单条看多新闻 → 正极性、正 z、看多占比 1', () => {
-    const items: NewsItem[] = [{ id: '1', title: '公司业绩超预期，放量新高', publishedAt: daysAgo(0) }];
+    const items: NewsItem[] = [
+      { id: '1', title: '公司业绩超预期，放量新高', publishedAt: daysAgo(0) },
+    ];
     const s = aggregateNewsSentiment(items);
     expect(s.hasNews).toBe(true);
     expect(s.polarity).toBeGreaterThan(0);
@@ -81,7 +83,9 @@ describe('aggregateNewsSentiment', () => {
   });
 
   it('预标注 polarity 优先于词典法', () => {
-    const items: NewsItem[] = [{ id: 'x', title: '中性标题但人工标注利空', publishedAt: daysAgo(0), polarity: -1 }];
+    const items: NewsItem[] = [
+      { id: 'x', title: '中性标题但人工标注利空', publishedAt: daysAgo(0), polarity: -1 },
+    ];
     const s = aggregateNewsSentiment(items);
     expect(s.polarity).toBe(-1);
   });

@@ -10,46 +10,34 @@ describe('mapWithConcurrency', () => {
   it('结果按输入顺序返回（与完成顺序无关）', async () => {
     // 故意让靠后的任务先完成，验证保序
     const delays = [30, 5, 15, 1];
-    const out = await mapWithConcurrency(
-      [0, 1, 2, 3],
-      4,
-      async (i) => {
-        await new Promise((r) => setTimeout(r, delays[i]));
-        return i * 10;
-      },
-    );
+    const out = await mapWithConcurrency([0, 1, 2, 3], 4, async (i) => {
+      await new Promise((r) => setTimeout(r, delays[i]));
+      return i * 10;
+    });
     expect(out).toEqual([0, 10, 20, 30]);
   });
 
   it('限制并发数：同时进行的任务不超过 limit', async () => {
     let active = 0;
     let maxActive = 0;
-    await mapWithConcurrency(
-      Array.from({ length: 12 }),
-      3,
-      async () => {
-        active++;
-        maxActive = Math.max(maxActive, active);
-        await new Promise((r) => setTimeout(r, 10));
-        active--;
-      },
-    );
+    await mapWithConcurrency(Array.from({ length: 12 }), 3, async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 10));
+      active--;
+    });
     expect(maxActive).toBeLessThanOrEqual(3);
   });
 
   it('limit 超过数组长度时退化为全并发', async () => {
     let active = 0;
     let maxActive = 0;
-    await mapWithConcurrency(
-      Array.from({ length: 4 }),
-      99,
-      async () => {
-        active++;
-        maxActive = Math.max(maxActive, active);
-        await new Promise((r) => setTimeout(r, 10));
-        active--;
-      },
-    );
+    await mapWithConcurrency(Array.from({ length: 4 }), 99, async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 10));
+      active--;
+    });
     expect(maxActive).toBe(4);
   });
 
@@ -65,16 +53,12 @@ describe('mapWithConcurrency', () => {
   it('limit 非法（≤0）被钳制为 1', async () => {
     let active = 0;
     let maxActive = 0;
-    await mapWithConcurrency(
-      Array.from({ length: 5 }),
-      0,
-      async () => {
-        active++;
-        maxActive = Math.max(maxActive, active);
-        await new Promise((r) => setTimeout(r, 10));
-        active--;
-      },
-    );
+    await mapWithConcurrency(Array.from({ length: 5 }), 0, async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 10));
+      active--;
+    });
     expect(maxActive).toBe(1);
   });
 });

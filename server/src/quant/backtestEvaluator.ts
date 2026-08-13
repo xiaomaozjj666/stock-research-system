@@ -24,8 +24,16 @@
 import type { BacktestResult } from './types.js';
 
 export interface MetricDelta {
-  name: keyof Pick<BacktestResult,
-    'totalReturn' | 'annualizedReturn' | 'sharpeRatio' | 'sortinoRatio' | 'maxDrawdown' | 'winRate' | 'profitFactor'>;
+  name: keyof Pick<
+    BacktestResult,
+    | 'totalReturn'
+    | 'annualizedReturn'
+    | 'sharpeRatio'
+    | 'sortinoRatio'
+    | 'maxDrawdown'
+    | 'winRate'
+    | 'profitFactor'
+  >;
   baseline: number;
   experiment: number;
   /** experiment − baseline（maxDrawdown 为负=改善） */
@@ -36,10 +44,10 @@ export interface MetricDelta {
 
 /** 显著性分级（Harvey-Liu-Zhu 2016：t≥3.0 才算强显著） */
 export type Significance =
-  | 'significant_strong'     // |t| > 3.0，多重检验校正后仍显著
-  | 'significant_marginal'   // 2.0 < |t| ≤ 3.0，单次检验显著但未做多重校正，存疑
-  | 'not_significant'        // |t| ≤ 2.0
-  | 'insufficient_sample';   // n < 30
+  | 'significant_strong' // |t| > 3.0，多重检验校正后仍显著
+  | 'significant_marginal' // 2.0 < |t| ≤ 3.0，单次检验显著但未做多重校正，存疑
+  | 'not_significant' // |t| ≤ 2.0
+  | 'insufficient_sample'; // n < 30
 
 export interface NonNormalityDiagnostic {
   skewness: number;
@@ -123,31 +131,50 @@ function excessKurtosis(xs: number[]): number {
 export function normCDF(x: number): number {
   // Abramowitz-Stegun 近似
   const t = 1 / (1 + 0.2316419 * Math.abs(x));
-  const d = 0.3989423 * Math.exp(-x * x / 2);
-  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  const d = 0.3989423 * Math.exp((-x * x) / 2);
+  const p =
+    d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
   return x > 0 ? 1 - p : p;
 }
 
 /** 标准正态分布分位函数（逆 CDF 近似） */
 function normInv(p: number): number {
   // Acklam 近似
-  const a = [-3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.38357751867269e2, -3.066479806614716e1, 2.506628277459239];
-  const b = [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1];
-  const c = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const a = [
+    -3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.38357751867269e2,
+    -3.066479806614716e1, 2.506628277459239,
+  ];
+  const b = [
+    -5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1,
+    -1.328068155288572e1,
+  ];
+  const c = [
+    -7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734,
+    4.374664141464968, 2.938163982698783,
+  ];
   const d = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416];
   const plow = 0.02425;
   const phigh = 1 - plow;
   let q: number, r: number;
   if (p < plow) {
     q = Math.sqrt(-2 * Math.log(p));
-    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+    return (
+      (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+      ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+    );
   } else if (p <= phigh) {
     q = p - 0.5;
     r = q * q;
-    return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+    return (
+      ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) /
+      (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+    );
   } else {
     q = Math.sqrt(-2 * Math.log(1 - p));
-    return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+    return (
+      -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+      ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+    );
   }
 }
 
@@ -200,7 +227,13 @@ export function expectedMaxOfNormals(N: number): number {
  * @param skew 偏度
  * @param kurt 超额峰度（= 常规峰度 − 3）
  */
-export function deflatedSharpeRatio(sr: number, N: number, T: number, skew: number, kurt: number): number {
+export function deflatedSharpeRatio(
+  sr: number,
+  N: number,
+  T: number,
+  skew: number,
+  kurt: number,
+): number {
   if (N < 1 || T < 2) return 0;
   const sigmaSR = Math.sqrt((1 - skew * sr + ((kurt + 2) / 4) * sr * sr) / (T - 1));
   if (sigmaSR <= 0) return 0;
@@ -230,7 +263,7 @@ function mulberry32(seed: number): () => number {
   let a = seed;
   return function () {
     a |= 0;
-    a = (a + 0x6D2B79F5) | 0;
+    a = (a + 0x6d2b79f5) | 0;
     let t = a;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
@@ -243,11 +276,7 @@ function mulberry32(seed: number): () => number {
  * 对差值序列做块重采样，块长服从几何分布（参数 p = 1/expectedBlockLength）
  * 保留时序结构，比 IID bootstrap 更适合金融收益序列
  */
-function stationaryBootstrapCI(
-  diffs: number[],
-  iterations = 2000,
-  seed = 42,
-): BootstrapResult {
+function stationaryBootstrapCI(diffs: number[], iterations = 2000, seed = 42): BootstrapResult {
   const n = diffs.length;
   if (n < 2) return { ci95: [0, 0], pValue: 1, iterations: 0, crossesZero: true };
   // 期望块长 ~ 2√n（Politis-Romano 启发式）
@@ -303,8 +332,13 @@ export function compareBacktests(
 ): BacktestComparison {
   const N = options?.numStrategiesTried ?? 1;
   const metricNames: MetricDelta['name'][] = [
-    'totalReturn', 'annualizedReturn', 'sharpeRatio', 'sortinoRatio',
-    'maxDrawdown', 'winRate', 'profitFactor',
+    'totalReturn',
+    'annualizedReturn',
+    'sharpeRatio',
+    'sortinoRatio',
+    'maxDrawdown',
+    'winRate',
+    'profitFactor',
   ];
 
   const metrics: MetricDelta[] = metricNames.map((name) => {
@@ -349,7 +383,9 @@ export function compareBacktests(
       significance = 'significant_strong';
     } else if (absT > 2) {
       significance = 'significant_marginal';
-      caveats.push(`t=${tStatistic.toFixed(2)} 处于 2-3 区间：单次检验显著但未做多重比较校正，若做了参数搜索需参考 Harvey-Liu-Zhu(2016) t≥3.0 阈值`);
+      caveats.push(
+        `t=${tStatistic.toFixed(2)} 处于 2-3 区间：单次检验显著但未做多重比较校正，若做了参数搜索需参考 Harvey-Liu-Zhu(2016) t≥3.0 阈值`,
+      );
     } else {
       significance = 'not_significant';
     }
@@ -386,18 +422,24 @@ export function compareBacktests(
     minTRL = minTrackRecordLength(expSharpeDaily, expSkew, expKurt);
 
     if (N > 1) {
-      caveats.push(`已试 ${N} 个策略变体，DSR=${dsr.toFixed(3)}（已校正搜索偏差）；若 N 实际更大请传入 numStrategiesTried`);
+      caveats.push(
+        `已试 ${N} 个策略变体，DSR=${dsr.toFixed(3)}（已校正搜索偏差）；若 N 实际更大请传入 numStrategiesTried`,
+      );
     }
     if (minTRL > 0 && minTRL !== Infinity) {
       const yearsActual = n / 252;
       if (yearsActual < minTRL) {
-        caveats.push(`MinTRL=${minTRL.toFixed(1)} 年 > 实际 ${yearsActual.toFixed(1)} 年，回测长度不足以确认 Sharpe 可信`);
+        caveats.push(
+          `MinTRL=${minTRL.toFixed(1)} 年 > 实际 ${yearsActual.toFixed(1)} 年，回测长度不足以确认 Sharpe 可信`,
+        );
       }
     }
     // Bootstrap CI 跨 0 但 t 显著 → 矛盾，以 Bootstrap 为准
     // 此处 significance 不可能为 insufficient_sample（样本不足时已提前 return），仅需排除 not_significant
     if (bootstrap.crossesZero && significance !== 'not_significant') {
-      caveats.push(`Bootstrap 95% CI [${bootstrap.ci95[0].toFixed(4)}, ${bootstrap.ci95[1].toFixed(4)}] 跨 0，与 t 检验结论矛盾，以 Bootstrap 为准（更鲁棒）`);
+      caveats.push(
+        `Bootstrap 95% CI [${bootstrap.ci95[0].toFixed(4)}, ${bootstrap.ci95[1].toFixed(4)}] 跨 0，与 t 检验结论矛盾，以 Bootstrap 为准（更鲁棒）`,
+      );
       significance = 'not_significant';
     }
   }
@@ -408,8 +450,11 @@ export function compareBacktests(
   if (baseSim || expSim) {
     caveats.push('某方权益曲线为空，日收益对比可能失真');
   }
-  if (baseline.benchmark.length > 0 && experiment.benchmark.length > 0
-      && baseline.benchmark.length !== experiment.benchmark.length) {
+  if (
+    baseline.benchmark.length > 0 &&
+    experiment.benchmark.length > 0 &&
+    baseline.benchmark.length !== experiment.benchmark.length
+  ) {
     caveats.push('两组基准长度不一致，可能未在同一区间回测，对比结论存疑');
   }
 
@@ -418,9 +463,11 @@ export function compareBacktests(
   const expTrades = experiment.tradeCount ?? 0;
   const baseTrades = baseline.tradeCount ?? 0;
   if (expTrades > baseTrades * 1.5 && expTrades > 0) {
-    const costRatio = (expTrades * 0.4) / Math.abs(experiment.totalReturn || 1) * 100;
+    const costRatio = ((expTrades * 0.4) / Math.abs(experiment.totalReturn || 1)) * 100;
     if (costRatio > 30) {
-      caveats.push(`实验组交易次数(${expTrades})显著多于基线(${baseTrades})，按 A 股 0.4% round-trip 估算成本占比约 ${costRatio.toFixed(0)}%，可能侵蚀大部分收益`);
+      caveats.push(
+        `实验组交易次数(${expTrades})显著多于基线(${baseTrades})，按 A 股 0.4% round-trip 估算成本占比约 ${costRatio.toFixed(0)}%，可能侵蚀大部分收益`,
+      );
     }
   }
 
@@ -431,14 +478,27 @@ export function compareBacktests(
   if (significance === 'insufficient_sample') {
     verdict = 'inconclusive';
   } else if (significance === 'significant_strong' || significance === 'significant_marginal') {
-    verdict = alphaAnnualized > 0 ? 'experiment_wins' : alphaAnnualized < 0 ? 'baseline_wins' : 'tie';
+    verdict =
+      alphaAnnualized > 0 ? 'experiment_wins' : alphaAnnualized < 0 ? 'baseline_wins' : 'tie';
   } else {
-    verdict = improvedCount > deterioratedCount + 1 ? 'experiment_wins'
-      : deterioratedCount > improvedCount + 1 ? 'baseline_wins'
-      : 'tie';
+    verdict =
+      improvedCount > deterioratedCount + 1
+        ? 'experiment_wins'
+        : deterioratedCount > improvedCount + 1
+          ? 'baseline_wins'
+          : 'tie';
   }
 
-  const summary = buildSummary(verdict, significance, alphaAnnualized, tStatistic, improvedCount, metrics.length, dsr, bootstrap);
+  const summary = buildSummary(
+    verdict,
+    significance,
+    alphaAnnualized,
+    tStatistic,
+    improvedCount,
+    metrics.length,
+    dsr,
+    bootstrap,
+  );
 
   const result: BacktestComparison = {
     metrics,
@@ -468,13 +528,19 @@ function buildSummary(
   bootstrap?: BootstrapResult,
 ): string {
   const alphaStr = `${alpha >= 0 ? '+' : ''}${alpha.toFixed(2)}pp`;
-  const sigStr = significance === 'significant_strong' ? '统计强显著（|t|>3，通过 Harvey-Liu-Zhu 多重检验校正）'
-    : significance === 'significant_marginal' ? '统计边际显著（2<|t|≤3，未做多重检验校正，存疑）'
-    : significance === 'not_significant' ? '统计不显著'
-    : '样本不足';
+  const sigStr =
+    significance === 'significant_strong'
+      ? '统计强显著（|t|>3，通过 Harvey-Liu-Zhu 多重检验校正）'
+      : significance === 'significant_marginal'
+        ? '统计边际显著（2<|t|≤3，未做多重检验校正，存疑）'
+        : significance === 'not_significant'
+          ? '统计不显著'
+          : '样本不足';
   const trendStr = `${improved}/${total} 项指标改善`;
   const dsrStr = dsr !== undefined ? `，DSR=${dsr.toFixed(3)}` : '';
-  const bootStr = bootstrap ? `，Bootstrap CI [${bootstrap.ci95[0].toFixed(4)}, ${bootstrap.ci95[1].toFixed(4)}]${bootstrap.crossesZero ? '（跨0）' : ''}` : '';
+  const bootStr = bootstrap
+    ? `，Bootstrap CI [${bootstrap.ci95[0].toFixed(4)}, ${bootstrap.ci95[1].toFixed(4)}]${bootstrap.crossesZero ? '（跨0）' : ''}`
+    : '';
   switch (verdict) {
     case 'experiment_wins':
       return `实验组优于基线：年化超额 ${alphaStr}，${trendStr}，${sigStr}（t=${t.toFixed(2)}${dsrStr}${bootStr}）。LLM 信号带来了可量化的增量 alpha。`;

@@ -184,7 +184,10 @@ describe('PaperAccount 持久化 round-trip', () => {
   let tmpFile: string;
 
   beforeEach(() => {
-    tmpFile = path.join(os.tmpdir(), `paper-trading-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+    tmpFile = path.join(
+      os.tmpdir(),
+      `paper-trading-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`,
+    );
   });
 
   afterEach(() => {

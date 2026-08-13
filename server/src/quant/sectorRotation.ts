@@ -181,9 +181,7 @@ function calculateTrend(sectors: SectorData[]): number[] {
   const rsPct = relativeStrengthPercentile(sectors);
   // RS 百分位 [0,100] → z 近似 [-1, 1]：50% 中性对应 z=0
   const zRS = rsPct.map((p) => (p - 50) / 50);
-  return sectors.map((_, i) =>
-    zToScore(0.4 * zM20[i] + 0.4 * zM60[i] + 0.2 * zRS[i]),
-  );
+  return sectors.map((_, i) => zToScore(0.4 * zM20[i] + 0.4 * zM60[i] + 0.2 * zRS[i]));
 }
 
 /**
@@ -290,9 +288,7 @@ export function calculateSectorRotation(sectors: SectorData[]): SectorRotationRe
 
   // 5) 按 rank 升序输出，便于调用方消费
   const sorted = [...signals].sort((a, b) => a.rank - b.rank);
-  const topSectors = sorted
-    .filter((s) => s.recommendation === 'overweight')
-    .map((s) => s.sector);
+  const topSectors = sorted.filter((s) => s.recommendation === 'overweight').map((s) => s.sector);
   const bottomSectors = sorted
     .filter((s) => s.recommendation === 'underweight')
     .map((s) => s.sector);

@@ -60,12 +60,18 @@ export async function extractDocumentInsights(
         risks: string[];
         catalysts: string[];
         confidence: string;
-      }>([{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: clean }], {
-        ...options,
-        task: 'extract',
-        maxTokens: 1200,
-        timeout: 45000,
-      });
+      }>(
+        [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: clean },
+        ],
+        {
+          ...options,
+          task: 'extract',
+          maxTokens: 1200,
+          timeout: 45000,
+        },
+      );
       return {
         summary: r.summary || clean.slice(0, 200),
         positives: Array.isArray(r.positives) ? r.positives.slice(0, 8) : [],

@@ -16,12 +16,7 @@ import * as path from 'node:path';
 
 /** 审计条目类别 */
 export type AuditCategory =
-  | 'llm_call'
-  | 'tool_call'
-  | 'trade_signal'
-  | 'data_access'
-  | 'user_query'
-  | 'system';
+  'llm_call' | 'tool_call' | 'trade_signal' | 'data_access' | 'user_query' | 'system';
 
 /** 风险等级（从低到高） */
 export type RiskLevel = 'info' | 'low' | 'medium' | 'high' | 'critical';
@@ -305,17 +300,31 @@ export class AuditLogger {
   }
 }
 
-/** 审计日志落盘文件（JSON 行追加，每行一条审计条目） */
-export const AUDIT_LOG_FILE = path.join(import.meta.dirname, '..', 'data', 'audit.log');
+/** 审计日志默认落盘路径（JSON 行追加） */
+const DEFAULT_AUDIT_LOG_FILE = path.join(import.meta.dirname, '..', 'data', 'audit.log');
 
 /**
- * 默认落盘持久化钩子：把每条审计条目追加为一行 JSON 到 AUDIT_LOG_FILE。
+ * 运行时解析落盘路径：支持 AUDIT_LOG_FILE 环境变量重定向（与 watchlist/paper 同模式）。
+ * 在「每次调用时」解析，测试可在 beforeAll 设置临时路径实现进程级隔离。
+ */
+function resolveAuditLogFile(): string {
+  return process.env.AUDIT_LOG_FILE && process.env.AUDIT_LOG_FILE.length > 0
+    ? process.env.AUDIT_LOG_FILE
+    : DEFAULT_AUDIT_LOG_FILE;
+}
+
+/** 兼容导出：默认落盘路径（生产路径；测试应改用 resolveAuditLogFile 对应的 env 重定向） */
+export const AUDIT_LOG_FILE = DEFAULT_AUDIT_LOG_FILE;
+
+/**
+ * 默认落盘持久化钩子：把每条审计条目追加为一行 JSON。
  * IO 失败静默降级（审计主流程不受影响，条目仍保留在内存中）。
  */
 export function filePersistenceHook(entry: AuditEntry): void {
   try {
-    fs.mkdirSync(path.dirname(AUDIT_LOG_FILE), { recursive: true });
-    fs.appendFileSync(AUDIT_LOG_FILE, JSON.stringify(entry) + '\n', 'utf-8');
+    const file = resolveAuditLogFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, JSON.stringify(entry) + '\n', 'utf-8');
   } catch {
     // 磁盘写入失败：静默降级，审计日志仍保留在内存中
   }
@@ -410,11 +419,7 @@ export function auditTradeSignal(
  * @param resource 资源标识（如 "财务数据库" / "行情接口"）
  * @param action 操作类型（如 "read" / "write" / "export"）
  */
-export function auditDataAccess(
-  sessionId: string,
-  resource: string,
-  action: string,
-): AuditEntry {
+export function auditDataAccess(sessionId: string, resource: string, action: string): AuditEntry {
   return auditLogger.log({
     sessionId,
     action: `data.${action}`,

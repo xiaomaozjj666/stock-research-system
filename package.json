@@ -2,6 +2,9 @@
   "name": "stock-research-system",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "workspaces": [
     "server",
     "client"
@@ -15,11 +18,13 @@
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "format": "prettier --write \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"*.{json,md,mjs}\"",
     "format:check": "prettier --check \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"*.{json,md,mjs}\""
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.62.1",
     "@testing-library/dom": "10.4.1",
     "@testing-library/jest-dom": "7.0.0",
     "@testing-library/react": "16.3.2",
@@ -40,10 +45,5 @@
   "overrides": {
     "vite": "8.2.1",
     "nanoid": ">=3.3.17"
-  },
-  "allowScripts": {
-    "esbuild@0.28.1": true,
-    "esbuild@0.21.5": true,
-    "esbuild@0.25.12": true
   }
 }

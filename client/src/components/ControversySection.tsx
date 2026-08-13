@@ -30,7 +30,8 @@ export default function ControversySection({ data = [] }: ControversySectionProp
             </div>
           </div>
           <div className="controversy-arbitration">
-            <strong>仲裁结论：</strong>{c.arbitration}
+            <strong>仲裁结论：</strong>
+            {c.arbitration}
           </div>
           <span className="confidence-badge">置信度 {c.confidence}%</span>
         </div>

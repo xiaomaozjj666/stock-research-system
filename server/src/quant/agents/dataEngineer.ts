@@ -10,7 +10,7 @@ export function dataEngineer(data: OHLCVData[]): DataQualityReport {
 
   // --- 基础统计 ---
   const totalRecords = data.length;
-  const dates = data.map(d => d.date);
+  const dates = data.map((d) => d.date);
   const sortedDates = [...dates].sort();
   const start = sortedDates[0] ?? '';
   const end = sortedDates[sortedDates.length - 1] ?? '';
@@ -26,7 +26,9 @@ export function dataEngineer(data: OHLCVData[]): DataQualityReport {
   }
   if (duplicates.length > 0) {
     score -= duplicates.length * 5;
-    issues.push(`发现 ${duplicates.length} 个重复日期: ${duplicates.slice(0, 5).join(', ')}${duplicates.length > 5 ? '...' : ''}`);
+    issues.push(
+      `发现 ${duplicates.length} 个重复日期: ${duplicates.slice(0, 5).join(', ')}${duplicates.length > 5 ? '...' : ''}`,
+    );
     suggestions.push('去除重复日期的数据记录');
   }
 

@@ -1,5 +1,11 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
-import { chatWithAgent, type ChatAgentResponse, type ChatTurn } from '../api/client';
+import {
+  chatWithAgent,
+  chatWithAgentStream,
+  type ChatAgentResponse,
+  type ChatStreamEvent,
+  type ChatTurn,
+} from '../api/client';
 import ResearchEnhance from './ResearchEnhance';
 
 interface UIMessage extends ChatTurn {
@@ -23,10 +29,12 @@ export default function ChatPanel() {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  /** 流式阶段进度文案（null=无进行中流式） */
+  /** 流式阶段进度文案（null=无进行中请求） */
   const [stage, setStage] = useState<string | null>(null);
   const [openEvidence, setOpenEvidence] = useState<Record<number, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** 在途流式对话的取消函数（卸载时中断，防止内存泄漏与无效 setState） */
+  const streamCancelRef = useRef<(() => void) | null>(null);
   // 会话级记忆 ID：持久化到 localStorage，第二轮提问无需重复股票代码
   const [sessionId] = useState<string>(() => {
     const KEY = 'srs-session-id';
@@ -46,6 +54,9 @@ export default function ChatPanel() {
     }
   }, [messages, loading, stage]);
 
+  // 卸载时取消在途流式连接
+  useEffect(() => () => streamCancelRef.current?.(), []);
+
   async function send(text: string) {
     const content = text.trim();
     if (!content || loading) return;
@@ -53,14 +64,46 @@ export default function ChatPanel() {
     setMessages(next);
     setInput('');
     setLoading(true);
-    setStage('检索证据中…');
+    setStage('连接中…');
+
+    // 优先走 SSE 流式接口：逐阶段推送真实执行进度（检索→工具→辩论→校验）
+    let streamSettled = false;
     try {
-      const res = await chatWithAgent({ message: content, history: messages, sessionId });
-      setMessages([...next, { role: 'assistant', content: res.answer, meta: res }]);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '对话请求失败';
-      setMessages([...next, { role: 'assistant', content: `⚠️ ${msg}` }]);
+      await new Promise<void>((resolve, reject) => {
+        let cancelled = false;
+        const handle = chatWithAgentStream(content, (evt: ChatStreamEvent) => {
+          if (cancelled) return; // 取消后忽略迟到的事件
+          if (evt.phase === 'done') {
+            streamSettled = true;
+            setMessages([
+              ...next,
+              { role: 'assistant', content: evt.response.answer, meta: evt.response },
+            ]);
+            resolve();
+          } else if (evt.phase === 'error') {
+            reject(new Error(evt.message || '流式对话失败'));
+          } else {
+            setStage(evt.message);
+          }
+        });
+        streamCancelRef.current = () => {
+          cancelled = true;
+          handle.cancel();
+        };
+      });
+    } catch {
+      // 流式失败（连接中断/服务不可达）→ 回退非流式接口（携带完整历史，更稳健）
+      if (!streamSettled) {
+        try {
+          const res = await chatWithAgent({ message: content, history: messages, sessionId });
+          setMessages([...next, { role: 'assistant', content: res.answer, meta: res }]);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : '对话请求失败';
+          setMessages([...next, { role: 'assistant', content: `⚠️ ${msg}` }]);
+        }
+      }
     } finally {
+      streamCancelRef.current = null;
       setLoading(false);
       setStage(null);
     }
@@ -78,11 +121,16 @@ export default function ChatPanel() {
       <div className="chat-header">
         <div className="chat-header-top">
           <h2>研究助手</h2>
-          <button className="btn-ghost chat-enhance-toggle" onClick={() => setShowEnhance((s) => !s)}>
+          <button
+            className="btn-ghost chat-enhance-toggle"
+            onClick={() => setShowEnhance((s) => !s)}
+          >
             {showEnhance ? '收起增强能力 ▲' : '研究增强 ▼'}
           </button>
         </div>
-        <p className="chat-subtitle">用自然语言提问：分析个股、对比、回测、多空辩论。支持路由规划、工具调用、证据引用与事实校验。</p>
+        <p className="chat-subtitle">
+          用自然语言提问：分析个股、对比、回测、多空辩论。支持路由规划、工具调用、证据引用与事实校验。
+        </p>
       </div>
       {showEnhance && <ResearchEnhance sessionId={sessionId} />}
 
@@ -92,7 +140,11 @@ export default function ChatPanel() {
             <p>试试这些问题：</p>
             <div className="chat-quick">
               {QUICK_PROMPTS.map((q) => (
-                <button key={q} className="chip chip-neutral chat-quick-item" onClick={() => send(q)}>
+                <button
+                  key={q}
+                  className="chip chip-neutral chat-quick-item"
+                  onClick={() => send(q)}
+                >
                   {q}
                 </button>
               ))}
@@ -108,7 +160,9 @@ export default function ChatPanel() {
               {m.meta && (
                 <div className="chat-meta">
                   {m.meta.degraded && <span className="chat-badge chat-badge-warn">离线降级</span>}
-                  {m.meta.model && <span className="chat-badge chat-badge-model">{m.meta.model}</span>}
+                  {m.meta.model && (
+                    <span className="chat-badge chat-badge-model">{m.meta.model}</span>
+                  )}
                   {m.meta.plan && (
                     <span className="chat-badge chat-badge-plan" title={m.meta.plan.reason}>
                       路由: {PLAN_LABEL[m.meta.plan.action] ?? m.meta.plan.action}
@@ -149,7 +203,9 @@ export default function ChatPanel() {
                         <div key={idx} className="chat-calc-error">
                           <p className="chat-calc-claim">断言：{ce.claim}</p>
                           <p className="chat-calc-formula">公式：{ce.reconstructedFormula}</p>
-                          <p>重算：{ce.recomputedValue} ≠ 回答：{ce.claimedValue}</p>
+                          <p>
+                            重算：{ce.recomputedValue} ≠ 回答：{ce.claimedValue}
+                          </p>
                           <p className="chat-calc-disc">{ce.discrepancy}</p>
                         </div>
                       ))}

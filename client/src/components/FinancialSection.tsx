@@ -34,7 +34,12 @@ export default function FinancialSection({ data }: FinancialSectionProps) {
   const years = data.years || [];
   if (years.length === 0) return null;
 
-  const rows: { label: string; values: (number | undefined)[]; type: 'money' | 'pct' | 'plain'; unit: string }[] = [
+  const rows: {
+    label: string;
+    values: (number | undefined)[];
+    type: 'money' | 'pct' | 'plain';
+    unit: string;
+  }[] = [
     { label: '营业收入(亿)', values: data.revenue || [], type: 'money', unit: '亿' },
     { label: '净利润(亿)', values: data.netProfit || [], type: 'money', unit: '亿' },
     { label: '毛利率', values: data.grossMargin || [], type: 'pct', unit: '%' },
@@ -63,13 +68,15 @@ export default function FinancialSection({ data }: FinancialSectionProps) {
                 <td>{row.label}</td>
                 {row.values.map((v, i) => {
                   const prev = i > 0 ? row.values[i - 1] : undefined;
-                  const change = prev && prev !== 0 ? ((v! - prev) / Math.abs(prev)) * 100 : undefined;
+                  const change =
+                    prev && prev !== 0 ? ((v! - prev) / Math.abs(prev)) * 100 : undefined;
                   return (
                     <td key={i} className={yoyColor(change)}>
                       {fmt(v, row.type)}
                       {i > 0 && change !== undefined && (
                         <span style={{ fontSize: 11, marginLeft: 4 }}>
-                          {yoyArrow(change)}{Math.abs(change).toFixed(1)}%
+                          {yoyArrow(change)}
+                          {Math.abs(change).toFixed(1)}%
                         </span>
                       )}
                     </td>

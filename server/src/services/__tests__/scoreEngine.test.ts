@@ -87,13 +87,9 @@ describe('calculateScores', () => {
 
   it('注入 IR 最优权重后，强因子主导维度得分（最优因子可用）', () => {
     // 把 roe 权重拉满，其余因子权重归零：盈利质量应主要由 ROE 决定
-    const s = calculateScores(
-      makeFinancial(),
-      valuation,
-      info,
-      undefined,
-      { factorWeights: { roe: 1, grossMargin: 0, cashFlowRatio: 0, arRatioProfit: 0, gmStability: 0 } },
-    );
+    const s = calculateScores(makeFinancial(), valuation, info, undefined, {
+      factorWeights: { roe: 1, grossMargin: 0, cashFlowRatio: 0, arRatioProfit: 0, gmStability: 0 },
+    });
     expect(s.profit_quality).toBeGreaterThan(10);
     // 与等权相比，ROE 主导下分数仍落在合法区间
     expect(s.profit_quality).toBeLessThanOrEqual(20);

@@ -42,7 +42,9 @@ export default function StrategyListSection({ data }: Props) {
             <div className="strategy-metrics">
               <div className="strategy-metric">
                 <div className="strategy-metric-label">夏普比率</div>
-                <div className="strategy-metric-value">{(strategy.sharpeRatio ?? 0).toFixed(2)}</div>
+                <div className="strategy-metric-value">
+                  {(strategy.sharpeRatio ?? 0).toFixed(2)}
+                </div>
               </div>
               <div className="strategy-metric">
                 <div className="strategy-metric-label">最大回撤</div>
@@ -56,8 +58,11 @@ export default function StrategyListSection({ data }: Props) {
               </div>
               <div className="strategy-metric">
                 <div className="strategy-metric-label">总收益</div>
-                <div className={`strategy-metric-value ${strategy.totalReturn >= 0 ? 'val-positive' : 'val-negative'}`}>
-                  {strategy.totalReturn >= 0 ? '+' : ''}{(strategy.totalReturn ?? 0).toFixed(1)}%
+                <div
+                  className={`strategy-metric-value ${strategy.totalReturn >= 0 ? 'val-positive' : 'val-negative'}`}
+                >
+                  {strategy.totalReturn >= 0 ? '+' : ''}
+                  {(strategy.totalReturn ?? 0).toFixed(1)}%
                 </div>
               </div>
             </div>
@@ -77,10 +82,11 @@ export default function StrategyListSection({ data }: Props) {
 
             {strategy.newsAware && (
               <div className="strategy-news-aware">
-                📰 含最新消息（姿态 {(strategy.newsAware.posture * 100).toFixed(0)}%）：
-                收益 {strategy.newsAware.totalReturn >= 0 ? '+' : ''}{strategy.newsAware.totalReturn.toFixed(1)}% ·
-                夏普 {strategy.newsAware.sharpeRatio.toFixed(2)} ·
-                回撤 {strategy.newsAware.maxDrawdown.toFixed(1)}%
+                📰 含最新消息（姿态 {(strategy.newsAware.posture * 100).toFixed(0)}%）： 收益{' '}
+                {strategy.newsAware.totalReturn >= 0 ? '+' : ''}
+                {strategy.newsAware.totalReturn.toFixed(1)}% · 夏普{' '}
+                {strategy.newsAware.sharpeRatio.toFixed(2)} · 回撤{' '}
+                {strategy.newsAware.maxDrawdown.toFixed(1)}%
               </div>
             )}
           </div>

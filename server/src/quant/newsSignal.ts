@@ -37,18 +37,80 @@ const Z_CLIP = 0.001;
 
 /** 看多（利好）词库：命中贡献 +1 */
 const BULLISH_WORDS: string[] = [
-  '利好', '超预期', '大幅增长', '高增长', '创新高', '新高', '突破', '中标', '签约', '订单',
-  '扩产', '回购', '增持', '扭亏', '盈利', '大涨', '暴涨', '获批', '提价', '上调',
-  '增资', '利好', '复苏', '放量', '拐点', '困境反转', '机构买入', '买入评级', '上调评级',
-  '分红', '高分红', '超预期增长', '产能释放', '需求旺盛', '量价齐升',
+  '利好',
+  '超预期',
+  '大幅增长',
+  '高增长',
+  '创新高',
+  '新高',
+  '突破',
+  '中标',
+  '签约',
+  '订单',
+  '扩产',
+  '回购',
+  '增持',
+  '扭亏',
+  '盈利',
+  '大涨',
+  '暴涨',
+  '获批',
+  '提价',
+  '上调',
+  '增资',
+  '利好',
+  '复苏',
+  '放量',
+  '拐点',
+  '困境反转',
+  '机构买入',
+  '买入评级',
+  '上调评级',
+  '分红',
+  '高分红',
+  '超预期增长',
+  '产能释放',
+  '需求旺盛',
+  '量价齐升',
 ];
 
 /** 看空（利空）词库：命中贡献 −1 */
 const BEARISH_WORDS: string[] = [
-  '利空', '下滑', '亏损', '爆雷', '暴雷', '减持', '下调', '降级', '诉讼', '处罚', '退市',
-  '跌停', '暴跌', '商誉减值', '警示', '立案', '冻结', '停产', '召回', '计提减值', '业绩变脸',
-  '下调评级', '卖出评级', '机构卖出', '监管', '调查', '违规', '造假', '停产整顿', '需求疲软',
-  '量价齐跌', '库存高企', '现金流紧张', '债务危机', '质押平仓',
+  '利空',
+  '下滑',
+  '亏损',
+  '爆雷',
+  '暴雷',
+  '减持',
+  '下调',
+  '降级',
+  '诉讼',
+  '处罚',
+  '退市',
+  '跌停',
+  '暴跌',
+  '商誉减值',
+  '警示',
+  '立案',
+  '冻结',
+  '停产',
+  '召回',
+  '计提减值',
+  '业绩变脸',
+  '下调评级',
+  '卖出评级',
+  '机构卖出',
+  '监管',
+  '调查',
+  '违规',
+  '造假',
+  '停产整顿',
+  '需求疲软',
+  '量价齐跌',
+  '库存高企',
+  '现金流紧张',
+  '债务危机',
+  '质押平仓',
 ];
 
 export interface NewsItem {
@@ -135,17 +197,20 @@ export interface AggregateOptions {
 /**
  * 将一组新闻聚合为一个 NewsSignal。空输入返回中性信号（hasNews=false）。
  */
-export function aggregateNewsSentiment(
-  items: NewsItem[],
-  opts: AggregateOptions = {},
-): NewsSignal {
+export function aggregateNewsSentiment(items: NewsItem[], opts: AggregateOptions = {}): NewsSignal {
   const lambda = opts.lambda ?? RECENCY_LAMBDA;
   const now = opts.now ?? Date.now();
 
   if (!items || items.length === 0) {
     return {
-      polarity: 0, sentimentZ: 0, bullishRatio: 0, newsCount: 0,
-      freshness: 0, weightedImpact: 0, items: [], hasNews: false,
+      polarity: 0,
+      sentimentZ: 0,
+      bullishRatio: 0,
+      newsCount: 0,
+      freshness: 0,
+      weightedImpact: 0,
+      items: [],
+      hasNews: false,
     };
   }
 
@@ -173,9 +238,7 @@ export function aggregateNewsSentiment(
   const weightedImpact = Math.min(1, Math.abs(polarity) * freshness);
 
   // 按时效升序排序（最新在前）
-  const sorted = [...scored]
-    .sort((a, b) => a.age - b.age)
-    .map((s) => s.item);
+  const sorted = [...scored].sort((a, b) => a.age - b.age).map((s) => s.item);
 
   return {
     polarity,
@@ -258,16 +321,20 @@ export async function scoreNewsWithLLM(items: NewsItem[]): Promise<NewsItem[] | 
       summary: it.summary ?? '',
       publishedAt: it.publishedAt,
     }));
-    const raw = await chatJSON<{ scores?: { i: number; polarity: number; impact: number }[] }>([
-      {
-        role: 'system',
-        content: '你是金融新闻情绪分析器。对每条新闻给出极性 polarity(-1看空~1看多)与影响强度 impact(0~1)。只返回 JSON。',
-      },
-      {
-        role: 'user',
-        content: `请分析以下新闻，返回 {"scores":[{"i":序号,"polarity":数值,"impact":数值}]}。\n${JSON.stringify(payload)}`,
-      },
-    ], { temperature: 0.2, maxTokens: 1200, timeout: 30000 });
+    const raw = await chatJSON<{ scores?: { i: number; polarity: number; impact: number }[] }>(
+      [
+        {
+          role: 'system',
+          content:
+            '你是金融新闻情绪分析器。对每条新闻给出极性 polarity(-1看空~1看多)与影响强度 impact(0~1)。只返回 JSON。',
+        },
+        {
+          role: 'user',
+          content: `请分析以下新闻，返回 {"scores":[{"i":序号,"polarity":数值,"impact":数值}]}。\n${JSON.stringify(payload)}`,
+        },
+      ],
+      { temperature: 0.2, maxTokens: 1200, timeout: 30000 },
+    );
 
     if (!Array.isArray(raw.scores)) return null;
     const byIndex = new Map(raw.scores.map((s) => [s.i, s]));

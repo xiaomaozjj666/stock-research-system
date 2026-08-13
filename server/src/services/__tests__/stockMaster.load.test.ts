@@ -11,7 +11,10 @@ const originalFetch = globalThis.fetch;
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 
 /** 构造一页 diff（模拟东方财富 clist 返回结构） */
-function pageItems(n: number, offset = 0): Record<string, { f12: string; f14: string; f100: string }> {
+function pageItems(
+  n: number,
+  offset = 0,
+): Record<string, { f12: string; f14: string; f100: string }> {
   const diff: Record<string, { f12: string; f14: string; f100: string }> = {};
   for (let i = 1; i <= n; i++) {
     diff[`item${i}`] = { f12: String(600000 + offset + i), f14: `股票${offset + i}`, f100: '行业' };

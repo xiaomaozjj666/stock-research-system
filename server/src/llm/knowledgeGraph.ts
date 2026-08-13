@@ -159,11 +159,7 @@ export class KnowledgeGraph {
     let count = 0;
     for (let i = this.edges.length - 1; i >= 0; i--) {
       const e = this.edges[i];
-      if (
-        e.source === source &&
-        e.target === target &&
-        (type === undefined || e.type === type)
-      ) {
+      if (e.source === source && e.target === target && (type === undefined || e.type === type)) {
         this.edges.splice(i, 1);
         count++;
       }
@@ -476,9 +472,7 @@ export class KnowledgeGraph {
       targetNodes = nodeIds
         .map((id) => this.nodes.get(id))
         .filter((n): n is GraphNode => n !== undefined);
-      targetEdges = this.edges.filter(
-        (e) => idSet.has(e.source) && idSet.has(e.target),
-      );
+      targetEdges = this.edges.filter((e) => idSet.has(e.source) && idSet.has(e.target));
     } else {
       targetNodes = [...this.nodes.values()];
       targetEdges = [...this.edges];

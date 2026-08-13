@@ -33,7 +33,9 @@ export function normalizeApiError(error: unknown, fallback = '请求失败'): Er
     return new Error('请求超时：分析耗时超过预期，请稍后重试或换一只标的');
   }
   if (e?.code === 'ERR_NETWORK' || !e?.response) {
-    return new Error('无法连接后端服务（localhost:3001）。请确认服务已启动，或运行「启动系统.bat」后重试');
+    return new Error(
+      '无法连接后端服务（localhost:3001）。请确认服务已启动，或运行「启动系统.bat」后重试',
+    );
   }
 
   const status = e.response.status;
@@ -53,10 +55,14 @@ export async function analyzeStock(stockCode: string) {
   currentController = new AbortController();
 
   try {
-    const response = await api.post('/analyze', { stockCode }, {
-      signal: currentController.signal,
-      timeout: 60000,
-    });
+    const response = await api.post(
+      '/analyze',
+      { stockCode },
+      {
+        signal: currentController.signal,
+        timeout: 60000,
+      },
+    );
     return response.data;
   } catch (error: unknown) {
     if (axios.isCancel(error)) throw new Error('请求已取消');
@@ -91,7 +97,13 @@ export async function searchStocks(keyword: string, signal?: AbortSignal) {
 export async function runQuantAnalysis(payload: {
   strategy: unknown;
   useNews?: boolean;
-  newsItems?: { id: string; title: string; summary?: string; publishedAt: string; polarity?: number }[];
+  newsItems?: {
+    id: string;
+    title: string;
+    summary?: string;
+    publishedAt: string;
+    polarity?: number;
+  }[];
 }) {
   try {
     const response = await api.post('/quant/analyze', payload);
@@ -103,9 +115,13 @@ export async function runQuantAnalysis(payload: {
 
 export async function compareStocks(codes: string[]) {
   try {
-    const response = await api.post('/compare', { stockCodes: codes }, {
-      timeout: 180000, // 3 min timeout for multi-stock analysis
-    });
+    const response = await api.post(
+      '/compare',
+      { stockCodes: codes },
+      {
+        timeout: 180000, // 3 min timeout for multi-stock analysis
+      },
+    );
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '对比分析失败');
@@ -259,7 +275,10 @@ export async function ingestDocument(payload: {
     throw normalizeApiError(error, '文档入库失败');
   }
 }
-export async function listDocuments(): Promise<{ count: number; docs: { id: string; source: string; preview: string }[] }> {
+export async function listDocuments(): Promise<{
+  count: number;
+  docs: { id: string; source: string; preview: string }[];
+}> {
   try {
     const response = await api.get('/documents', { timeout: 15000 });
     return response.data;
@@ -271,7 +290,13 @@ export async function listDocuments(): Promise<{ count: number; docs: { id: stri
 export interface ModelRoutingInfo {
   available: boolean;
   embeddingEnabled: boolean;
-  registry: { id: string; label: string; costPer1kInput: number; costPer1kOutput: number; tasks: string[] }[];
+  registry: {
+    id: string;
+    label: string;
+    costPer1kInput: number;
+    costPer1kOutput: number;
+    tasks: string[];
+  }[];
   routing: Record<string, string>;
 }
 export async function getModels(): Promise<ModelRoutingInfo> {
@@ -288,7 +313,10 @@ export interface CostReport {
   totalPromptTokens: number;
   totalCompletionTokens: number;
   callCount: number;
-  byModel: Record<string, { promptTokens: number; completionTokens: number; cost: number; calls: number }>;
+  byModel: Record<
+    string,
+    { promptTokens: number; completionTokens: number; cost: number; calls: number }
+  >;
 }
 export async function getCostReport(): Promise<CostReport> {
   try {
@@ -325,7 +353,9 @@ export interface AutonomousState {
   errorCount?: number;
   lastError?: string;
 }
-export async function startAutonomous(intervalMs?: number): Promise<AutonomousState & { started: boolean }> {
+export async function startAutonomous(
+  intervalMs?: number,
+): Promise<AutonomousState & { started: boolean }> {
   try {
     const response = await api.post('/autonomous/start', { intervalMs }, { timeout: 15000 });
     return response.data;
@@ -369,23 +399,44 @@ export function chatWithAgentStream(
 ): { cancel: () => void } {
   const es = new EventSource(`/api/chat/stream?message=${encodeURIComponent(message)}`);
   let settled = false;
+  /** 首包看门狗：20 秒内没收到任何事件即判定服务不可用，避免静默挂起 */
+  let watchdog: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    if (!settled)
+      finish({ phase: 'error', message: '后端无响应：20 秒内未收到任何进度，请确认服务是否正常' });
+  }, 20000);
   const finish = (evt: ChatStreamEvent) => {
     if (settled) return;
     settled = true;
+    if (watchdog) {
+      clearTimeout(watchdog);
+      watchdog = null;
+    }
     es.close();
     onEvent(evt);
   };
   es.onmessage = (e) => {
+    if (watchdog) {
+      clearTimeout(watchdog);
+      watchdog = null;
+    }
     try {
       const data = JSON.parse(e.data) as ChatStreamEvent;
       if (data.phase === 'done' || data.phase === 'error') finish(data);
       else onEvent(data);
-    } catch { /* 忽略偶发解析错误 */ }
+    } catch {
+      /* 忽略偶发解析错误 */
+    }
   };
   es.onerror = () => {
     if (!settled) finish({ phase: 'error', message: '连接中断，对话未完成，请重试' });
   };
-  return { cancel: () => { settled = true; es.close(); } };
+  return {
+    cancel: () => {
+      if (watchdog) clearTimeout(watchdog);
+      settled = true;
+      es.close();
+    },
+  };
 }
 
 /** 流式分析阶段事件（与后端 AnalysisStage 对齐） */
@@ -397,16 +448,28 @@ export interface AnalysisStage {
   result?: AnalysisResult;
 }
 
+export interface AnalyzeStreamOptions {
+  /** 连接失败（尚未收到任何事件）时的自动重连次数上限，默认 3；设 0 关闭 */
+  maxRetries?: number;
+}
+
 /**
  * 流式股票分析（SSE）
  * onStage 在每次阶段进度更新时回调；返回的 done Promise 在分析完成时 resolve 结果。
  * 调用方可通过 cancel() 主动中断。
+ *
+ * 连接健壮性（H-03）：尚未收到任何事件时连接失败，按指数退避自动重连
+ * （1s → 2s → 4s，默认最多 3 次）；已收到事件后断开则直接报错
+ * （分析无法断点续传，重跑会造成重复消耗）。
  */
 export function analyzeStockStream(
   stockCode: string,
-  onStage: (stage: AnalysisStage) => void
+  onStage: (stage: AnalysisStage) => void,
+  options: AnalyzeStreamOptions = {},
 ): { cancel: () => void; done: Promise<AnalysisResult> } {
-  const es = new EventSource(`/api/analyze/stream?stockCode=${encodeURIComponent(stockCode)}`);
+  const maxRetries = options.maxRetries ?? 3;
+  const url = `/api/analyze/stream?stockCode=${encodeURIComponent(stockCode)}`;
+
   let resolveDone!: (r: AnalysisResult) => void;
   let rejectDone!: (e: Error) => void;
   const done = new Promise<AnalysisResult>((resolve, reject) => {
@@ -417,61 +480,95 @@ export function analyzeStockStream(
   /** 是否收到过任何一条服务端事件 —— 用于区分「连不上」和「中途断开」 */
   let received = false;
   let settled = false;
-  /** 首包看门狗：若 20s 内一条事件都没收到，判定为服务不可用 */
-  let watchdog: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-    if (!received) finish(new Error('后端无响应：20 秒内未收到任何分析进度，请确认服务是否正常'));
-  }, 20000);
+  let cancelled = false;
+  let es: EventSource | null = null;
+  let retryCount = 0;
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const cleanup = () => {
+  const clearWatchdog = () => {
     if (watchdog) {
       clearTimeout(watchdog);
       watchdog = null;
     }
-    es.close();
+  };
+
+  /** 首包看门狗：若 20s 内一条事件都没收到，判定为服务不可用 */
+  const armWatchdog = () => {
+    clearWatchdog();
+    watchdog = setTimeout(() => {
+      if (!received) finish(new Error('后端无响应：20 秒内未收到任何分析进度，请确认服务是否正常'));
+    }, 20000);
   };
 
   function finish(err: Error | null, result?: AnalysisResult) {
     if (settled) return;
     settled = true;
-    cleanup();
+    clearWatchdog();
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    es?.close();
     if (err) rejectDone(err);
     else resolveDone(result as AnalysisResult);
   }
 
-  es.onmessage = (event) => {
-    received = true;
-    if (watchdog) {
-      clearTimeout(watchdog);
-      watchdog = null;
-    }
-    try {
-      const data = JSON.parse(event.data) as AnalysisStage;
-      if (data.phase === 'done' && data.result) {
-        finish(null, data.result);
-      } else if (data.phase === 'error') {
-        finish(new Error(data.message || '分析过程出错'));
-      } else {
-        onStage(data);
-      }
-    } catch {
-      // 忽略偶发解析错误
-    }
-  };
+  function connect() {
+    if (settled || cancelled) return;
+    es = new EventSource(url);
+    armWatchdog();
 
-  es.onerror = () => {
-    // EventSource 在正常结束时也会触发 error，已 settle 的场景直接忽略
-    if (settled) return;
-    finish(
-      received
-        ? new Error('连接中断，分析未完成，请重试')
-        : new Error('无法连接后端服务（localhost:3001）。请确认服务已启动，或运行「启动系统.bat」后重试')
-    );
-  };
+    es.onmessage = (event) => {
+      received = true;
+      clearWatchdog();
+      try {
+        const data = JSON.parse(event.data) as AnalysisStage;
+        if (data.phase === 'done' && data.result) {
+          finish(null, data.result);
+        } else if (data.phase === 'error') {
+          finish(new Error(data.message || '分析过程出错'));
+        } else {
+          onStage(data);
+        }
+      } catch {
+        // 忽略偶发解析错误
+      }
+    };
+
+    es.onerror = () => {
+      // EventSource 在正常结束时也会触发 error，已 settle 的场景直接忽略
+      if (settled || cancelled) return;
+      es?.close();
+      clearWatchdog();
+      // 已收到过事件后断开：分析无法续传，直接报错
+      if (received) {
+        finish(new Error('连接中断，分析未完成，请重试'));
+        return;
+      }
+      // 从未收到事件：指数退避重连（1s/2s/4s…），耗尽后报连接失败（H-03）
+      if (retryCount < maxRetries) {
+        retryCount += 1;
+        retryTimer = setTimeout(connect, 1000 * 2 ** (retryCount - 1));
+        return;
+      }
+      finish(
+        new Error(
+          '无法连接后端服务（localhost:3001）。请确认服务已启动，或运行「启动系统.bat」后重试',
+        ),
+      );
+    };
+  }
+
+  connect();
 
   return {
     cancel: () => {
+      cancelled = true;
       settled = true;
-      cleanup();
+      clearWatchdog();
+      if (retryTimer) clearTimeout(retryTimer);
+      es?.close();
     },
     done,
   };
@@ -500,7 +597,12 @@ export async function settlePaperDay(body: {
   date: string;
   closePrices: Record<string, number>;
   prevClosePrices?: Record<string, number>;
-}): Promise<{ date: string; cash: number; latestEquity?: PaperEquityPoint; history: PaperEquityPoint[] }> {
+}): Promise<{
+  date: string;
+  cash: number;
+  latestEquity?: PaperEquityPoint;
+  history: PaperEquityPoint[];
+}> {
   try {
     const response = await api.post('/paper/settle', body, { timeout: 30000 });
     return response.data;
@@ -519,7 +621,9 @@ export async function getPaperStats(): Promise<PaperStats> {
 }
 
 // === 合规审计查询（金融监管 8 号文）：可按类别/风险等级/时间/会话过滤 ===
-export async function getAuditLog(query?: AuditQueryFilter): Promise<{ count: number; entries: AuditEntry[] }> {
+export async function getAuditLog(
+  query?: AuditQueryFilter,
+): Promise<{ count: number; entries: AuditEntry[] }> {
   try {
     const response = await api.get('/audit', { params: query ?? {}, timeout: 15000 });
     return response.data;

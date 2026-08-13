@@ -39,8 +39,11 @@
   --duration-fast: 150ms;
   --duration-normal: 250ms;
   --duration-slow: 400ms;
-  --font-main: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  /* 外部字体源已移除（国内网络加载慢/阻塞渲染），统一走系统字体栈；
+     中文字体按平台回退：PingFang(macOS/iOS) → Microsoft YaHei(Windows) → Noto Sans CJK(Android/Linux) */
+  --font-main: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  --font-mono: ui-monospace, 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
   --text-display: 28px;
   --text-h1: 22px;
   --text-h2: 16px;

@@ -96,10 +96,7 @@ describe('chatStream 用量与超时', () => {
   });
 
   it('流式响应无 usage 时安全跳过记账', async () => {
-    const chunks = [
-      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
-      'data: [DONE]\n\n',
-    ];
+    const chunks = ['data: {"choices":[{"delta":{"content":"hi"}}]}\n\n', 'data: [DONE]\n\n'];
     const fetchMock = vi.fn().mockResolvedValue(makeStreamResponse(chunks));
     global.fetch = fetchMock as unknown as typeof fetch;
 
@@ -108,14 +105,16 @@ describe('chatStream 用量与超时', () => {
   });
 
   it('options.timeout 生效：超时触发 abort（修复前无超时会永久挂起）', async () => {
-    const fetchMock = vi.fn().mockImplementation((_url: string, init?: { signal?: AbortSignal }) => {
-      return new Promise((_resolve, reject) => {
-        const sig = init?.signal;
-        const onAbort = () => reject(new Error('The operation was aborted'));
-        if (sig?.aborted) onAbort();
-        else sig?.addEventListener('abort', onAbort, { once: true });
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((_url: string, init?: { signal?: AbortSignal }) => {
+        return new Promise((_resolve, reject) => {
+          const sig = init?.signal;
+          const onAbort = () => reject(new Error('The operation was aborted'));
+          if (sig?.aborted) onAbort();
+          else sig?.addEventListener('abort', onAbort, { once: true });
+        });
       });
-    });
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const start = Date.now();

@@ -98,7 +98,7 @@ describe('专家规则引擎（LLM 不可用时的降级路径）', () => {
         debtRatio: [75, 75, 75, 75, 75, 75],
       }),
       makeValuation(),
-      info
+      info,
     );
     assertValidOpinion(op);
     expect(op.overallSentiment).toBe('bearish');
@@ -124,9 +124,13 @@ describe('专家规则引擎（LLM 不可用时的降级路径）', () => {
   it('riskExpert 高负债率触发风险预警', async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', '');
     const op = await riskExpert(
-      makeFinancial({ debtRatio: [85, 86, 87, 88, 89, 90], totalLiabilities: [850, 860, 870, 880, 890, 900], equity: [150, 140, 130, 120, 110, 100] }),
+      makeFinancial({
+        debtRatio: [85, 86, 87, 88, 89, 90],
+        totalLiabilities: [850, 860, 870, 880, 890, 900],
+        equity: [150, 140, 130, 120, 110, 100],
+      }),
       makeValuation(),
-      info
+      info,
     );
     assertValidOpinion(op);
     expect(op.overallSentiment).toBe('bearish');
@@ -142,11 +146,10 @@ describe('专家规则引擎（LLM 不可用时的降级路径）', () => {
 
   it('policyExpert 政策支持行业（半导体）→ bullish', async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', '');
-    const op = await policyExpert(
-      makeFinancial(),
-      makeValuation(),
-      { ...info, industry: '半导体芯片' },
-    );
+    const op = await policyExpert(makeFinancial(), makeValuation(), {
+      ...info,
+      industry: '半导体芯片',
+    });
     assertValidOpinion(op);
     expect(op.expert).toBe('政策分析师');
     expect(op.overallSentiment).toBe('bullish');
@@ -155,11 +158,10 @@ describe('专家规则引擎（LLM 不可用时的降级路径）', () => {
 
   it('policyExpert 政策限制行业（房地产）→ bearish', async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', '');
-    const op = await policyExpert(
-      makeFinancial(),
-      makeValuation(),
-      { ...info, industry: '房地产开发' },
-    );
+    const op = await policyExpert(makeFinancial(), makeValuation(), {
+      ...info,
+      industry: '房地产开发',
+    });
     assertValidOpinion(op);
     expect(op.overallSentiment).toBe('bearish');
     expect(op.keyPoints.some((k) => k.includes('政策限制'))).toBe(true);
@@ -199,11 +201,10 @@ describe('专家规则引擎（LLM 不可用时的降级路径）', () => {
 
   it('unlockExpert 上市不足 1 年 → bearish（首次解禁临近）', async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', '');
-    const op = await unlockExpert(
-      makeFinancial(),
-      makeValuation({ marketCap: 100 }),
-      { ...info, listingDate: '2026-01-01' },
-    );
+    const op = await unlockExpert(makeFinancial(), makeValuation({ marketCap: 100 }), {
+      ...info,
+      listingDate: '2026-01-01',
+    });
     assertValidOpinion(op);
     expect(op.expert).toBe('解禁分析师');
     expect(op.overallSentiment).toBe('bearish');
@@ -212,11 +213,10 @@ describe('专家规则引擎（LLM 不可用时的降级路径）', () => {
 
   it('unlockExpert 上市超 5 年 → neutral（解禁压力已释放）', async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', '');
-    const op = await unlockExpert(
-      makeFinancial(),
-      makeValuation({ marketCap: 5000 }),
-      { ...info, listingDate: '2010-01-01' },
-    );
+    const op = await unlockExpert(makeFinancial(), makeValuation({ marketCap: 5000 }), {
+      ...info,
+      listingDate: '2010-01-01',
+    });
     assertValidOpinion(op);
     expect(op.overallSentiment).toBe('neutral');
     expect(op.keyPoints.some((k) => k.includes('已释放') || k.includes('压力已'))).toBe(true);

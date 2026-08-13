@@ -11,7 +11,9 @@ vi.mock('fs', async (importOriginal) => {
     mkdirSync: vi.fn(),
     promises: {
       ...actual.promises,
-      readFile: vi.fn(async () => { throw new Error('no cache'); }),
+      readFile: vi.fn(async () => {
+        throw new Error('no cache');
+      }),
       writeFile: vi.fn(async () => {}),
       readdir: vi.fn(async () => []),
     },
@@ -82,11 +84,20 @@ describe('getData', () => {
   });
 
   it('正常装配：规范化窗口名 + 解析行业 + 填充同业对比', async () => {
-    mockFetchInfo.mockResolvedValue({ code: '688825', name: 'C长鑫', industry: '半导体', market: '上交所', listingDate: '', description: '' });
+    mockFetchInfo.mockResolvedValue({
+      code: '688825',
+      name: 'C长鑫',
+      industry: '半导体',
+      market: '上交所',
+      listingDate: '',
+      description: '',
+    });
     mockFetchFinancial.mockResolvedValue(okFinancial());
     mockFetchValuation.mockResolvedValue(okValuation());
     mockResolveIndustry.mockResolvedValue('半导体');
-    mockBuildPeers.mockResolvedValue([{ name: '中芯国际', code: '688981', pe: 50, pb: 5, roe: 0, marketCap: 3000 }]);
+    mockBuildPeers.mockResolvedValue([
+      { name: '中芯国际', code: '688981', pe: 50, pb: 5, roe: 0, marketCap: 3000 },
+    ]);
 
     const ds = await getData('688825');
     // 上市窗口名 C 前缀被规范化去除
@@ -113,6 +124,9 @@ describe('getData', () => {
 describe('getSupportedStocks', () => {
   it('无缓存时至少包含茅台', async () => {
     const stocks = await getSupportedStocks();
-    expect(stocks.find(s => s.code === '600519')).toMatchObject({ name: '贵州茅台', industry: '白酒' });
+    expect(stocks.find((s) => s.code === '600519')).toMatchObject({
+      name: '贵州茅台',
+      industry: '白酒',
+    });
   });
 });

@@ -15,8 +15,20 @@ function makeSignal(over: Partial<NewsSignal>): NewsSignal {
     weightedImpact: 0.36,
     hasNews: true,
     items: [
-      { id: '1', title: '超预期增长', publishedAt: '2026-08-01T00:00:00Z', source: '测试', polarity: 0.5 },
-      { id: '2', title: '平淡公告', publishedAt: '2026-07-30T00:00:00Z', source: '测试', polarity: 0 },
+      {
+        id: '1',
+        title: '超预期增长',
+        publishedAt: '2026-08-01T00:00:00Z',
+        source: '测试',
+        polarity: 0.5,
+      },
+      {
+        id: '2',
+        title: '平淡公告',
+        publishedAt: '2026-07-30T00:00:00Z',
+        source: '测试',
+        polarity: 0,
+      },
     ],
     ...over,
   };

@@ -269,7 +269,9 @@ export class PaperAccount {
         const pos = this.positions.get(order.code);
         if (pos) {
           const newQty = pos.quantity + order.quantity;
-          pos.avgCost = round2((pos.quantity * pos.avgCost + order.quantity * fprice + commission) / newQty);
+          pos.avgCost = round2(
+            (pos.quantity * pos.avgCost + order.quantity * fprice + commission) / newQty,
+          );
           pos.quantity = newQty;
           pos.buyDate = date;
         } else {
@@ -280,7 +282,13 @@ export class PaperAccount {
             buyDate: date,
           });
         }
-        Object.assign(order, { status: 'filled', fillDate: date, fillPrice: fprice, filledQuantity: order.quantity, commission });
+        Object.assign(order, {
+          status: 'filled',
+          fillDate: date,
+          fillPrice: fprice,
+          filledQuantity: order.quantity,
+          commission,
+        });
       } else {
         // 卖出：成交时复核持仓（防多笔卖单同日集中成交导致超卖）
         const pos = this.positions.get(order.code);
@@ -293,7 +301,14 @@ export class PaperAccount {
         this.cash = round2(this.cash + revenue);
         pos.quantity -= order.quantity;
         if (pos.quantity <= 0) this.positions.delete(order.code);
-        Object.assign(order, { status: 'filled', fillDate: date, fillPrice: fprice, filledQuantity: order.quantity, commission, stampDuty });
+        Object.assign(order, {
+          status: 'filled',
+          fillDate: date,
+          fillPrice: fprice,
+          filledQuantity: order.quantity,
+          commission,
+          stampDuty,
+        });
       }
     }
 
@@ -328,7 +343,8 @@ export class PaperAccount {
   /** 绩效统计：累计收益 / 最大回撤 / 简单年化夏普 */
   computeStats(): PaperStats {
     const { equityHistory, initialCapital } = this;
-    const finalEquity = equityHistory.length > 0 ? equityHistory[equityHistory.length - 1].value : initialCapital;
+    const finalEquity =
+      equityHistory.length > 0 ? equityHistory[equityHistory.length - 1].value : initialCapital;
 
     if (equityHistory.length === 0) {
       return {
@@ -366,7 +382,9 @@ export class PaperAccount {
       const riskFreeDaily = 0.025 / 252;
       const avg = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
       const excess = avg - riskFreeDaily;
-      const std = Math.sqrt(dailyReturns.reduce((s, r) => s + (r - avg) ** 2, 0) / dailyReturns.length);
+      const std = Math.sqrt(
+        dailyReturns.reduce((s, r) => s + (r - avg) ** 2, 0) / dailyReturns.length,
+      );
       sharpeRatio = std > 0 ? (excess / std) * Math.sqrt(252) : 0;
     }
 

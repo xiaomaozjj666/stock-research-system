@@ -5,7 +5,9 @@ describe('newsSignal LLM enhancement', () => {
   it('scoreNewsWithLLM returns null (or safe array) when LLM unavailable', async () => {
     delete process.env.DEEPSEEK_API_KEY;
     delete process.env.OPENAI_API_KEY;
-    const r = await scoreNewsWithLLM([{ id: '1', title: '利好', publishedAt: new Date().toISOString() }]);
+    const r = await scoreNewsWithLLM([
+      { id: '1', title: '利好', publishedAt: new Date().toISOString() },
+    ]);
     expect(r === null || (Array.isArray(r) && r.length === 1)).toBe(true);
   });
 

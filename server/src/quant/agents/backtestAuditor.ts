@@ -53,8 +53,16 @@ export function backtestAuditor(backtest: BacktestResult, strategy: StrategyConf
   score = Math.max(0, score);
 
   // 确定风险等级
-  const futureFunctionRisk = futureCheck.check.passed ? 'low' : futureCheck.check.severity === 'critical' ? 'high' : 'medium';
-  const overfittingRisk = overfitCheck.check.passed ? 'low' : overfitCheck.check.severity === 'critical' ? 'high' : 'medium';
+  const futureFunctionRisk = futureCheck.check.passed
+    ? 'low'
+    : futureCheck.check.severity === 'critical'
+      ? 'high'
+      : 'medium';
+  const overfittingRisk = overfitCheck.check.passed
+    ? 'low'
+    : overfitCheck.check.severity === 'critical'
+      ? 'high'
+      : 'medium';
   const survivorshipBias = survivorCheck.check.passed ? 'low' : 'medium';
 
   // 可靠性评估
@@ -148,7 +156,11 @@ function checkOverfitting(backtest: BacktestResult, _strategy: StrategyConfig) {
       name: '过拟合风险',
       passed,
       detail,
-      severity: (tooFewTrades && abnormallyHigh ? 'critical' : tooFewTrades || abnormallyHigh ? 'warning' : 'info') as 'critical' | 'warning' | 'info',
+      severity: (tooFewTrades && abnormallyHigh
+        ? 'critical'
+        : tooFewTrades || abnormallyHigh
+          ? 'warning'
+          : 'info') as 'critical' | 'warning' | 'info',
     },
     penalty: tooFewTrades && abnormallyHigh ? 25 : tooFewTrades ? 15 : abnormallyHigh ? 10 : 0,
   };
@@ -224,7 +236,11 @@ function checkStatisticalReliability(backtest: BacktestResult, strategy: Strateg
       name: '统计可靠性',
       passed,
       detail,
-      severity: (!enoughTrades && !longEnough ? 'warning' : !enoughTrades || !longEnough ? 'warning' : 'info') as 'warning' | 'info',
+      severity: (!enoughTrades && !longEnough
+        ? 'warning'
+        : !enoughTrades || !longEnough
+          ? 'warning'
+          : 'info') as 'warning' | 'info',
     },
     penalty: !enoughTrades && !longEnough ? 15 : !enoughTrades || !longEnough ? 8 : 0,
   };

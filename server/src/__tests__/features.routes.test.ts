@@ -3,7 +3,9 @@ import request from 'supertest';
 
 // 隔离真实 LLM 与网络依赖
 vi.mock('../services/chatAgent.js', () => ({
-  chatAgent: { run: vi.fn(async () => ({ answer: 'ok', toolsUsed: [], evidence: [], degraded: false })) },
+  chatAgent: {
+    run: vi.fn(async () => ({ answer: 'ok', toolsUsed: [], evidence: [], degraded: false })),
+  },
 }));
 vi.mock('../services/watchlistBacktest.js', () => ({
   runWatchlistNewsBacktest: vi.fn(async (codes: string[]) => ({
@@ -29,7 +31,9 @@ beforeAll(() => {
 
 describe('文档入库与 RAG', () => {
   it('POST /api/ingest 解析文本并入库', async () => {
-    const r = await request(app).post('/api/ingest').send({ title: '测试研报', text: '公司营收增长，但面临监管风险' });
+    const r = await request(app)
+      .post('/api/ingest')
+      .send({ title: '测试研报', text: '公司营收增长，但面临监管风险' });
     expect(r.status).toBe(200);
     expect(r.body.ingested).toBe(true);
     expect(r.body.insight.source).toBe('heuristic'); // 测试环境无 LLM key

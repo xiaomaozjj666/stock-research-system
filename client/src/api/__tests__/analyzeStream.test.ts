@@ -61,10 +61,50 @@ describe('analyzeStockStream', () => {
     await p;
   });
 
-  it('连接前出错且从未收到事件 → 连接错误', async () => {
-    const { done } = analyzeStockStream('600519', () => {});
+  it('连接前出错且从未收到事件、关闭重连 → 连接错误', async () => {
+    const { done } = analyzeStockStream('600519', () => {}, { maxRetries: 0 });
     MockEventSource.instances[0].emitError();
     await expect(done).rejects.toThrow(/无法连接后端服务/);
+  });
+
+  it('连接失败后自动重连，重连成功则正常完成（H-03）', async () => {
+    const stages: AnalysisStage[] = [];
+    const { done } = analyzeStockStream('600519', (s) => stages.push(s));
+    // 首次连接失败（未收到任何事件）→ 1s 后重连
+    MockEventSource.instances[0].emitError();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(MockEventSource.instances).toHaveLength(2);
+    // 第二次连接成功
+    MockEventSource.instances[1].emit({ phase: 'data', message: '获取数据中' });
+    MockEventSource.instances[1].emit({
+      phase: 'done',
+      message: '完成',
+      result: { stock_pool: [] } as never,
+    });
+    const result = await done;
+    expect(stages).toHaveLength(1);
+    expect(result).toEqual({ stock_pool: [] });
+  });
+
+  it('重试次数耗尽后报连接失败（H-03）', async () => {
+    const { done } = analyzeStockStream('600519', () => {}, { maxRetries: 2 });
+    // 先挂断言再推进计时器，避免 done 提前 reject 产生 unhandled rejection
+    const p = expect(done).rejects.toThrow(/无法连接后端服务/);
+    // 初次连接 + 2 次重连全部失败，退避间隔 1s、2s
+    for (let i = 0; i < 3; i++) {
+      MockEventSource.instances[i].emitError();
+      await vi.advanceTimersByTimeAsync(2000);
+    }
+    expect(MockEventSource.instances).toHaveLength(3);
+    await p;
+  });
+
+  it('cancel 后不再触发重连', async () => {
+    const { cancel } = analyzeStockStream('600519', () => {});
+    MockEventSource.instances[0].emitError();
+    cancel();
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(MockEventSource.instances).toHaveLength(1); // 未创建新连接
   });
 
   it('接收过事件后断开 → 连接中断', async () => {

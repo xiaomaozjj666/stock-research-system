@@ -69,7 +69,9 @@ export default function OptimizationPanel({ data }: Props) {
                   <tr key={i}>
                     <td>{p.param}</td>
                     <td className="quant-mono">{p.currentValue}</td>
-                    <td className="quant-mono">{p.suggestedRange.min} ~ {p.suggestedRange.max}</td>
+                    <td className="quant-mono">
+                      {p.suggestedRange.min} ~ {p.suggestedRange.max}
+                    </td>
                     <td className="quant-mono quant-accent-text">{p.suggestedRange.optimal}</td>
                     <td>{p.sensitivity}</td>
                   </tr>

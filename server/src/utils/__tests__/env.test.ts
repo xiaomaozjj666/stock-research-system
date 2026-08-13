@@ -67,10 +67,7 @@ describe('env 环境变量校验', () => {
 
     const env = loadEnv();
 
-    expect(env.allowedOrigins).toEqual([
-      'https://example.com',
-      'https://app.example.com',
-    ]);
+    expect(env.allowedOrigins).toEqual(['https://example.com', 'https://app.example.com']);
   });
 
   it('ALLOWED_ORIGINS 空字符串时为 null', () => {

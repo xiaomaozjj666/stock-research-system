@@ -31,7 +31,9 @@ export default function DataQualityPanel({ data }: Props) {
       </div>
 
       <div className="quant-quality-meta">
-        <span>数据范围：{data.dataRange.start} ~ {data.dataRange.end}</span>
+        <span>
+          数据范围：{data.dataRange.start} ~ {data.dataRange.end}
+        </span>
         <span>交易日：{data.dataRange.tradingDays} 天</span>
         <span>总记录：{data.totalRecords} 条</span>
       </div>
@@ -55,7 +57,9 @@ export default function DataQualityPanel({ data }: Props) {
           <h4 className="quant-subtitle">预处理建议</h4>
           <ul className="quant-suggestion-list">
             {data.suggestions.map((s, i) => (
-              <li key={i} className="quant-suggestion-item">{s}</li>
+              <li key={i} className="quant-suggestion-item">
+                {s}
+              </li>
             ))}
           </ul>
         </div>

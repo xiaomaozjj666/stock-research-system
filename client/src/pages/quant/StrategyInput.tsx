@@ -12,7 +12,10 @@ const STRATEGY_OPTIONS = [
   { value: 'mean_reversion', label: '均值回归' },
 ] as const;
 
-const PARAM_CONFIG: Record<string, { key: string; label: string; default: number; step?: number }[]> = {
+const PARAM_CONFIG: Record<
+  string,
+  { key: string; label: string; default: number; step?: number }[]
+> = {
   ma_cross: [
     { key: 'shortPeriod', label: '短期均线天数', default: 5 },
     { key: 'longPeriod', label: '长期均线天数', default: 20 },
@@ -41,7 +44,9 @@ function getDefaultStartDate(): string {
 }
 
 export default function StrategyInput({ onSubmit, loading }: Props) {
-  const [strategyType, setStrategyType] = useState<'ma_cross' | 'momentum' | 'mean_reversion'>('ma_cross');
+  const [strategyType, setStrategyType] = useState<'ma_cross' | 'momentum' | 'mean_reversion'>(
+    'ma_cross',
+  );
   const [stockCode, setStockCode] = useState('600519');
   const [startDate, setStartDate] = useState(getDefaultStartDate());
   const [endDate, setEndDate] = useState(getDefaultEndDate());
@@ -58,16 +63,16 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
   const handleTypeChange = (type: 'ma_cross' | 'momentum' | 'mean_reversion') => {
     setStrategyType(type);
     const defaults: Record<string, number> = {};
-    for (const p of (PARAM_CONFIG[type] ?? [])) defaults[p.key] = p.default;
+    for (const p of PARAM_CONFIG[type] ?? []) defaults[p.key] = p.default;
     setParams(defaults);
   };
 
   const handleParamChange = (key: string, val: string) => {
     const num = parseFloat(val);
-    if (!isNaN(num)) setParams(prev => ({ ...prev, [key]: num }));
+    if (!isNaN(num)) setParams((prev) => ({ ...prev, [key]: num }));
   };
 
-  const strategyLabel = STRATEGY_OPTIONS.find(o => o.value === strategyType)?.label ?? '';
+  const strategyLabel = STRATEGY_OPTIONS.find((o) => o.value === strategyType)?.label ?? '';
 
   const handleSubmit = () => {
     onSubmit({
@@ -88,8 +93,15 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
     <div className="quant-form">
       <div className="quant-form-group">
         <label>策略类型</label>
-        <select value={strategyType} onChange={e => handleTypeChange(e.target.value as typeof strategyType)}>
-          {STRATEGY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        <select
+          value={strategyType}
+          onChange={(e) => handleTypeChange(e.target.value as typeof strategyType)}
+        >
+          {STRATEGY_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
         </select>
       </div>
 
@@ -98,31 +110,31 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
         <input
           type="text"
           value={stockCode}
-          onChange={e => setStockCode(e.target.value)}
+          onChange={(e) => setStockCode(e.target.value)}
           placeholder="如 600519"
         />
       </div>
 
       <div className="quant-form-group">
         <label>开始日期</label>
-        <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+        <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
       </div>
 
       <div className="quant-form-group">
         <label>结束日期</label>
-        <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
+        <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
       </div>
 
       <div className="quant-form-divider" />
 
-      {paramFields.map(field => (
+      {paramFields.map((field) => (
         <div className="quant-form-group" key={field.key}>
           <label>{field.label}</label>
           <input
             type="number"
             value={params[field.key] ?? field.default}
             step={field.step ?? 1}
-            onChange={e => handleParamChange(field.key, e.target.value)}
+            onChange={(e) => handleParamChange(field.key, e.target.value)}
           />
         </div>
       ))}
@@ -135,7 +147,7 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
           type="number"
           value={initialCapital}
           step={100000}
-          onChange={e => setInitialCapital(parseFloat(e.target.value) || 0)}
+          onChange={(e) => setInitialCapital(parseFloat(e.target.value) || 0)}
         />
       </div>
 
@@ -145,7 +157,7 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
           type="number"
           value={commission}
           step={0.0001}
-          onChange={e => setCommission(parseFloat(e.target.value) || 0)}
+          onChange={(e) => setCommission(parseFloat(e.target.value) || 0)}
         />
       </div>
 

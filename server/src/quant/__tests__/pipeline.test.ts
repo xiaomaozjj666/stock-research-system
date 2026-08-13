@@ -2,11 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runQuantPipeline } from '../pipeline.js';
 import { fetchOHLCVData } from '../dataProvider.js';
 import { runBacktest } from '../backtestEngine.js';
-import {
-  parseStrategyInput,
-  orchestrate,
-  generateSummary,
-} from '../agents/orchestrator.js';
+import { parseStrategyInput, orchestrate, generateSummary } from '../agents/orchestrator.js';
 import type {
   AuditReport,
   BacktestResult,
@@ -84,9 +80,7 @@ function makeBacktest(): BacktestResult {
 beforeEach(() => {
   vi.clearAllMocks();
   mockedParse.mockImplementation((input) =>
-    typeof input === 'string'
-      ? { ...makeStrategy(), name: `解析:${input}` }
-      : input,
+    typeof input === 'string' ? { ...makeStrategy(), name: `解析:${input}` } : input,
   );
   mockedFetch.mockResolvedValue(makeBars(40));
   mockedRunBacktest.mockReturnValue(makeBacktest());

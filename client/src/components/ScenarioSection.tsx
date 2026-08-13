@@ -23,9 +23,7 @@ export default function ScenarioSection({ data }: Props) {
   return (
     <div className="card">
       <div className="section-title">情景推演</div>
-      <div className="scenario-subtitle">
-        基于专家情绪分布的概率加权分析
-      </div>
+      <div className="scenario-subtitle">基于专家情绪分布的概率加权分析</div>
 
       <div className="scenario-grid scenario-cards">
         {data.map((scenario, i) => (
@@ -37,7 +35,8 @@ export default function ScenarioSection({ data }: Props) {
               {(scenario.probability * 100).toFixed(0)}%
             </div>
             <div className="scenario-price-range">
-              目标价区间：¥{scenario.targetPriceRange?.low?.toFixed(0) || '—'} - ¥{scenario.targetPriceRange?.high?.toFixed(0) || '—'}
+              目标价区间：¥{scenario.targetPriceRange?.low?.toFixed(0) || '—'} - ¥
+              {scenario.targetPriceRange?.high?.toFixed(0) || '—'}
             </div>
 
             {scenario.keyAssumptions.length > 0 && (
@@ -78,9 +77,7 @@ export default function ScenarioSection({ data }: Props) {
         ))}
       </div>
 
-      <div className="scenario-disclaimer">
-        概率为主观估计，仅供参考
-      </div>
+      <div className="scenario-disclaimer">概率为主观估计，仅供参考</div>
     </div>
   );
 }

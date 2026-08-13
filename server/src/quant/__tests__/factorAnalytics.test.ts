@@ -140,8 +140,8 @@ describe('zToScore', () => {
 describe('validateFactorModel', () => {
   // 构造面板：factorA 与收益强正相关，factorB 噪声，factorC 负相关
   const panel: FactorPanelRow[] = [
-    { factors: { A: 5, B: 1, C: 1 }, forwardReturn: 0.30 },
-    { factors: { A: 4, B: 9, C: 2 }, forwardReturn: 0.20 },
+    { factors: { A: 5, B: 1, C: 1 }, forwardReturn: 0.3 },
+    { factors: { A: 4, B: 9, C: 2 }, forwardReturn: 0.2 },
     { factors: { A: 3, B: 3, C: 3 }, forwardReturn: 0.05 },
     { factors: { A: 2, B: 7, C: 4 }, forwardReturn: -0.15 },
     { factors: { A: 1, B: 2, C: 5 }, forwardReturn: -0.25 },

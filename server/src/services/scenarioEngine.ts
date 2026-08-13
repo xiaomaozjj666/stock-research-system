@@ -7,7 +7,13 @@
  *   - 目标价区间 = targetPriceRange（当前价 × (1+E[r]) × (1±band)）。
  * 不再使用原先的 0.4/0.3/0.3 魔法权重与 0.9/1.2 等随意目标价倍数。
  */
-import type { ExpertOpinion, FinancialData, ValuationData, StockInfo, NewsSignal } from '../types.js';
+import type {
+  ExpertOpinion,
+  FinancialData,
+  ValuationData,
+  StockInfo,
+  NewsSignal,
+} from '../types.js';
 import {
   expectedForwardReturnFromData,
   scenarioProbabilities,
@@ -24,11 +30,11 @@ export interface ScenarioResult {
 }
 
 /** 将概率（保留2位）归一化到 Σ=1，消除浮点误差累积 */
-function normalizeProbabilities(p: {
+function normalizeProbabilities(p: { optimistic: number; neutral: number; pessimistic: number }): {
   optimistic: number;
   neutral: number;
   pessimistic: number;
-}): { optimistic: number; neutral: number; pessimistic: number } {
+} {
   const o = Math.round(p.optimistic * 100) / 100;
   const n = Math.round(p.neutral * 100) / 100;
   const pe = Math.round(p.pessimistic * 100) / 100;
@@ -55,9 +61,10 @@ export function generateScenarios(
 
   // 2. PE 历史分位
   const peValues = valuation.historicalPE.map((h) => h.pe).sort((a, b) => a - b);
-  const pePercentile = peValues.length > 0
-    ? (peValues.filter((p) => p <= valuation.pe).length / peValues.length) * 100
-    : 50;
+  const pePercentile =
+    peValues.length > 0
+      ? (peValues.filter((p) => p <= valuation.pe).length / peValues.length) * 100
+      : 50;
 
   // 3. 严谨期望收益（因子模型 + 估值均值回复，可选叠加最新消息情绪 z）
   const { expectedReturn } = expectedForwardReturnFromData(
@@ -69,7 +76,12 @@ export function generateScenarios(
   );
 
   // 4. softmax 情景概率（叠加专家情绪微调 + 最新消息微调）
-  const probs = scenarioProbabilities(expectedReturn, pePercentile, sentimentTilt, news?.polarity ?? 0);
+  const probs = scenarioProbabilities(
+    expectedReturn,
+    pePercentile,
+    sentimentTilt,
+    news?.polarity ?? 0,
+  );
   const norm = normalizeProbabilities(probs);
 
   // 5. 收集支撑/反对论点（置信度阈值，与原逻辑一致）
@@ -130,7 +142,18 @@ function extractKeyAssumptions(
   scenario: 'optimistic' | 'pessimistic',
 ): string[] {
   const assumptions: string[] = [];
-  const themeKeywords = ['毛利率', 'ROE', '现金流', '增速', '估值', '行业', '竞争', '景气', '杠杆', '分红'];
+  const themeKeywords = [
+    '毛利率',
+    'ROE',
+    '现金流',
+    '增速',
+    '估值',
+    '行业',
+    '竞争',
+    '景气',
+    '杠杆',
+    '分红',
+  ];
   for (const keyword of themeKeywords) {
     const matchedArgs = args.filter((a) => a.text.includes(keyword));
     if (matchedArgs.length > 0) {
@@ -145,9 +168,11 @@ function extractKeyAssumptions(
   }
 
   if (assumptions.length < 3) {
-    const latestGrowth = n >= 2
-      ? ((financial.netProfit[n - 1] - financial.netProfit[n - 2]) / financial.netProfit[n - 2]) * 100
-      : 0;
+    const latestGrowth =
+      n >= 2
+        ? ((financial.netProfit[n - 1] - financial.netProfit[n - 2]) / financial.netProfit[n - 2]) *
+          100
+        : 0;
     const avgROE = financial.roe.reduce((a, b) => a + b, 0) / n;
     if (scenario === 'optimistic') {
       if (latestGrowth > 10) assumptions.push(`利润增速${latestGrowth.toFixed(1)}%保持强劲`);
@@ -166,13 +191,18 @@ function generateNeutralAssumptions(
   n: number,
 ): string[] {
   const assumptions: string[] = [];
-  const latestGrowth = n >= 2
-    ? ((financial.netProfit[n - 1] - financial.netProfit[n - 2]) / financial.netProfit[n - 2]) * 100
-    : 0;
+  const latestGrowth =
+    n >= 2
+      ? ((financial.netProfit[n - 1] - financial.netProfit[n - 2]) / financial.netProfit[n - 2]) *
+        100
+      : 0;
   const avgGM = financial.grossMargin.reduce((a, b) => a + b, 0) / n;
-  const pePercentile = valuation.historicalPE.length > 0
-    ? (valuation.historicalPE.filter((h) => h.pe <= valuation.pe).length / valuation.historicalPE.length) * 100
-    : 50;
+  const pePercentile =
+    valuation.historicalPE.length > 0
+      ? (valuation.historicalPE.filter((h) => h.pe <= valuation.pe).length /
+          valuation.historicalPE.length) *
+        100
+      : 50;
   assumptions.push(`利润增速维持当前水平（${latestGrowth.toFixed(1)}%）`);
   assumptions.push(`毛利率保持稳定（均值${avgGM.toFixed(1)}%）`);
   assumptions.push(`估值处于历史${pePercentile.toFixed(0)}%分位，中枢暂无明显迁移`);

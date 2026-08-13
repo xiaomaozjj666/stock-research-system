@@ -37,13 +37,24 @@ const valuation: ValuationData = {
   ps: 8,
   marketCap: 2000,
   historicalPE: [
-    { year: '2021', pe: 25 }, { year: '2022', pe: 24 }, { year: '2023', pe: 23 },
-    { year: '2024', pe: 22 }, { year: '2025', pe: 21 }, { year: '2026', pe: 20 },
+    { year: '2021', pe: 25 },
+    { year: '2022', pe: 24 },
+    { year: '2023', pe: 23 },
+    { year: '2024', pe: 22 },
+    { year: '2025', pe: 21 },
+    { year: '2026', pe: 20 },
   ],
   peerComparison: [],
 };
 
-const info: StockInfo = { code: '600519', name: '测试股', industry: '白酒', market: '上交所主板', listingDate: '', description: '' };
+const info: StockInfo = {
+  code: '600519',
+  name: '测试股',
+  industry: '白酒',
+  market: '上交所主板',
+  listingDate: '',
+  description: '',
+};
 
 describe('normalizeFactor', () => {
   it('neutral 处 desirability = 0.5', () => {
@@ -90,10 +101,17 @@ describe('extractFactors', () => {
     expect(normalizeFactor(gm.value, gm.direction, gm.neutral, gm.scale)).toBeGreaterThan(0.5);
   });
   it('高负债行业债务风险得分中性化（银行 91% 不应判为极差）', () => {
-    const bank = extractFactors(makeFinancial({ debtRatio: [90, 90, 91, 91, 91, 91] }), valuation, { ...info, industry: '银行' });
+    const bank = extractFactors(makeFinancial({ debtRatio: [90, 90, 91, 91, 91, 91] }), valuation, {
+      ...info,
+      industry: '银行',
+    });
     const debt = bank.find((f) => f.name === 'debtRiskScore')!;
     // 银行基准 92%：91% 在危险线(115%)之下，得部分分；制造业同负债则归零。
-    const asManufacturer = extractFactors(makeFinancial({ debtRatio: [91, 91, 91, 91, 91, 91] }), valuation, { ...info, industry: '制造业' });
+    const asManufacturer = extractFactors(
+      makeFinancial({ debtRatio: [91, 91, 91, 91, 91, 91] }),
+      valuation,
+      { ...info, industry: '制造业' },
+    );
     const debtM = asManufacturer.find((f) => f.name === 'debtRiskScore')!;
     expect(debt.value).toBeGreaterThan(debtM.value);
     expect(debt.value).toBeGreaterThan(0);
@@ -110,10 +128,17 @@ describe('buildFactorZScores', () => {
     expect(z.pePercentile).toBeGreaterThan(0);
   });
   it('截面路径：相对同业 z 标准化', () => {
-    const fs = extractFactors(makeFinancial(), { ...valuation, peerComparison: [
-      { name: 'A', code: '1', pe: 25, pb: 4, roe: 20, marketCap: 1000 },
-      { name: 'B', code: '2', pe: 30, pb: 4, roe: 20, marketCap: 1000 },
-    ] }, info);
+    const fs = extractFactors(
+      makeFinancial(),
+      {
+        ...valuation,
+        peerComparison: [
+          { name: 'A', code: '1', pe: 25, pb: 4, roe: 20, marketCap: 1000 },
+          { name: 'B', code: '2', pe: 30, pb: 4, roe: 20, marketCap: 1000 },
+        ],
+      },
+      info,
+    );
     const z = buildFactorZScores(fs, { roe: [20, 20] });
     // 本股 roe=30，同业=[20,20]，应为正 z
     expect(z.roe).toBeGreaterThan(0);

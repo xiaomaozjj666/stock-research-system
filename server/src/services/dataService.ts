@@ -13,7 +13,9 @@ export interface StockDataSet {
   valuation: ValuationData;
 }
 
-const CACHE_DIR = path.join(import.meta.dirname, '..', 'data', 'cache');
+// 缓存目录可被 DATA_CACHE_DIR 重定向（测试据此隔离到临时目录，避免污染真实缓存）
+const CACHE_DIR =
+  process.env.DATA_CACHE_DIR || path.join(import.meta.dirname, '..', 'data', 'cache');
 
 // 确保缓存目录存在（同步，模块加载时执行一次）
 if (!fs.existsSync(CACHE_DIR)) {
@@ -25,7 +27,10 @@ const CACHE_TTL = CACHE_TTL_HOURS * 60 * 60 * 1000;
 
 // 内存 LRU 缓存：避免热股票反复触发文件 I/O + JSON 解析。
 // 容量上限后淘汰最久未用；与文件缓存共用同一 TTL（CACHE_TTL）。
-interface MemCacheEntry { data: StockDataSet; timestamp: number; }
+interface MemCacheEntry {
+  data: StockDataSet;
+  timestamp: number;
+}
 const memCache = new Map<string, MemCacheEntry>();
 const MEM_CACHE_MAX = Number(process.env.MEM_CACHE_MAX) || 500;
 
@@ -52,11 +57,65 @@ function memCacheSet(code: string, data: StockDataSet): void {
   }
 }
 
+// === 磁盘缓存清理（H-05）：TTL 过期删除 + 数量上限淘汰，防止缓存文件无限累积撑爆磁盘 ===
+const FILE_CACHE_MAX = Number(process.env.FILE_CACHE_MAX) || 2000;
+/** 定期清理间隔：1 小时（过期项在读取时也会跳过，这里是兜底物理删除） */
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * 清理磁盘缓存：
+ * 1. 删除已过 TTL 的缓存文件与损坏文件；
+ * 2. 剩余数量超过 FILE_CACHE_MAX 时，按写入时间从最旧开始淘汰。
+ * best-effort：任何 IO 失败都静默降级，不影响主流程。
+ */
+export async function pruneFileCache(): Promise<{ removed: number }> {
+  let removed = 0;
+  try {
+    const files = (await fs.promises.readdir(CACHE_DIR)).filter((f) => f.endsWith('.json'));
+    const alive: { file: string; timestamp: number }[] = [];
+    for (const f of files) {
+      const full = path.join(CACHE_DIR, f);
+      try {
+        const parsed = JSON.parse(await fs.promises.readFile(full, 'utf-8')) as {
+          timestamp?: number;
+        };
+        if (typeof parsed.timestamp !== 'number' || Date.now() - parsed.timestamp > CACHE_TTL) {
+          await fs.promises.unlink(full);
+          removed += 1;
+        } else {
+          alive.push({ file: full, timestamp: parsed.timestamp });
+        }
+      } catch {
+        // 损坏/不可读的缓存文件：直接删除
+        await fs.promises.unlink(full).catch(() => {});
+        removed += 1;
+      }
+    }
+    if (alive.length > FILE_CACHE_MAX) {
+      alive.sort((a, b) => a.timestamp - b.timestamp);
+      for (const entry of alive.slice(0, alive.length - FILE_CACHE_MAX)) {
+        await fs.promises.unlink(entry.file).catch(() => {});
+        removed += 1;
+      }
+    }
+  } catch {
+    // 目录不存在或 IO 失败：静默降级
+  }
+  return { removed };
+}
+
+// 启动清理一次 + 每小时定期清理（测试环境不自动跑，避免测试改动真实缓存目录）
+if (process.env.NODE_ENV !== 'test') {
+  void pruneFileCache();
+  const pruneTimer = setInterval(() => void pruneFileCache(), PRUNE_INTERVAL_MS);
+  if (typeof pruneTimer.unref === 'function') pruneTimer.unref();
+}
+
 // 品牌名/常用名 → 上市简称 的别名映射。东方财富搜索 API 只认上市主体简称，
 // 用户输入品牌名（如「长鑫存储」）时需改写为上市主体名（「长鑫科技」）才能命中。
 export const SEARCH_ALIASES: Record<string, string> = {
-  '长鑫存储': '长鑫科技',
-  '长鑫': '长鑫科技',
+  长鑫存储: '长鑫科技',
+  长鑫: '长鑫科技',
 };
 
 // 上市窗口期临时前缀（C=上市后次日起 5 个交易日内，N=上市首日）仅表示
@@ -98,7 +157,7 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
     const [info, financial, valuation] = await Promise.all([
       fetchStockInfo(stockCode),
       fetchFinancialData(stockCode),
-      fetchValuationData(stockCode)
+      fetchValuationData(stockCode),
     ]);
     // 去除上市窗口期临时前缀（C/N），展示规范简称
     info.name = cleanDisplayName(info.name, info.code);
@@ -133,7 +192,7 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
       await fs.promises.writeFile(
         cacheFile,
         JSON.stringify({ data: dataSet, timestamp: Date.now() }, null, 2),
-        'utf-8'
+        'utf-8',
       );
     } catch (writeErr) {
       logger.warn('缓存写入失败', { stockCode, err: writeErr as Error });
@@ -146,20 +205,22 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
       return {
         info: MOUTAI_INFO,
         financial: MOUTAI_FINANCIAL,
-        valuation: MOUTAI_VALUATION
+        valuation: MOUTAI_VALUATION,
       };
     }
     throw new Error(`无法获取股票数据: ${stockCode}，${(error as Error).message}`);
   }
 }
 
-export async function getSupportedStocks(): Promise<{ code: string; name: string; industry: string }[]> {
+export async function getSupportedStocks(): Promise<
+  { code: string; name: string; industry: string }[]
+> {
   const stocks: { code: string; name: string; industry: string }[] = [];
 
   // 从缓存目录读取已查询过的股票（异步）
   try {
     if (fs.existsSync(CACHE_DIR)) {
-      const files = (await fs.promises.readdir(CACHE_DIR)).filter(f => f.endsWith('.json'));
+      const files = (await fs.promises.readdir(CACHE_DIR)).filter((f) => f.endsWith('.json'));
       const entries = await Promise.all(
         files.map(async (file) => {
           try {
@@ -170,7 +231,7 @@ export async function getSupportedStocks(): Promise<{ code: string; name: string
           } catch {
             return null;
           }
-        })
+        }),
       );
       for (const e of entries) {
         if (e) stocks.push(e);
@@ -181,7 +242,7 @@ export async function getSupportedStocks(): Promise<{ code: string; name: string
   }
 
   // 确保茅台始终在列表中
-  if (!stocks.find(s => s.code === '600519')) {
+  if (!stocks.find((s) => s.code === '600519')) {
     stocks.unshift({ code: '600519', name: '贵州茅台', industry: '白酒' });
   }
 
@@ -196,14 +257,14 @@ export async function searchStocks(keyword: string): Promise<{ code: string; nam
   try {
     const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=${searchToken}&count=10`;
     const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    const data = await response.json() as {
+    const data = (await response.json()) as {
       QuotationCodeTable?: { Data?: Array<{ MktNum: string; Code: string; Name: string }> };
     };
 
     if (data.QuotationCodeTable?.Data) {
-      const results = data.QuotationCodeTable.Data
-        .filter(item => item.MktNum === '0' || item.MktNum === '1')
-        .map(item => ({ code: item.Code, name: cleanDisplayName(item.Name, item.Code) }));
+      const results = data.QuotationCodeTable.Data.filter(
+        (item) => item.MktNum === '0' || item.MktNum === '1',
+      ).map((item) => ({ code: item.Code, name: cleanDisplayName(item.Name, item.Code) }));
       if (results.length > 0) return results;
     }
   } catch {
@@ -214,7 +275,8 @@ export async function searchStocks(keyword: string): Promise<{ code: string; nam
   try {
     const master = await loadStockMaster();
     const fuzzy = fuzzyMatch(query, master);
-    if (fuzzy.length > 0) return fuzzy.map(e => ({ code: e.code, name: cleanDisplayName(e.name, e.code) }));
+    if (fuzzy.length > 0)
+      return fuzzy.map((e) => ({ code: e.code, name: cleanDisplayName(e.name, e.code) }));
   } catch {
     /* 兜底失败，返回空 */
   }

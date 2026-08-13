@@ -11,7 +11,11 @@ import { fetchJson } from '../http.js';
  * 解构出 undefined、随后 `stdout.toString()` 崩溃。这里用 `promisify.custom` 复刻
  * 真实契约，并经由模块级 curlImpl 注册表控制每个用例的行为，全部调用记录在 callLog。
  */
-type CurlImpl = (file: string, args: string[], opts: unknown) => Promise<{ stdout: string; stderr: string }>;
+type CurlImpl = (
+  file: string,
+  args: string[],
+  opts: unknown,
+) => Promise<{ stdout: string; stderr: string }>;
 let curlImpl: CurlImpl = async () => ({ stdout: '', stderr: '' });
 const callLog: Array<{ file: string; args: string[]; opts: unknown }> = [];
 
@@ -38,7 +42,9 @@ function mockCurl(stdout: string, stderr = '') {
 }
 /** 让 curl 回退直接抛错（模拟 curl 进程失败） */
 function mockCurlError(err: Error) {
-  curlImpl = async () => { throw err; };
+  curlImpl = async () => {
+    throw err;
+  };
 }
 /** 让 curl 回退返回空响应（fetchJson 视为失败并继续重试） */
 function mockCurlEmpty() {
@@ -56,7 +62,10 @@ describe('fetchJson', () => {
   });
 
   it('fetch 成功时直接返回解析后的 JSON，不触达 curl', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: 1 }), { status: 200 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ ok: 1 }), { status: 200 })),
+    );
     const data = await fetchJson('https://example.com/api');
     expect(data).toEqual({ ok: 1 });
     // 成功路径不应触发 curl 回退
@@ -65,47 +74,72 @@ describe('fetchJson', () => {
   });
 
   it('非 2xx 响应视为失败并回退 curl', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 500 })),
+    );
     mockCurl(JSON.stringify({ fallback: true }));
     const data = await fetchJson('https://example.com/api');
-    expect(callLog.some(c => c.file === 'curl')).toBe(true);
+    expect(callLog.some((c) => c.file === 'curl')).toBe(true);
     expect(data).toEqual({ fallback: true });
   });
 
   it('fetch 抛错时回退到 curl 子进程', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('fetch failed'); }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('fetch failed');
+      }),
+    );
     mockCurl(JSON.stringify({ fromCurl: 1 }));
     const data = await fetchJson('https://example.com/api');
     expect(data).toEqual({ fromCurl: 1 });
-    expect(callLog.some(c => c.file === 'curl')).toBe(true);
+    expect(callLog.some((c) => c.file === 'curl')).toBe(true);
   });
 
   it('curl 返回空响应时视为失败（全部尝试失败则抛出）', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('fetch failed'); }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('fetch failed');
+      }),
+    );
     mockCurlEmpty();
     await expect(fetchJson('https://example.com/api', { retries: 0 })).rejects.toThrow();
   });
 
   it('fetch 与 curl 都失败时，抛出最后一次错误', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('fetch failed'); }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('fetch failed');
+      }),
+    );
     mockCurlError(new Error('curl error 56'));
-    await expect(fetchJson('https://example.com/api', { retries: 1 })).rejects.toThrow(/curl error 56/);
+    await expect(fetchJson('https://example.com/api', { retries: 1 })).rejects.toThrow(
+      /curl error 56/,
+    );
   });
 
   it('重试：前两次 fetch 失败，第三次成功', async () => {
     let calls = 0;
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      calls += 1;
-      if (calls < 3) throw new Error('transient');
-      return new Response(JSON.stringify({ attempt: calls }), { status: 200 });
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1;
+        if (calls < 3) throw new Error('transient');
+        return new Response(JSON.stringify({ attempt: calls }), { status: 200 });
+      }),
+    );
     const data = await fetchJson('https://example.com/api', { retries: 2 });
     expect(data).toEqual({ attempt: 3 });
     expect(calls).toBe(3);
   });
 
   it('透传自定义请求头给 fetch', async () => {
-    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => new Response('{}', { status: 200 }));
+    const fetchSpy = vi.fn(
+      async (_url: string, _init?: RequestInit) => new Response('{}', { status: 200 }),
+    );
     vi.stubGlobal('fetch', fetchSpy);
     await fetchJson('https://example.com/api', { headers: { 'User-Agent': 'test-agent' } });
     const init = (fetchSpy.mock.calls[0][1] ?? {}) as RequestInit;
@@ -113,10 +147,15 @@ describe('fetchJson', () => {
   });
 
   it('curl 回退同样透传自定义请求头', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('fetch failed'); }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('fetch failed');
+      }),
+    );
     mockCurl('{}');
     await fetchJson('https://example.com/api', { headers: { 'User-Agent': 'test-agent' } });
-    const curlCall = callLog.find(c => c.file === 'curl');
+    const curlCall = callLog.find((c) => c.file === 'curl');
     expect(curlCall).toBeDefined();
     // curl 参数形如 ['-s', '-m', '17', '-H', 'User-Agent: test-agent', <url>]
     const hIdx = curlCall!.args.indexOf('-H');

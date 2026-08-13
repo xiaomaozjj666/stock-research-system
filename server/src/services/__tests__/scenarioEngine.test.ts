@@ -31,8 +31,12 @@ const undervalued: ValuationData = {
   ps: 8,
   marketCap: 2000,
   historicalPE: [
-    { year: '2021', pe: 30 }, { year: '2022', pe: 28 }, { year: '2023', pe: 26 },
-    { year: '2024', pe: 24 }, { year: '2025', pe: 22 }, { year: '2026', pe: 15 },
+    { year: '2021', pe: 30 },
+    { year: '2022', pe: 28 },
+    { year: '2023', pe: 26 },
+    { year: '2024', pe: 24 },
+    { year: '2025', pe: 22 },
+    { year: '2026', pe: 15 },
   ],
   peerComparison: [],
 };
@@ -44,13 +48,24 @@ const overvalued: ValuationData = {
   ps: 8,
   marketCap: 2000,
   historicalPE: [
-    { year: '2021', pe: 20 }, { year: '2022', pe: 22 }, { year: '2023', pe: 24 },
-    { year: '2024', pe: 26 }, { year: '2025', pe: 28 }, { year: '2026', pe: 60 },
+    { year: '2021', pe: 20 },
+    { year: '2022', pe: 22 },
+    { year: '2023', pe: 24 },
+    { year: '2024', pe: 26 },
+    { year: '2025', pe: 28 },
+    { year: '2026', pe: 60 },
   ],
   peerComparison: [],
 };
 
-const info: StockInfo = { code: '600519', name: '测试股', industry: '白酒', market: '上交所主板', listingDate: '', description: '' };
+const info: StockInfo = {
+  code: '600519',
+  name: '测试股',
+  industry: '白酒',
+  market: '上交所主板',
+  listingDate: '',
+  description: '',
+};
 
 function opinion(sentiment: 'bullish' | 'neutral' | 'bearish'): ExpertOpinion {
   return {
@@ -70,7 +85,12 @@ describe('generateScenarios', () => {
 
   it('概率均 ∈ [0,1] 且和恰为 1', () => {
     for (const v of [undervalued, overvalued]) {
-      const s = generateScenarios([opinion('bullish'), opinion('neutral')], makeFinancial(), v, info);
+      const s = generateScenarios(
+        [opinion('bullish'), opinion('neutral')],
+        makeFinancial(),
+        v,
+        info,
+      );
       const sum = s.reduce((acc, x) => acc + x.probability, 0);
       expect(sum).toBeCloseTo(1, 6);
       for (const x of s) {
@@ -89,14 +109,24 @@ describe('generateScenarios', () => {
   });
 
   it('低估优质股：乐观概率 > 悲观概率', () => {
-    const s = generateScenarios([opinion('bullish'), opinion('bullish')], makeFinancial(), undervalued, info);
+    const s = generateScenarios(
+      [opinion('bullish'), opinion('bullish')],
+      makeFinancial(),
+      undervalued,
+      info,
+    );
     const opt = s.find((x) => x.name === '乐观')!.probability;
     const pes = s.find((x) => x.name === '悲观')!.probability;
     expect(opt).toBeGreaterThan(pes);
   });
 
   it('高估股：悲观概率 > 乐观概率', () => {
-    const s = generateScenarios([opinion('bearish'), opinion('bearish')], makeFinancial(), overvalued, info);
+    const s = generateScenarios(
+      [opinion('bearish'), opinion('bearish')],
+      makeFinancial(),
+      overvalued,
+      info,
+    );
     const opt = s.find((x) => x.name === '乐观')!.probability;
     const pes = s.find((x) => x.name === '悲观')!.probability;
     expect(pes).toBeGreaterThan(opt);

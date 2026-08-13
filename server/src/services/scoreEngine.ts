@@ -54,7 +54,10 @@ function equalWeights(factors: FactorDef[]): Record<string, number> {
 }
 
 /** 在给定权重中挑选本维度因子的权重（缺失则等权） */
-function resolveWeights(factors: FactorDef[], optimal?: Record<string, number>): Record<string, number> {
+function resolveWeights(
+  factors: FactorDef[],
+  optimal?: Record<string, number>,
+): Record<string, number> {
   if (!optimal) return equalWeights(factors);
   const picked: Record<string, number> = {};
   let any = false;
@@ -120,7 +123,8 @@ export function calculateScores(
   }
 
   // 防御性夹紧（理论上 zToScore 已保证，这里兜底非有限值）
-  const clamp = (v: number) => (isFinite(v) ? Math.max(0, Math.min(DIMENSION_MAX, Math.round(v))) : 0);
+  const clamp = (v: number) =>
+    isFinite(v) ? Math.max(0, Math.min(DIMENSION_MAX, Math.round(v))) : 0;
   void n; // 保留 n 以备未来维度内时间加权
   return {
     profit_quality: clamp(profit_quality),

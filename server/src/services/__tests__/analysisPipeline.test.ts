@@ -43,7 +43,11 @@ const sampleInfo: StockInfo = {
   description: '',
 };
 
-const sampleData: StockDataSet = { info: sampleInfo, financial: sampleFinancial, valuation: sampleValuation };
+const sampleData: StockDataSet = {
+  info: sampleInfo,
+  financial: sampleFinancial,
+  valuation: sampleValuation,
+};
 
 vi.mock('../dataService.js', () => ({
   getData: vi.fn(async () => sampleData),
@@ -162,7 +166,9 @@ describe('可选增强：知识图谱 / 行业轮动成功路径', () => {
     expect(stock.sectorRotation).toBeDefined();
     expect(stock.sectorRotation!.sector).toBe('白酒');
     expect(stock.sectorRotation!.rank).toBe(1);
-    expect(['overweight', 'neutral', 'underweight']).toContain(stock.sectorRotation!.recommendation);
+    expect(['overweight', 'neutral', 'underweight']).toContain(
+      stock.sectorRotation!.recommendation,
+    );
     expect(typeof stock.sectorRotation!.compositeScore).toBe('number');
     expect(typeof stock.sectorRotation!.industryBeta).toBe('number');
     expect(stock.sectorRotation!.date).toBe('2026-08-08');

@@ -1,11 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { backtestAuditor } from '../agents/backtestAuditor.js';
 import { dataEngineer } from '../agents/dataEngineer.js';
-import {
-  parseStrategyInput,
-  orchestrate,
-  generateSummary,
-} from '../agents/orchestrator.js';
+import { parseStrategyInput, orchestrate, generateSummary } from '../agents/orchestrator.js';
 import { strategyOptimizer } from '../agents/strategyOptimizer.js';
 import type {
   AuditReport,
@@ -109,10 +105,7 @@ describe('backtestAuditor', () => {
   });
 
   it('未来函数：乱序交易 → critical + 扣20分 + high 风险', () => {
-    const trades = [
-      makeTrade('2024-01-10', 'buy', 100),
-      makeTrade('2024-01-05', 'sell', 110),
-    ];
+    const trades = [makeTrade('2024-01-10', 'buy', 100), makeTrade('2024-01-05', 'sell', 110)];
     const report = backtestAuditor(makeBacktest({ trades }), makeStrategy());
     const check = report.checks.find((c) => c.name === '未来函数检查')!;
     expect(check.passed).toBe(false);
@@ -178,10 +171,7 @@ describe('backtestAuditor', () => {
   });
 
   it('幸存者偏差：总是 info 提示（含股票代码）', () => {
-    const report = backtestAuditor(
-      makeBacktest(),
-      makeStrategy({ stockCode: '000001' }),
-    );
+    const report = backtestAuditor(makeBacktest(), makeStrategy({ stockCode: '000001' }));
     const check = report.checks.find((c) => c.name === '幸存者偏差')!;
     expect(check.passed).toBe(true);
     expect(check.severity).toBe('info');
@@ -257,10 +247,7 @@ describe('backtestAuditor', () => {
   });
 
   it('可靠性分级：60~79 → 谨慎参考', () => {
-    const trades = [
-      makeTrade('2024-01-10', 'buy', 100),
-      makeTrade('2024-01-05', 'sell', 110),
-    ];
+    const trades = [makeTrade('2024-01-10', 'buy', 100), makeTrade('2024-01-05', 'sell', 110)];
     const report = backtestAuditor(
       makeBacktest({ trades, tradeCount: 10, annualizedReturn: 20 }),
       makeStrategy({
@@ -275,10 +262,7 @@ describe('backtestAuditor', () => {
   });
 
   it('可靠性分级：40~59 → 需要修正后重新验证', () => {
-    const trades = [
-      makeTrade('2024-01-10', 'buy', 100),
-      makeTrade('2024-01-05', 'sell', 110),
-    ];
+    const trades = [makeTrade('2024-01-10', 'buy', 100), makeTrade('2024-01-05', 'sell', 110)];
     const report = backtestAuditor(
       makeBacktest({ trades, tradeCount: 3, annualizedReturn: 60 }),
       makeStrategy(),
@@ -289,10 +273,7 @@ describe('backtestAuditor', () => {
   });
 
   it('可靠性分级：<40 → 不可信', () => {
-    const trades = [
-      makeTrade('2024-01-10', 'buy', 100),
-      makeTrade('2024-01-05', 'sell', 110),
-    ];
+    const trades = [makeTrade('2024-01-10', 'buy', 100), makeTrade('2024-01-05', 'sell', 110)];
     const report = backtestAuditor(
       makeBacktest({ trades, tradeCount: 3, annualizedReturn: 60 }),
       makeStrategy({
@@ -335,9 +316,7 @@ describe('dataEngineer', () => {
   });
 
   it('连续无重复的干净数据：100 分', () => {
-    const data = ['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'].map(
-      (d) => makeBar(d),
-    );
+    const data = ['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'].map((d) => makeBar(d));
     const report = dataEngineer(data);
     expect(report.overallScore).toBe(100);
     expect(report.totalRecords).toBe(4);
@@ -399,10 +378,7 @@ describe('dataEngineer', () => {
   });
 
   it('价格涨跌幅超 ±11% 记为异常值', () => {
-    const report = dataEngineer([
-      makeBar('2024-01-02', 100),
-      makeBar('2024-01-03', 120),
-    ]);
+    const report = dataEngineer([makeBar('2024-01-02', 100), makeBar('2024-01-03', 120)]);
     const outlier = report.outliers.find((o) => o.field === 'close')!;
     expect(outlier).toBeDefined();
     expect(outlier.value).toBe(20);
@@ -410,10 +386,7 @@ describe('dataEngineer', () => {
   });
 
   it('价格大跌同样触发异常值（负值）', () => {
-    const report = dataEngineer([
-      makeBar('2024-01-02', 100),
-      makeBar('2024-01-03', 80),
-    ]);
+    const report = dataEngineer([makeBar('2024-01-02', 100), makeBar('2024-01-03', 80)]);
     const outlier = report.outliers.find((o) => o.field === 'close')!;
     expect(outlier).toBeDefined();
     expect(outlier.value).toBe(-20);
@@ -431,18 +404,13 @@ describe('dataEngineer', () => {
   });
 
   it('前收盘价为0时跳过涨跌幅计算', () => {
-    const report = dataEngineer([
-      makeBar('2024-01-02', 0),
-      makeBar('2024-01-03', 100),
-    ]);
+    const report = dataEngineer([makeBar('2024-01-02', 0), makeBar('2024-01-03', 100)]);
     expect(report.outliers.some((o) => o.field === 'close')).toBe(false);
   });
 
   it('成交量超过平均值10倍记为异常值', () => {
     const dates = tradingWeekdays(11);
-    const data = dates.map((d, i) =>
-      makeBar(d, 100, i === 10 ? 200_000_000 : 1_000_000),
-    );
+    const data = dates.map((d, i) => makeBar(d, 100, i === 10 ? 200_000_000 : 1_000_000));
     const report = dataEngineer(data);
     const outlier = report.outliers.find((o) => o.field === 'volume')!;
     expect(outlier).toBeDefined();
@@ -526,9 +494,7 @@ describe('parseStrategyInput', () => {
 describe('orchestrate', () => {
   it('依次执行 数据检查→审计→优化 并汇报进度', async () => {
     const onProgress = vi.fn();
-    const data = ['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'].map(
-      (d) => makeBar(d),
-    );
+    const data = ['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'].map((d) => makeBar(d));
     const res = await orchestrate(makeStrategy(), data, makeBacktest(), onProgress);
 
     expect(res.dataQuality.overallScore).toBe(100);
@@ -556,7 +522,7 @@ describe('orchestrate', () => {
 // ---------------------------------------------------------------------------
 
 describe('generateSummary', () => {
-  const dq = (overallScore: number) => ({ overallScore } as DataQualityReport);
+  const dq = (overallScore: number) => ({ overallScore }) as DataQualityReport;
   const opt = (count: number) =>
     ({ suggestions: Array.from({ length: count }, () => ({})) }) as unknown as OptimizationReport;
 
@@ -648,7 +614,13 @@ describe('strategyOptimizer', () => {
     it('回撤在 15%~40% 区间线性扣分，15% 满分、40% 零分', () => {
       const run = (maxDrawdown: number) =>
         strategyOptimizer(
-          makeBacktest({ annualizedReturn: 0, sharpeRatio: 0, maxDrawdown, winRate: 0, profitFactor: 0 }),
+          makeBacktest({
+            annualizedReturn: 0,
+            sharpeRatio: 0,
+            maxDrawdown,
+            winRate: 0,
+            profitFactor: 0,
+          }),
           makeAudit(),
           makeStrategy(),
         ).performanceScore;
@@ -725,9 +697,7 @@ describe('strategyOptimizer', () => {
           params: { shortPeriod: 20, longPeriod: 20, buyThreshold: 5, someParam: 10 },
         }),
       );
-      const byParam = new Map(
-        parameterSensitivity.map((p) => [p.param, p]),
-      );
+      const byParam = new Map(parameterSensitivity.map((p) => [p.param, p]));
       // 短期周期：winRate 偏离 50 大于 15 → high
       expect(byParam.get('shortPeriod')).toMatchObject({
         currentValue: 20,
@@ -786,10 +756,7 @@ describe('strategyOptimizer', () => {
     const report = strategyOptimizer(
       {
         ...rest,
-        trades: [
-          makeTrade('2024-01-02', 'buy', 100),
-          makeTrade('2024-01-05', 'buy', 100),
-        ],
+        trades: [makeTrade('2024-01-02', 'buy', 100), makeTrade('2024-01-05', 'buy', 100)],
       } as BacktestResult,
       makeAudit(),
       makeStrategy(),
@@ -876,11 +843,7 @@ describe('strategyOptimizer', () => {
     });
 
     it('无交易时平均持仓天数为 0', () => {
-      const { riskMetrics } = strategyOptimizer(
-        makeBacktest(),
-        makeAudit(),
-        makeStrategy(),
-      );
+      const { riskMetrics } = strategyOptimizer(makeBacktest(), makeAudit(), makeStrategy());
       expect(riskMetrics.avgHoldingDays).toBe(0);
     });
   });

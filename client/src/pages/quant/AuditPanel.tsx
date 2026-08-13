@@ -34,22 +34,31 @@ export default function AuditPanel({ data }: Props) {
       <h3 className="quant-panel-title">回测审计报告</h3>
 
       <div className="quant-audit-score-block">
-        <div className="quant-audit-score">{data.riskScore}<span className="quant-audit-max">/100</span></div>
+        <div className="quant-audit-score">
+          {data.riskScore}
+          <span className="quant-audit-max">/100</span>
+        </div>
         <div className="quant-audit-label">风险评分</div>
       </div>
 
       <div className="quant-audit-risks">
         <div className="quant-audit-risk-item">
           <span className="quant-audit-risk-label">未来函数</span>
-          <span className={riskChipCls(data.futureFunctionRisk)}>{riskLabel(data.futureFunctionRisk)}</span>
+          <span className={riskChipCls(data.futureFunctionRisk)}>
+            {riskLabel(data.futureFunctionRisk)}
+          </span>
         </div>
         <div className="quant-audit-risk-item">
           <span className="quant-audit-risk-label">过拟合</span>
-          <span className={riskChipCls(data.overfittingRisk)}>{riskLabel(data.overfittingRisk)}</span>
+          <span className={riskChipCls(data.overfittingRisk)}>
+            {riskLabel(data.overfittingRisk)}
+          </span>
         </div>
         <div className="quant-audit-risk-item">
           <span className="quant-audit-risk-label">幸存者偏差</span>
-          <span className={riskChipCls(data.survivorshipBias)}>{riskLabel(data.survivorshipBias)}</span>
+          <span className={riskChipCls(data.survivorshipBias)}>
+            {riskLabel(data.survivorshipBias)}
+          </span>
         </div>
       </div>
 
@@ -61,7 +70,9 @@ export default function AuditPanel({ data }: Props) {
               <li key={i} className="quant-check-item">
                 <span
                   className="quant-check-icon"
-                  style={{ color: check.passed ? 'var(--color-positive)' : severityColor(check.severity) }}
+                  style={{
+                    color: check.passed ? 'var(--color-positive)' : severityColor(check.severity),
+                  }}
                 >
                   {check.passed ? '✓' : severityIcon(check.severity)}
                 </span>

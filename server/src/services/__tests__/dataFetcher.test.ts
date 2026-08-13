@@ -70,7 +70,12 @@ describe('fetchStockInfo', () => {
       data: { f57: '600519', f58: '贵州茅台', f127: '白酒' },
     });
     const info = await fetchStockInfo('600519');
-    expect(info).toMatchObject({ code: '600519', name: '贵州茅台', industry: '白酒', market: '上交所主板' });
+    expect(info).toMatchObject({
+      code: '600519',
+      name: '贵州茅台',
+      industry: '白酒',
+      market: '上交所主板',
+    });
   });
 
   it('深交所代码市场标记为深交所主板', async () => {
@@ -131,7 +136,9 @@ describe('fetchFinancialData', () => {
   it('主数据源无数据时回退到单年快照', async () => {
     mockFetchJson
       .mockResolvedValueOnce({ success: false, result: { data: [] } }) // 主源失败
-      .mockResolvedValueOnce({ data: { f173: 1e9, f187: 1e8, f188: 80, f190: 40, f191: 20, f192: 1, f193: 5e9, f162: 50 } }); // push2 兜底
+      .mockResolvedValueOnce({
+        data: { f173: 1e9, f187: 1e8, f188: 80, f190: 40, f191: 20, f192: 1, f193: 5e9, f162: 50 },
+      }); // push2 兜底
     const f = await fetchFinancialData('600519');
     expect(f.years).toHaveLength(1);
     expect(f.revenue[0]).toBe(10);
