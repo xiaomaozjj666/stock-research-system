@@ -4540,3 +4540,70 @@ tr:hover td {
   font-size: 13px;
   margin: 8px 0;
 }
+
+/* === 体验细节：回到顶部 / 页面占位 / 打印 === */
+.back-top {
+  position: fixed;
+  right: 24px;
+  bottom: 28px;
+  z-index: 200;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.back-top:hover {
+  background: var(--accent);
+  color: var(--text-inverse);
+  transform: translateY(-2px);
+}
+.page-suspense {
+  padding: 60px 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* 打印：研究报告可打印（隐藏交互元素，卡片不拆页） */
+@media print {
+  .navbar,
+  .tab-bar,
+  .report-nav,
+  .mobile-nav,
+  .back-top,
+  .chat-input-area,
+  .chat-header,
+  .chat-enhance-toggle,
+  .history-actions,
+  .history-open,
+  .history-delete,
+  .btn-primary,
+  .btn-ghost,
+  .stock-search-area,
+  .search-dropdown {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+  .card,
+  .report-section,
+  .chart-card,
+  .scenario-card,
+  .strategy-card {
+    break-inside: avoid;
+    box-shadow: none;
+  }
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
