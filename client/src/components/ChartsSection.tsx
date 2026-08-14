@@ -347,9 +347,10 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
       <div className="section-title">可视化分析</div>
       <div className="charts-grid">
         {hasFinanceData && (
-          <div className="chart-card">
+          <div className="chart-card chart-card-wide">
             <h4>营收与利润趋势</h4>
-            <EChart option={revenueChart} style={{ height: 280 }} />
+            {/* 主图：跨整行、更高，承载最丰富的时间序列信息 */}
+            <EChart option={revenueChart} style={{ height: 320 }} />
           </div>
         )}
         {hasFinanceData && (

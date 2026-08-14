@@ -643,11 +643,14 @@ tr:hover td { background: var(--bg-card-hover); }
   font-weight: 600;
 }
 
-/* ===== Charts Section ===== */
+/* ===== Charts Section =====
+ * 排布：主图（营收与利润趋势）跨整行放大，其余图表两两配对成行；
+ * 窄屏（≤768px）自动降为单列（见底部媒体查询）。 */
 .charts-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-lg);
+  align-items: stretch;
 }
 .chart-card {
   background: var(--bg-card);
@@ -655,6 +658,7 @@ tr:hover td { background: var(--bg-card-hover); }
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
   transition: border-color var(--duration-normal) var(--ease-out);
+  min-width: 0;
 }
 .chart-card:hover { border-color: var(--border-hover); }
 .chart-card h4 {
@@ -663,6 +667,7 @@ tr:hover td { background: var(--bg-card-hover); }
   color: var(--text-secondary);
   margin-bottom: var(--space-md);
 }
+.chart-card-wide { grid-column: 1 / -1; }
 
 /* ===== Scoring Table ===== */
 .scoring-row {
