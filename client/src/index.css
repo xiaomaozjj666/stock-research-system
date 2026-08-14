@@ -3804,19 +3804,21 @@ tr:hover td {
   margin-top: 10px;
 }
 .chat-quick-item {
-  /* 快捷提问用主题青色系（默认 chip-neutral 是蓝色 info 系，与整体青色主题不搭） */
-  background: var(--accent-dim);
-  color: var(--accent);
-  border: 1px solid rgba(45, 212, 191, 0.25);
-  border-radius: var(--radius-pill);
+  /* 与全站标签统一风格（hot-stock-tag 同款）：中性深底 + 悬停变青，
+     避免独立的自创配色破坏整体主题语言 */
   padding: 4px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: var(--font-main);
   transition: all var(--duration-fast) var(--ease-out);
 }
 .chat-quick-item:hover {
-  background: rgba(45, 212, 191, 0.2);
   border-color: var(--accent);
-  color: var(--accent-hover);
-  transform: translateY(-1px);
+  color: var(--accent);
 }
 .chat-row {
   display: flex;
