@@ -63,7 +63,17 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
     animation: true,
     animationDuration: 1500,
     animationEasing: 'cubicOut' as const,
-    tooltip: { trigger: 'axis' as const },
+    tooltip: {
+      trigger: 'axis' as const,
+      // 单位标注：营收/净利润均为亿元（专业图表 tooltip 必带量纲）
+      formatter: (params: { seriesName: string; value: number; marker: string }[]) => {
+        let s = '';
+        for (const p of params) {
+          s += `${p.marker} ${p.seriesName}: ${p.value} 亿元<br/>`;
+        }
+        return s;
+      },
+    },
     legend: { data: ['营业收入', '净利润'], textStyle: chartTextStyle, top: 0 },
     grid: { left: 60, right: 60, top: 40, bottom: 30 },
     xAxis: {
@@ -153,18 +163,31 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
       },
     },
     legend: { data: ['毛利率', '净利率', 'ROE'], textStyle: chartTextStyle, top: 0 },
-    grid: { left: 50, right: 20, top: 40, bottom: 30 },
+    // 双轴：毛利率/净利率（左轴 %）与 ROE（右轴 %）量纲接近但分布不同，
+    // 单轴会把低值线压扁（参考专业金融图表的 axis split）
+    grid: { left: 50, right: 50, top: 40, bottom: 30 },
     xAxis: {
       type: 'category' as const,
       data: years,
       axisLine: { lineStyle: { color: borderDefault } },
       axisLabel: chartTextStyle,
     },
-    yAxis: {
-      type: 'value' as const,
-      axisLabel: { ...chartTextStyle, formatter: '{value}%' },
-      splitLine: { lineStyle: { color: borderDefault, type: 'dashed' } },
-    },
+    yAxis: [
+      {
+        type: 'value' as const,
+        name: '毛利率/净利率',
+        nameTextStyle: chartTextStyle,
+        axisLabel: { ...chartTextStyle, formatter: '{value}%' },
+        splitLine: { lineStyle: { color: borderDefault, type: 'dashed' } },
+      },
+      {
+        type: 'value' as const,
+        name: 'ROE',
+        nameTextStyle: chartTextStyle,
+        axisLabel: { ...chartTextStyle, formatter: '{value}%' },
+        splitLine: { show: false },
+      },
+    ],
     series: [
       {
         name: '毛利率',
@@ -185,6 +208,7 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
       {
         name: 'ROE',
         type: 'line',
+        yAxisIndex: 1,
         data: roe,
         smooth: true,
         lineStyle: { color: colorWarning, width: 2 },
@@ -226,6 +250,14 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
           itemStyle: { color: peerColors[i], borderRadius: [4, 4, 0, 0] },
         })),
         barWidth: '40%',
+        // 柱顶数值标签：对比图直接读数是基础要求
+        label: {
+          show: true,
+          position: 'top',
+          color: textSecondary,
+          fontSize: 10,
+          formatter: (p: { value: number }) => String(Math.round(p.value)),
+        },
       },
     ],
   };
@@ -269,6 +301,8 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
             areaStyle: { color: accentDim },
             lineStyle: { color: accent, width: 2 },
             itemStyle: { color: accent },
+            // 顶点数值标签：直接读出各维度得分
+            label: { show: true, fontSize: 11, color: textSecondary },
           },
         ],
       },
