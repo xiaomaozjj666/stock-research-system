@@ -25,10 +25,11 @@ import ChatPanel from './components/ChatPanel';
 import { useScrollReveal } from './hooks/useScrollReveal';
 import { useCountUp } from './hooks/useCountUp';
 
-// 路由级懒加载：减小首屏体积，量化/对比/模拟盘页按需加载
+// 路由级懒加载：减小首屏体积，量化/对比/模拟盘/历史页按需加载
 const QuantPage = lazy(() => import('./pages/quant/QuantPage'));
 const ComparisonView = lazy(() => import('./components/ComparisonView'));
 const PaperTradingPage = lazy(() => import('./pages/paper/PaperTradingPage'));
+const HistoryPage = lazy(() => import('./pages/history/HistoryPage'));
 
 /* ===== RevealSection wrapper ===== */
 function RevealSection({
@@ -103,7 +104,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState('');
   const [activeTab, setActiveTab] = useState<
-    'research' | 'quant' | 'compare' | 'watchlist' | 'paper' | 'chat'
+    'research' | 'quant' | 'compare' | 'watchlist' | 'paper' | 'chat' | 'history'
   >('research');
   const [scrollProgress, setScrollProgress] = useState(0);
   /** 最近一次分析的代码，用于失败后一键重试 */
@@ -248,6 +249,12 @@ function App() {
           onClick={() => setActiveTab('chat')}
         >
           研究助手
+        </button>
+        <button
+          className={`tab ${activeTab === 'history' ? 'active' : ''}`}
+          onClick={() => setActiveTab('history')}
+        >
+          历史
         </button>
       </div>
 
@@ -474,6 +481,16 @@ function App() {
         {activeTab === 'watchlist' && <WatchlistPage />}
         {activeTab === 'paper' && <PaperTradingPage />}
         {activeTab === 'chat' && <ChatPanel />}
+        {activeTab === 'history' && (
+          <HistoryPage
+            onOpenHistory={(result) => {
+              // 回看历史：恢复完整分析结果并切回深度研究页渲染
+              setAnalysisResult(result);
+              setError(null);
+              setActiveTab('research');
+            }}
+          />
+        )}
       </Suspense>
     </div>
   );

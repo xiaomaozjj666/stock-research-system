@@ -3,6 +3,8 @@ import type {
   AnalysisResult,
   AuditEntry,
   AuditQueryFilter,
+  HistoryItem,
+  HistorySummary,
   IntlFundamentalsResult,
   IntlMarket,
   PaperEquityPoint,
@@ -645,5 +647,32 @@ export async function getIntlFundamentals(
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '港美股数据获取失败');
+  }
+}
+
+// === 研究历史记录（分析结果自动入库，前端列表/回看/删除） ===
+export async function fetchHistoryList(limit = 50): Promise<HistorySummary[]> {
+  try {
+    const response = await api.get('/history', { params: { limit }, timeout: 15000 });
+    return response.data.items;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '历史记录读取失败');
+  }
+}
+
+export async function fetchHistoryDetail(id: string): Promise<HistoryItem> {
+  try {
+    const response = await api.get(`/history/${id}`, { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '历史记录读取失败');
+  }
+}
+
+export async function deleteHistoryItem(id: string): Promise<void> {
+  try {
+    await api.delete(`/history/${id}`, { timeout: 15000 });
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '历史记录删除失败');
   }
 }

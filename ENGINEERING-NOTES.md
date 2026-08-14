@@ -205,3 +205,12 @@
 - **研究助手主题**：ChatPanel/ResearchEnhance 的样式（index.css 2428 起）历史上是**亮色硬编码**（白底证据卡、`#f1f5f9` 浅灰气泡、`#e2e8f0` badge、`--color-primary/--bg-surface/--border-color` 不存在的变量 + 浅色 fallback），在深色界面里形成"亮色孤岛"。已整体重写接入深色变量体系（`--bg-card/--bg-secondary/--accent/语义色 dim`；A 股红涨绿跌语义保留：看多红、看空绿）。注意：**CSS 注释里不能出现 `*/` 序列**（lightningcss minify 会提前终止注释导致构建失败）。
 - **交互完善**（ChatPanel）：Enter 发送 / Shift+Enter 换行（替代 Ctrl+Enter）；空输入禁用发送按钮；"清空"按钮（仅清前端显示，服务端会话记忆保留）；助手消息 hover 显示"复制"按钮（clipboard API + 已复制反馈）。ChatPanel.test.tsx 增至 6 用例。
 - **验证**：807 tests 全绿（+7 新用例）/ client build OK（新产物无 echarts-for-react/size-sensor）/ E2E 9/9 / 双端 tsc / lint / format:check 全过。
+
+## 2026-08-14 研究历史记录功能落地记录
+
+- **后端**：`services/historyService.ts`——分析结果落盘 `server/src/data/history.json`（`HISTORY_FILE` env 可重定向，与 watchlist/paper/audit 同模式）；**同股票代码去重更新**（id 保留、createdAt 刷新，每只股票仅一条最新记录）；容量上限 `MAX_HISTORY_ITEMS=100`（超出按 createdAt 倒序淘汰最旧）；"临时文件 + 原子 rename"写入；损坏文件/写盘失败静默降级。列表接口瘦身（不含完整 result），详情接口返回 `result` 供前端恢复研究报告渲染。
+- **自动入库**：`/api/analyze` 与 `/api/analyze/stream` 成功路径均调用 `persistAnalysisHistory()`（从 `result.stock_pool[0]` 提取摘要；任何失败静默，不阻断分析响应）。
+- **路由**：`GET /api/history?limit=`（列表倒序）、`GET /api/history/:id`（详情含 result）、`DELETE /api/history/:id`；OpenAPI 契约同步补齐（`/api/history` + `/api/history/{id}`）。
+- **前端**：新增「历史」tab（第 7 个，懒加载 `pages/history/HistoryPage.tsx`）——列表（名称/代码/行业/评级徽章/评分/时间）、「查看」拉取详情并恢复完整研究报告（切回深度研究页渲染）、「删除」即时移除；评级徽章用语义色（优先跟踪=绿 / 持续观察=蓝 / 谨慎观望=黄 / 建议规避=红）。
+- **测试**：`historyService.test.ts`（8 用例：增删查/去重/容量淘汰/损坏容错/写失败/limit 钳制）+ `history.routes.test.ts`（5 用例 CRUD 路由）+ `HistoryPage.test.tsx`（3 用例列表/查看回调/删除）；e2e「全部 Tab」用例补历史页。
+- **验证**：823 tests 全绿（+16 新用例）/ client build OK / E2E 9/9 / 双端 tsc / lint / format:check 全过。

@@ -2570,6 +2570,45 @@ tr:hover td { background: var(--bg-card-hover); }
   border-radius: var(--radius-sm); padding: 6px 10px;
 }
 
+/* === 研究历史页 === */
+.history-page { max-width: 880px; margin: 0 auto; padding: 24px 20px 60px; }
+.history-header h2 { margin: 0 0 6px; font-size: 22px; color: var(--text-primary); }
+.history-sub { margin: 0 0 18px; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.history-empty { text-align: center; color: var(--text-muted); padding: 48px 0; font-size: 14px; }
+.history-empty-hint { font-size: 12px; margin-top: 6px; }
+.history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.history-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--bg-card); border: 1px solid var(--border-default);
+  border-radius: var(--radius-md); padding: 12px 14px;
+  transition: border-color var(--duration-fast);
+}
+.history-item:hover { border-color: var(--border-hover); }
+.history-item-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.history-stock { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.history-name { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.history-code { font-size: 12px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.history-industry {
+  font-size: 11px; color: var(--text-secondary); background: var(--bg-secondary);
+  border: 1px solid var(--border-default); border-radius: var(--radius-pill);
+  padding: 1px 8px;
+}
+.history-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.history-rating {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: var(--radius-pill);
+}
+.history-rating-positive { background: var(--color-positive-dim); color: var(--color-positive); }
+.history-rating-info { background: var(--color-info-dim); color: var(--color-info); }
+.history-rating-warn { background: var(--color-warning-dim); color: var(--color-warning); }
+.history-rating-negative { background: var(--color-negative-dim); color: var(--color-negative); }
+.history-score { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.history-time { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.history-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.history-open { font-size: 12px; padding: 4px 12px; }
+.history-delete { font-size: 12px; padding: 4px 12px; color: var(--color-negative); }
+.history-delete:hover { border-color: var(--color-negative); }
+.history-delete:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* === 模拟盘页面 === */
 .paper-page { max-width: 980px; margin: 0 auto; padding: 24px 20px 60px; }
 .paper-header h2 { margin: 0 0 6px; font-size: 22px; color: var(--text-primary); }

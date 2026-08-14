@@ -15,7 +15,7 @@ test.describe('应用加载与导航', () => {
     await expect(page.getByPlaceholder(/输入股票代码或名称/)).toBeVisible();
   });
 
-  test('六个 Tab 均可切换并渲染对应页面标题', async ({ page }) => {
+  test('全部 Tab 均可切换并渲染对应页面标题', async ({ page }) => {
     await page.goto('/');
 
     // 深度研究（默认 tab，首屏即渲染搜索区）
@@ -40,6 +40,10 @@ test.describe('应用加载与导航', () => {
     // 研究助手
     await page.getByRole('button', { name: '研究助手' }).click();
     await expect(page.getByRole('heading', { name: '研究助手' })).toBeVisible();
+
+    // 历史（懒加载）
+    await page.getByRole('button', { name: '历史' }).click();
+    await expect(page.getByRole('heading', { name: '研究历史' })).toBeVisible();
   });
 });
 
