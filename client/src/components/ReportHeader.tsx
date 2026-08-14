@@ -13,6 +13,9 @@ interface StockData {
 interface ReportHeaderProps {
   data: StockData;
   research_confidence?: string;
+  /** 完整分析结果（导出 Markdown 用） */
+  result?: unknown;
+  onExport?: () => void;
 }
 
 function getRatingClass(rating: string) {
@@ -29,7 +32,11 @@ function formatMarketCap(cap?: number) {
   return cap.toFixed(0) + ' 亿';
 }
 
-export default function ReportHeader({ data, research_confidence }: ReportHeaderProps) {
+export default function ReportHeader({
+  data,
+  research_confidence,
+  onExport,
+}: ReportHeaderProps) {
   return (
     <div className="card report-header">
       <div className="report-header-top">
@@ -59,6 +66,11 @@ export default function ReportHeader({ data, research_confidence }: ReportHeader
             <div className="confidence-tag">研究置信度：{research_confidence}</div>
           )}
         </div>
+        {onExport && (
+          <button className="btn-ghost report-export-btn" onClick={onExport} title="导出为 Markdown">
+            导出报告
+          </button>
+        )}
       </div>
     </div>
   );

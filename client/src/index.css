@@ -4607,3 +4607,72 @@ tr:hover td {
     grid-template-columns: 1fr;
   }
 }
+
+/* === Toast 轻提示 === */
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-md);
+  animation: toast-in var(--duration-normal) var(--ease-out);
+}
+.toast-success { border-color: var(--color-positive); color: var(--color-positive); }
+.toast-info { border-color: var(--color-info); color: var(--color-info); }
+.toast-error { border-color: var(--color-negative); color: var(--color-negative); }
+.toast-close {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0 2px;
+}
+.toast-close:hover { color: var(--text-primary); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* === 报告导出按钮 === */
+.report-export-btn { font-size: 12px; padding: 4px 12px; align-self: flex-start; flex-shrink: 0; }
+
+/* === 自选股异动预警 === */
+.watchlist-monitor { flex-shrink: 0; }
+.watchlist-alerts { margin-top: 16px; }
+.watchlist-alerts-empty {
+  font-size: 12px; color: var(--text-muted);
+  background: var(--bg-secondary); border: 1px solid var(--border-default);
+  border-radius: var(--radius-md); padding: 10px 14px;
+}
+.watchlist-alerts-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.watchlist-alert {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; border-radius: var(--radius-md);
+  border: 1px solid var(--border-default); font-size: 13px;
+  color: var(--text-primary); background: var(--bg-card);
+}
+.watchlist-alert-level { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: var(--radius-pill); }
+.watchlist-alert.alert-bull { border-left: 3px solid var(--color-negative); }
+.watchlist-alert.alert-bull .watchlist-alert-level { background: var(--color-negative-dim); color: var(--color-negative); }
+.watchlist-alert.alert-bear { border-left: 3px solid var(--color-positive); }
+.watchlist-alert.alert-bear .watchlist-alert-level { background: var(--color-positive-dim); color: var(--color-positive); }
+.watchlist-alert.alert-impact { border-left: 3px solid var(--color-warning); }
+.watchlist-alert.alert-impact .watchlist-alert-level { background: var(--color-warning-dim); color: var(--color-warning); }
+.watchlist-alert-stock b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.watchlist-alert-detail { flex: 1; min-width: 120px; color: var(--text-secondary); }
+.watchlist-alert-meta { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
