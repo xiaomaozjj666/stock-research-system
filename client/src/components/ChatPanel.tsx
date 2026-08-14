@@ -320,7 +320,14 @@ export default function ChatPanel() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
-          rows={2}
+          rows={1}
+          // 单行高度 + 输入时自动增高（主流聊天 UI 行为）：
+          // 固定 rows=2 时单行文字贴顶、下方大片留白，文字不居中
+          onInput={(e) => {
+            const el = e.currentTarget;
+            el.style.height = 'auto';
+            el.style.height = `${el.scrollHeight}px`;
+          }}
         />
         <button
           className="btn-primary chat-send"

@@ -4082,9 +4082,13 @@ tr:hover td {
   padding: 9px 12px;
   font-family: inherit;
   font-size: 14px;
+  line-height: 20px;
   background: var(--bg-input);
   color: var(--text-primary);
   outline: none;
+  min-height: 40px;
+  max-height: 120px;
+  overflow-y: auto;
   transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
 }
 .chat-input:focus {
