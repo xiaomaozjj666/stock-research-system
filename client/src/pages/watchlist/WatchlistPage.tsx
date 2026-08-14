@@ -4,10 +4,12 @@ import {
   addToWatchlist,
   removeFromWatchlist,
   runWatchlistNewsBacktest,
+  monitorWatchlist,
 } from '../../api/client';
-import type { WatchlistNewsBacktestReport } from '../../types';
+import type { WatchlistNewsBacktestReport, WatchlistAlert } from '../../types';
 import { normalizeApiError } from '../../api/client';
 import NewsPostureHeatBar from '../../components/NewsPostureHeatBar';
+import { useToast } from '../../components/Toast';
 
 function polarityLabel(p: number): { text: string; cls: string } {
   if (p > 0.15) return { text: '偏多', cls: 'bull' };
@@ -15,12 +17,22 @@ function polarityLabel(p: number): { text: string; cls: string } {
   return { text: '中性', cls: 'neutral' };
 }
 
+/** 预警级别 → 文案与样式（A 股习惯：红=看多、绿=看空） */
+const ALERT_LEVEL: Record<WatchlistAlert['level'], { text: string; cls: string }> = {
+  'strong-bull': { text: '强烈看多', cls: 'alert-bull' },
+  'strong-bear': { text: '强烈看空', cls: 'alert-bear' },
+  'high-impact': { text: '高影响新闻', cls: 'alert-impact' },
+};
+
 export default function WatchlistPage() {
+  const { showToast } = useToast();
   const [codes, setCodes] = useState<string[]>([]);
   const [input, setInput] = useState('');
   const [loadingList, setLoadingList] = useState(false);
   const [running, setRunning] = useState(false);
+  const [monitoring, setMonitoring] = useState(false);
   const [report, setReport] = useState<WatchlistNewsBacktestReport | null>(null);
+  const [alerts, setAlerts] = useState<WatchlistAlert[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadList = useCallback(async () => {
@@ -82,6 +94,28 @@ export default function WatchlistPage() {
     }
   }, [codes]);
 
+  /** 监控异动：重跑批量新闻回测并检出预警（复用后端 detectAlerts） */
+  const handleMonitor = useCallback(async () => {
+    if (codes.length === 0) {
+      setError('自选股清单为空，请先添加股票');
+      return;
+    }
+    setMonitoring(true);
+    setError(null);
+    try {
+      const res = await monitorWatchlist();
+      setAlerts(res.alerts);
+      showToast(
+        res.alerts.length > 0 ? `发现 ${res.alerts.length} 条异动预警` : '本轮无异动预警',
+        res.alerts.length > 0 ? 'info' : 'success',
+      );
+    } catch (err) {
+      setError(normalizeApiError(err, '自选股监控失败').message);
+    } finally {
+      setMonitoring(false);
+    }
+  }, [codes, showToast]);
+
   return (
     <div className="watchlist-page">
       <div className="watchlist-header">
@@ -112,6 +146,14 @@ export default function WatchlistPage() {
         >
           {running ? '回测中…' : `批量含最新消息回测（${codes.length}）`}
         </button>
+        <button
+          className="btn-ghost watchlist-monitor"
+          onClick={handleMonitor}
+          disabled={monitoring || codes.length === 0}
+          title="重跑新闻回测并检出强烈看多/看空/高影响预警"
+        >
+          {monitoring ? '监控中…' : '监控异动'}
+        </button>
       </div>
 
       {error && (
@@ -140,6 +182,35 @@ export default function WatchlistPage() {
           </ul>
         )}
       </div>
+
+      {alerts && (
+        <div className="watchlist-alerts">
+          <div className="section-title">异动预警</div>
+          {alerts.length === 0 ? (
+            <div className="watchlist-alerts-empty">
+              本轮监控未发现异动（阈值：|极性|≥0.5 或影响强度≥0.6）。
+            </div>
+          ) : (
+            <ul className="watchlist-alerts-list">
+              {alerts.map((a, i) => {
+                const lv = ALERT_LEVEL[a.level];
+                return (
+                  <li key={`${a.code}-${i}`} className={`watchlist-alert ${lv.cls}`}>
+                    <span className="watchlist-alert-level">{lv.text}</span>
+                    <span className="watchlist-alert-stock">
+                      {a.name ?? ''} <b>{a.code}</b>
+                    </span>
+                    <span className="watchlist-alert-detail">{a.detail}</span>
+                    <span className="watchlist-alert-meta">
+                      极性 {a.polarity.toFixed(2)} · 影响 {(a.weightedImpact * 100).toFixed(0)}%
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
 
       {report && (
         <div className="watchlist-report">

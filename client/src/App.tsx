@@ -20,6 +20,8 @@ import ReflectionSection from './components/ReflectionSection';
 import FollowUpSection from './components/FollowUpSection';
 import MobileNav from './components/MobileNav';
 import ChatPanel from './components/ChatPanel';
+import { useToast } from './components/Toast';
+import { generateReportMarkdown, downloadMarkdown } from './utils/reportExport';
 import { useScrollReveal } from './hooks/useScrollReveal';
 import { useCountUp } from './hooks/useCountUp';
 
@@ -100,6 +102,7 @@ function DashboardCards({ data }: { data: AnalysisResult['stock_pool'][0] }) {
 }
 
 function App() {
+  const { showToast } = useToast();
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [analysisStage, setAnalysisStage] = useState<AnalysisStage | null>(null);
@@ -115,6 +118,23 @@ function App() {
   const [viewingHistory, setViewingHistory] = useState(false);
   /** 滚动超过阈值时显示"回到顶部"浮动按钮 */
   const [showBackTop, setShowBackTop] = useState(false);
+
+  /** 导出当前报告为 Markdown（前端生成 + 下载） */
+  const handleExport = useCallback(() => {
+    if (!analysisResult) return;
+    try {
+      const item = analysisResult.stock_pool[0];
+      if (!item) {
+        showToast('导出失败：报告内容为空', 'error');
+        return;
+      }
+      const md = generateReportMarkdown(analysisResult);
+      downloadMarkdown(`${item.stock_name}(${item.stock_code})_研究报告.md`, md);
+      showToast('研究报告已导出');
+    } catch {
+      showToast('导出失败，请重试', 'error');
+    }
+  }, [analysisResult, showToast]);
 
   // 页面标题随当前分析/历史快照更新（标签页可读性）
   useEffect(() => {
@@ -404,6 +424,7 @@ function App() {
                   <ReportHeader
                     data={stockData}
                     research_confidence={analysisResult?.research_confidence}
+                    onExport={analysisResult ? handleExport : undefined}
                   />
                 </RevealSection>
 

@@ -168,6 +168,22 @@ export interface WatchlistNewsBacktestReport {
   results: WatchlistNewsBacktestRow[];
 }
 
+// 自选股异动预警（与 server/src/services/alerts.ts 对齐）
+export interface WatchlistAlert {
+  code: string;
+  name: string | null;
+  level: 'strong-bull' | 'strong-bear' | 'high-impact';
+  polarity: number;
+  weightedImpact: number;
+  detail: string;
+}
+
+export interface WatchlistMonitorResult {
+  generatedAt: string;
+  monitored: number;
+  alerts: WatchlistAlert[];
+}
+
 // 单只股票的完整研究数据
 export interface StockPoolItem {
   stock_code: string;

@@ -12,6 +12,7 @@ import type {
   PaperOrderInput,
   PaperPortfolio,
   PaperStats,
+  WatchlistMonitorResult,
 } from '../types';
 
 const api = axios.create({
@@ -674,5 +675,15 @@ export async function deleteHistoryItem(id: string): Promise<void> {
     await api.delete(`/history/${id}`, { timeout: 15000 });
   } catch (error: unknown) {
     throw normalizeApiError(error, '历史记录删除失败');
+  }
+}
+
+// === 自选股异动监控：重跑批量新闻回测并检出预警 ===
+export async function monitorWatchlist(): Promise<WatchlistMonitorResult> {
+  try {
+    const response = await api.post('/watchlist/monitor', {}, { timeout: 120000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '自选股监控失败');
   }
 }
