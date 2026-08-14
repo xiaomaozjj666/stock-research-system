@@ -124,8 +124,8 @@ describe('historyService 研究历史', () => {
   });
 
   it('容量超上限时淘汰最旧记录（保留最新 MAX_HISTORY_ITEMS 条）', () => {
-    // 断言不依赖毫秒时间戳分布（同毫秒条目靠稳定排序保持保存序）：
-    // 最早保存的必被淘汰、最晚保存的必保留、总数恒为上限
+    // createdAt 由服务端单调时钟保证严格递增（同毫秒保存也 +1ms），
+    // 因此"最早保存 = createdAt 最小 = 必被淘汰"的语义恒定成立
     const first = saveHistoryEntry(makeEntry('600001'));
     let last: HistoryItem | null = null;
     for (let i = 2; i <= MAX_HISTORY_ITEMS + 5; i++) {
@@ -135,6 +135,17 @@ describe('historyService 研究历史', () => {
     expect(list).toHaveLength(MAX_HISTORY_ITEMS);
     expect(list.some((i) => i.id === first!.id)).toBe(false); // 最旧的 600001 被淘汰
     expect(list.some((i) => i.id === last!.id)).toBe(true); // 最新保存的保留
+    expect(list[list.length - 1].stockCode).toBe('600006'); // 最旧的保留项精确可断
+  });
+
+  it('快速连续保存 createdAt 严格递增（毫秒级单调时钟）', () => {
+    // 此前 Date.now() 在同一毫秒内返回相同值，createdAt 相同会让淘汰语义
+    // 依赖数组稳定序而错误（淘汰后保存的）；此用例锁定单调性
+    const a = saveHistoryEntry(makeEntry('600001'))!;
+    const b = saveHistoryEntry(makeEntry('600002'))!;
+    const c = saveHistoryEntry(makeEntry('600003'))!;
+    expect(a.createdAt < b.createdAt).toBe(true);
+    expect(b.createdAt < c.createdAt).toBe(true);
   });
 
   it('文件损坏时安全降级为空历史（不抛错）', () => {

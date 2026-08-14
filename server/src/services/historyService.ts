@@ -85,13 +85,24 @@ function makeId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// 毫秒级单调时钟：Date.now() 在快速连续保存（如批量测试/脚本）时可能落在同一毫秒，
+// createdAt 相同会让"按时间倒序 + 淘汰最旧"依赖数组稳定序（结果错误：淘汰的是后保存的）。
+// 同毫秒时强制 +1ms 递增，保证 createdAt 严格单调、排序与淘汰语义永远正确。
+let lastCreatedAtMs = 0;
+function monotonicNowIso(): string {
+  const now = Date.now();
+  const ts = now > lastCreatedAtMs ? now : lastCreatedAtMs + 1;
+  lastCreatedAtMs = ts;
+  return new Date(ts).toISOString();
+}
+
 /**
  * 保存/更新一条历史记录：同股票代码去重（更新为最新分析，id 保留），
  * 容量超上限时淘汰最旧记录。返回保存后的条目；写盘失败返回 null（不阻断分析主流程）。
  */
 export function saveHistoryEntry(input: HistoryEntryInput): HistoryItem | null {
   const store = readStore();
-  const now = new Date().toISOString();
+  const now = monotonicNowIso();
   const existing = store.items.find((it) => it.stockCode === input.stockCode);
 
   let saved: HistoryItem;
