@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { fetchHistoryList, fetchHistoryDetail, deleteHistoryItem } from '../../api/client';
 import type { AnalysisResult, HistorySummary } from '../../types';
 
@@ -27,6 +27,9 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  /** 待确认删除的 id（二次点击才真正执行，防误删） */
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -54,6 +57,14 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
   }
 
   async function removeItem(id: string) {
+    // 二次确认防误删：第一次点击进入确认态（3 秒后自动复位），再点才执行
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+      confirmTimerRef.current = setTimeout(() => setConfirmDeleteId(null), 3000);
+      return;
+    }
+    setConfirmDeleteId(null);
     setDeletingId(id);
     try {
       await deleteHistoryItem(id);
@@ -117,7 +128,11 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
                   disabled={deletingId === it.id}
                   onClick={() => removeItem(it.id)}
                 >
-                  {deletingId === it.id ? '删除中…' : '删除'}
+                  {deletingId === it.id
+                    ? '删除中…'
+                    : confirmDeleteId === it.id
+                      ? '确认删除？'
+                      : '删除'}
                 </button>
               </div>
             </li>

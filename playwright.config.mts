@@ -30,11 +30,12 @@ export default defineConfig({
       PORT: '3100',
       NODE_ENV: 'production',
       LOG_LEVEL: 'warn',
-      // 数据隔离：E2E 不触碰真实自选股/模拟盘/缓存/审计日志数据
+      // 数据隔离：E2E 不触碰真实自选股/模拟盘/缓存/审计日志/研究历史数据
       WATCHLIST_FILE: path.join(E2E_TMP, 'watchlist.json'),
       PAPER_TRADING_FILE: path.join(E2E_TMP, 'paperTrading.json'),
       DATA_CACHE_DIR: path.join(E2E_TMP, 'cache'),
       AUDIT_LOG_FILE: path.join(E2E_TMP, 'audit.log'),
+      HISTORY_FILE: path.join(E2E_TMP, 'history.json'),
     },
   },
 });

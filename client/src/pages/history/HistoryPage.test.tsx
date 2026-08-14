@@ -69,11 +69,18 @@ describe('HistoryPage 研究历史', () => {
     });
   });
 
-  it('点击删除 → 调删除接口并从列表移除', async () => {
+  it('点击删除需二次确认（防误删），确认后调接口并从列表移除', async () => {
     render(<HistoryPage onOpenHistory={() => {}} />);
     await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
 
-    fireEvent.click(screen.getAllByRole('button', { name: '删除' })[0]);
+    const delBtn = screen.getAllByRole('button', { name: '删除' })[0];
+    // 第一次点击：进入确认态，不调用接口
+    fireEvent.click(delBtn);
+    expect(deleteHistoryItem).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '确认删除？' })).toBeInTheDocument();
+
+    // 第二次点击：真正删除
+    fireEvent.click(screen.getByRole('button', { name: '确认删除？' }));
 
     await waitFor(() => {
       expect(deleteHistoryItem).toHaveBeenCalledWith('h1');
