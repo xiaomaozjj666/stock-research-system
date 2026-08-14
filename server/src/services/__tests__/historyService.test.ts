@@ -44,15 +44,51 @@ describe('historyService 研究历史', () => {
     writeFileSync(tmpFile, JSON.stringify({ items: [] }), 'utf-8');
   });
 
-  it('保存新增条目，列表倒序返回摘要（不含 result）', () => {
+  it('保存新增条目，列表返回摘要（不含 result）', () => {
     saveHistoryEntry(makeEntry('600519', { totalScore: 88 }));
     saveHistoryEntry(makeEntry('000001', { totalScore: 55 }));
 
     const list = listHistory();
-    expect(list.map((i) => i.stockCode)).toEqual(['000001', '600519']); // 后保存的在最前
-    expect(list[0]).not.toHaveProperty('result'); // 列表瘦身
-    expect(list[0].totalScore).toBe(55);
-    expect(list[0].rating).toBe('持续观察');
+    expect(list).toHaveLength(2);
+    // 注意：快速连续保存可能落在同一毫秒（createdAt 相同），此时排序是稳定序，
+    // 顺序断言不可靠——这里只断言内容，排序语义由下方 fixture 用例验证
+    const byCode = Object.fromEntries(list.map((i) => [i.stockCode, i]));
+    expect(byCode['600519'].totalScore).toBe(88);
+    expect(byCode['600519'].rating).toBe('持续观察');
+    expect(byCode['000001'].totalScore).toBe(55);
+    expect(list[0]).not.toHaveProperty('result'); // 列表瘦身（不含完整 result）
+  });
+
+  it('列表按 createdAt 倒序（最新在前）', () => {
+    // 用明确 createdAt 的 fixture 验证排序，不依赖 saveHistoryEntry 的毫秒精度
+    writeFileSync(
+      tmpFile,
+      JSON.stringify({
+        items: [
+          {
+            id: 'old',
+            stockCode: '600001',
+            stockName: '旧',
+            createdAt: '2026-08-01T00:00:00.000Z',
+            rating: 'a',
+            totalScore: 1,
+            result: {},
+          },
+          {
+            id: 'new',
+            stockCode: '600002',
+            stockName: '新',
+            createdAt: '2026-08-02T00:00:00.000Z',
+            rating: 'b',
+            totalScore: 2,
+            result: {},
+          },
+        ],
+      }),
+      'utf-8',
+    );
+    const list = listHistory();
+    expect(list.map((i) => i.id)).toEqual(['new', 'old']);
   });
 
   it('同股票代码去重更新（id 保留、createdAt 刷新、不新增条目）', () => {
