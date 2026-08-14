@@ -149,32 +149,49 @@ function App() {
           'followup',
         ];
 
-        // 底部兜底：页面滚到底时，最后一个区块（后续跟踪指标）的 top 可能永远到不了
-        // 150px 判定线（区块高度 < 视口-150），导致左侧高亮卡在前一个区块。
-        // 此时直接高亮最后一个 section。
-        const atBottom =
-          window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+        // 高亮判定：视口中心线——包含视口中心（innerHeight/2）的区块为"当前区块"。
+        // 相比"顶部 150px 判定线"，矮区块（如研究局限性仅 ~146px）的高亮窗口
+        // 从 ~21px 滚动距离扩大到整个区块高度（~146px），滚轮滚动不再"跳过"。
+        const vh = window.innerHeight;
+        const mid = vh / 2;
+        const lastId = sections[sections.length - 1];
+        const atBottom = window.scrollY + vh >= document.documentElement.scrollHeight - 2;
+        // 到底兜底：末尾区块已在视口内（部分可见）时直接高亮它（含浮点容差）
         if (atBottom) {
-          const last = sections[sections.length - 1];
-          if (last !== lastSection) {
-            lastSection = last;
-            setActiveSection(last);
+          const lastEl = document.getElementById(lastId);
+          if (lastEl) {
+            const r = lastEl.getBoundingClientRect();
+            if (r.top < vh + 1 && r.bottom > -1) {
+              if (lastSection !== lastId) {
+                lastSection = lastId;
+                setActiveSection(lastId);
+              }
+              return;
+            }
           }
-          return;
         }
-
+        let matched = false;
+        // 浮点容差：区块边界与中心线恰好重合时（如 limitation 底部 = 视口中心），
+        // getBoundingClientRect 返回 360.5 之类的小数，严格 <= 会漏判
+        const EPS = 1;
         for (const id of sections) {
           const el = document.getElementById(id);
           if (el) {
             const rect = el.getBoundingClientRect();
-            if (rect.top <= 150 && rect.bottom > 150) {
+            if (rect.top <= mid + EPS && rect.bottom >= mid - EPS) {
               if (id !== lastSection) {
                 lastSection = id;
                 setActiveSection(id);
               }
+              matched = true;
               break;
             }
           }
+        }
+        // 常规判定无结果且已到底：末尾区块贴底（中心线未触及），补高亮它
+        if (!matched && atBottom && lastSection !== lastId) {
+          lastSection = lastId;
+          setActiveSection(lastId);
         }
       });
     };
