@@ -46,10 +46,17 @@ export default function EChart({ option, style, className, onChartReady }: EChar
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // option 变化时更新（notMerge 整体替换，等价 echarts-for-react 默认行为）
+  // option 内容级比较：父组件（如滚动监听驱动的重渲染）每次会重建 option 对象，
+  // 引用比较会反复触发全量 setOption 重绘；JSON 内容相同则跳过，内容变化才重绘。
+  // option 为纯数据（无函数引用/循环），JSON 序列化开销（微秒级）远小于重绘开销。
+  const optionKey = JSON.stringify(option);
+  const prevOptionKeyRef = useRef<string | null>(null);
   useEffect(() => {
+    if (prevOptionKeyRef.current === optionKey) return;
+    prevOptionKeyRef.current = optionKey;
     chartRef.current?.setOption(option as never, { notMerge: true });
-  }, [option]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optionKey]);
 
   return <div ref={containerRef} className={className} style={style} />;
 }

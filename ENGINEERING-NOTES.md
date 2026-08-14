@@ -214,3 +214,16 @@
 - **前端**：新增「历史」tab（第 7 个，懒加载 `pages/history/HistoryPage.tsx`）——列表（名称/代码/行业/评级徽章/评分/时间）、「查看」拉取详情并恢复完整研究报告（切回深度研究页渲染）、「删除」即时移除；评级徽章用语义色（优先跟踪=绿 / 持续观察=蓝 / 谨慎观望=黄 / 建议规避=红）。
 - **测试**：`historyService.test.ts`（8 用例：增删查/去重/容量淘汰/损坏容错/写失败/limit 钳制）+ `history.routes.test.ts`（5 用例 CRUD 路由）+ `HistoryPage.test.tsx`（3 用例列表/查看回调/删除）；e2e「全部 Tab」用例补历史页。
 - **验证**：823 tests 全绿（+16 新用例）/ client build OK / E2E 9/9 / 双端 tsc / lint / format:check 全过。
+
+## 2026-08-14 性能与体验极致化记录
+
+- **前端首屏 -65%**（~295KB → ~107KB gzip）：
+  - `ChartsSection` 改为 `React.lazy`（分析结果出现才加载）——echarts 运行时不再进首屏 modulepreload；
+  - **`WatchlistPage` 是最后一个静态 import 的页面**（→ NewsPostureHeatBar → EChart → echarts），同样懒加载后 echarts-vendor（195.57KB gzip）彻底移出首屏，成为按需 chunk；
+  - 图表区加轻量 fallback（`.charts-suspense`，替代全屏 LoadingScreen）。
+- **EChart 重绘防抖**：App 的滚动监听高频 setState → 父组件重渲染会重建 option 对象 → 原 `[option]` 引用比较反复触发全量 `setOption`。改为 **JSON 内容级比较**（option 为纯数据，序列化微秒级），滚动/无关重渲染不再重绘图表；内容变化仍增量更新。新增用例验证"同内容不重复 setOption"。
+- **后端管线并行化**：`getData`（行情/财务/估值）与 `extractNewsSignal`（新闻情绪）原本串行——两者都只依赖股票代码，改为 `Promise.all` 并行，省一个网络往返（新闻限时 3s 不阻塞）。8 位专家本已并行（`analysisPipeline` 内 Promise.all）。
+- **移动端 tab 溢出修复**：7 个 tab 在窄屏横向滚动（`overflow-x: auto` + 隐藏滚动条 + tab 不收缩）。
+- **历史快照提示条**：回看历史时研究页顶部显示"正在查看历史快照（非实时分析）"提示（`viewingHistory` 状态，新分析开始即清除），避免用户误以为历史数据是实时结果。
+- **构建产物清理**：`client/vite.config.ts` 的 `build.emptyOutDir` 恢复为 `true`（沙箱安全删除守卫已不在，恢复 Vite 默认清理，dist 不再堆积旧产物）。
+- **验证**：825 tests 全绿 / client build OK（首屏无 echarts modulepreload）/ E2E 9/9 / 双端 tsc / lint / format:check 全过。

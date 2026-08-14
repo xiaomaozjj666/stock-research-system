@@ -38,26 +38,25 @@ export async function runAnalysis(
     onProgress?.(stage);
   };
 
-  // 1. 数据获取
-  emit({ phase: 'data', message: '正在获取行情与财务数据...' });
-  const { info, financial, valuation } = await getData(stockCode);
+  // 1. 数据获取 + 新闻情绪：两者都只依赖股票代码，并行拉取（省一个网络往返）
+  emit({ phase: 'data', message: '正在获取行情/财务/新闻数据...' });
+  const [dataResult, newsResult] = await Promise.all([
+    getData(stockCode),
+    // 新闻情绪尽力而为：限时 3s，失败/超时视为无新闻（不阻塞主流程）
+    withTimeout(extractNewsSignal(stockCode), 3000).catch(() => ({
+      signal: null as NewsSignal | null,
+      source: 'none' as const,
+    })),
+  ]);
+  const { info, financial, valuation } = dataResult;
   const n = financial.years.length;
+  const newsSignal = newsResult.signal;
 
   // 审计：数据访问完成（合规留痕；runAnalysis 无会话上下文，以股票代码作为审计会话键）
   try {
     auditDataAccess(stockCode, '行情/财务数据接口', 'read');
   } catch (err) {
     logger.warn('审计记录数据访问失败，降级跳过', { stockCode, err: err as Error });
-  }
-
-  // 1.5 抓取最新消息情绪（尽力而为：限时 3s 且不阻塞主流程，失败/超时则视为无新闻）
-  emit({ phase: 'data', message: '正在获取最新消息情绪...' });
-  let newsSignal: NewsSignal | null = null;
-  try {
-    const fetched = await withTimeout(extractNewsSignal(info.code), 3000);
-    newsSignal = fetched.signal;
-  } catch {
-    newsSignal = null;
   }
 
   // === 修正 PE/PB：用股价/每股收益 和 股价/每股净资产 计算，不依赖API不可靠的f167/f164字段 ===
