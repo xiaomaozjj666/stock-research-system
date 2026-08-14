@@ -18,6 +18,8 @@ server/src/data/chatHistory.json
 server/data/chatHistory.json
 # 合规审计日志（运行时生成，不入库）
 server/src/data/audit.log
+# 研究历史记录（运行时生成，不入库）
+server/src/data/history.json
 .coverage_tmp/
 
 # Test artifacts

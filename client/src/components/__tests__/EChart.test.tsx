@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { StrictMode } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
 import EChart from '../EChart';
@@ -25,6 +26,7 @@ describe('EChart 轻量封装（替代 echarts-for-react）', () => {
 
   beforeEach(() => {
     chart = { setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn() };
+    echartsMock.init.mockClear();
     echartsMock.init.mockReturnValue(chart);
     vi.stubGlobal('ResizeObserver', ResizeObserverStub);
   });
@@ -60,5 +62,18 @@ describe('EChart 轻量封装（替代 echarts-for-react）', () => {
     const ready = vi.fn();
     render(<EChart option={{}} onChartReady={ready} />);
     expect(ready).toHaveBeenCalledWith(chart);
+  });
+
+  it('StrictMode 双挂载下 option 仍被应用（回归：内容比较需在卸载时重置）', () => {
+    // main.tsx 用 <React.StrictMode>：开发模式组件会 mount→unmount→remount。
+    // 若 prevOptionKeyRef 在卸载时不重置，二次挂载的新实例会因"内容相同"跳过
+    // setOption 而渲染空白图表（曾导致"可视化分析看不到图"）。
+    render(
+      <StrictMode>
+        <EChart option={{ a: 1 }} />
+      </StrictMode>,
+    );
+    expect(echartsMock.init).toHaveBeenCalledTimes(2); // 双挂载
+    expect(chart.setOption).toHaveBeenCalledTimes(2); // 每次挂载都应用 option
   });
 });

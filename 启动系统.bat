@@ -15,7 +15,13 @@ echo [2/2] 启动前端服务 (端口 5173)...
 cd /d D:\XIAOMAO\Projects\stock-research-system\client
 start "Stock-Frontend" cmd /k "npx vite --host"
 
-timeout /t 3 /nobreak >nul
+echo.
+echo 等待前端服务就绪（Vite 首次启动需预构建依赖，可能需 10 秒左右）...
+echo （就绪后会自动打开浏览器；若迟迟未打开请按 Ctrl+C 后重新运行）
+:wait_frontend
+timeout /t 1 /nobreak >nul
+curl -s -o nul http://localhost:5173 2>nul
+if errorlevel 1 goto wait_frontend
 
 echo.
 echo ========================================
