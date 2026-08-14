@@ -3804,7 +3804,19 @@ tr:hover td {
   margin-top: 10px;
 }
 .chat-quick-item {
-  cursor: pointer;
+  /* 快捷提问用主题青色系（默认 chip-neutral 是蓝色 info 系，与整体青色主题不搭） */
+  background: var(--accent-dim);
+  color: var(--accent);
+  border: 1px solid rgba(45, 212, 191, 0.25);
+  border-radius: var(--radius-pill);
+  padding: 4px 14px;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.chat-quick-item:hover {
+  background: rgba(45, 212, 191, 0.2);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+  transform: translateY(-1px);
 }
 .chat-row {
   display: flex;
@@ -4063,23 +4075,35 @@ tr:hover td {
 .chat-input {
   flex: 1;
   resize: none;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-hover);
   border-radius: var(--radius-md);
-  padding: 8px 10px;
+  padding: 9px 12px;
   font-family: inherit;
   font-size: 14px;
   background: var(--bg-input);
   color: var(--text-primary);
   outline: none;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
 }
 .chat-input:focus {
   border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--accent-dim);
 }
 .chat-input::placeholder {
   color: var(--text-muted);
 }
 .chat-send {
   align-self: flex-end;
+  min-width: 88px;
+  font-weight: 600;
+}
+/* 空输入禁用时保持青色弱化态（而非 btn-primary 的 opacity 0.5 半透明灰），
+   按钮始终有色彩、状态一眼可辨 */
+.chat-send:disabled {
+  background: var(--accent-dim);
+  color: var(--accent);
+  opacity: 1;
+  cursor: not-allowed;
 }
 
 /* ===== 研究增强面板（文档库 / 模型路由 / 成本 / 监控 / 记忆） ===== */
