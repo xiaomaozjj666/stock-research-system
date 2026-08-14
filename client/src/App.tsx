@@ -148,6 +148,21 @@ function App() {
           'limitation',
           'followup',
         ];
+
+        // 底部兜底：页面滚到底时，最后一个区块（后续跟踪指标）的 top 可能永远到不了
+        // 150px 判定线（区块高度 < 视口-150），导致左侧高亮卡在前一个区块。
+        // 此时直接高亮最后一个 section。
+        const atBottom =
+          window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+        if (atBottom) {
+          const last = sections[sections.length - 1];
+          if (last !== lastSection) {
+            lastSection = last;
+            setActiveSection(last);
+          }
+          return;
+        }
+
         for (const id of sections) {
           const el = document.getElementById(id);
           if (el) {
