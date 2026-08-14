@@ -6,3 +6,5 @@ cache
 *.lock
 package-lock.json
 **/cache/**
+# 运行时数据文件（JSON 落盘，非源码，格式由程序控制）
+server/src/data/*.json

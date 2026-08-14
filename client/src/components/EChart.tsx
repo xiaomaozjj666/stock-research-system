@@ -41,6 +41,10 @@ export default function EChart({ option, style, className, onChartReady }: EChar
       observer.disconnect();
       chart.dispose();
       chartRef.current = null;
+      // 关键：React StrictMode 下组件会 mount→unmount→再 mount（开发模式），
+      // 若不清除已比较的 optionKey，二次挂载的新图表实例会因"内容相同"跳过
+      // setOption 而渲染空白。必须在卸载时重置，让二次挂载重新应用 option。
+      prevOptionKeyRef.current = null;
     };
     // 仅挂载时初始化一次；option 由下方 effect 驱动
     // eslint-disable-next-line react-hooks/exhaustive-deps
