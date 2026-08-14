@@ -35,7 +35,16 @@ describe('EChart 轻量封装（替代 echarts-for-react）', () => {
     expect(chart.setOption).toHaveBeenCalledWith({ a: 1 }, { notMerge: true });
   });
 
-  it('option 变化时增量 setOption', () => {
+  it('option 内容不变时（新对象引用）不重复 setOption（滚动重渲染防抖）', () => {
+    const { rerender } = render(<EChart option={{ a: 1 }} />);
+    expect(chart.setOption).toHaveBeenCalledTimes(1);
+    // 父组件重渲染会重建 option 对象，但 JSON 内容相同 → 跳过重绘
+    rerender(<EChart option={{ a: 1 }} />);
+    rerender(<EChart option={{ a: 1, b: undefined }} />); // 序列化后相同
+    expect(chart.setOption).toHaveBeenCalledTimes(1);
+  });
+
+  it('option 内容变化时增量 setOption', () => {
     const { rerender } = render(<EChart option={{ a: 1 }} />);
     rerender(<EChart option={{ a: 2 }} />);
     expect(chart.setOption).toHaveBeenLastCalledWith({ a: 2 }, { notMerge: true });

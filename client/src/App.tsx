@@ -4,11 +4,9 @@ import type { AnalysisResult } from './types';
 import StockSelector from './components/StockSelector';
 import LoadingScreen from './components/LoadingScreen';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import WatchlistPage from './pages/watchlist/WatchlistPage';
 import ReportHeader from './components/ReportHeader';
 import CoreSummary from './components/CoreSummary';
 import FinancialSection from './components/FinancialSection';
-import ChartsSection from './components/ChartsSection';
 import ValuationSection from './components/ValuationSection';
 import ExpertOpinions from './components/ExpertOpinions';
 import CapitalFlowSection from './components/CapitalFlowSection';
@@ -25,11 +23,15 @@ import ChatPanel from './components/ChatPanel';
 import { useScrollReveal } from './hooks/useScrollReveal';
 import { useCountUp } from './hooks/useCountUp';
 
-// 路由级懒加载：减小首屏体积，量化/对比/模拟盘/历史页按需加载
+// 路由级懒加载：减小首屏体积，量化/对比/模拟盘/自选股/历史页按需加载
 const QuantPage = lazy(() => import('./pages/quant/QuantPage'));
 const ComparisonView = lazy(() => import('./components/ComparisonView'));
 const PaperTradingPage = lazy(() => import('./pages/paper/PaperTradingPage'));
+const WatchlistPage = lazy(() => import('./pages/watchlist/WatchlistPage'));
 const HistoryPage = lazy(() => import('./pages/history/HistoryPage'));
+// 图表区懒加载：echarts 运行时（~196KB gzip）不再随首屏预加载，
+// 仅在分析结果出现、真正需要渲染图表时才拉取
+const ChartsSection = lazy(() => import('./components/ChartsSection'));
 
 /* ===== RevealSection wrapper ===== */
 function RevealSection({
@@ -109,6 +111,8 @@ function App() {
   const [scrollProgress, setScrollProgress] = useState(0);
   /** 最近一次分析的代码，用于失败后一键重试 */
   const lastCodeRef = useRef<string>('');
+  /** 是否处于"回看历史快照"模式（顶部提示条；新分析开始即退出） */
+  const [viewingHistory, setViewingHistory] = useState(false);
   /** 在途 SSE 的取消函数 */
   const cancelRef = useRef<(() => void) | null>(null);
 
@@ -170,6 +174,7 @@ function App() {
     setLoading(true);
     setError(null);
     setAnalysisStage(null);
+    setViewingHistory(false); // 新分析开始：退出历史快照模式
     try {
       const { done, cancel } = analyzeStockStream(stockCode, (stage) => {
         setAnalysisStage(stage);
@@ -342,6 +347,12 @@ function App() {
                   【风险提示】本内容依托公开市场数据进行学术投研模拟分析，所有推演假设标注【推演，存在不确定性】，不构成任何投资建议。
                 </div>
 
+                {viewingHistory && (
+                  <div className="history-snapshot-banner" role="status">
+                    正在查看<b>历史快照</b>（非实时分析）——发起新的分析即可刷新
+                  </div>
+                )}
+
                 <RevealSection>
                   <ReportHeader
                     data={stockData}
@@ -387,7 +398,10 @@ function App() {
                 </RevealSection>
                 <RevealSection id="charts">
                   <ErrorBoundary label="数据图表">
-                    <ChartsSection data={stockData} />
+                    
+                    <Suspense fallback={<div className="charts-suspense">图表加载中…</div>}>
+                      <ChartsSection data={stockData} />
+                    </Suspense>
                   </ErrorBoundary>
                 </RevealSection>
                 <RevealSection id="valuation">
@@ -487,6 +501,7 @@ function App() {
               // 回看历史：恢复完整分析结果并切回深度研究页渲染
               setAnalysisResult(result);
               setError(null);
+              setViewingHistory(true);
               setActiveTab('research');
             }}
           />

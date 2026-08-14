@@ -44,7 +44,7 @@ export default defineConfig({
     target: 'es2020',
     sourcemap: false,
     // 输出目录清理交由外部（CI/脚本）处理：沙箱安全删除守卫会拦截 Vite 的批量清空
-    emptyOutDir: false,
+    emptyOutDir: true,
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
