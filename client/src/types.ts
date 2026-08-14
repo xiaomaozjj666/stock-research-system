@@ -199,6 +199,22 @@ export interface AnalysisResult {
   data_sources?: DataSource[];
 }
 
+// === 研究历史记录 ===
+// 与 server/src/services/historyService.ts 对齐
+export interface HistorySummary {
+  id: string;
+  stockCode: string;
+  stockName: string;
+  createdAt: string;
+  rating: string;
+  totalScore: number;
+  industry?: string;
+}
+
+export interface HistoryItem extends HistorySummary {
+  result: AnalysisResult;
+}
+
 // === 模拟盘（paper trading）研究闭环 ===
 // 与 server/src/quant/paperTrading.ts 对齐
 export type PaperOrderSide = 'buy' | 'sell';

@@ -579,6 +579,43 @@ export function buildOpenApiDocument() {
           },
         },
       },
+      '/api/history': {
+        get: {
+          tags: ['history'],
+          summary: '研究历史列表（倒序摘要，不含完整结果）',
+          parameters: [
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer', default: 50 },
+              description: '返回条数上限（1-200）',
+            },
+          ],
+          responses: {
+            200: { description: '{ items: HistorySummary[] }' },
+          },
+        },
+      },
+      '/api/history/{id}': {
+        get: {
+          tags: ['history'],
+          summary: '研究历史详情（含完整分析结果，可恢复研究报告）',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: { description: 'HistoryItem（含 result）' },
+            404: errorResponse('历史记录不存在'),
+          },
+        },
+        delete: {
+          tags: ['history'],
+          summary: '删除一条研究历史',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: { description: '{ deleted: true }' },
+            404: errorResponse('历史记录不存在'),
+          },
+        },
+      },
     },
   };
 }

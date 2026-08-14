@@ -37,6 +37,12 @@ import {
   isEmbeddingConfigured,
 } from './llm/index.js';
 import { clearHistory } from './services/chatMemory.js';
+import {
+  saveHistoryEntry,
+  listHistory,
+  getHistoryItem,
+  deleteHistoryItem,
+} from './services/historyService.js';
 import { configureTracer, expressTracerMiddleware } from './services/telemetry.js';
 import { PaperAccount } from './quant/paperTrading.js';
 import { auditLogger } from './services/auditLog.js';
@@ -274,6 +280,7 @@ app.post('/api/analyze', analyzeLimiter, circuitBreakerGuard, async (req, res) =
       return res.status(400).json({ error: '请提供有效的6位股票代码' });
     }
     const result = await runAnalysis(stockCode);
+    persistAnalysisHistory(result); // 分析完成自动入库（失败静默，不影响响应）
     res.json(result);
   } catch (error) {
     logger.error('Analysis error', {
@@ -284,6 +291,24 @@ app.post('/api/analyze', analyzeLimiter, circuitBreakerGuard, async (req, res) =
     res.status(500).json({ error: '分析过程出错', detail: (error as Error).message });
   }
 });
+
+/** 分析结果自动写入研究历史（同代码去重；任何失败静默降级，不阻断主流程） */
+function persistAnalysisHistory(result: unknown): void {
+  try {
+    const item = (result as { stock_pool?: Array<Record<string, unknown>> })?.stock_pool?.[0];
+    if (!item || typeof item.stock_code !== 'string') return;
+    saveHistoryEntry({
+      stockCode: item.stock_code,
+      stockName: String(item.stock_name ?? item.stock_code),
+      industry: typeof item.industry === 'string' ? item.industry : undefined,
+      rating: String(item.rating ?? ''),
+      totalScore: Number(item.total_score) || 0,
+      result: result as never,
+    });
+  } catch {
+    /* 历史落盘失败不影响分析响应 */
+  }
+}
 
 // === 流式分析接口（SSE，逐步推送分析进度）===
 app.get(
@@ -312,6 +337,7 @@ app.get(
 
     try {
       const result = await runAnalysis(stockCode, (stage) => send(stage));
+      persistAnalysisHistory(result); // 分析完成自动入库（失败静默）
       send({ phase: 'done', message: '分析完成', result });
     } catch (error) {
       send({ phase: 'error', message: (error as Error).message || '分析过程出错' });
@@ -320,6 +346,24 @@ app.get(
     }
   },
 );
+
+// === 研究历史记录（分析结果自动入库；列表/详情/删除） ===
+app.get('/api/history', (req, res) => {
+  const limit = Number(req.query.limit) || 50;
+  res.json({ items: listHistory(limit) });
+});
+
+app.get('/api/history/:id', (req, res) => {
+  const item = getHistoryItem(req.params.id);
+  if (!item) return res.status(404).json({ error: '历史记录不存在' });
+  res.json(item);
+});
+
+app.delete('/api/history/:id', (req, res) => {
+  const ok = deleteHistoryItem(req.params.id);
+  if (!ok) return res.status(404).json({ error: '历史记录不存在' });
+  res.json({ deleted: true });
+});
 
 // === Compare Rate Limiter (3 req/min) ===
 const compareLimiter = rateLimit({
