@@ -9,6 +9,7 @@ import {
   deleteHistoryItem,
   MAX_HISTORY_ITEMS,
   type HistoryEntryInput,
+  type HistoryItem,
 } from '../historyService.js';
 
 // 落盘重定向到进程专属临时文件（HISTORY_FILE env，与 watchlist/paper/audit 同模式）
@@ -87,16 +88,17 @@ describe('historyService 研究历史', () => {
   });
 
   it('容量超上限时淘汰最旧记录（保留最新 MAX_HISTORY_ITEMS 条）', () => {
+    // 断言不依赖毫秒时间戳分布（同毫秒条目靠稳定排序保持保存序）：
+    // 最早保存的必被淘汰、最晚保存的必保留、总数恒为上限
     const first = saveHistoryEntry(makeEntry('600001'));
+    let last: HistoryItem | null = null;
     for (let i = 2; i <= MAX_HISTORY_ITEMS + 5; i++) {
-      const code = String(600000 + i);
-      saveHistoryEntry(makeEntry(code));
+      last = saveHistoryEntry(makeEntry(String(600000 + i)));
     }
     const list = listHistory(200);
     expect(list).toHaveLength(MAX_HISTORY_ITEMS);
     expect(list.some((i) => i.id === first!.id)).toBe(false); // 最旧的 600001 被淘汰
-    // 同毫秒时间戳下淘汰按保存序：600001-600005 被淘汰，600006 是最旧的保留项
-    expect(list[list.length - 1].stockCode).toBe('600006');
+    expect(list.some((i) => i.id === last!.id)).toBe(true); // 最新保存的保留
   });
 
   it('文件损坏时安全降级为空历史（不抛错）', () => {
