@@ -32,11 +32,7 @@ function formatMarketCap(cap?: number) {
   return cap.toFixed(0) + ' 亿';
 }
 
-export default function ReportHeader({
-  data,
-  research_confidence,
-  onExport,
-}: ReportHeaderProps) {
+export default function ReportHeader({ data, research_confidence, onExport }: ReportHeaderProps) {
   return (
     <div className="card report-header">
       <div className="report-header-top">
@@ -67,7 +63,11 @@ export default function ReportHeader({
           )}
         </div>
         {onExport && (
-          <button className="btn-ghost report-export-btn" onClick={onExport} title="导出为 Markdown">
+          <button
+            className="btn-ghost report-export-btn"
+            onClick={onExport}
+            title="导出为 Markdown"
+          >
             导出报告
           </button>
         )}
