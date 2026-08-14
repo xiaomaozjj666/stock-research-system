@@ -113,6 +113,16 @@ function App() {
   const lastCodeRef = useRef<string>('');
   /** 是否处于"回看历史快照"模式（顶部提示条；新分析开始即退出） */
   const [viewingHistory, setViewingHistory] = useState(false);
+  /** 滚动超过阈值时显示"回到顶部"浮动按钮 */
+  const [showBackTop, setShowBackTop] = useState(false);
+
+  // 页面标题随当前分析/历史快照更新（标签页可读性）
+  useEffect(() => {
+    const item = analysisResult?.stock_pool?.[0];
+    document.title = item
+      ? `${item.stock_name}(${item.stock_code}) 研究报告 - 投研系统`
+      : '投研系统 - AI 多专家股票研究';
+  }, [analysisResult]);
   /** 在途 SSE 的取消函数 */
   const cancelRef = useRef<(() => void) | null>(null);
 
@@ -131,6 +141,11 @@ function App() {
         if (docHeight > 0) {
           setScrollProgress((window.scrollY / docHeight) * 100);
         }
+        // 回到顶部按钮：仅在跨越阈值时更新状态（避免每帧 setState）
+        setShowBackTop((prev) => {
+          const next = window.scrollY > 600;
+          return prev === next ? prev : next;
+        });
 
         const sections = [
           'summary',
@@ -525,7 +540,8 @@ function App() {
           )}
         </>
       )}
-      <Suspense fallback={<LoadingScreen />}>
+      {/* 懒加载页切换用轻量占位（全屏 LoadingScreen 只保留给深度研究分析中） */}
+      <Suspense fallback={<div className="page-suspense">页面加载中…</div>}>
         {activeTab === 'quant' && <QuantPage />}
         {activeTab === 'compare' && <ComparisonView />}
         {activeTab === 'watchlist' && <WatchlistPage />}
@@ -543,6 +559,17 @@ function App() {
           />
         )}
       </Suspense>
+
+      {showBackTop && (
+        <button
+          className="back-top"
+          aria-label="回到顶部"
+          title="回到顶部"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+        >
+          ↑
+        </button>
+      )}
     </div>
   );
 }
