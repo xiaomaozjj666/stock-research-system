@@ -46,6 +46,9 @@ export default function ChatPanel() {
     return v;
   });
   const [showEnhance, setShowEnhance] = useState(false);
+  /** 最近复制的消息索引（短暂显示"已复制"反馈） */
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -56,6 +59,17 @@ export default function ChatPanel() {
 
   // 卸载时取消在途流式连接
   useEffect(() => () => streamCancelRef.current?.(), []);
+
+  async function copyMessage(content: string, idx: number) {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedIdx(idx);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedIdx(null), 1500);
+    } catch {
+      /* 剪贴板不可用（非安全上下文等）时静默 */
+    }
+  }
 
   async function send(text: string) {
     const content = text.trim();
@@ -110,7 +124,8 @@ export default function ChatPanel() {
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    // 主流聊天交互：Enter 发送、Shift+Enter 换行
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       send(input);
     }
@@ -121,12 +136,23 @@ export default function ChatPanel() {
       <div className="chat-header">
         <div className="chat-header-top">
           <h2>研究助手</h2>
-          <button
-            className="btn-ghost chat-enhance-toggle"
-            onClick={() => setShowEnhance((s) => !s)}
-          >
-            {showEnhance ? '收起增强能力 ▲' : '研究增强 ▼'}
-          </button>
+          <div className="chat-header-actions">
+            {messages.length > 0 && (
+              <button
+                className="btn-ghost chat-clear"
+                title="清空当前对话（服务端会话记忆保留）"
+                onClick={() => setMessages([])}
+              >
+                清空
+              </button>
+            )}
+            <button
+              className="btn-ghost chat-enhance-toggle"
+              onClick={() => setShowEnhance((s) => !s)}
+            >
+              {showEnhance ? '收起增强能力 ▲' : '研究增强 ▼'}
+            </button>
+          </div>
         </div>
         <p className="chat-subtitle">
           用自然语言提问：分析个股、对比、回测、多空辩论。支持路由规划、工具调用、证据引用与事实校验。
@@ -155,7 +181,18 @@ export default function ChatPanel() {
         {messages.map((m, i) => (
           <div key={i} className={`chat-row chat-row-${m.role}`}>
             <div className={`chat-bubble chat-bubble-${m.role}`}>
-              <div className="chat-text">{m.content}</div>
+              <div className="chat-text">
+                {m.content}
+                {m.role === 'assistant' && (
+                  <button
+                    className="chat-copy"
+                    title="复制回答"
+                    onClick={() => copyMessage(m.content, i)}
+                  >
+                    {copiedIdx === i ? '已复制 ✓' : '复制'}
+                  </button>
+                )}
+              </div>
 
               {m.meta && (
                 <div className="chat-meta">
@@ -279,14 +316,18 @@ export default function ChatPanel() {
         <textarea
           aria-label="对话输入"
           className="chat-input"
-          placeholder="输入问题，Enter+Ctrl 发送…"
+          placeholder="输入问题，Enter 发送，Shift+Enter 换行…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
           rows={2}
         />
-        <button className="btn-primary chat-send" onClick={() => send(input)} disabled={loading}>
-          发送
+        <button
+          className="btn-primary chat-send"
+          onClick={() => send(input)}
+          disabled={loading || input.trim().length === 0}
+        >
+          {loading ? '分析中…' : '发送'}
         </button>
       </div>
     </div>

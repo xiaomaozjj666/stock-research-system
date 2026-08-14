@@ -197,3 +197,11 @@
   - `mcpClient.test.ts` 连接失败用例依赖真实 spawn/网络（127.0.0.1:1），慢网环境可能卡 30s。
   - `predictionModel.test.ts` 区间对称包络容差 25% 过松；`factors.test.ts` 硬编码因子数（21）新增因子即破。
   - 测试隔离底线约定：**所有运行时数据文件（watchlist/paper/cache/audit/chatHistory/masterCache）均已支持 env 重定向**，新增落盘服务必须沿用此模式，禁止测试写默认路径。
+
+## 2026-08-14 图表渲染修复与研究助手主题统一记录
+
+- **图表崩溃根因**：`echarts-for-react@3.0.7` 被 npm 标记 "published in error"（已废弃；3.0.6 才是 latest 正式版）。其 esm/ 产物用 extensionless 导入（非规范 ESM），生产构建（Rolldown）下 default 互操作把模块对象交给组件，React 报 `Element type is invalid: ... but got: object`（ChartsSection 渲染崩溃）。vite-node 下 default 是 function（正常），因此 dev 正常、生产必炸。
+- **修复**：自研轻量封装 `client/src/components/EChart.tsx`（echarts.init + setOption(notMerge) + ResizeObserver 自适应 + 卸载 dispose），替换 ChartsSection 与 NewsPostureHeatBar 中的 echarts-for-react；**删除 echarts-for-react 依赖**（bundler 体积 -7.4KB gzip）。新增 EChart.test.tsx（4 用例，mock lib/echarts + ResizeObserver stub）。
+- **研究助手主题**：ChatPanel/ResearchEnhance 的样式（index.css 2428 起）历史上是**亮色硬编码**（白底证据卡、`#f1f5f9` 浅灰气泡、`#e2e8f0` badge、`--color-primary/--bg-surface/--border-color` 不存在的变量 + 浅色 fallback），在深色界面里形成"亮色孤岛"。已整体重写接入深色变量体系（`--bg-card/--bg-secondary/--accent/语义色 dim`；A 股红涨绿跌语义保留：看多红、看空绿）。注意：**CSS 注释里不能出现 `*/` 序列**（lightningcss minify 会提前终止注释导致构建失败）。
+- **交互完善**（ChatPanel）：Enter 发送 / Shift+Enter 换行（替代 Ctrl+Enter）；空输入禁用发送按钮；"清空"按钮（仅清前端显示，服务端会话记忆保留）；助手消息 hover 显示"复制"按钮（clipboard API + 已复制反馈）。ChatPanel.test.tsx 增至 6 用例。
+- **验证**：807 tests 全绿（+7 新用例）/ client build OK（新产物无 echarts-for-react/size-sensor）/ E2E 9/9 / 双端 tsc / lint / format:check 全过。

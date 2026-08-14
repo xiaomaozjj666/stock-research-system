@@ -2425,7 +2425,10 @@ tr:hover td { background: var(--bg-card-hover); }
   opacity: 0.7;
 }
 
-/* ===== Chat Panel (研究助手) ===== */
+/* ===== Chat Panel (研究助手) =====
+ * 注意：本节全部接入深色 CSS 变量体系（bg / border / accent / 语义色 dim 系列）。
+ * 历史上曾用亮色硬编码（白底证据卡 / 浅灰气泡 / 亮色 badge），
+ * 在深色界面里形成"亮色孤岛"，与整体主题不搭——2026-08-14 统一重写。 */
 .chat-panel {
   max-width: 880px;
   margin: 0 auto;
@@ -2433,19 +2436,19 @@ tr:hover td { background: var(--bg-card-hover); }
   flex-direction: column;
   height: calc(100vh - 200px);
   min-height: 480px;
-  background: var(--bg-surface, #fff);
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
   overflow: hidden;
 }
-.chat-header { padding: 16px 20px 8px; border-bottom: 1px solid var(--border-color, #eef2f7); }
-.chat-header h2 { margin: 0; font-size: 18px; }
-.chat-subtitle { margin: 4px 0 0; font-size: 12px; color: var(--text-muted, #64748b); }
+.chat-header { padding: 16px 20px 8px; border-bottom: 1px solid var(--border-default); }
+.chat-header h2 { margin: 0; font-size: 18px; color: var(--text-primary); }
+.chat-subtitle { margin: 4px 0 0; font-size: 12px; color: var(--text-secondary); }
 .chat-messages {
   flex: 1; overflow-y: auto; padding: 16px 20px;
   display: flex; flex-direction: column; gap: 14px;
 }
-.chat-empty { color: var(--text-muted, #64748b); font-size: 13px; }
+.chat-empty { color: var(--text-muted); font-size: 13px; }
 .chat-quick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .chat-quick-item { cursor: pointer; }
 .chat-row { display: flex; }
@@ -2455,75 +2458,117 @@ tr:hover td { background: var(--bg-card-hover); }
   max-width: 82%; padding: 10px 14px; border-radius: 14px;
   font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
 }
-.chat-bubble-user { background: var(--color-primary, #185fa5); color: #fff; border-bottom-right-radius: 4px; }
-.chat-bubble-assistant { background: var(--bg-secondary, #f1f5f9); color: var(--text-primary, #1f2937); border-bottom-left-radius: 4px; }
+.chat-bubble-user { background: var(--accent); color: var(--text-inverse); border-bottom-right-radius: 4px; }
+.chat-bubble-assistant {
+  background: var(--bg-secondary); color: var(--text-primary);
+  border: 1px solid var(--border-default); border-bottom-left-radius: 4px;
+}
+.chat-text { position: relative; }
+.chat-copy {
+  position: absolute; top: -6px; right: -6px;
+  font-size: 10px; padding: 1px 6px; border-radius: var(--radius-sm);
+  background: var(--bg-card); border: 1px solid var(--border-default);
+  color: var(--text-muted); cursor: pointer; opacity: 0; transition: opacity var(--duration-fast);
+}
+.chat-bubble:hover .chat-copy { opacity: 1; }
+.chat-copy:hover { color: var(--accent); border-color: var(--accent); }
+.chat-header-actions { display: flex; align-items: center; gap: 8px; }
+.chat-clear { font-size: 12px; padding: 4px 10px; }
 .chat-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
-.chat-badge { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: #e2e8f0; color: #334155; }
-.chat-badge-warn { background: #fef3c7; color: #92400e; }
-.chat-badge-model { background: #e0f2fe; color: #075985; }
-.chat-badge-tool { background: #dcfce7; color: #166534; }
-.chat-badge-plan { background: #ede9fe; color: #5b21b6; }
-.chat-verification { margin-top: 8px; padding: 8px 10px; background: #fff7ed; border: 1px solid #fb923c; border-radius: 8px; font-size: 12px; color: #9a3412; }
+.chat-badge {
+  font-size: 11px; padding: 2px 8px; border-radius: var(--radius-sm);
+  background: var(--bg-secondary); border: 1px solid var(--border-default); color: var(--text-secondary);
+}
+.chat-badge-warn { background: var(--color-warning-dim); border-color: var(--color-warning); color: var(--color-warning); }
+.chat-badge-model { background: var(--color-info-dim); border-color: var(--color-info); color: var(--color-info); }
+.chat-badge-tool { background: var(--color-positive-dim); border-color: var(--color-positive); color: var(--color-positive); }
+.chat-badge-plan { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.chat-verification {
+  margin-top: 8px; padding: 8px 10px;
+  background: var(--color-warning-dim); border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md); font-size: 12px; color: var(--color-warning);
+}
 .chat-verification strong { display: block; margin-bottom: 4px; }
 .chat-verification p { margin: 0 0 4px; }
 .chat-verification ul { margin: 0; padding-left: 18px; }
-.chat-evidence-toggle { font-size: 11px; background: none; border: none; color: var(--color-primary, #185fa5); cursor: pointer; padding: 2px 4px; }
-.chat-evidence { list-style: none; margin: 6px 0 0; padding: 8px; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; }
+.chat-evidence-toggle { font-size: 11px; background: none; border: none; color: var(--accent); cursor: pointer; padding: 2px 4px; }
+.chat-evidence-toggle:hover { text-decoration: underline; }
+.chat-evidence {
+  list-style: none; margin: 6px 0 0; padding: 8px;
+  background: var(--bg-secondary); border: 1px solid var(--border-default);
+  border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 6px;
+}
 .chat-evidence li { font-size: 12px; }
-.chat-evidence-src { color: #64748b; margin-right: 6px; font-family: var(--font-mono, monospace); }
-.chat-evidence-text { color: #334155; }
+.chat-evidence-src { color: var(--accent); margin-right: 6px; font-family: var(--font-mono); }
+.chat-evidence-text { color: var(--text-secondary); }
 .chat-debate { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
-.chat-debate-side, .chat-debate-synthesis { padding: 8px 10px; border-radius: 10px; font-size: 13px; }
+.chat-debate-side, .chat-debate-synthesis {
+  padding: 8px 10px; border-radius: var(--radius-md); font-size: 13px;
+  border: 1px solid var(--border-default); color: var(--text-primary);
+}
 .chat-debate-side p, .chat-debate-synthesis p { margin: 4px 0 0; white-space: pre-wrap; }
-.chat-debate-bull { background: #fef2f2; }
-.chat-debate-bear { background: #f0fdf4; }
-.chat-debate-synthesis { background: #eff6ff; }
-.chat-calc-errors { margin-top: 8px; padding-top: 6px; border-top: 1px dashed #fb923c; }
-.chat-calc-errors > strong { display: block; margin-bottom: 4px; color: #9a3412; }
-.chat-calc-error { padding: 6px 8px; background: #fef2f2; border-radius: 6px; margin-bottom: 4px; }
-.chat-calc-claim { font-weight: 600; }
-.chat-calc-formula { font-family: var(--font-mono, monospace); font-size: 11px; color: #64748b; }
-.chat-calc-disc { color: #b91c1c; font-size: 11px; }
-.chat-risk-debate { border-top: 2px solid #e5e7eb; padding-top: 6px; }
-.chat-risk-aggressive { background: #fef2f2; border-left: 3px solid #ef4444; }
-.chat-risk-neutral { background: #fffbeb; border-left: 3px solid #f59e0b; }
-.chat-risk-conservative { background: #f0fdf4; border-left: 3px solid #22c55e; }
-.chat-loading { color: #64748b; }
-.chat-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #94a3b8; margin-right: 6px; animation: chatpulse 1s infinite; }
+/* A 股习惯：红=看多、绿=看空（与 NewsPostureHeatBar 语义一致） */
+.chat-debate-bull { background: var(--color-negative-dim); border-left: 3px solid var(--color-negative); }
+.chat-debate-bear { background: var(--color-positive-dim); border-left: 3px solid var(--color-positive); }
+.chat-debate-synthesis { background: var(--color-info-dim); border-left: 3px solid var(--color-info); }
+.chat-calc-errors { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--color-warning); }
+.chat-calc-errors > strong { display: block; margin-bottom: 4px; color: var(--color-warning); }
+.chat-calc-error { padding: 6px 8px; background: var(--color-warning-dim); border-radius: var(--radius-sm); margin-bottom: 4px; }
+.chat-calc-claim { font-weight: 600; color: var(--text-primary); }
+.chat-calc-formula { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
+.chat-calc-disc { color: var(--color-warning); font-size: 11px; }
+.chat-risk-debate { border-top: 1px solid var(--border-default); padding-top: 6px; }
+.chat-risk-aggressive { background: var(--color-negative-dim); border-left: 3px solid var(--color-negative); }
+.chat-risk-neutral { background: var(--color-warning-dim); border-left: 3px solid var(--color-warning); }
+.chat-risk-conservative { background: var(--color-positive-dim); border-left: 3px solid var(--color-positive); }
+.chat-loading { color: var(--text-muted); }
+.chat-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-right: 6px; animation: chatpulse 1s infinite; }
 @keyframes chatpulse { 0%,100% { opacity: .3; } 50% { opacity: 1; } }
-.chat-input-area { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-color, #eef2f7); }
-.chat-input { flex: 1; resize: none; border: 1px solid var(--border-color, #cbd5e1); border-radius: 10px; padding: 8px 10px; font-family: inherit; font-size: 14px; }
+.chat-input-area { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-default); }
+.chat-input {
+  flex: 1; resize: none;
+  border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  padding: 8px 10px; font-family: inherit; font-size: 14px;
+  background: var(--bg-input); color: var(--text-primary); outline: none;
+}
+.chat-input:focus { border-color: var(--border-focus); }
+.chat-input::placeholder { color: var(--text-muted); }
 .chat-send { align-self: flex-end; }
 
 /* ===== 研究增强面板（文档库 / 模型路由 / 成本 / 监控 / 记忆） ===== */
 .chat-header-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .chat-enhance-toggle { font-size: 12px; padding: 4px 10px; }
-.enhance-panel { padding: 12px 16px 4px; border-bottom: 1px solid var(--border-color, #eef2f7); background: var(--bg-secondary, #f8fafc); }
+.enhance-panel { padding: 12px 16px 4px; border-bottom: 1px solid var(--border-default); background: var(--bg-secondary); }
 .enhance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
-.enhance-card { background: var(--bg-card, #fff); border: 1px solid var(--border-color, #e5e7eb); border-radius: 12px; padding: 12px; }
-.enhance-title { margin: 0 0 6px; font-size: 14px; color: var(--text-primary, #1f2937); }
-.enhance-hint { margin: 0 0 8px; font-size: 12px; color: #64748b; line-height: 1.5; }
+.enhance-card { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 12px; }
+.enhance-title { margin: 0 0 6px; font-size: 14px; color: var(--text-primary); }
+.enhance-hint { margin: 0 0 8px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
 .enhance-input, .enhance-textarea {
-  width: 100%; box-sizing: border-box; border: 1px solid var(--border-color, #cbd5e1); border-radius: 8px;
+  width: 100%; box-sizing: border-box; border: 1px solid var(--border-default); border-radius: var(--radius-sm);
   padding: 6px 8px; font-family: inherit; font-size: 13px; margin-bottom: 6px;
-  background: var(--bg-input, #fff); color: var(--text-primary, #1f2937);
+  background: var(--bg-input); color: var(--text-primary); outline: none;
 }
+.enhance-input:focus, .enhance-textarea:focus { border-color: var(--border-focus); }
 .enhance-textarea { resize: vertical; }
 .enhance-actions { display: flex; gap: 8px; margin-bottom: 8px; }
 .enhance-file { display: inline-flex; align-items: center; cursor: pointer; }
 .enhance-docs { display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto; }
-.enhance-doc { border-top: 1px dashed var(--border-color, #e5e7eb); padding-top: 6px; }
-.enhance-doc-src { display: block; font-size: 11px; color: var(--color-primary, #185fa5); font-family: var(--font-mono, monospace); }
-.enhance-doc-preview { display: block; font-size: 12px; color: #475569; }
-.enhance-empty { font-size: 12px; color: #94a3b8; }
-.enhance-row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; padding: 4px 0; color: var(--text-primary, #1f2937); }
+.enhance-doc { border-top: 1px dashed var(--border-default); padding-top: 6px; }
+.enhance-doc-src { display: block; font-size: 11px; color: var(--accent); font-family: var(--font-mono); }
+.enhance-doc-preview { display: block; font-size: 12px; color: var(--text-secondary); }
+.enhance-empty { font-size: 12px; color: var(--text-muted); }
+.enhance-row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; padding: 4px 0; color: var(--text-primary); }
 .enhance-routing { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
-.enhance-cost { margin-top: 6px; border-top: 1px dashed var(--border-color, #e5e7eb); padding-top: 6px; }
-.tag { font-size: 11px; padding: 2px 8px; border-radius: 6px; }
-.tag-ok { background: #dcfce7; color: #166534; }
-.tag-warn { background: #fef3c7; color: #92400e; }
-.chip-warn { background: #fee2e2; color: #991b1b; }
-.enhance-msg { margin-top: 8px; font-size: 12px; color: #0f766e; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 6px 10px; }
+.enhance-cost { margin-top: 6px; border-top: 1px dashed var(--border-default); padding-top: 6px; }
+.tag { font-size: 11px; padding: 2px 8px; border-radius: var(--radius-sm); }
+.tag-ok { background: var(--color-positive-dim); color: var(--color-positive); }
+.tag-warn { background: var(--color-warning-dim); color: var(--color-warning); }
+.chip-warn { background: var(--color-negative-dim); color: var(--color-negative); }
+.enhance-msg {
+  margin-top: 8px; font-size: 12px; color: var(--color-positive);
+  background: var(--color-positive-dim); border: 1px solid var(--color-positive);
+  border-radius: var(--radius-sm); padding: 6px 10px;
+}
 
 /* === 模拟盘页面 === */
 .paper-page { max-width: 980px; margin: 0 auto; padding: 24px 20px 60px; }

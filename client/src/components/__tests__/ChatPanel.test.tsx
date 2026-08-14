@@ -51,4 +51,31 @@ describe('ChatPanel', () => {
     fireEvent.click(screen.getByText(/对比 600519 和 000858/));
     await waitFor(() => expect(screen.getByText('这是回复')).toBeInTheDocument());
   });
+
+  it('Enter 键发送、Shift+Enter 不发送（换行）', async () => {
+    render(<ChatPanel />);
+    const ta = screen.getByLabelText('对话输入') as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: '分析 600519' } });
+    // Shift+Enter：不应触发发送
+    fireEvent.keyDown(ta, { key: 'Enter', shiftKey: true });
+    expect(screen.queryByText('这是回复')).not.toBeInTheDocument();
+    // Enter：触发发送
+    fireEvent.keyDown(ta, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText('这是回复')).toBeInTheDocument());
+  });
+
+  it('空输入时发送按钮禁用', () => {
+    render(<ChatPanel />);
+    expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
+  });
+
+  it('清空按钮清空当前对话', async () => {
+    render(<ChatPanel />);
+    const ta = screen.getByLabelText('对话输入') as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: '分析 600519' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(screen.getByText('这是回复')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '清空' }));
+    expect(screen.queryByText('这是回复')).not.toBeInTheDocument();
+  });
 });
