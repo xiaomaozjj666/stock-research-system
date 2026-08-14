@@ -1,20 +1,5 @@
-import ReactEChartsCoreDefault from 'echarts-for-react/lib/core';
-import type { ComponentType, CSSProperties } from 'react';
-import echarts from '../lib/echarts';
+import EChart from './EChart';
 import type { WatchlistNewsBacktestReport, NewsSignal } from '../types';
-
-// 与 ChartsSection 相同的类型桥接（echarts-for-react@3.0.7 基于 React18 声明，与 React19 不兼容；
-// option 用 unknown 规避 ECharts6 严格字面量类型，运行时正常）。
-const ReactEChartsCore = ReactEChartsCoreDefault as unknown as ComponentType<{
-  echarts: typeof import('../lib/echarts').default;
-  option: unknown;
-  style?: CSSProperties;
-  notMerge?: boolean;
-  lazyUpdate?: boolean;
-  theme?: string | object;
-  onChartReady?: (instance: unknown) => void;
-  onEvents?: Record<string, (params: unknown) => void>;
-}>;
 
 // 设计系统配色（与 index.css / ChartsSection 协调）：红=看多、绿=看空、灰=无新闻
 const BULL = { r: 239, g: 68, b: 68 }; // #ef4444
@@ -146,7 +131,7 @@ export default function NewsPostureHeatBar({
   return (
     <div className="card watchlist-heatbar">
       <div className="section-title">新闻姿态热力条（自选股批量回测总览）</div>
-      <ReactEChartsCore echarts={echarts} option={option} style={{ height }} notMerge />
+      <EChart option={option} style={{ height }} />
       <div className="watchlist-heatbar-legend">
         <span className="hb-dot hb-bull" /> 偏多（红）
         <span className="hb-dot hb-bear" /> 偏空（绿）

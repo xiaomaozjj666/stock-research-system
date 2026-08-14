@@ -1,21 +1,7 @@
-import ReactEChartsCoreDefault from 'echarts-for-react/lib/core';
-import type { ComponentType, CSSProperties } from 'react';
-import echarts from '../lib/echarts';
-
-// echarts-for-react@3.0.7 的声明基于 React 18 的 Component 类型，与 React 19 的 JSX 类型不兼容
-// （运行时正常）。这里做最小类型桥接，使其可作为 JSX 组件使用。
-// option 采用 unknown：ECharts 6 的 EChartsOption 类型较严格，内联配置对象（type 字面量被推断为
-// string 等）易触发类型不匹配；运行时渲染不受影响。
-const ReactEChartsCore = ReactEChartsCoreDefault as unknown as ComponentType<{
-  echarts: typeof import('../lib/echarts').default;
-  option: unknown;
-  style?: CSSProperties;
-  notMerge?: boolean;
-  lazyUpdate?: boolean;
-  theme?: string | object;
-  onChartReady?: (instance: unknown) => void;
-  onEvents?: Record<string, (params: unknown) => void>;
-}>;
+// 图表渲染统一走自研轻量封装 EChart（替代 echarts-for-react@3.0.7：
+// 该版本被 npm 标记 "published in error"，生产构建下 default 互操作会得到模块对象，
+// 导致 "Element type is invalid: got object" 渲染崩溃）
+import EChart from './EChart';
 
 interface StockData {
   stock_name?: string;
@@ -363,31 +349,31 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
         {hasFinanceData && (
           <div className="chart-card">
             <h4>营收与利润趋势</h4>
-            <ReactEChartsCore echarts={echarts} option={revenueChart} style={{ height: 280 }} />
+            <EChart option={revenueChart} style={{ height: 280 }} />
           </div>
         )}
         {hasFinanceData && (
           <div className="chart-card">
             <h4>盈利能力指标</h4>
-            <ReactEChartsCore echarts={echarts} option={profitChart} style={{ height: 280 }} />
+            <EChart option={profitChart} style={{ height: 280 }} />
           </div>
         )}
         {hasPeerData && (
           <div className="chart-card">
             <h4>同业 PE 对比</h4>
-            <ReactEChartsCore echarts={echarts} option={peerChart} style={{ height: 280 }} />
+            <EChart option={peerChart} style={{ height: 280 }} />
           </div>
         )}
         {hasRadar && (
           <div className="chart-card">
             <h4>五维度雷达图</h4>
-            <ReactEChartsCore echarts={echarts} option={radarChart} style={{ height: 280 }} />
+            <EChart option={radarChart} style={{ height: 280 }} />
           </div>
         )}
         {hasPeData && (
           <div className="chart-card">
             <h4>历史 PE 走势</h4>
-            <ReactEChartsCore echarts={echarts} option={peChart} style={{ height: 280 }} />
+            <EChart option={peChart} style={{ height: 280 }} />
           </div>
         )}
       </div>
