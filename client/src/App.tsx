@@ -481,7 +481,11 @@ function App() {
                 )}
                 <RevealSection id="followup">
                   <ErrorBoundary label="跟踪指标">
-                    <FollowUpSection data={stockData.follow_up_indicators} />
+                    
+                    <FollowUpSection
+                      data={stockData.follow_up_indicators}
+                      stockCode={stockData.stock_code}
+                    />
                   </ErrorBoundary>
                 </RevealSection>
               </main>
