@@ -17,6 +17,11 @@ import { setLogLevel } from '../utils/logger.js';
 const testDataDir = mkdtempSync(join(tmpdir(), 'srs-test-data-'));
 process.env.AUDIT_LOG_FILE = join(testDataDir, 'audit.log');
 process.env.CHAT_HISTORY_FILE = join(testDataDir, 'chatHistory.json');
+// 路由级测试（security/features 等）会经真实 app 写自选股/模拟盘/缓存：
+// 未显式重定向的测试一律落到临时目录，杜绝污染 server/src/data/
+process.env.WATCHLIST_FILE = join(testDataDir, 'watchlist.json');
+process.env.PAPER_TRADING_FILE = join(testDataDir, 'paperTrading.json');
+process.env.DATA_CACHE_DIR = join(testDataDir, 'cache');
 
 // 静音结构化日志（路由级测试 import 真实 app 会产生大量 HTTP request / warn 噪音）。
 // 依赖日志输出的测试（env.test.ts / telemetry.test.ts）会在用例内显式 setLogLevel 恢复。
