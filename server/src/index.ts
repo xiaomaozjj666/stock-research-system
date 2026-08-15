@@ -69,17 +69,19 @@ app.use(
 );
 
 // === 安全响应头（helmet 标准中间件，替代手写头：覆盖面由库维护，不靠人记忆） ===
-// CSP 与权限策略按本项目定制（允许内联样式以兼容 ECharts）；HSTS 生产环境 + 显式开启才启用。
+// CSP 按本项目定制：style 允许内联（React/echarts 内联样式）；script 严格 self
+// （index.html 无内联脚本，构建产物全部外链）；connect 仅 self（API/SSE 同源）。
+// HSTS 生产环境 + 显式开启才启用。
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
         'default-src': ["'self'"],
-        'script-src': ["'self'", "'unsafe-inline'"],
+        'script-src': ["'self'"],
         'style-src': ["'self'", "'unsafe-inline'"],
         'img-src': ["'self'", 'data:', 'https:'],
         'font-src': ["'self'", 'data:'],
-        'connect-src': ["'self'", 'https:'],
+        'connect-src': ["'self'"],
         'frame-ancestors': ["'none'"],
         'base-uri': ["'self'"],
         'form-action': ["'self'"],
@@ -175,7 +177,8 @@ if (process.env.NODE_ENV === 'production' && fs.existsSync(CLIENT_DIST)) {
     }),
   );
   // SPA 路由回退：非 /api 开头的 GET 一律返回 index.html（前端为客户端渲染）
-  app.get(/^\/(?!api\/).*/, (_req: Request, res: Response, next: NextFunction) => {
+  // 注意：裸 /api（无子路径）也必须走 404，避免返回 HTML（(?!api(?:\/|$)) 同时排除 /api 与 /api/...）
+  app.get(/^\/(?!api(?:\/|$)).*/, (_req: Request, res: Response, next: NextFunction) => {
     res.sendFile(path.join(CLIENT_DIST, 'index.html'), (err) => {
       if (err) next(err);
     });
