@@ -4,7 +4,11 @@ import '@testing-library/jest-dom/vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ToastProvider, useToast } from '../Toast';
 
-function Trigger({ onShow }: { onShow: (show: (msg: string, type?: 'success' | 'info' | 'error') => void) => void }) {
+function Trigger({
+  onShow,
+}: {
+  onShow: (show: (msg: string, type?: 'success' | 'info' | 'error') => void) => void;
+}) {
   const { showToast } = useToast();
   return <button onClick={() => onShow(showToast)}>触发</button>;
 }
