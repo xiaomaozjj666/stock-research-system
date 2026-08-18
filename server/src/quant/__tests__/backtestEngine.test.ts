@@ -99,6 +99,83 @@ describe('runBacktest 新闻情绪叠加层', () => {
   });
 });
 
+describe('runBacktest T+1 信号延迟成交（backtrader Market / qlib shift=1 语义）', () => {
+  /** 简单 SMA（与引擎 maAt 同口径） */
+  function smaAt(data: OHLCVData[], idx: number, period: number): number {
+    if (idx < period - 1) return NaN;
+    let s = 0;
+    for (let k = idx - period + 1; k <= idx; k++) s += data[k].close;
+    return s / period;
+  }
+
+  /** 找到首个金叉信号 bar 下标（MA5 上穿 MA20） */
+  function firstGoldenCross(data: OHLCVData[]): number {
+    for (let i = 20; i < data.length; i++) {
+      const prevShort = smaAt(data, i - 1, 5);
+      const prevLong = smaAt(data, i - 1, 20);
+      const short = smaAt(data, i, 5);
+      const long = smaAt(data, i, 20);
+      if (prevShort <= prevLong && short > long) return i;
+    }
+    return -1;
+  }
+
+  it('买入成交于信号生成次一 bar（开盘价 × (1+滑点)），而非信号当日', () => {
+    const r = runBacktest(ohlcv, maConfig());
+    const buy = r.trades.find((t) => t.type === 'buy')!;
+    expect(buy).toBeTruthy();
+    const sigIdx = firstGoldenCross(ohlcv);
+    expect(sigIdx).toBeGreaterThan(0);
+    // 成交日 = 信号日 + 1
+    expect(buy.date).toBe(ohlcv[sigIdx + 1].date);
+    // 成交价 = 次一 bar 开盘价 × (1+滑点 0.001)，round 2 位
+    expect(buy.price).toBeCloseTo(ohlcv[sigIdx + 1].open * 1.001, 2);
+  });
+
+  it('卖出同样延迟：死叉信号次一 bar 开盘价成交', () => {
+    const osc2 = oscillatingSeries();
+    const r = runBacktest(osc2, maConfig());
+    const sells = r.trades.filter((t) => t.type === 'sell');
+    expect(sells.length).toBeGreaterThan(0);
+    // 找到首个死叉信号 bar（MA5 下穿 MA20）
+    let sigIdx = -1;
+    for (let i = 20; i < osc2.length; i++) {
+      const prevShort = smaAt(osc2, i - 1, 5);
+      const prevLong = smaAt(osc2, i - 1, 20);
+      const short = smaAt(osc2, i, 5);
+      const long = smaAt(osc2, i, 20);
+      if (prevShort >= prevLong && short < long) {
+        sigIdx = i;
+        break;
+      }
+    }
+    expect(sigIdx).toBeGreaterThan(0);
+    expect(sells[0].date).toBe(osc2[sigIdx + 1].date);
+    expect(sells[0].price).toBeCloseTo(osc2[sigIdx + 1].open * 0.999, 2);
+  });
+
+  it('数据末 bar 生成的信号无法成交（无下一 bar，与真实世界一致丢弃）', () => {
+    // 前 29 天平盘（MA5=MA20=100），最后一天跳涨 → 金叉只在末 bar，无法成交
+    const flatUp: OHLCVData[] = [];
+    const base = new Date('2025-01-01').getTime();
+    for (let i = 0; i < 30; i++) {
+      const close = i === 29 ? 120 : 100;
+      const d = new Date(base + i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      flatUp.push({
+        date: d,
+        open: i === 29 ? 110 : 100,
+        close,
+        high: close,
+        low: close - 1,
+        volume: 1_000_000,
+      });
+    }
+    expect(firstGoldenCross(flatUp)).toBe(29); // 金叉确实只在末 bar
+    const r = runBacktest(flatUp, maConfig());
+    expect(r.tradeCount).toBe(0);
+  });
+});
+
 describe('runBacktest 可插拔成本模型', () => {
   const osc = oscillatingSeries();
 

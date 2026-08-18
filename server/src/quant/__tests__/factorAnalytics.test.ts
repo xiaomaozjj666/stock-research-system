@@ -172,3 +172,76 @@ describe('validateFactorModel', () => {
     expect(rep.perFactor).toHaveLength(0);
   });
 });
+
+describe('validateFactorModel 每日截面 IC 序列（qlib calc_ic 口径）', () => {
+  // 两个交易日 × 3 只股票：A 因子在每天截面内与收益排序一致（强因子），B 为噪声
+  const dailyPanel: FactorPanelRow[] = [
+    { date: '2025-01-02', factors: { A: 3, B: 5 }, forwardReturn: 0.3 },
+    { date: '2025-01-02', factors: { A: 2, B: 9 }, forwardReturn: 0.1 },
+    { date: '2025-01-02', factors: { A: 1, B: 1 }, forwardReturn: -0.2 },
+    { date: '2025-01-03', factors: { A: 3, B: 7 }, forwardReturn: 0.25 },
+    { date: '2025-01-03', factors: { A: 2, B: 2 }, forwardReturn: 0.0 },
+    { date: '2025-01-03', factors: { A: 1, B: 8 }, forwardReturn: -0.3 },
+  ];
+
+  it('按日分组计算 IC 序列：A 因子每日截面 IC ≈ +1，B 为噪声 IC 弱', () => {
+    const rep = validateFactorModel(dailyPanel);
+    expect(rep.n).toBe(6);
+    const a = rep.perFactor.find((f) => f.name === 'A')!;
+    const b = rep.perFactor.find((f) => f.name === 'B')!;
+    // A：每日内因子值与收益完全同序 → 每日 IC = 1 → 平均 IC ≈ 1
+    expect(a.ic).toBeCloseTo(1, 6);
+    expect(Math.abs(a.ic)).toBeGreaterThan(Math.abs(b.ic));
+  });
+
+  it('多截面 IC 序列可计算 ICIR（= mean/std），单截面时缺省', () => {
+    const rep = validateFactorModel(dailyPanel);
+    const a = rep.perFactor.find((f) => f.name === 'A')!;
+    // 每日 IC 恒为 1 → std=0 → informationRatio 返回符号 99
+    expect(a.icir).toBe(99);
+    // 无 date 的旧面板：单 IC，icir 缺省
+    const legacy = validateFactorModel([
+      { factors: { A: 1 }, forwardReturn: 0.1 },
+      { factors: { A: 2 }, forwardReturn: 0.2 },
+      { factors: { A: 3 }, forwardReturn: 0.3 },
+    ]);
+    expect(legacy.perFactor[0].icir).toBeUndefined();
+  });
+
+  it('混合口径差异：跨期秩混合的单 IC ≠ 每日截面平均 IC（A 因子跨日排序与收益不同序）', () => {
+    // 构造日内同序（每天 A 升→收益升，日内 IC=+1）但跨日整体偏移（01-02 的 A 值整体高于
+    // 01-03，收益水平却与之错位）——跨期混合秩相关被拉低，按日截面口径仍为 +1
+    const panel: FactorPanelRow[] = [
+      { date: '2025-01-02', factors: { A: 4 }, forwardReturn: -0.2 },
+      { date: '2025-01-02', factors: { A: 5 }, forwardReturn: 0.1 },
+      { date: '2025-01-02', factors: { A: 6 }, forwardReturn: 0.3 },
+      { date: '2025-01-03', factors: { A: 1 }, forwardReturn: -0.3 },
+      { date: '2025-01-03', factors: { A: 2 }, forwardReturn: 0.0 },
+      { date: '2025-01-03', factors: { A: 3 }, forwardReturn: 0.25 },
+    ];
+    const rep = validateFactorModel(panel);
+    const a = rep.perFactor.find((f) => f.name === 'A')!;
+    // 按日口径：每日 IC = +1（日内同序）→ 平均 IC = 1
+    expect(a.ic).toBeCloseTo(1, 6);
+    // 全样本混合口径：跨期秩混合 → IC 明显低于 1
+    const mixed = spearmanRankIC(
+      panel.map((r) => r.factors.A),
+      panel.map((r) => r.forwardReturn),
+    );
+    expect(mixed).toBeLessThan(a.ic);
+    expect(mixed).toBeLessThan(1);
+  });
+
+  it('某日样本不足 2 行时跳过该日（不参与 IC 序列）', () => {
+    const panel: FactorPanelRow[] = [
+      { date: '2025-01-02', factors: { A: 2 }, forwardReturn: 0.1 },
+      { date: '2025-01-02', factors: { A: 1 }, forwardReturn: -0.1 },
+      { date: '2025-01-03', factors: { A: 5 }, forwardReturn: 0.5 }, // 单行日 → 跳过
+    ];
+    const rep = validateFactorModel(panel);
+    const a = rep.perFactor.find((f) => f.name === 'A')!;
+    // 只用 01-02 的 2 行 → 单截面 IC，icir 缺省
+    expect(a.icir).toBeUndefined();
+    expect(a.ic).toBeCloseTo(1, 6);
+  });
+});
