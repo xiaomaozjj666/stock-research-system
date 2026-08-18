@@ -19,15 +19,15 @@
 
 ### 可插拔交易成本模型（借鉴 backtrader CommInfo / qlib Exchange / gs-quant backtests）（feat）
 
-- 新增 `server/src/quant/costModel.ts`：`CostModel {openRate, closeRate, minCost, slippage}` 接口 + 纯函数 `buyCost/sellProceeds`（费用 = max(成交额×费率, 最低费用)）。
-- **A 股真实费率模型** `A_SHARE_COST_MODEL`：佣金万 2.5 双边 + **印花税万 5 仅卖出单边**（2023-08-28 起）+ 单笔最低佣金 5 元——对应 backtrader CommInfoBase 方向性佣金与 qlib Exchange 不对称费率设计。
+- 新增 `server/src/quant/costModel.ts`：`CostModel {openRate, closeRate, minCost, slippage, impactCost?}` 接口 + 纯函数 `buyCost/sellProceeds`（费用 = max(成交额×费率, 最低费用)）+ `marketImpactCost`（**二次方市场冲击**：`impactCost × (成交额/当日成交量)²`，qlib Exchange 公式）。
+- **A 股真实费率模型** `A_SHARE_COST_MODEL`：佣金万 2.5 双边 + **印花税万 5 仅卖出单边**（2023-08-28 起）+ 单笔最低佣金 5 元 + 市场冲击系数 0.1（qlib 推荐值）——对应 backtrader CommInfoBase 方向性佣金与 qlib Exchange 不对称费率/冲击成本设计。
 - 引擎 `runBacktest(data, strategy, costModel?)`：未传时按 commission/slippage 构造对称模型（**历史行为逐字等价**）；`strategy.costModel='a_share'` 启用 A 股真实费率；也可注入任意自定义模型。
 - 前端量化页成本模型下拉：「自定义佣金（默认万三对称）」/「A 股真实费率（佣金万2.5 + 印花税卖出万5 + 最低5元）」。
-- 新增 12 个测试用例（costModel 纯函数 7 + 引擎路径 5：历史行为等价、a_share 费率、印花税单边致收益更低、零成本模型、minCost 兜底经引擎生效）。
+- 新增 17 个测试用例（costModel 纯函数 11 + 引擎路径 6：历史行为等价、a_share 费率、印花税单边致收益更低、零成本模型、minCost 兜底、市场冲击经引擎生效）。
 
 ### 验证
 
-- **877 tests 全绿**（+26 新增）/ E2E 9/9 / 双端 tsc / lint / format:check / 双端 build 全过；风险归因经真实浏览器 E2E 验证（600519，0 pageerror）。
+- **882 tests 全绿**（+31 新增）/ E2E 9/9 / 双端 tsc / lint / format:check / 双端 build 全过；风险归因经真实浏览器 E2E 验证（600519，0 pageerror）。
 
 ## 2026-08-14 — 图表修复、研究助手主题统一、测试全量审查、CI 修复
 
