@@ -1,5 +1,6 @@
 import type { OHLCVData, StrategyConfig, BacktestResult, Trade } from './types.js';
 import { getBenchmarkCurve } from './dataProvider.js';
+import { computePerformance, type AnalyzerContext } from './analyzers.js';
 
 /**
  * 运行回测
@@ -84,75 +85,20 @@ export function runBacktest(data: OHLCVData[], strategy: StrategyConfig): Backte
     });
   }
 
-  // 计算绩效指标
-  const totalReturn = ((equityCurve[equityCurve.length - 1].value - 100) / 100) * 100;
-  const years = data.length / 252;
-  const annualizedReturn = (Math.pow(1 + totalReturn / 100, 1 / years) - 1) * 100;
-
-  // 夏普比率（基于日收益率，扣除无风险利率）
-  const riskFreeRate = 0.025; // 中国10年期国债收益率
-  const dailyRiskFree = riskFreeRate / 252;
-  const dailyReturns: number[] = [];
-  for (let i = 1; i < equityCurve.length; i++) {
-    dailyReturns.push((equityCurve[i].value - equityCurve[i - 1].value) / equityCurve[i - 1].value);
-  }
-  const avgDailyReturn = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
-  const excessAvgReturn = avgDailyReturn - dailyRiskFree;
-  const dailyStdDev = Math.sqrt(
-    dailyReturns.reduce((s, r) => s + (r - avgDailyReturn) ** 2, 0) / dailyReturns.length,
-  );
-  const sharpeRatio = dailyStdDev > 0 ? (excessAvgReturn / dailyStdDev) * Math.sqrt(252) : 0;
-
-  // 索提诺比率（只考虑下行风险）
-  const excessReturns = dailyReturns.map((r) => r - dailyRiskFree);
-  const downsideReturns = excessReturns.filter((r) => r < 0);
-  const downsideDev =
-    downsideReturns.length > 0
-      ? Math.sqrt(downsideReturns.reduce((s, r) => s + r * r, 0) / downsideReturns.length)
-      : 0;
-  const sortinoRatio = downsideDev > 0 ? (excessAvgReturn / downsideDev) * Math.sqrt(252) : 0;
-
-  // 最大回撤
-  let maxDrawdown = 0;
-  let peak = equityCurve[0].value;
-  for (const point of equityCurve) {
-    if (point.value > peak) peak = point.value;
-    const drawdown = ((peak - point.value) / peak) * 100;
-    if (drawdown > maxDrawdown) maxDrawdown = drawdown;
-  }
-
-  // 胜率（考虑交易成本）
-  const transactionCostRate = 0.001; // 单次交易成本（佣金+滑点）
-  const sellTrades = trades.filter((t) => t.type === 'sell');
-  const buyTrades = trades.filter((t) => t.type === 'buy');
-  let wins = 0;
-  for (let i = 0; i < Math.min(buyTrades.length, sellTrades.length); i++) {
-    // 考虑买卖双向交易成本
-    const netReturn =
-      sellTrades[i].price * (1 - transactionCostRate) -
-      buyTrades[i].price * (1 + transactionCostRate);
-    if (netReturn > 0) wins++;
-  }
-  const winRate = sellTrades.length > 0 ? (wins / sellTrades.length) * 100 : 0;
-
-  // 盈亏比
-  const totalProfit = sellTrades
-    .filter((t, i) => t.price > buyTrades[i]?.price)
-    .reduce((s, t, i) => s + (t.price - buyTrades[i].price) * t.shares, 0);
-  const totalLoss = sellTrades
-    .filter((t, i) => t.price <= buyTrades[i]?.price)
-    .reduce((s, t, i) => s + (buyTrades[i].price - t.price) * t.shares, 0);
-  const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? 99 : 0;
+  // 绩效指标：由可插拔分析器集合计算（backtrader Analyzer 模式），
+  // 新增指标只需追加分析器，无需改动引擎
+  const stats = computePerformance({ equityCurve, trades } satisfies AnalyzerContext);
+  const round = (v: number) => Math.round(v * 100) / 100;
 
   return {
-    totalReturn: Math.round(totalReturn * 100) / 100,
-    annualizedReturn: Math.round(annualizedReturn * 100) / 100,
-    sharpeRatio: Math.round(sharpeRatio * 100) / 100,
-    sortinoRatio: Math.round(sortinoRatio * 100) / 100,
-    maxDrawdown: Math.round(maxDrawdown * 100) / 100,
-    winRate: Math.round(winRate * 100) / 100,
-    tradeCount: trades.length,
-    profitFactor: Math.round(profitFactor * 100) / 100,
+    totalReturn: round(stats.totalReturn),
+    annualizedReturn: round(stats.annualizedReturn),
+    sharpeRatio: round(stats.sharpeRatio),
+    sortinoRatio: round(stats.sortinoRatio),
+    maxDrawdown: round(stats.maxDrawdown),
+    winRate: round(stats.winRate),
+    tradeCount: stats.tradeCount,
+    profitFactor: round(stats.profitFactor),
     equityCurve,
     trades,
     benchmark: getBenchmarkCurve(data),

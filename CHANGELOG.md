@@ -3,6 +3,21 @@
 股票研究系统（AI 多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-08-18 — 量化层升级：Analyzer 模式 + 风险归因（借鉴 backtrader / gs-quant / qlib）
+
+### 绩效分析器（Analyzer 模式，借鉴 backtrader）（refactor）
+
+- 新增 `server/src/quant/analyzers.ts`：绩效统计从回测引擎内联硬编码重构为**可插拔纯函数分析器集合**（`PerformanceAnalyzer {name, compute(ctx)}` + `AnalyzerContext {equityCurve, trades}`），`computePerformance()` 支持自定义分析器注入——与 backtrader Analyzer 三件套（生命周期钩子 / 结果容器 / 注册实例化）同构的轻量版。
+- 默认集合：总收益 / 年化收益 / Sharpe / Sortino / 最大回撤 / 胜率 / 盈亏比 / 交易次数；回测引擎输出与旧逻辑逐字等价（行为不变，含手续费与无风险利率常量 `TRANSACTION_COST_RATE=0.001` / `RISK_FREE_RATE=0.025`）。
+- 新增 5 个测试用例：引擎与分析器输出一致性、默认集合字段、自定义 Calmar 分析器、空曲线安全、总收益归一化。
+
+### 风险归因（RiskModel 轻量版，借鉴 gs-quant）（feat）
+
+- 新增 `server/src/quant/riskAttribution.ts`：风格因子暴露（规模/价值/动量/盈利/杠杆，z 分数标准化）+ 系统/特异风险分解（经验因子波动率常量，无协方差矩阵的轻量 RiskModel）——对应 gs-quant `getExposures / getSpecificRisk / getTotalRisk` 的最小可用子集。
+- 分析管线（`analysisPipeline`）为每只股票附加 `riskAttribution` 字段（因子暴露 + 分解：系统波动 / 特异波动 / 总波动 / 因子解释占比），前端 `RiskSection` 新增"风险归因（风格因子暴露）"区：5 因子条形图（红=正向暴露、绿=负向暴露）+ 分解文本。
+- 新增 9 个测试用例（缺失输入、正/负向暴露、截面标准化、pe≤0 容错、零暴露全特异、高暴露系统占比、负特异容错、全链路）+ 前端 RiskSection 归因渲染用例；E2E 真实浏览器验证 600519 分析渲染归因区（0 pageerror）。
+- 验证：**865 tests 全绿** / E2E 9/9 / 双端 tsc / lint / format:check / 双端 build 全过。
+
 ## 2026-08-14 — 图表修复、研究助手主题统一、测试全量审查、CI 修复
 
 ### 报告导出 / Toast / 异动预警（feat）

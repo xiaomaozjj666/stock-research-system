@@ -205,6 +205,22 @@ export interface StockPoolItem {
   scenarios?: ScenarioResult[];
   strategyList?: StrategyRecommendation[];
   newsSentiment?: NewsSignal;
+  /** 风险归因：风格因子暴露 + 系统/特异风险分解（可选） */
+  riskAttribution?: {
+    exposures: {
+      size: number;
+      value: number;
+      momentum: number;
+      profitability: number;
+      leverage: number;
+    };
+    decomposition: {
+      systematicVol: number;
+      specificVol: number;
+      totalVol: number;
+      explainedRatio: number;
+    };
+  };
 }
 
 // 完整分析结果

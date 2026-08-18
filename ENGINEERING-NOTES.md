@@ -215,6 +215,33 @@
 - **测试**：`historyService.test.ts`（8 用例：增删查/去重/容量淘汰/损坏容错/写失败/limit 钳制）+ `history.routes.test.ts`（5 用例 CRUD 路由）+ `HistoryPage.test.tsx`（3 用例列表/查看回调/删除）；e2e「全部 Tab」用例补历史页。
 - **验证**：823 tests 全绿（+16 新用例）/ client build OK / E2E 9/9 / 双端 tsc / lint / format:check 全过。
 
+## 2026-08-18 量化层升级记录（Analyzer 模式 + 风险归因）
+
+对标 backtrader（22.9k⭐）/ qlib（47.7k⭐）/ gs-quant（12k⭐）三个高 star 量化引擎，落地两项高价值优化：
+
+### 1. 绩效分析器（借鉴 backtrader Analyzer 模式）
+
+- backtrader 核心范式：**引擎只广播事件，统计是可插拔分析器集合**（Analyzer 有生命周期钩子 start/stop/next + 结果容器 get_analysis + 注册实例化，可嵌套组合）。
+- 落地：`server/src/quant/analyzers.ts` —— `AnalyzerContext {equityCurve, trades, tradingDaysPerYear?}`，`PerformanceAnalyzer {name, compute(ctx): number}`，`computePerformance(ctx, analyzers = defaultAnalyzers)`。引擎侧 `backtestEngine.ts` 删除 87-161 行硬编码统计，改为调用 `computePerformance` 后 round 2 位，**返回字段逐字不变**（行为等价重构，无回归风险）。
+- 常量：`TRANSACTION_COST_RATE = 0.001`（双边万 5 佣金 + 万 5 印花税近似）、`RISK_FREE_RATE = 0.025`。
+- 扩展方式：传入自定义分析器数组即可新增统计（测试里演示了 Calmar），无需改引擎。
+
+### 2. 风险归因（借鉴 gs-quant RiskModel，轻量版）
+
+- gs-quant RiskModel 接口：`getExposures / getFactorCovariance / getSpecificRisk / getTotalRisk / attributePortfolio`（风格+行业因子暴露，协方差 ×252 年化，特异残差）。
+- 落地为**无协方差矩阵的经验常量版**（数据约束下最优解）：
+  - `styleFactorExposures(input, crossSection?)`：5 风格因子（规模=ln市值、价值=-PE、动量=近 6 月涨幅、盈利=ROE、杠杆=负债率）对截面（缺省 `DEFAULT_BENCHMARK` 经验基准 mean/std）z 分数标准化；缺数据因子记 0（中性），pe≤0 容错。
+  - `decomposeRisk(exposures, specificVol, factorVols = [12,18,22,14,10])`：`systematicVol = sqrt(Σ (z_i · fv_i)²)`，`totalVol = sqrt(sys² + spec²)`，`explainedRatio = sys²/total²`——经验因子波动率（A 股风格因子年化波动近似）。
+  - `analysisPipeline` 在结果组装处附加 `riskAttribution`（特异风险基线 `SPECIFIC_RISK_BASELINE = 25`），前端 RiskSection 渲染 5 因子条形图（正暴露红、负暴露绿，A 股语境红涨绿跌）+ 分解文本。
+- **注意**：当前为经验常量版，未实现协方差矩阵（数据不足）。后续若接入因子收益率序列（如 qlib Alpha158 因子库），可升级为真实 `getFactorCovariance` + 年化 252 路径。
+
+### 3. 精度与测试口径教训
+
+- 引擎对 analyzer 输出 round 2 位 → 一致性测试断言须同口径（`round(stats.X) === r.X`），不能直接比原始 double。
+- `totalVol` 与 components 各自 round 后累计误差可达 0.01 → 高暴露系统占比断言用容差 `<= 0.02`。
+- TS 严格模式：`??` 表达式不收窄原变量（`TS18048`），可选嵌套字段先提局部变量再判 `!== undefined`。
+- 验证：865 tests（+14 新增）/ E2E 9/9 / 双端 tsc / lint / format:check / build 全过；真实浏览器验证 600519 风险归因区渲染 0 pageerror。
+
 ## 2026-08-14 性能与体验极致化记录
 
 - **前端首屏 -65%**（~295KB → ~107KB gzip）：
