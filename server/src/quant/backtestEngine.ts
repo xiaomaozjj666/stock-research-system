@@ -1,15 +1,37 @@
 import type { OHLCVData, StrategyConfig, BacktestResult, Trade } from './types.js';
 import { getBenchmarkCurve } from './dataProvider.js';
 import { computePerformance, type AnalyzerContext } from './analyzers.js';
+import {
+  A_SHARE_COST_MODEL,
+  makeCostModel,
+  buyCost,
+  sellProceeds,
+  type CostModel,
+} from './costModel.js';
 
 /**
  * 运行回测
  * 逐K线回放，严格按时间顺序，杜绝未来函数
+ *
+ * 成本处理为可插拔成本模型（CostModel）：
+ * - 未显式传入 costModel 时，按 strategy.commission / strategy.slippage 构造对称模型，行为与历史一致；
+ * - strategy.costModel = 'a_share' 时使用 A 股真实费率（佣金万 2.5 双边 + 印花税万 5 卖出单边 + 最低佣金 5 元）；
+ * - 也可直接传入自定义 CostModel（如不对称费率、最低费用、冲击成本场景）。
  */
-export function runBacktest(data: OHLCVData[], strategy: StrategyConfig): BacktestResult {
+export function runBacktest(
+  data: OHLCVData[],
+  strategy: StrategyConfig,
+  costModelOverride?: CostModel,
+): BacktestResult {
   const initialCapital = strategy.initialCapital || 1000000;
   const commission = strategy.commission || 0.0003; // 万三
   const slippage = strategy.slippage || 0.001; // 0.1%
+
+  const costModel: CostModel =
+    costModelOverride ??
+    (strategy.costModel === 'a_share'
+      ? A_SHARE_COST_MODEL
+      : makeCostModel({ openRate: commission, closeRate: commission, slippage }));
 
   // 最新消息情绪叠加层：posture = clamp(0.5 + 0.5·polarity, 0, 1)
   //   polarity=+1(全面利好) → posture=1 满仓；polarity=0(中性) → 0.5 半仓；
@@ -42,20 +64,21 @@ export function runBacktest(data: OHLCVData[], strategy: StrategyConfig): Backte
     // 执行交易
     if (signal === 'buy' && position === 0) {
       if (newsPosture > 0) {
-        const price = bar.close * (1 + slippage);
+        const price = bar.close * (1 + costModel.slippage);
         // 按新闻姿态缩放可用资金（强空新闻 posture→0 时不建仓）
         const deployable = cash * newsPosture;
-        const shares = Math.floor(deployable / (price * (1 + commission)) / 100) * 100; // A股100股整数倍
+        // A股100股整数倍；每股价按含买入费率估算（成交额×(1+openRate)，minCost 忽略以便整手取整）
+        const shares = Math.floor(deployable / (price * (1 + costModel.openRate)) / 100) * 100;
         if (shares > 0) {
-          const cost = shares * price * (1 + commission);
-          cash -= cost;
+          const { total, fee } = buyCost(costModel, shares, price);
+          cash -= total;
           position = shares;
           trades.push({
             date: bar.date,
             type: 'buy',
             price: Math.round(price * 100) / 100,
             shares,
-            commission: Math.round(shares * price * commission * 100) / 100,
+            commission: Math.round(fee * 100) / 100,
             reason:
               getSignalReason(strategy, 'buy') +
               (newsAware ? `（新闻姿态${(newsPosture * 100).toFixed(0)}%）` : ''),
@@ -63,15 +86,15 @@ export function runBacktest(data: OHLCVData[], strategy: StrategyConfig): Backte
         }
       }
     } else if (signal === 'sell' && position > 0) {
-      const price = bar.close * (1 - slippage);
-      const revenue = position * price * (1 - commission);
-      cash += revenue;
+      const price = bar.close * (1 - costModel.slippage);
+      const { proceeds, fee } = sellProceeds(costModel, position, price);
+      cash += proceeds;
       trades.push({
         date: bar.date,
         type: 'sell',
         price: Math.round(price * 100) / 100,
         shares: position,
-        commission: Math.round(position * price * commission * 100) / 100,
+        commission: Math.round(fee * 100) / 100,
         reason: getSignalReason(strategy, 'sell'),
       });
       position = 0;

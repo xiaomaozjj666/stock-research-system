@@ -215,9 +215,9 @@
 - **测试**：`historyService.test.ts`（8 用例：增删查/去重/容量淘汰/损坏容错/写失败/limit 钳制）+ `history.routes.test.ts`（5 用例 CRUD 路由）+ `HistoryPage.test.tsx`（3 用例列表/查看回调/删除）；e2e「全部 Tab」用例补历史页。
 - **验证**：823 tests 全绿（+16 新用例）/ client build OK / E2E 9/9 / 双端 tsc / lint / format:check 全过。
 
-## 2026-08-18 量化层升级记录（Analyzer 模式 + 风险归因）
+## 2026-08-18 量化层升级记录（Analyzer 模式 + 风险归因 + 可插拔成本模型）
 
-对标 backtrader（22.9k⭐）/ qlib（47.7k⭐）/ gs-quant（12k⭐）三个高 star 量化引擎，落地两项高价值优化：
+对标 backtrader（22.9k⭐）/ qlib（47.7k⭐）/ gs-quant（12k⭐）三个高 star 量化引擎，落地三项高价值优化：
 
 ### 1. 绩效分析器（借鉴 backtrader Analyzer 模式）
 
@@ -235,12 +235,23 @@
   - `analysisPipeline` 在结果组装处附加 `riskAttribution`（特异风险基线 `SPECIFIC_RISK_BASELINE = 25`），前端 RiskSection 渲染 5 因子条形图（正暴露红、负暴露绿，A 股语境红涨绿跌）+ 分解文本。
 - **注意**：当前为经验常量版，未实现协方差矩阵（数据不足）。后续若接入因子收益率序列（如 qlib Alpha158 因子库），可升级为真实 `getFactorCovariance` + 年化 252 路径。
 
-### 3. 精度与测试口径教训
+### 3. 可插拔交易成本模型（backtrader CommInfo / qlib Exchange / gs-quant backtests 三方印证）
+
+- 三份研究报告交叉一致结论：成本与撮合解耦、费率可带方向（**印花税只收卖出单边**）、支持最低费用兜底与冲击成本。
+- 落地：`server/src/quant/costModel.ts` —— `CostModel {openRate, closeRate, minCost, slippage}` + 纯函数 `buyCost/sellProceeds`（fee = max(成交额×费率, minCost)）。
+  - `DEFAULT_COST_MODEL`：佣金万 3 双边对称、无最低费用（**保持历史行为**；引擎未显式传模型时按 strategy.commission/slippage 构造对称模型，输出逐字等价，测试有显式等价断言）。
+  - `A_SHARE_COST_MODEL`：佣金万 2.5 双边 + **印花税万 5 仅卖出**（closeRate = 0.00075）+ 最低佣金 5 元；`strategy.costModel = 'a_share'` 一键启用。
+  - 引擎签名 `runBacktest(data, strategy, costModelOverride?)` 向后兼容（第三参数可选），所有既有调用方零改动。
+- 前端量化页「成本模型」下拉（自定义佣金 / A 股真实费率），选 A 股时提交 `costModel:'a_share'` 且佣金率输入禁用。
+- **测试行情构造教训**：均线交叉要产生「金叉买入 + 死叉卖出」，数据必须是「走平 → 上涨 → 回落」（flat 段让 MA5==MA20，随后上涨突破触发金叉）；纯单调上涨只有金叉无死叉（测试首版因此 `sells.length===0` 失败）。
+
+### 4. 精度与测试口径教训
 
 - 引擎对 analyzer 输出 round 2 位 → 一致性测试断言须同口径（`round(stats.X) === r.X`），不能直接比原始 double。
 - `totalVol` 与 components 各自 round 后累计误差可达 0.01 → 高暴露系统占比断言用容差 `<= 0.02`。
+- 交易记录 `price` 保留 2 位，费用按未舍入价计算 → 反推费用断言用 `toBeCloseTo(..., 1)`。
 - TS 严格模式：`??` 表达式不收窄原变量（`TS18048`），可选嵌套字段先提局部变量再判 `!== undefined`。
-- 验证：865 tests（+14 新增）/ E2E 9/9 / 双端 tsc / lint / format:check / build 全过；真实浏览器验证 600519 风险归因区渲染 0 pageerror。
+- 验证：877 tests（+26 新增）/ E2E 9/9 / 双端 tsc / lint / format:check / build 全过；真实浏览器验证 600519 风险归因区渲染 0 pageerror。
 
 ## 2026-08-14 性能与体验极致化记录
 
