@@ -245,7 +245,16 @@
 - 前端量化页「成本模型」下拉（自定义佣金 / A 股真实费率），选 A 股时提交 `costModel:'a_share'` 且佣金率输入禁用。
 - **测试行情构造教训**：均线交叉要产生「金叉买入 + 死叉卖出」，数据必须是「走平 → 上涨 → 回落」（flat 段让 MA5==MA20，随后上涨突破触发金叉）；纯单调上涨只有金叉无死叉（测试首版因此 `sells.length===0` 失败）。
 
-### 4. 精度与测试口径教训
+### 4. backtrader 完整报告其余可借鉴项（后续路径，已评估未实施）
+
+backtrader 主循环事实：Cerebro 只做组装与广播，**撮合真相在 Broker**（订单 9 态状态机 + `OrderExecutionBit` 部分成交累加 + `clone()` 快照通知），策略/分析器只消费快照；佣金/滑点/成交量约束（Filler）/撮合时序（coo/coc）全部可注入；事件/向量双模式共用一套 Line+游标代码。
+
+- **订单状态机 + 执行位**（paperTrading 增强）：`OrderStatus 9 态 + ExecutionBit[] 部分成交 + clone() 快照通知`，撮合只 push bit + 迁移状态，通知由 broker 统一出队——为挂单（limit/stop）预留。
+- **Broker 接口 + A 股规则插槽（一次实现、回测/模拟盘双复用）**：`FillRule（整手/成交量）/ MatchGate（涨跌停拒单）/ Slippage / CommissionScheme(带方向)` 组合注入；paperTrading 现有 A 股撮合（T+1/涨跌停/整手/佣金印花税）可抽成 `cnRules` 包与 backtestEngine 共用。**当前成本模型参数化（costModel.ts）已覆盖 CommissionScheme 方向性部分**；撮合接口统一属结构性重构，留待撮合扩展需求出现时再做。
+- **Line 统一抽象 + 游标**（`sma.get(0)/get(-1)`，事件/向量双模式共用）：当前回测与模拟盘无共享策略代码需求，暂不引入。
+- **组装式引擎 + 参数寻优**：单函数 → `BacktestEngine` 类（add* 声明式 + optStrategy 笛卡尔积并行）；现有 factorOptimizer 已承担参数扫描职责，暂不重构。
+
+### 5. 精度与测试口径教训
 
 - 引擎对 analyzer 输出 round 2 位 → 一致性测试断言须同口径（`round(stats.X) === r.X`），不能直接比原始 double。
 - `totalVol` 与 components 各自 round 后累计误差可达 0.01 → 高暴露系统占比断言用容差 `<= 0.02`。
