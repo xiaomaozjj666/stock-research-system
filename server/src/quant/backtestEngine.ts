@@ -12,7 +12,9 @@ import {
 
 /**
  * 运行回测
- * 逐K线回放，严格按时间顺序，杜绝未来函数
+ * 逐K线回放，严格按时间顺序，杜绝未来函数；
+ * 成交采用 T+1 信号延迟（backtrader Market 单 / qlib shift=1 语义）：信号 T 日收盘生成、
+ * T+1 日开盘价成交。
  *
  * 成本处理为可插拔成本模型（CostModel）：
  * - 未显式传入 costModel 时，按 strategy.commission / strategy.slippage 构造对称模型，行为与历史一致；
@@ -57,15 +59,19 @@ export function runBacktest(
     return (prefixSum[index + 1] - prefixSum[index - period + 1]) / period;
   };
 
-  // 根据策略类型生成信号
+  // 根据策略类型生成信号；成交采用「T+1 信号延迟」语义（backtrader Market 单/qlib shift=1）：
+  //   信号在 bar i 收盘后生成 → 于 bar i+1 **开盘价**成交——收盘价仅用于决策，成交价取自
+  //   下一根 bar 的 open，杜绝「收盘决策 + 同收盘价即时成交」这一现实中不可实现的口径。
+  //   数据末 bar 生成的信号无法成交（无下一根），与真实世界一致地丢弃。
+  let pending: 'buy' | 'sell' | null = null;
+
   for (let i = 0; i < data.length; i++) {
     const bar = data[i];
-    const signal = generateSignal(data, i, strategy, maAt);
 
-    // 执行交易
-    if (signal === 'buy' && position === 0) {
+    // 1. 先执行上一 bar 生成的信号（本 bar 开盘价成交）
+    if (pending === 'buy' && position === 0) {
       if (newsPosture > 0) {
-        const price = bar.close * (1 + costModel.slippage);
+        const price = bar.open * (1 + costModel.slippage);
         // 按新闻姿态缩放可用资金（强空新闻 posture→0 时不建仓）
         const deployable = cash * newsPosture;
         // A股100股整数倍；每股价按含买入费率估算（成交额×(1+openRate)，minCost 忽略以便整手取整）
@@ -88,8 +94,8 @@ export function runBacktest(
           });
         }
       }
-    } else if (signal === 'sell' && position > 0) {
-      const price = bar.close * (1 - costModel.slippage);
+    } else if (pending === 'sell' && position > 0) {
+      const price = bar.open * (1 - costModel.slippage);
       const { proceeds, fee } = sellProceeds(costModel, position, price);
       const impact = marketImpactCost(costModel, position * price, bar.volume);
       cash += proceeds - impact;
@@ -103,8 +109,17 @@ export function runBacktest(
       });
       position = 0;
     }
+    pending = null;
 
-    // 记录权益
+    // 2. 用本 bar 数据生成新信号（下一 bar 开盘成交）
+    const signal = generateSignal(data, i, strategy, maAt);
+    if (signal === 'buy' && position === 0) {
+      pending = 'buy';
+    } else if (signal === 'sell' && position > 0) {
+      pending = 'sell';
+    }
+
+    // 3. 记录权益
     const equity = cash + position * bar.close;
     equityCurve.push({
       date: bar.date,

@@ -246,7 +246,20 @@
 - 前端量化页「成本模型」下拉（自定义佣金 / A 股真实费率），选 A 股时提交 `costModel:'a_share'` 且佣金率输入禁用。
 - **测试行情构造教训**：均线交叉要产生「金叉买入 + 死叉卖出」，数据必须是「走平 → 上涨 → 回落」（flat 段让 MA5==MA20，随后上涨突破触发金叉）；纯单调上涨只有金叉无死叉（测试首版因此 `sells.length===0` 失败）。市场冲击在测试行情（volume=100 万）下影响 ~0.1 元/笔、round 后不可见 → 用低成交量行情（2 万）放大差异断言。
 
-### 4. backtrader 完整报告其余可借鉴项（后续路径，已评估未实施）
+### 4. T+1 信号延迟成交（backtrader Market 单 / qlib shift=1 语义）
+
+- 三报告一致结论：**信号 T 日生成、T+1 日成交**（backtrader Market 单用下一根 bar 开盘价；qlib `shift=1` 取前一 bar 信号）。原引擎「收盘决策 + 同收盘价即时成交」虽无信息泄漏（收盘价当日已知），但现实中收盘后才可下单、只能次日成交——口径不可实现。
+- 落地：`backtestEngine` 主循环引入 `pending: 'buy' | 'sell' | null`：T 日收盘用 `bar.close` 算信号（MA 前缀和不变），T+1 日 **`bar.open`**（× (1±滑点)）成交；数据末 bar 生成的信号丢弃（无下一根）。
+- 权益记录在信号日（含未成交 pending），成交发生在次一 bar——与真实世界「持仓从成交日起算」一致。
+- 测试：买入/卖出均断言「成交日 = 信号日 + 1、成交价 = 次一 bar open × (1±滑点)」；构造「仅末 bar 金叉」行情验证 tradeCount=0。测试内复制 5 行 SMA 计算用于定位信号日（引擎内部 maAt 不可见）。
+
+### 5. 每日截面 IC 序列（qlib calc_ic / ICIR 口径）
+
+- qlib 把「IC」定义为**按日截面计算**：`calc_ic(pred, label)` 每日 Pearson/Spearman → IC 序列 → `ICIR = IC.mean()/IC.std()`。原 `validateFactorModel` 把面板全部样本混入一个秩相关——**跨期秩混合**会把日内同序的强因子 IC 拉低（测试演示：日内 IC=+1 的因子在跨期混合口径下仅 ~0.7）。
+- 落地：`FactorPanelRow.date?`（要求每行都有才启用）→ 按日期分组，组内 ≥2 样本算当日 Spearman IC → `icSeries` 多截面路径自动走 `selectOptimalFactors` 的 |IR| 加权（即 ICIR 加权）；`perFactor.icir` 字段（多截面时）。
+- 无 `date` 保持全样本单 IC 兼容；`FactorPanelRow` 目前无生产调用方（仅测试/优化器），此改造为将来接入真实多股票面板数据（如东财 RPT 面板）铺路。
+
+### 6. backtrader 完整报告其余可借鉴项（后续路径，已评估未实施）
 
 backtrader 主循环事实：Cerebro 只做组装与广播，**撮合真相在 Broker**（订单 9 态状态机 + `OrderExecutionBit` 部分成交累加 + `clone()` 快照通知），策略/分析器只消费快照；佣金/滑点/成交量约束（Filler）/撮合时序（coo/coc）全部可注入；事件/向量双模式共用一套 Line+游标代码。
 
@@ -255,13 +268,13 @@ backtrader 主循环事实：Cerebro 只做组装与广播，**撮合真相在 B
 - **Line 统一抽象 + 游标**（`sma.get(0)/get(-1)`，事件/向量双模式共用）：当前回测与模拟盘无共享策略代码需求，暂不引入。
 - **组装式引擎 + 参数寻优**：单函数 → `BacktestEngine` 类（add* 声明式 + optStrategy 笛卡尔积并行）；现有 factorOptimizer 已承担参数扫描职责，暂不重构。
 
-### 5. 精度与测试口径教训
+### 7. 精度与测试口径教训
 
 - 引擎对 analyzer 输出 round 2 位 → 一致性测试断言须同口径（`round(stats.X) === r.X`），不能直接比原始 double。
 - `totalVol` 与 components 各自 round 后累计误差可达 0.01 → 高暴露系统占比断言用容差 `<= 0.02`。
 - 交易记录 `price` 保留 2 位，费用按未舍入价计算 → 反推费用断言用 `toBeCloseTo(..., 1)`。
 - TS 严格模式：`??` 表达式不收窄原变量（`TS18048`），可选嵌套字段先提局部变量再判 `!== undefined`。
-- 验证：882 tests（+31 新增）/ E2E 9/9 / 双端 tsc / lint / format:check / build 全过；真实浏览器验证 600519 风险归因区渲染 0 pageerror。
+- 验证：889 tests（+38 新增）/ E2E 9/9 / 双端 tsc / lint / format:check / build 全过；真实浏览器验证 600519 风险归因区渲染 0 pageerror。
 
 ## 2026-08-14 性能与体验极致化记录
 

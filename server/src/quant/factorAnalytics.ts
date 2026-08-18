@@ -200,11 +200,26 @@ export function zToScore(z: number, max: number, zScale = 2): number {
 export interface FactorPanelRow {
   factors: Record<string, number>;
   forwardReturn: number;
+  /**
+   * 样本日期（YYYY-MM-DD，qlib calc_ic 口径）。
+   * 提供时（要求每行都有），validateFactorModel 按「每日截面」分组计算每日 IC 序列
+   * （组内样本 ≥2 才计），再聚合 IC / ICIR（= mean/std，qlib ICIR 口径）——
+   * 避免把不同日期的样本混入同一个秩相关（跨期秩混合会扭曲 IC）。
+   * 缺省时保持向后兼容：全样本单 IC。
+   */
+  date?: string;
 }
 
 export interface FactorValidationReport {
-  /** 每个因子的 IC / IR / 是否入选 / 权重 */
-  perFactor: { name: string; ic: number; ir: number; selected: boolean; weight: number }[];
+  /** 每个因子的 IC / IR / ICIR / 是否入选 / 权重 */
+  perFactor: {
+    name: string;
+    ic: number;
+    ir: number;
+    icir?: number;
+    selected: boolean;
+    weight: number;
+  }[];
   /** 模型预测方向与实际方向一致的比例 ∈ [0,1] */
   directionalAccuracy: number;
   /** 预测收益（组合z×已实现波动）与实现收益的 RMSE ≥ 0 */
@@ -215,8 +230,9 @@ export interface FactorValidationReport {
 
 /**
  * 在样本面板上验证因子模型（离线校准 / 回测）。
- *  - 对每个因子计算跨截面 Spearman IC 与 IR；
- *  - 用 selectOptimalFactors 选出最优权重；
+ *  - 对每个因子计算 Spearman IC：面板每行都有 date 时按「每日截面」分组算每日 IC 序列
+ *    （qlib calc_ic 口径），否则全样本单 IC（向后兼容）；
+ *  - 用 selectOptimalFactors 选出最优权重（多截面路径自动按 |IR|=|ICIR| 加权）；
  *  - 以「组合 z × 已实现收益波动」作为预测收益，与实现收益比较，
  *    给出方向准确率与 RMSE，作为模型有效性的量化证据。
  * 面板样本 < 3 时直接返回空报告（样本不足，无法验证）。
@@ -242,15 +258,36 @@ export function validateFactorModel(
     ) / forward.length,
   );
 
-  const candidates: FactorCandidate[] = names.map((name) => ({
-    name,
-    icSeries: [
-      spearmanRankIC(
-        panel.map((row) => row.factors[name] ?? 0),
-        forward,
-      ),
-    ],
-  }));
+  // 每日截面分组（qlib calc_ic 口径）：仅当面板每行都有 date 时启用
+  const hasDates = panel.every((row) => typeof row.date === 'string' && row.date.length > 0);
+  const dates = hasDates ? Array.from(new Set(panel.map((row) => row.date))) : null;
+
+  const candidates: FactorCandidate[] = names.map((name) => {
+    if (dates) {
+      // 每日截面 Spearman IC 序列：该日组内样本的因子值 vs 未来收益的秩相关
+      const icSeries = dates
+        .map((d) => {
+          const dayRows = panel.filter((row) => row.date === d);
+          if (dayRows.length < 2) return null;
+          return spearmanRankIC(
+            dayRows.map((row) => row.factors[name] ?? 0),
+            dayRows.map((row) => row.forwardReturn),
+          );
+        })
+        .filter((v): v is number => v !== null);
+      return { name, icSeries };
+    }
+    // 向后兼容：全样本单 IC
+    return {
+      name,
+      icSeries: [
+        spearmanRankIC(
+          panel.map((row) => row.factors[name] ?? 0),
+          forward,
+        ),
+      ],
+    };
+  });
   const selected = selectOptimalFactors(candidates, opts);
   const weightMap: Record<string, number> = {};
   selected.forEach((s) => (weightMap[s.name] = s.weight));
@@ -272,10 +309,13 @@ export function validateFactorModel(
   return {
     perFactor: candidates.map((c) => {
       const sel = selected.find((s) => s.name === c.name);
+      // ICIR（qlib 口径）= mean(IC)/std(IC)，仅多截面 IC 序列（长度 ≥ 2）时可得
+      const icir = c.icSeries.length >= 2 ? informationRatio(c.icSeries) : undefined;
       return {
         name: c.name,
         ic: sel?.ic ?? 0,
         ir: sel?.ir ?? 0,
+        ...(icir !== undefined ? { icir } : {}),
         selected: !!sel,
         weight: sel?.weight ?? 0,
       };

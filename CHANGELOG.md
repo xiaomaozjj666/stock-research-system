@@ -5,6 +5,17 @@
 
 ## 2026-08-18 — 量化层升级：Analyzer 模式 + 风险归因 + 可插拔成本模型（借鉴 backtrader / gs-quant / qlib）
 
+### T+1 信号延迟成交（借鉴 backtrader Market 单 / qlib shift=1）（fix）
+
+- 回测引擎成交改为 **T+1 语义**：信号在 T 日收盘后生成 → **T+1 日开盘价成交**（`bar.open × (1±滑点)`）——收盘价仅用于决策，成交价取自次一 bar 开盘，消除「收盘决策 + 同收盘价即时成交」这一现实中不可实现的口径；数据末 bar 生成的信号与真实世界一致地丢弃。
+- 新增 3 个测试用例：买入/卖出均延迟一 bar 且以开盘价成交、末 bar 信号不成交（构造「仅末 bar 金叉」行情验证）。
+
+### 每日截面 IC 序列（借鉴 qlib calc_ic / ICIR 口径）（feat）
+
+- `validateFactorModel` 支持按日分组计算**每日截面 Spearman IC 序列**（`FactorPanelRow.date`，要求每行都有）：避免把不同日期的样本混入同一个秩相关（跨期秩混合会扭曲 IC）；多截面路径自动按 **ICIR（= mean/std，qlib 口径）** 加权。
+- 无 `date` 时保持向后兼容（全样本单 IC）；报告 `perFactor` 新增 `icir` 字段（多截面时）。
+- 新增 4 个测试用例：每日 IC 序列聚合、ICIR 计算与单截面缺省、跨期混合 vs 按日口径差异、单样本日跳过。
+
 ### 绩效分析器（Analyzer 模式，借鉴 backtrader）（refactor）
 
 - 新增 `server/src/quant/analyzers.ts`：绩效统计从回测引擎内联硬编码重构为**可插拔纯函数分析器集合**（`PerformanceAnalyzer {name, compute(ctx)}` + `AnalyzerContext {equityCurve, trades}`），`computePerformance()` 支持自定义分析器注入——与 backtrader Analyzer 三件套（生命周期钩子 / 结果容器 / 注册实例化）同构的轻量版。
@@ -27,7 +38,7 @@
 
 ### 验证
 
-- **882 tests 全绿**（+31 新增）/ E2E 9/9 / 双端 tsc / lint / format:check / 双端 build 全过；风险归因经真实浏览器 E2E 验证（600519，0 pageerror）。
+- **889 tests 全绿**（+38 新增）/ E2E 9/9 / 双端 tsc / lint / format:check / 双端 build 全过；风险归因经真实浏览器 E2E 验证（600519，0 pageerror）。
 
 ## 2026-08-14 — 图表修复、研究助手主题统一、测试全量审查、CI 修复
 
