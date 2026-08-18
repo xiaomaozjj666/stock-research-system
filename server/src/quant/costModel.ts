@@ -3,11 +3,12 @@
  *
  * 三份研究报告交叉印证的一致结论：
  * - backtrader CommInfoBase：佣金可带方向（印花税等税费只收卖出单边）；
- * - qlib Exchange：open/close 不对称费率 + minCost 兜底 + 可选冲击成本，撮合统一返回成交价/成本；
+ * - qlib Exchange：open/close 不对称费率 + minCost 兜底 + 二次方市场冲击成本，撮合统一返回成交价/成本；
  * - gs-quant SimulatedExecutionEngine：成本与撮合解耦，可插拔。
  *
- * 默认模型（DEFAULT_COST_MODEL 语义）保持引擎历史行为：佣金双边对称、无最低费用。
- * A_SHARE_COST_MODEL 为 A 股真实规则：佣金万 2.5 双边 + 印花税万 5 仅卖出单边（2023-08-28 起）+ 单笔最低佣金 5 元。
+ * 默认模型（DEFAULT_COST_MODEL 语义）保持引擎历史行为：佣金双边对称、无最低费用、无市场冲击。
+ * A_SHARE_COST_MODEL 为 A 股真实规则：佣金万 2.5 双边 + 印花税万 5 仅卖出单边（2023-08-28 起）
+ * + 单笔最低佣金 5 元 + 二次方市场冲击（qlib 推荐 impactCost=0.1）。
  */
 
 export interface CostModel {
@@ -19,6 +20,12 @@ export interface CostModel {
   minCost: number;
   /** 滑点率（买入上滑 / 卖出下滑），0.001 = 0.1% */
   slippage: number;
+  /**
+   * 二次方市场冲击系数（qlib Exchange `impact_cost`，推荐 0.1）：
+   * 冲击成本 = impactCost × (成交额 / 当日成交量)²——单笔成交占当日成交比例越大，冲击越显著；
+   * 0 / 缺省 = 不模拟市场冲击。
+   */
+  impactCost?: number;
 }
 
 /** 默认模型：佣金双边对称（保持历史行为），无最低费用 */
@@ -33,18 +40,30 @@ export const DEFAULT_COST_MODEL: CostModel = {
  * A 股真实费率模型：
  * - 佣金万 2.5（0.025%）双边；
  * - 印花税万 5（0.05%）仅卖出单边（2023-08-28 起）→ closeRate = 0.00025 + 0.0005 = 0.00075；
- * - 单笔佣金最低 5 元。
+ * - 单笔佣金最低 5 元；
+ * - 二次方市场冲击系数 0.1（qlib Exchange 推荐值）。
  */
 export const A_SHARE_COST_MODEL: CostModel = {
   openRate: 0.00025,
   closeRate: 0.00075,
   minCost: 5,
   slippage: 0.001,
+  impactCost: 0.1,
 };
 
 /** 以默认模型为底，按需覆盖字段构造新模型 */
 export function makeCostModel(overrides: Partial<CostModel>): CostModel {
   return { ...DEFAULT_COST_MODEL, ...overrides };
+}
+
+/**
+ * 二次方市场冲击成本（qlib Exchange：`adj_cost_ratio = impact_cost × (trade_val/total_vol)²`）：
+ * 冲击成本 = impactCost × (成交额 / 当日成交量)²；系数缺省/≤0 或成交量无效时返回 0。
+ */
+export function marketImpactCost(model: CostModel, tradeVal: number, volume: number): number {
+  const k = model.impactCost ?? 0;
+  if (k <= 0 || !(volume > 0) || tradeVal <= 0) return 0;
+  return k * Math.pow(tradeVal / volume, 2);
 }
 
 /** 买入成本：总支出 = 成交额 + 费用（费用 = max(成交额×openRate, minCost)） */

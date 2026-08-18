@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { runBacktest } from '../backtestEngine.js';
-import { A_SHARE_COST_MODEL, makeCostModel } from '../costModel.js';
+import { A_SHARE_COST_MODEL, makeCostModel, marketImpactCost } from '../costModel.js';
 import type { OHLCVData, StrategyConfig } from '../types.js';
 
 /** 构造前段走平、后段上行行情，使均线交叉策略在区间内产生金叉买入 */
@@ -121,14 +121,13 @@ describe('runBacktest 可插拔成本模型', () => {
     // 振荡行情下应产生卖出
     const sells = r.trades.filter((t) => t.type === 'sell');
     expect(sells.length).toBeGreaterThan(0);
-    // 卖出费用 = max(成交额 × closeRate, minCost)，与 A_SHARE_COST_MODEL 一致
+    // 每笔费用 = max(成交额 × closeRate, minCost) + 二次方市场冲击（impactCost × (成交额/成交量)²）
     // （交易记录 price 保留 2 位小数，费用按未舍入价计算，容差 ±0.05）
     for (const s of sells) {
       const gross = s.shares * s.price;
-      const expected =
-        Math.round(
-          Math.max(gross * A_SHARE_COST_MODEL.closeRate, A_SHARE_COST_MODEL.minCost) * 100,
-        ) / 100;
+      const fee = Math.max(gross * A_SHARE_COST_MODEL.closeRate, A_SHARE_COST_MODEL.minCost);
+      const impact = marketImpactCost(A_SHARE_COST_MODEL, gross, 1_000_000);
+      const expected = Math.round((fee + impact) * 100) / 100;
       expect(s.commission).toBeCloseTo(expected, 1);
     }
   });
@@ -163,6 +162,23 @@ describe('runBacktest 可插拔成本模型', () => {
     expect(r.tradeCount).toBeGreaterThan(0);
     for (const t of r.trades) {
       expect(t.commission).toBe(100);
+    }
+  });
+
+  it('市场冲击经引擎路径生效：成交占比高时费用更高（qlib 二次方冲击）', () => {
+    // 低成交量行情（2 万）：成交额 ~100 万 → 成交占比 ~50 → 冲击 = 0.1 × 50² = 250 元/笔，显著可见
+    const thin = osc.map((b) => ({ ...b, volume: 20_000 }));
+    const withImpact = runBacktest(
+      thin,
+      maConfig(),
+      makeCostModel({ impactCost: 0.1, minCost: 0, slippage: 0.001 }),
+    );
+    const withoutImpact = runBacktest(thin, maConfig());
+    expect(withImpact.tradeCount).toBe(withoutImpact.tradeCount);
+    expect(withImpact.totalReturn).toBeLessThan(withoutImpact.totalReturn);
+    // 冲击成本逐笔计入 commission 字段
+    for (let i = 0; i < withImpact.trades.length; i++) {
+      expect(withImpact.trades[i].commission).toBeGreaterThan(withoutImpact.trades[i].commission);
     }
   });
 });

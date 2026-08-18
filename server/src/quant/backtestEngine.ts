@@ -6,6 +6,7 @@ import {
   makeCostModel,
   buyCost,
   sellProceeds,
+  marketImpactCost,
   type CostModel,
 } from './costModel.js';
 
@@ -71,14 +72,16 @@ export function runBacktest(
         const shares = Math.floor(deployable / (price * (1 + costModel.openRate)) / 100) * 100;
         if (shares > 0) {
           const { total, fee } = buyCost(costModel, shares, price);
-          cash -= total;
+          // 二次方市场冲击成本（qlib Exchange）：impactCost × (成交额/当日成交量)²
+          const impact = marketImpactCost(costModel, shares * price, bar.volume);
+          cash -= total + impact;
           position = shares;
           trades.push({
             date: bar.date,
             type: 'buy',
             price: Math.round(price * 100) / 100,
             shares,
-            commission: Math.round(fee * 100) / 100,
+            commission: Math.round((fee + impact) * 100) / 100,
             reason:
               getSignalReason(strategy, 'buy') +
               (newsAware ? `（新闻姿态${(newsPosture * 100).toFixed(0)}%）` : ''),
@@ -88,13 +91,14 @@ export function runBacktest(
     } else if (signal === 'sell' && position > 0) {
       const price = bar.close * (1 - costModel.slippage);
       const { proceeds, fee } = sellProceeds(costModel, position, price);
-      cash += proceeds;
+      const impact = marketImpactCost(costModel, position * price, bar.volume);
+      cash += proceeds - impact;
       trades.push({
         date: bar.date,
         type: 'sell',
         price: Math.round(price * 100) / 100,
         shares: position,
-        commission: Math.round(fee * 100) / 100,
+        commission: Math.round((fee + impact) * 100) / 100,
         reason: getSignalReason(strategy, 'sell'),
       });
       position = 0;

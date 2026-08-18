@@ -5,6 +5,7 @@ import {
   makeCostModel,
   buyCost,
   sellProceeds,
+  marketImpactCost,
 } from '../costModel.js';
 
 describe('costModel 可插拔成本模型', () => {
@@ -58,5 +59,32 @@ describe('costModel 可插拔成本模型', () => {
   it('minCost=0 时费用按比例（无兜底）', () => {
     const { fee } = buyCost(DEFAULT_COST_MODEL, 1000, 10);
     expect(fee).toBeCloseTo(3, 6); // 10000 × 0.0003
+  });
+});
+
+describe('marketImpactCost 二次方市场冲击（qlib Exchange）', () => {
+  it('冲击成本 = impactCost × (成交额/成交量)²', () => {
+    // 成交额 100 万、当日成交量 1 亿 → 占比 0.01 → 0.1 × 0.0001 = 1e-5
+    const m = makeCostModel({ impactCost: 0.1 });
+    expect(marketImpactCost(m, 1_000_000, 100_000_000)).toBeCloseTo(1e-5, 10);
+  });
+
+  it('成交占比越高冲击越大（非线性二次方）', () => {
+    const m = makeCostModel({ impactCost: 0.1 });
+    const small = marketImpactCost(m, 1_000_000, 100_000_000); // 占比 1%
+    const big = marketImpactCost(m, 5_000_000, 100_000_000); // 占比 5%
+    // (5%)² / (1%)² = 25 倍
+    expect(big).toBeCloseTo(small * 25, 10);
+  });
+
+  it('系数缺省/≤0、成交量无效或成交额≤0 时返回 0', () => {
+    expect(marketImpactCost(DEFAULT_COST_MODEL, 1_000_000, 100_000_000)).toBe(0);
+    expect(marketImpactCost(makeCostModel({ impactCost: 0 }), 1_000_000, 100_000_000)).toBe(0);
+    expect(marketImpactCost(A_SHARE_COST_MODEL, 1_000_000, 0)).toBe(0);
+    expect(marketImpactCost(A_SHARE_COST_MODEL, 0, 100_000_000)).toBe(0);
+  });
+
+  it('A 股真实模型默认启用冲击系数 0.1（qlib 推荐值）', () => {
+    expect(A_SHARE_COST_MODEL.impactCost).toBe(0.1);
   });
 });
