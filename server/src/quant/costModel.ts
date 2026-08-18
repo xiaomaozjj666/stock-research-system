@@ -1,0 +1,70 @@
+/**
+ * 可插拔交易成本模型（借鉴 backtrader CommInfoBase / qlib Exchange / gs-quant backtests 成本处理）
+ *
+ * 三份研究报告交叉印证的一致结论：
+ * - backtrader CommInfoBase：佣金可带方向（印花税等税费只收卖出单边）；
+ * - qlib Exchange：open/close 不对称费率 + minCost 兜底 + 可选冲击成本，撮合统一返回成交价/成本；
+ * - gs-quant SimulatedExecutionEngine：成本与撮合解耦，可插拔。
+ *
+ * 默认模型（DEFAULT_COST_MODEL 语义）保持引擎历史行为：佣金双边对称、无最低费用。
+ * A_SHARE_COST_MODEL 为 A 股真实规则：佣金万 2.5 双边 + 印花税万 5 仅卖出单边（2023-08-28 起）+ 单笔最低佣金 5 元。
+ */
+
+export interface CostModel {
+  /** 买入费率（佣金率），如 0.00025 = 万 2.5 */
+  openRate: number;
+  /** 卖出费率（佣金率 + 卖出方税费，如印花税），如 0.00075 = 万 7.5 */
+  closeRate: number;
+  /** 单笔最低费用（元），0 = 不设下限 */
+  minCost: number;
+  /** 滑点率（买入上滑 / 卖出下滑），0.001 = 0.1% */
+  slippage: number;
+}
+
+/** 默认模型：佣金双边对称（保持历史行为），无最低费用 */
+export const DEFAULT_COST_MODEL: CostModel = {
+  openRate: 0.0003, // 万三
+  closeRate: 0.0003,
+  minCost: 0,
+  slippage: 0.001,
+};
+
+/**
+ * A 股真实费率模型：
+ * - 佣金万 2.5（0.025%）双边；
+ * - 印花税万 5（0.05%）仅卖出单边（2023-08-28 起）→ closeRate = 0.00025 + 0.0005 = 0.00075；
+ * - 单笔佣金最低 5 元。
+ */
+export const A_SHARE_COST_MODEL: CostModel = {
+  openRate: 0.00025,
+  closeRate: 0.00075,
+  minCost: 5,
+  slippage: 0.001,
+};
+
+/** 以默认模型为底，按需覆盖字段构造新模型 */
+export function makeCostModel(overrides: Partial<CostModel>): CostModel {
+  return { ...DEFAULT_COST_MODEL, ...overrides };
+}
+
+/** 买入成本：总支出 = 成交额 + 费用（费用 = max(成交额×openRate, minCost)） */
+export function buyCost(
+  model: CostModel,
+  shares: number,
+  price: number,
+): { total: number; fee: number } {
+  const gross = shares * price;
+  const fee = Math.max(gross * model.openRate, model.minCost);
+  return { total: gross + fee, fee };
+}
+
+/** 卖出所得：净收入 = 成交额 − 费用（费用 = max(成交额×closeRate, minCost)） */
+export function sellProceeds(
+  model: CostModel,
+  shares: number,
+  price: number,
+): { proceeds: number; fee: number } {
+  const gross = shares * price;
+  const fee = Math.max(gross * model.closeRate, model.minCost);
+  return { proceeds: gross - fee, fee };
+}

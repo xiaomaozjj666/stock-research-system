@@ -52,6 +52,7 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
   const [endDate, setEndDate] = useState(getDefaultEndDate());
   const [initialCapital, setInitialCapital] = useState(1000000);
   const [commission, setCommission] = useState(0.0003);
+  const [costModel, setCostModel] = useState<'default' | 'a_share'>('default');
   const [params, setParams] = useState<Record<string, number>>(() => {
     const defaults: Record<string, number> = {};
     for (const p of PARAM_CONFIG.ma_cross) defaults[p.key] = p.default;
@@ -83,7 +84,8 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
       startDate,
       endDate,
       initialCapital,
-      commission,
+      // A 股真实费率模型（印花税卖出单边 + 最低佣金）覆盖默认佣金率；自定义模式沿用佣金率字段
+      ...(costModel === 'a_share' ? { costModel: 'a_share' as const } : { commission }),
     });
   };
 
@@ -152,11 +154,23 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
       </div>
 
       <div className="quant-form-group">
+        <label>成本模型</label>
+        <select
+          value={costModel}
+          onChange={(e) => setCostModel(e.target.value as 'default' | 'a_share')}
+        >
+          <option value="default">自定义佣金（默认万三对称）</option>
+          <option value="a_share">A 股真实费率（佣金万2.5 + 印花税卖出万5 + 最低5元）</option>
+        </select>
+      </div>
+
+      <div className="quant-form-group">
         <label>佣金率</label>
         <input
           type="number"
           value={commission}
           step={0.0001}
+          disabled={costModel === 'a_share'}
           onChange={(e) => setCommission(parseFloat(e.target.value) || 0)}
         />
       </div>

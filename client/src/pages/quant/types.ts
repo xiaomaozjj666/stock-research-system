@@ -9,6 +9,8 @@ export interface StrategyConfig {
   initialCapital?: number;
   commission?: number;
   slippage?: number;
+  /** 交易成本模型（可选）：'a_share' = A 股真实费率（佣金万2.5双边 + 印花税万5卖出单边 + 最低佣金5元） */
+  costModel?: 'a_share';
 }
 
 // 最新消息单条

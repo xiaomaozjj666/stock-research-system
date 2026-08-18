@@ -20,6 +20,12 @@ export interface StrategyConfig {
   initialCapital?: number; // 初始资金，默认100万
   commission?: number; // 佣金率，默认万三
   slippage?: number; // 滑点，默认0.1%
+  /**
+   * 交易成本模型（可选）：
+   * - 'a_share'：A 股真实费率（佣金万2.5双边 + 印花税万5卖出单边 + 最低佣金5元）；
+   * - 未设置：按 commission/slippage 构造对称模型（历史行为）。
+   */
+  costModel?: 'a_share';
   /** 最新消息情绪叠加层（可选）：polarity ∈ [−1,1]，用于按新闻姿态缩放仓位 */
   newsOverlay?: { polarity: number };
 }
