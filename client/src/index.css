@@ -1383,6 +1383,32 @@ tr:hover td {
   flex-shrink: 0;
 }
 
+/* === 风险归因（风格因子暴露 + 系统/特异风险分解） === */
+.risk-attribution { margin-top: 14px; }
+.risk-attribution-title {
+  font-size: var(--text-caption); color: var(--text-muted);
+  margin-bottom: 8px; font-weight: 500;
+}
+.risk-factor-list { display: flex; flex-direction: column; gap: 6px; }
+.risk-factor { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.risk-factor-label { width: 40px; color: var(--text-secondary); flex-shrink: 0; }
+.risk-factor-bar {
+  position: relative; flex: 1; height: 8px; border-radius: 4px;
+  background: var(--bg-secondary); border: 1px solid var(--border-default);
+  overflow: hidden;
+}
+.risk-factor-fill { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+.risk-factor-fill.positive { background: var(--color-negative); }
+.risk-factor-fill.negative { background: var(--color-positive); }
+.risk-factor-value {
+  width: 52px; text-align: right; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums; flex-shrink: 0;
+}
+.risk-decomposition {
+  margin-top: 10px; font-size: var(--text-caption); color: var(--text-muted);
+  line-height: 1.6;
+}
+
 /* ===== Data Sources Tags (legacy) ===== */
 .data-sources-tags {
   display: flex;

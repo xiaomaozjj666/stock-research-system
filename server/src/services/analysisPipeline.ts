@@ -18,8 +18,12 @@ import { extractNewsSignal, type NewsSignal } from '../quant/newsSignal.js';
 import { auditDataAccess, auditLLMCall, auditTradeSignal } from './auditLog.js';
 import { buildFinancialGraph } from '../llm/knowledgeGraph.js';
 import { calculateSectorRotation, type SectorData } from '../quant/sectorRotation.js';
+import { styleFactorExposures, decomposeRisk } from '../quant/riskAttribution.js';
 import { withTimeout } from '../utils/timeout.js';
 import logger from '../utils/logger.js';
+
+/** 特异波动经验基准（%）：无残差收益序列时使用（A 股中位单股波动水平） */
+const SPECIFIC_RISK_BASELINE = 25;
 
 /** 分析阶段事件（用于 SSE 流式推送进度） */
 export type AnalysisStage =
@@ -548,6 +552,16 @@ export async function runAnalysis(
     }
   }
 
+  // 风险归因（借鉴 GS Quant RiskModel 轻量版）：风格因子暴露 + 系统/特异风险分解。
+  // 动量因子暂缺收益序列数据（记 0 中性）；特异波动用经验基准（无残差序列时）。
+  const styleExposures = styleFactorExposures({
+    marketCap: valuation.marketCap,
+    pe: valuation.pe,
+    roe: financial.roe?.[financial.roe.length - 1],
+    debtRatio: financial.debtRatio?.[financial.debtRatio.length - 1],
+  });
+  const riskDecomposition = decomposeRisk(styleExposures, SPECIFIC_RISK_BASELINE);
+
   return {
     stock_pool: [
       {
@@ -573,6 +587,10 @@ export async function runAnalysis(
         newsSentiment: newsSignal?.hasNews ? newsSignal : undefined,
         knowledgeGraphContext,
         sectorRotation: sectorRotationSignal,
+        riskAttribution: {
+          exposures: styleExposures,
+          decomposition: riskDecomposition,
+        },
         mcpContext,
       },
     ],

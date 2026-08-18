@@ -215,6 +215,22 @@ export interface AnalysisResult {
     knowledgeGraphContext?: string;
     /** 行业轮动信号（可选；股票有行业归属时附加） */
     sectorRotation?: SectorRotationSignal;
+    /** 风险归因（可选；风格因子暴露 + 系统/特异风险分解，借鉴 GS Quant RiskModel 轻量版） */
+    riskAttribution?: {
+      exposures: {
+        size: number;
+        value: number;
+        momentum: number;
+        profitability: number;
+        leverage: number;
+      };
+      decomposition: {
+        systematicVol: number;
+        specificVol: number;
+        totalVol: number;
+        explainedRatio: number;
+      };
+    };
     /** MCP 外部工具上下文（可选；仅配置 MCP_SERVER_URL 时附加） */
     mcpContext?: { serverUrl: string; toolCount: number; tools: string[] };
   }[];

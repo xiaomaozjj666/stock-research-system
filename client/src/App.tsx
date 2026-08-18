@@ -526,7 +526,11 @@ function App() {
                 </RevealSection>
                 <RevealSection id="risk">
                   <ErrorBoundary label="风险清单">
-                    <RiskSection data={stockData.risk_list} />
+                    
+                    <RiskSection
+                      data={stockData.risk_list}
+                      attribution={stockData.riskAttribution}
+                    />
                   </ErrorBoundary>
                 </RevealSection>
                 <RevealSection id="reflection">
