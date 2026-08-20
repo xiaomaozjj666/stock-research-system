@@ -47,3 +47,6 @@ e2e/.tmp/
 # 运行时数据（watchlist 等）
 server/data/
 server/src/data/watchlist.json
+
+# UI screenshot artifacts (dev only)
+_shots/
