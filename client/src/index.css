@@ -1146,14 +1146,14 @@ tr:hover td {
   gap: 6px 12px;
   padding: 5px 10px;
   border-radius: var(--radius-sm);
-  background: rgba(13, 13, 13, 0.55);
+  background: rgba(13, 13, 13, 0.72);
   backdrop-filter: blur(2px);
   font-size: 11px;
   line-height: 1.4;
   color: #cfcfcf;
   pointer-events: none;
   font-variant-numeric: tabular-nums;
-  max-width: calc(100% - 72px);
+  max-width: calc(100% - 82px);
 }
 .trend-legend .tl-date {
   color: #fff;
@@ -1180,6 +1180,55 @@ tr:hover td {
 }
 .trend-legend .tl-boll {
   color: #c9cdd4;
+}
+.trend-legend .tl-label {
+  color: #888;
+}
+.trend-legend .tl-val {
+  color: #fff;
+}
+
+/* 走势图 ECharts 容器高度（CSS 控制，便于响应式覆盖） */
+.trend-plot-chart {
+  height: 480px;
+}
+.trend-plot-chart-macd {
+  height: 600px;
+}
+
+@media (max-width: 768px) {
+  .trend-chart {
+    padding: 12px;
+  }
+  .trend-chart-head {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .trend-chart-head h4 {
+    font-size: 13px;
+  }
+  .trend-controls {
+    gap: 5px;
+  }
+  .trend-controls .seg-btn,
+  .trend-controls .chip-btn {
+    font-size: 11px;
+    padding: 3px 7px;
+  }
+  .trend-legend {
+    top: 4px;
+    left: 8px;
+    font-size: 10px;
+    padding: 4px 6px;
+    max-width: calc(100% - 58px);
+    gap: 4px 8px;
+  }
+  .trend-plot-chart {
+    height: 380px;
+  }
+  .trend-plot-chart-macd {
+    height: 460px;
+  }
 }
 
 /* ===== Scoring Table ===== */
