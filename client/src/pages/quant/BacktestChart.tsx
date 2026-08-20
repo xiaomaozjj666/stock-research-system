@@ -74,8 +74,8 @@ export default function BacktestChart({ data }: Props) {
           data: strategyVals,
           smooth: true,
           symbol: 'none',
-          lineStyle: { color: '#2dd4bf', width: 2 },
-          itemStyle: { color: '#2dd4bf' },
+          lineStyle: { color: '#4c8dff', width: 2 },
+          itemStyle: { color: '#4c8dff' },
         },
         {
           name: '基准(买入持有)',

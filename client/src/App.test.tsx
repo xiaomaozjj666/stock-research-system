@@ -11,9 +11,6 @@ vi.mock('./api/client', () => ({ analyzeStockStream: apiMock.analyzeStockStream 
 
 // mock UI 基础设施 hooks / 组件
 vi.mock('./components/Toast', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
-vi.mock('./hooks/useScrollReveal', () => ({
-  useScrollReveal: () => ({ ref: { current: null }, isVisible: true }),
-}));
 vi.mock('./hooks/useCountUp', () => ({ useCountUp: (v: number) => v }));
 
 // mock 股票选择器：简化交互（输入代码 + 触发 onAnalyze）

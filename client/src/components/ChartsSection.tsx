@@ -34,15 +34,15 @@ interface ChartsSectionProps {
   data: StockData;
 }
 
-// Design system colors
-const accent = '#2dd4bf';
-const accentDim = 'rgba(45, 212, 191, 0.12)';
-const colorInfo = '#60a5fa';
-const colorPositive = '#34d399';
-const colorWarning = '#fbbf24';
-const textSecondary = '#a0a0a0';
-const textMuted = '#666666';
-const borderDefault = '#2a2a2a';
+// Design system colors（克制专业配色，去除 neon 模板感）
+const accent = '#4c8dff';
+const accentDim = 'rgba(76, 141, 255, 0.14)';
+const colorInfo = '#e6a23c';
+const colorPositive = '#9a8cf5';
+const colorWarning = '#e06c75';
+const textSecondary = '#9ba6b4';
+const textMuted = '#657181';
+const borderDefault = '#232b37';
 const transparent = 'transparent';
 
 const chartTextStyle = { color: textSecondary };
@@ -117,8 +117,8 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
             x2: 0,
             y2: 1,
             colorStops: [
-              { offset: 0, color: 'rgba(45,212,191,0.2)' },
-              { offset: 1, color: 'rgba(45,212,191,0.02)' },
+              { offset: 0, color: 'rgba(76,141,255,0.2)' },
+              { offset: 1, color: 'rgba(76,141,255,0.02)' },
             ],
           },
         },
@@ -351,8 +351,8 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
             x2: 0,
             y2: 1,
             colorStops: [
-              { offset: 0, color: 'rgba(45,212,191,0.15)' },
-              { offset: 1, color: 'rgba(45,212,191,0.02)' },
+              { offset: 0, color: 'rgba(76,141,255,0.15)' },
+              { offset: 1, color: 'rgba(76,141,255,0.02)' },
             ],
           },
         },
@@ -362,8 +362,8 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
               data: [
                 {
                   yAxis: pe,
-                  label: { formatter: `当前 ${pe}`, color: '#f87171', fontSize: 11 },
-                  lineStyle: { color: '#f87171', type: 'dashed' as const },
+                  label: { formatter: `当前 ${pe}`, color: '#e6a23c', fontSize: 11 },
+                  lineStyle: { color: '#e6a23c', type: 'dashed' as const },
                 },
               ],
             }
