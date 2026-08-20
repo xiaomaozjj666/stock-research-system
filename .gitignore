@@ -47,6 +47,3 @@ e2e/.tmp/
 # 运行时数据（watchlist 等）
 server/data/
 server/src/data/watchlist.json
-
-# WorkBuddy 项目数据（运行时生成，不入库）
-.workbuddy/
