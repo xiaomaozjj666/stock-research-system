@@ -184,6 +184,17 @@ export interface WatchlistMonitorResult {
   alerts: WatchlistAlert[];
 }
 
+// 行情历史单点（与 server/src/types.ts PriceHistoryPoint 对齐）
+export interface PricePoint {
+  date: string; // YYYY-MM-DD
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number; // 手
+  isSimulated?: boolean;
+}
+
 // 单只股票的完整研究数据
 export interface StockPoolItem {
   stock_code: string;
@@ -205,6 +216,8 @@ export interface StockPoolItem {
   scenarios?: ScenarioResult[];
   strategyList?: StrategyRecommendation[];
   newsSentiment?: NewsSignal;
+  /** 行情历史（日K线，用于走势图渲染；取数失败时为模拟数据） */
+  priceHistory?: PricePoint[];
   /** 风险归因：风格因子暴露 + 系统/特异风险分解（可选） */
   riskAttribution?: {
     exposures: {

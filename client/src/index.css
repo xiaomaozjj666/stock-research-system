@@ -1028,6 +1028,107 @@ tr:hover td {
   grid-column: 1 / -1;
 }
 
+/* ===== 行情走势图（K线）控件 ===== */
+.trend-chart {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  margin-bottom: var(--space-lg);
+  transition: border-color var(--duration-normal) var(--ease-out);
+}
+.trend-chart:hover {
+  border-color: var(--border-hover);
+}
+.trend-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+.trend-chart-head h4 {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.trend-badge {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+.trend-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.trend-controls .seg {
+  display: inline-flex;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.trend-controls .seg-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.trend-controls .seg-btn + .seg-btn {
+  border-left: 1px solid var(--border-default);
+}
+.trend-controls .seg-btn.active {
+  background: var(--accent, #2dd4bf);
+  color: #08110f;
+  font-weight: 600;
+}
+.trend-controls .chip-btn {
+  appearance: none;
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 4px 9px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+.trend-controls .chip-btn.active {
+  color: #08110f;
+  font-weight: 600;
+  border-color: transparent;
+}
+.trend-controls .chip-btn.ma-5.active {
+  background: #f5c542;
+}
+.trend-controls .chip-btn.ma-10.active {
+  background: #36cfff;
+}
+.trend-controls .chip-btn.ma-20.active {
+  background: #ff7ad9;
+}
+.trend-controls .chip-btn.ma-60.active {
+  background: #9b6bff;
+}
+.trend-controls .chip-btn:not(.ma-5):not(.ma-10):not(.ma-20):not(.ma-60).active {
+  background: var(--accent, #2dd4bf);
+}
+
 /* ===== Scoring Table ===== */
 .scoring-row {
   display: flex;

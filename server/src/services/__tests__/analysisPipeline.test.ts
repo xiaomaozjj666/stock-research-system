@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { runAnalysis } from '../analysisPipeline.js';
 import type { StockDataSet, FinancialData, ValuationData, StockInfo } from '../../types.js';
 import { buildFinancialGraph } from '../../llm/knowledgeGraph.js';
@@ -68,6 +68,16 @@ vi.mock('../../quant/sectorRotation.js', () => ({
 // 静态取 mock 的 getData（vi.mock hoisted），供 beforeEach 重置默认返回值
 import { getData } from '../dataService.js';
 
+// 强制 LLM 不可用：宿主若带有 OPENAI_API_KEY 会让 runExpertWithLLM 走真实网络（超时且结果不可控）。
+// 清空双 key 后 isLLMAvailable()=false，所有专家/仲裁自动降级到确定性的规则引擎，保证离线可跑、结果稳定。
+beforeAll(() => {
+  vi.stubEnv('DEEPSEEK_API_KEY', '');
+  vi.stubEnv('OPENAI_API_KEY', '');
+});
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('runAnalysis 流水线', () => {
   beforeEach(() => {
     // 重置 mock 默认值：此前"不同财务特征"用例把 getData 永久替换为 weakData、
@@ -112,6 +122,9 @@ describe('runAnalysis 流水线', () => {
 
     // 量化策略在无K线时为空数组（不崩溃）
     expect(Array.isArray(stock.strategyList)).toBe(true);
+
+    // 行情历史字段已挂载（即使无K线也应为数组，供前端走势图消费）
+    expect(Array.isArray(stock.priceHistory)).toBe(true);
   });
 
   it('核心摘要包含公司名与评级', async () => {
