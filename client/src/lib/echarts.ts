@@ -6,7 +6,7 @@
 import * as echarts from 'echarts/core';
 
 // 图表
-import { LineChart, BarChart, RadarChart } from 'echarts/charts';
+import { LineChart, BarChart, RadarChart, CandlestickChart } from 'echarts/charts';
 
 // 组件
 import {
@@ -15,6 +15,8 @@ import {
   LegendComponent,
   MarkLineComponent,
   TitleComponent,
+  DataZoomComponent,
+  AxisPointerComponent,
 } from 'echarts/components';
 
 // 渲染器
@@ -24,11 +26,14 @@ echarts.use([
   LineChart,
   BarChart,
   RadarChart,
+  CandlestickChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
   MarkLineComponent,
   TitleComponent,
+  DataZoomComponent,
+  AxisPointerComponent,
   CanvasRenderer,
 ]);
 

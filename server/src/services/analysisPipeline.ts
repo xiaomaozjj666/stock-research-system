@@ -1,4 +1,10 @@
-import type { AnalysisResult, ExpertOpinion, DataSource, SectorRotationSignal } from '../types.js';
+import type {
+  AnalysisResult,
+  ExpertOpinion,
+  DataSource,
+  SectorRotationSignal,
+  PriceHistoryPoint,
+} from '../types.js';
 import { getData } from './dataService.js';
 import { fundamentalExpert } from './experts/fundamentalExpert.js';
 import { valuationExpert } from './experts/valuationExpert.js';
@@ -25,6 +31,33 @@ import logger from '../utils/logger.js';
 /** 特异波动经验基准（%）：无残差收益序列时使用（A 股中位单股波动水平） */
 const SPECIFIC_RISK_BASELINE = 25;
 
+/**
+ * 拉取近 2 年日K线，映射为前端走势图可用的 PriceHistoryPoint。
+ * fetchOHLCVData 自带 12h 磁盘缓存与"网络失败→模拟数据"降级；
+ * 此处再套一层兜底，任何异常都返回空数组（前端据此隐藏走势图，而非报错）。
+ */
+async function fetchPriceHistory(stockCode: string): Promise<PriceHistoryPoint[]> {
+  const end = new Date();
+  const beg = new Date(end);
+  beg.setFullYear(beg.getFullYear() - 2);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  try {
+    const raw = await fetchOHLCVData(stockCode, fmt(beg), fmt(end));
+    if (!raw || raw.length === 0) return [];
+    return raw.map((d) => ({
+      date: d.date,
+      open: d.open,
+      high: d.high,
+      low: d.low,
+      close: d.close,
+      volume: d.volume,
+      isSimulated: d.isSimulated,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /** 分析阶段事件（用于 SSE 流式推送进度） */
 export type AnalysisStage =
   | { phase: 'data'; message: string }
@@ -42,15 +75,17 @@ export async function runAnalysis(
     onProgress?.(stage);
   };
 
-  // 1. 数据获取 + 新闻情绪：两者都只依赖股票代码，并行拉取（省一个网络往返）
+  // 1. 数据获取 + 新闻情绪 + 行情历史：三者都只依赖股票代码，并行拉取（省网络往返）
   emit({ phase: 'data', message: '正在获取行情/财务/新闻数据...' });
-  const [dataResult, newsResult] = await Promise.all([
+  const [dataResult, newsResult, priceHistory] = await Promise.all([
     getData(stockCode),
     // 新闻情绪尽力而为：限时 3s，失败/超时视为无新闻（不阻塞主流程）
     withTimeout(extractNewsSignal(stockCode), 3000).catch(() => ({
       signal: null as NewsSignal | null,
       source: 'none' as const,
     })),
+    // 行情历史（日K）：近 2 年，限时 12s，失败/超时降级为模拟数据（不阻塞主流程）
+    withTimeout(fetchPriceHistory(stockCode), 12000).catch(() => [] as PriceHistoryPoint[]),
   ]);
   const { info, financial, valuation } = dataResult;
   const n = financial.years.length;
@@ -592,6 +627,7 @@ export async function runAnalysis(
           decomposition: riskDecomposition,
         },
         mcpContext,
+        priceHistory,
       },
     ],
     data_sources: dataSources,

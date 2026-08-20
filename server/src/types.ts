@@ -110,6 +110,17 @@ export interface ChartConfig {
   config: Record<string, unknown>;
 }
 
+// 行情历史（日K线，用于前端走势图渲染）
+export interface PriceHistoryPoint {
+  date: string; // YYYY-MM-DD
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number; // 手（东财原始量纲）
+  isSimulated?: boolean; // 取数失败降级为模拟数据时为 true
+}
+
 // 情景分析结果
 export interface ScenarioResult {
   name: '乐观' | '中性' | '悲观';
@@ -233,6 +244,8 @@ export interface AnalysisResult {
     };
     /** MCP 外部工具上下文（可选；仅配置 MCP_SERVER_URL 时附加） */
     mcpContext?: { serverUrl: string; toolCount: number; tools: string[] };
+    /** 行情历史（日K线，用于走势图渲染；取数失败时为模拟数据，isSimulated=true） */
+    priceHistory?: PriceHistoryPoint[];
   }[];
   data_sources: DataSource[];
   research_confidence: string;

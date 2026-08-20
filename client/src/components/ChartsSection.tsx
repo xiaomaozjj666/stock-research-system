@@ -2,9 +2,12 @@
 // 该版本被 npm 标记 "published in error"，生产构建下 default 互操作会得到模块对象，
 // 导致 "Element type is invalid: got object" 渲染崩溃）
 import EChart from './EChart';
+import PriceTrendChart from './PriceTrendChart';
+import type { PricePoint } from '../types';
 
 interface StockData {
   stock_name?: string;
+  priceHistory?: PricePoint[];
   finance_metrics?: {
     years?: string[];
     revenue?: number[];
@@ -373,12 +376,16 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
   const hasPeData = historicalPE.length > 0;
   const hasPeerData = peerComparison.length > 0;
   const hasRadar = scoreDetail !== undefined;
+  const hasPriceData = (data.priceHistory?.length ?? 0) > 0;
 
-  if (!hasFinanceData && !hasPeData && !hasPeerData && !hasRadar) return null;
+  if (!hasFinanceData && !hasPeData && !hasPeerData && !hasRadar && !hasPriceData) return null;
 
   return (
     <div className="card">
       <div className="section-title">可视化分析</div>
+      {hasPriceData && (
+        <PriceTrendChart data={data.priceHistory ?? []} stockName={data.stock_name} />
+      )}
       <div className="charts-grid">
         {hasFinanceData && (
           <div className="chart-card chart-card-wide">
