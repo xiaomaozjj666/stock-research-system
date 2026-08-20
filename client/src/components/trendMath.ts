@@ -58,7 +58,7 @@ export function computeMACD(closes: number[]): MacdPoint[] {
   const deaRaw = computeEMA(dif, 9);
   return dif.map((d, i) => {
     const dea = deaRaw[i];
-    const macd = Math.round((2 * (d - dea)) * 1000) / 1000;
+    const macd = Math.round(2 * (d - dea) * 1000) / 1000;
     return { dif: d, dea, macd };
   });
 }

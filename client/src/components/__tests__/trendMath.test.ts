@@ -88,11 +88,7 @@ describe('aggregateCandles', () => {
   });
 
   it('月K 按 YYYY-MM 聚合', () => {
-    const daily = [
-      mk('2024-01-02', 10, 9),
-      mk('2024-01-15', 12),
-      mk('2024-02-01', 20, 18),
-    ];
+    const daily = [mk('2024-01-02', 10, 9), mk('2024-01-15', 12), mk('2024-02-01', 20, 18)];
     const month = aggregateCandles(daily, 'month');
     expect(month).toHaveLength(2);
     expect(month[0].open).toBe(9);

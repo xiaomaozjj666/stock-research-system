@@ -172,9 +172,30 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
         itemStyle: { color },
         z: 4,
       });
-      bollSeries.push(mk('BOLL上轨', b.map((x) => x.upper), '#8a8f98', 0.85));
-      bollSeries.push(mk('BOLL中轨', b.map((x) => x.mid), '#c9cdd4', 0.95));
-      bollSeries.push(mk('BOLL下轨', b.map((x) => x.lower), '#8a8f98', 0.85));
+      bollSeries.push(
+        mk(
+          'BOLL上轨',
+          b.map((x) => x.upper),
+          '#8a8f98',
+          0.85,
+        ),
+      );
+      bollSeries.push(
+        mk(
+          'BOLL中轨',
+          b.map((x) => x.mid),
+          '#c9cdd4',
+          0.95,
+        ),
+      );
+      bollSeries.push(
+        mk(
+          'BOLL下轨',
+          b.map((x) => x.lower),
+          '#8a8f98',
+          0.85,
+        ),
+      );
     }
 
     // MACD
@@ -188,11 +209,26 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
     const hasMacd = macdOn;
     const left = 8;
     const right = 64; // 右侧价格轴留白（给最新价标签足够空间，避免贴边裁切）
-    let priceTop: number, priceH: number, volTop: number, volH: number, macdTop: number, macdH: number;
+    let priceTop: number,
+      priceH: number,
+      volTop: number,
+      volH: number,
+      macdTop: number,
+      macdH: number;
     if (hasMacd) {
-      priceTop = 4; priceH = 44; volTop = 52; volH = 13; macdTop = 69; macdH = 13;
+      priceTop = 4;
+      priceH = 44;
+      volTop = 52;
+      volH = 13;
+      macdTop = 69;
+      macdH = 13;
     } else {
-      priceTop = 5; priceH = 58; volTop = 67; volH = 15; macdTop = 0; macdH = 0;
+      priceTop = 5;
+      priceH = 58;
+      volTop = 67;
+      volH = 15;
+      macdTop = 0;
+      macdH = 0;
     }
 
     const axisCommon = {
@@ -207,26 +243,42 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
     const grids = [gridPrice, gridVol];
     const xAxes: unknown[] = [
       {
-        type: 'category' as const, data: dates, gridIndex: 0, boundaryGap: true,
-        ...axisCommon, axisLabel: { ...axisCommon.axisLabel, show: false },
+        type: 'category' as const,
+        data: dates,
+        gridIndex: 0,
+        boundaryGap: true,
+        ...axisCommon,
+        axisLabel: { ...axisCommon.axisLabel, show: false },
         axisPointer: { show: true, label: { show: false } },
       },
       {
-        type: 'category' as const, data: dates, gridIndex: 1, boundaryGap: true,
+        type: 'category' as const,
+        data: dates,
+        gridIndex: 1,
+        boundaryGap: true,
         ...axisCommon,
       },
     ];
     const yAxes: unknown[] = [
       {
-        type: 'value' as const, scale: true, gridIndex: 0, position: 'right' as const,
+        type: 'value' as const,
+        scale: true,
+        gridIndex: 0,
+        position: 'right' as const,
         ...axisCommon,
         splitLine: { lineStyle: { color: '#1b1b1b', type: 'dashed' as const } },
         axisLabel: { ...axisCommon.axisLabel, formatter: (v: number) => v.toFixed(2) },
       },
       {
-        type: 'value' as const, gridIndex: 1, position: 'right' as const,
-        ...axisCommon, splitNumber: 2,
-        axisLabel: { ...axisCommon.axisLabel, formatter: (v: number) => `${(v / 10000).toFixed(0)}万` },
+        type: 'value' as const,
+        gridIndex: 1,
+        position: 'right' as const,
+        ...axisCommon,
+        splitNumber: 2,
+        axisLabel: {
+          ...axisCommon.axisLabel,
+          formatter: (v: number) => `${(v / 10000).toFixed(0)}万`,
+        },
       },
     ];
     const series: unknown[] = [
@@ -257,28 +309,52 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
     if (hasMacd) {
       grids.push({ left, right, top: `${macdTop}%`, height: `${macdH}%` });
       xAxes.push({
-        type: 'category' as const, data: dates, gridIndex: 2, boundaryGap: true,
-        ...axisCommon, axisLabel: { ...axisCommon.axisLabel, show: false },
+        type: 'category' as const,
+        data: dates,
+        gridIndex: 2,
+        boundaryGap: true,
+        ...axisCommon,
+        axisLabel: { ...axisCommon.axisLabel, show: false },
         axisPointer: { show: true, label: { show: false } },
       });
       yAxes.push({
-        type: 'value' as const, gridIndex: 2, position: 'right' as const,
-        ...axisCommon, splitNumber: 2,
+        type: 'value' as const,
+        gridIndex: 2,
+        position: 'right' as const,
+        ...axisCommon,
+        splitNumber: 2,
       });
       series.push(
         {
-          name: 'DIF', type: 'line', data: macd.map((m) => m.dif),
-          gridIndex: 2, xAxisIndex: 2, yAxisIndex: 2, showSymbol: false,
-          lineStyle: { width: 1, color: '#f5c542' }, z: 6,
+          name: 'DIF',
+          type: 'line',
+          data: macd.map((m) => m.dif),
+          gridIndex: 2,
+          xAxisIndex: 2,
+          yAxisIndex: 2,
+          showSymbol: false,
+          lineStyle: { width: 1, color: '#f5c542' },
+          z: 6,
         },
         {
-          name: 'DEA', type: 'line', data: macd.map((m) => m.dea),
-          gridIndex: 2, xAxisIndex: 2, yAxisIndex: 2, showSymbol: false,
-          lineStyle: { width: 1, color: '#36cfff' }, z: 6,
+          name: 'DEA',
+          type: 'line',
+          data: macd.map((m) => m.dea),
+          gridIndex: 2,
+          xAxisIndex: 2,
+          yAxisIndex: 2,
+          showSymbol: false,
+          lineStyle: { width: 1, color: '#36cfff' },
+          z: 6,
         },
         {
-          name: 'MACD', type: 'bar', data: macdBars,
-          gridIndex: 2, xAxisIndex: 2, yAxisIndex: 2, barWidth: '60%',
+          name: 'MACD',
+          type: 'bar',
+          data: macdBars,
+          gridIndex: 2,
+          xAxisIndex: 2,
+          yAxisIndex: 2,
+          barWidth: '60%',
         },
       );
     }
@@ -382,10 +458,7 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
               </button>
             ))}
           </div>
-          <button
-            className={`chip-btn ${maOn ? 'active' : ''}`}
-            onClick={() => setMaOn((v) => !v)}
-          >
+          <button className={`chip-btn ${maOn ? 'active' : ''}`} onClick={() => setMaOn((v) => !v)}>
             均线
           </button>
           {maOn &&
