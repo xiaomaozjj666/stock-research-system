@@ -253,7 +253,22 @@ export default function QuantPage() {
 
         {!loading && !report && !error && (
           <div className="quant-empty">
-            <div className="quant-empty-icon">📊</div>
+            <svg
+              className="quant-empty-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 20h18" />
+              <path d="M6 20v-7" />
+              <path d="M11 20V6" />
+              <path d="M16 20v-4" />
+              <path d="M21 20V10" />
+            </svg>
             <p className="quant-empty-text">配置左侧策略参数，点击"开始研究"启动量化分析</p>
           </div>
         )}

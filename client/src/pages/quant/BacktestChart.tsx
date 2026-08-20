@@ -115,7 +115,7 @@ export default function BacktestChart({ data }: Props) {
     <div className="quant-backtest">
       {data.newsAware && (
         <div className="backtest-news-badge">
-          📰 含最新消息情绪叠加（新闻姿态 {((data.newsPosture ?? 1) * 100).toFixed(0)}% 仓位）
+          含最新消息情绪叠加（新闻姿态 {((data.newsPosture ?? 1) * 100).toFixed(0)}% 仓位）
         </div>
       )}
       <div className="quant-metrics">

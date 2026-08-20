@@ -82,7 +82,7 @@ export default function StrategyListSection({ data }: Props) {
 
             {strategy.newsAware && (
               <div className="strategy-news-aware">
-                📰 含最新消息（姿态 {(strategy.newsAware.posture * 100).toFixed(0)}%）： 收益{' '}
+                含最新消息（姿态 {(strategy.newsAware.posture * 100).toFixed(0)}%）： 收益{' '}
                 {strategy.newsAware.totalReturn >= 0 ? '+' : ''}
                 {strategy.newsAware.totalReturn.toFixed(1)}% · 夏普{' '}
                 {strategy.newsAware.sharpeRatio.toFixed(2)} · 回撤{' '}
