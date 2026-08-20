@@ -5,29 +5,38 @@
 
 /* ===== CSS Variables ===== */
 :root {
-  --bg-primary: #0d0d0d;
-  --bg-secondary: #111111;
-  --bg-card: #161616;
-  --bg-card-hover: #1c1c1c;
-  --bg-input: #1a1a1a;
-  --border-default: #2a2a2a;
-  --border-hover: #3a3a3a;
-  --border-focus: #2dd4bf;
-  --text-primary: #f0f0f0;
-  --text-secondary: #a0a0a0;
-  --text-muted: #666666;
-  --text-inverse: #0d0d0d;
-  --accent: #2dd4bf;
-  --accent-dim: rgba(45, 212, 191, 0.12);
-  --accent-hover: #5eead4;
-  --color-positive: #34d399;
-  --color-positive-dim: rgba(52, 211, 153, 0.1);
-  --color-negative: #f87171;
-  --color-negative-dim: rgba(248, 113, 113, 0.1);
-  --color-warning: #fbbf24;
-  --color-warning-dim: rgba(251, 191, 36, 0.1);
-  --color-info: #60a5fa;
-  --color-info-dim: rgba(96, 165, 250, 0.1);
+  /* 背景层次：冷调深色，分层清晰（替代扁平纯黑） */
+  --bg-primary: #0a0c10;
+  --bg-secondary: #0e1117;
+  --bg-card: #141920;
+  --bg-card-hover: #1a212b;
+  --bg-input: #12161d;
+  --border-default: #232b37;
+  --border-hover: #333f4e;
+  --border-focus: #4c8dff;
+  /* 文本：冷灰阶，阅读层级明确 */
+  --text-primary: #e9edf3;
+  --text-secondary: #9ba6b4;
+  --text-muted: #657181;
+  --text-inverse: #0a0c10;
+  /* 主强调色：克制的工程蓝（替代荧光青 #2dd4bf，去除模板感） */
+  --accent: #4c8dff;
+  --accent-dim: rgba(76, 141, 255, 0.14);
+  --accent-hover: #6da4ff;
+  /* 市场语义（A 股惯例：红涨 / 绿跌）——红=涨·利好·买入，绿=跌·利空·卖出 */
+  --color-positive: #ef3f4c;
+  --color-positive-dim: rgba(239, 63, 76, 0.12);
+  --color-negative: #1fae6e;
+  --color-negative-dim: rgba(31, 174, 110, 0.12);
+  /* 状态语义（与涨跌解耦，避免红绿歧义） */
+  --color-success: #1fae6e;
+  --color-success-dim: rgba(31, 174, 110, 0.12);
+  --color-danger: #ef3f4c;
+  --color-danger-dim: rgba(239, 63, 76, 0.12);
+  --color-warning: #e6a23c;
+  --color-warning-dim: rgba(230, 162, 60, 0.12);
+  --color-info: #6f86a8;
+  --color-info-dim: rgba(111, 134, 168, 0.14);
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -138,6 +147,18 @@ body {
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: var(--space-md);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  letter-spacing: 0.2px;
+}
+.section-title::before {
+  content: '';
+  width: 3px;
+  height: 15px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex-shrink: 0;
 }
 .disclaimer {
   font-size: var(--text-caption);
@@ -224,11 +245,13 @@ body {
   font-size: var(--text-caption);
   color: var(--text-muted);
   margin-bottom: 6px;
+  letter-spacing: 0.3px;
 }
 .dash-value {
   font-size: 20px;
   font-weight: 700;
   color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 .dash-value.accent {
   color: var(--accent);
@@ -345,7 +368,7 @@ tr:hover td {
 .score-bar-fill {
   height: 100%;
   border-radius: 3px;
-  background: linear-gradient(90deg, var(--accent), var(--color-positive));
+  background: var(--accent);
   animation: scoreBarGrow var(--duration-slow) var(--ease-out);
 }
 
@@ -354,8 +377,7 @@ tr:hover td {
   position: sticky;
   top: 0;
   z-index: 100;
-  background: rgba(13, 13, 13, 0.88);
-  backdrop-filter: blur(16px);
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-default);
   padding: var(--space-sm) var(--space-lg);
   margin: 0 calc(-1 * var(--space-lg)) var(--space-lg);
@@ -535,8 +557,8 @@ tr:hover td {
 }
 
 .search-history-clear:hover {
-  color: var(--color-negative);
-  background: color-mix(in srgb, var(--color-negative) 10%, transparent);
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 }
 
 .search-history-list {
@@ -590,8 +612,8 @@ tr:hover td {
 }
 
 .search-history-item .delete-btn:hover {
-  color: var(--color-negative);
-  background: color-mix(in srgb, var(--color-negative) 10%, transparent);
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 }
 
 /* Hot Stocks Tags */
@@ -1093,7 +1115,7 @@ tr:hover td {
   border-left: 1px solid var(--border-default);
 }
 .trend-controls .seg-btn.active {
-  background: var(--accent, #2dd4bf);
+  background: var(--accent, #4c8dff);
   color: #08110f;
   font-weight: 600;
 }
@@ -1126,7 +1148,7 @@ tr:hover td {
   background: #9b6bff;
 }
 .trend-controls .chip-btn:not(.ma-5):not(.ma-10):not(.ma-20):not(.ma-60).active {
-  background: var(--accent, #2dd4bf);
+  background: var(--accent, #4c8dff);
 }
 
 /* 走势图绘图画布（相对定位容器，承载吸顶实况图例） */
@@ -1260,17 +1282,12 @@ tr:hover td {
   border-radius: 3px;
   transition: width var(--duration-slow) var(--ease-out);
 }
-.scoring-bar.green {
-  background: linear-gradient(90deg, var(--color-positive), #6ee7b7);
-}
-.scoring-bar.blue {
-  background: linear-gradient(90deg, var(--color-info), #93c5fd);
-}
-.scoring-bar.orange {
-  background: linear-gradient(90deg, var(--color-warning), #fcd34d);
-}
+/* 五维评分条：统一主色实心（去除彩虹渐变，分数数字本身表达大小） */
+.scoring-bar.green,
+.scoring-bar.blue,
+.scoring-bar.orange,
 .scoring-bar.red {
-  background: linear-gradient(90deg, var(--color-negative), #fca5a5);
+  background: var(--accent);
 }
 .scoring-val {
   width: 40px;
@@ -1627,11 +1644,11 @@ tr:hover td {
 
 /* ===== Error Banner ===== */
 .error-banner {
-  background: var(--color-negative-dim);
-  border: 1px solid rgba(248, 113, 113, 0.2);
+  background: var(--color-danger-dim);
+  border: 1px solid rgba(239, 63, 76, 0.2);
   border-radius: var(--radius-md);
   padding: var(--space-md) var(--space-lg);
-  color: var(--color-negative);
+  color: var(--color-danger);
   font-size: var(--text-body);
   margin-bottom: var(--space-lg);
   animation: fadeIn var(--duration-normal) var(--ease-out);
@@ -2471,7 +2488,7 @@ tr:hover td {
 /* ===== ErrorBoundary Fallback ===== */
 .error-boundary-fallback {
   background: var(--bg-card);
-  border: 1px solid rgba(248, 113, 113, 0.2);
+  border: 1px solid rgba(239, 63, 76, 0.2);
   border-radius: var(--radius-lg);
   padding: var(--space-xl);
   text-align: center;
@@ -2480,7 +2497,7 @@ tr:hover td {
 .error-boundary-fallback h3 {
   font-size: var(--text-h2);
   font-weight: 600;
-  color: var(--color-negative);
+  color: var(--color-danger);
   margin-bottom: var(--space-sm);
 }
 .error-boundary-fallback p {
@@ -2524,60 +2541,7 @@ tr:hover td {
   margin-bottom: var(--space-md);
 }
 
-/* ===== F4: Scroll Reveal Animations ===== */
-.reveal-section {
-  opacity: 0;
-  transform: translateY(24px);
-  transition:
-    opacity 0.6s ease-out,
-    transform 0.6s ease-out;
-}
-.reveal-section.revealed {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-/* Scenario staggered card entrance */
-.scenario-cards .scenario-card {
-  opacity: 0;
-  transform: translateY(20px);
-  transition:
-    opacity 0.5s ease-out,
-    transform 0.5s ease-out;
-}
-.scenario-cards.revealed .scenario-card:nth-child(1) {
-  transition-delay: 0ms;
-  opacity: 1;
-  transform: none;
-}
-.scenario-cards.revealed .scenario-card:nth-child(2) {
-  transition-delay: 150ms;
-  opacity: 1;
-  transform: none;
-}
-.scenario-cards.revealed .scenario-card:nth-child(3) {
-  transition-delay: 300ms;
-  opacity: 1;
-  transform: none;
-}
-/* fallback: if parent gets revealed class via IntersectionObserver on the wrapper */
-.reveal-section.revealed .scenario-cards .scenario-card:nth-child(1) {
-  transition-delay: 0ms;
-  opacity: 1;
-  transform: none;
-}
-.reveal-section.revealed .scenario-cards .scenario-card:nth-child(2) {
-  transition-delay: 150ms;
-  opacity: 1;
-  transform: none;
-}
-.reveal-section.revealed .scenario-cards .scenario-card:nth-child(3) {
-  transition-delay: 300ms;
-  opacity: 1;
-  transform: none;
-}
-
-/* ===== F4: Dashboard Card Hover ===== */
+/* ===== Dashboard Card Hover ===== */
 .dash-card {
   transition:
     transform 0.2s ease,
@@ -2589,16 +2553,6 @@ tr:hover td {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
-/* ===== F4: Scroll Progress Indicator ===== */
-.scroll-progress {
-  position: fixed;
-  top: 0;
-  left: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--accent), var(--color-info));
-  z-index: 1000;
-  transition: width 0.1s linear;
-}
 
 /* ===== F4: Loading Screen Enhancements ===== */
 .loading-stages {
@@ -2639,7 +2593,7 @@ tr:hover td {
   animation: loadingPulse 1.5s ease-in-out infinite;
 }
 .loading-stage-item.done .loading-stage-dot {
-  background: var(--color-positive);
+  background: var(--color-success);
 }
 .loading-stage-text {
   display: flex;
@@ -2741,7 +2695,7 @@ tr:hover td {
 .stock-search-input:focus,
 .navbar-search input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.15);
+  box-shadow: 0 0 0 3px rgba(76, 141, 255, 0.15);
 }
 
 /* ===== F4: Side Nav Active Indicator ===== */
@@ -3272,7 +3226,7 @@ tr:hover td {
 
 .comparison-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12);
+  box-shadow: 0 0 0 3px rgba(76, 141, 255, 0.12);
 }
 
 .comparison-input::placeholder {
@@ -3316,7 +3270,7 @@ tr:hover td {
   gap: 6px;
   padding: 5px 12px;
   background: var(--accent-dim);
-  border: 1px solid rgba(45, 212, 191, 0.25);
+  border: 1px solid rgba(76, 141, 255, 0.25);
   border-radius: var(--radius-pill);
   font-size: var(--text-caption);
   color: var(--accent);
@@ -3359,8 +3313,8 @@ tr:hover td {
 }
 
 .comparison-error {
-  background: var(--color-negative-dim);
-  border: 1px solid rgba(248, 113, 113, 0.2);
+  background: var(--color-danger-dim);
+  border: 1px solid rgba(239, 63, 76, 0.2);
   border-radius: var(--radius-md);
   padding: var(--space-sm) var(--space-md);
   color: var(--color-negative);

@@ -22,7 +22,6 @@ import MobileNav from './components/MobileNav';
 import ChatPanel from './components/ChatPanel';
 import { useToast } from './components/Toast';
 import { generateReportMarkdown, downloadMarkdown } from './utils/reportExport';
-import { useScrollReveal } from './hooks/useScrollReveal';
 import { useCountUp } from './hooks/useCountUp';
 
 // 路由级懒加载：减小首屏体积，量化/对比/模拟盘/自选股/历史页按需加载
@@ -35,26 +34,18 @@ const HistoryPage = lazy(() => import('./pages/history/HistoryPage'));
 // 仅在分析结果出现、真正需要渲染图表时才拉取
 const ChartsSection = lazy(() => import('./components/ChartsSection'));
 
-/* ===== RevealSection wrapper ===== */
+/* ===== 区块包裹：仅保留锚点 id 与滚动偏移，不做入场动画 ===== */
 function RevealSection({
   children,
   id,
   className = '',
-  delay = 0,
 }: {
   children: React.ReactNode;
   id?: string;
   className?: string;
-  delay?: number;
 }) {
-  const { ref, isVisible } = useScrollReveal();
   return (
-    <div
-      ref={ref}
-      id={id}
-      className={`reveal-section ${isVisible ? 'revealed' : ''} ${className}`}
-      style={{ transitionDelay: `${delay}ms` }}
-    >
+    <div id={id} className={className} style={{ scrollMarginTop: 96 }}>
       {children}
     </div>
   );
@@ -111,7 +102,6 @@ function App() {
   const [activeTab, setActiveTab] = useState<
     'research' | 'quant' | 'compare' | 'watchlist' | 'paper' | 'chat' | 'history'
   >('research');
-  const [scrollProgress, setScrollProgress] = useState(0);
   /** 最近一次分析的代码，用于失败后一键重试 */
   const lastCodeRef = useRef<string>('');
   /** 是否处于"回看历史快照"模式（顶部提示条；新分析开始即退出） */
@@ -156,11 +146,6 @@ function App() {
       ticking = true;
       requestAnimationFrame(() => {
         ticking = false;
-        // 滚动进度
-        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
-        if (docHeight > 0) {
-          setScrollProgress((window.scrollY / docHeight) * 100);
-        }
         // 回到顶部按钮：仅在跨越阈值时更新状态（避免每帧 setState）
         setShowBackTop((prev) => {
           const next = window.scrollY > 600;
@@ -278,11 +263,6 @@ function App() {
 
   return (
     <div className="app">
-      {/* 滚动进度条 */}
-      {stockData && !loading && (
-        <div className="scroll-progress" style={{ width: `${scrollProgress}%` }} />
-      )}
-
       <StockSelector onAnalyze={handleAnalyze} loading={loading} />
 
       <div className="tab-bar">
