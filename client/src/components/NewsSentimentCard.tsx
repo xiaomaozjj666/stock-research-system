@@ -24,7 +24,7 @@ export default function NewsSentimentCard({ data }: Props) {
   return (
     <div className="news-sentiment-card">
       <div className="news-sentiment-head">
-        <h3 className="news-sentiment-title">📰 最新消息情绪</h3>
+        <h3 className="news-sentiment-title">最新消息情绪</h3>
         <span className={`news-badge news-badge--${label.cls}`}>{label.text}</span>
       </div>
 

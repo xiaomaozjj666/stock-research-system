@@ -42,7 +42,7 @@ describe('NewsSentimentCard', () => {
 
   it('偏多极性：渲染标题、徽章与极性数值', () => {
     const { getByText } = render(<NewsSentimentCard data={makeSignal({ polarity: 0.4 })} />);
-    expect(getByText('📰 最新消息情绪')).toBeInTheDocument();
+    expect(getByText('最新消息情绪')).toBeInTheDocument();
     expect(getByText('偏多')).toBeInTheDocument();
     expect(getByText('0.40')).toBeInTheDocument();
   });

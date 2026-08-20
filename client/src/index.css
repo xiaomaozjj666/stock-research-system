@@ -1479,11 +1479,11 @@ tr:hover td {
   align-items: flex-start;
   gap: 10px;
   padding: 10px 14px;
-  background: var(--color-negative-dim);
+  background: var(--color-danger-dim);
   border-radius: var(--radius-sm);
-  border-left: 3px solid var(--color-negative);
+  border-left: 3px solid var(--color-danger);
   font-size: 13px;
-  color: var(--color-negative);
+  color: var(--color-danger);
   line-height: 1.5;
 }
 
@@ -1561,7 +1561,7 @@ tr:hover td {
   transition: color var(--duration-fast);
 }
 .followup-remove:hover {
-  color: var(--color-negative);
+  color: var(--color-danger);
 }
 .followup-add {
   display: flex;
@@ -1618,8 +1618,8 @@ tr:hover td {
   overflow: hidden;
 }
 .risk-factor-fill { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
-.risk-factor-fill.positive { background: var(--color-negative); }
-.risk-factor-fill.negative { background: var(--color-positive); }
+.risk-factor-fill.positive { background: var(--color-danger); }
+.risk-factor-fill.negative { background: var(--color-success); }
 .risk-factor-value {
   width: 52px; text-align: right; color: var(--text-secondary);
   font-variant-numeric: tabular-nums; flex-shrink: 0;
@@ -1898,7 +1898,7 @@ tr:hover td {
   box-shadow: 0 0 6px var(--accent);
 }
 .quant-pipeline-step.done .quant-pipeline-dot {
-  background: var(--color-positive);
+  background: var(--color-success);
 }
 .quant-pipeline-label {
   font-size: var(--text-body);
@@ -2289,9 +2289,11 @@ tr:hover td {
   text-align: center;
 }
 .quant-empty-icon {
-  font-size: 48px;
+  width: 44px;
+  height: 44px;
   margin-bottom: var(--space-md);
-  opacity: 0.5;
+  color: var(--text-muted);
+  opacity: 0.6;
 }
 .quant-empty-text {
   font-size: var(--text-body);
@@ -2473,8 +2475,8 @@ tr:hover td {
   vertical-align: middle;
 }
 .evidence-tag.fact {
-  background: var(--color-positive-dim);
-  color: var(--color-positive);
+  background: var(--color-success-dim);
+  color: var(--color-success);
 }
 .evidence-tag.inference {
   background: var(--color-info-dim);
@@ -3317,7 +3319,7 @@ tr:hover td {
   border: 1px solid rgba(239, 63, 76, 0.2);
   border-radius: var(--radius-md);
   padding: var(--space-sm) var(--space-md);
-  color: var(--color-negative);
+  color: var(--color-danger);
   font-size: var(--text-caption);
   animation: fadeIn var(--duration-fast) var(--ease-out);
 }
@@ -3446,7 +3448,7 @@ tr:hover td {
 .error-banner {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--space-md);
   flex-wrap: wrap;
   max-width: 1100px;
@@ -3463,7 +3465,7 @@ tr:hover td {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--color-negative);
+  background: var(--color-danger);
   color: var(--text-inverse);
   font-weight: 700;
   font-size: 13px;
@@ -3476,9 +3478,10 @@ tr:hover td {
 }
 .error-banner-retry {
   flex-shrink: 0;
+  margin-left: auto;
   background: transparent;
-  border: 1px solid var(--color-negative);
-  color: var(--color-negative);
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
   border-radius: var(--radius-md);
   padding: 6px 16px;
   font-size: var(--text-caption);
@@ -3490,7 +3493,7 @@ tr:hover td {
     color var(--duration-fast) var(--ease-out);
 }
 .error-banner-retry:hover {
-  background: var(--color-negative);
+  background: var(--color-danger);
   color: var(--text-inverse);
 }
 
@@ -3515,8 +3518,8 @@ tr:hover td {
     color var(--duration-fast) var(--ease-out);
 }
 .btn-ghost:hover {
-  border-color: var(--color-negative);
-  color: var(--color-negative);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* --- 错误边界：区块级 / 应用级 --- */
@@ -3852,8 +3855,8 @@ tr:hover td {
   cursor: pointer;
 }
 .watchlist-remove:hover {
-  color: var(--color-negative);
-  border-color: var(--color-negative);
+  color: var(--color-danger);
+  border-color: var(--color-danger);
 }
 .watchlist-empty,
 .watchlist-note {
@@ -4091,9 +4094,9 @@ tr:hover td {
   color: var(--color-info);
 }
 .chat-badge-tool {
-  background: var(--color-positive-dim);
-  border-color: var(--color-positive);
-  color: var(--color-positive);
+  background: var(--color-success-dim);
+  border-color: var(--color-success);
+  color: var(--color-success);
 }
 .chat-badge-plan {
   background: var(--accent-dim);
@@ -4174,12 +4177,12 @@ tr:hover td {
 }
 /* A 股习惯：红=看多、绿=看空（与 NewsPostureHeatBar 语义一致） */
 .chat-debate-bull {
-  background: var(--color-negative-dim);
-  border-left: 3px solid var(--color-negative);
-}
-.chat-debate-bear {
   background: var(--color-positive-dim);
   border-left: 3px solid var(--color-positive);
+}
+.chat-debate-bear {
+  background: var(--color-negative-dim);
+  border-left: 3px solid var(--color-negative);
 }
 .chat-debate-synthesis {
   background: var(--color-info-dim);
@@ -4219,16 +4222,16 @@ tr:hover td {
   padding-top: 6px;
 }
 .chat-risk-aggressive {
-  background: var(--color-negative-dim);
-  border-left: 3px solid var(--color-negative);
+  background: var(--color-danger-dim);
+  border-left: 3px solid var(--color-danger);
 }
 .chat-risk-neutral {
   background: var(--color-warning-dim);
   border-left: 3px solid var(--color-warning);
 }
 .chat-risk-conservative {
-  background: var(--color-positive-dim);
-  border-left: 3px solid var(--color-positive);
+  background: var(--color-success-dim);
+  border-left: 3px solid var(--color-success);
 }
 .chat-loading {
   color: var(--text-muted);
@@ -4415,23 +4418,23 @@ tr:hover td {
   border-radius: var(--radius-sm);
 }
 .tag-ok {
-  background: var(--color-positive-dim);
-  color: var(--color-positive);
+  background: var(--color-success-dim);
+  color: var(--color-success);
 }
 .tag-warn {
   background: var(--color-warning-dim);
   color: var(--color-warning);
 }
 .chip-warn {
-  background: var(--color-negative-dim);
-  color: var(--color-negative);
+  background: var(--color-warning-dim);
+  color: var(--color-warning);
 }
 .enhance-msg {
   margin-top: 8px;
   font-size: 12px;
-  color: var(--color-positive);
-  background: var(--color-positive-dim);
-  border: 1px solid var(--color-positive);
+  color: var(--color-success);
+  background: var(--color-success-dim);
+  border: 1px solid var(--color-success);
   border-radius: var(--radius-sm);
   padding: 6px 10px;
 }
@@ -4574,10 +4577,10 @@ tr:hover td {
 .history-delete {
   font-size: 12px;
   padding: 4px 12px;
-  color: var(--color-negative);
+  color: var(--color-danger);
 }
 .history-delete:hover {
-  border-color: var(--color-negative);
+  border-color: var(--color-danger);
 }
 .history-delete:disabled {
   opacity: 0.5;
@@ -4613,9 +4616,9 @@ tr:hover td {
   font-size: 14px;
 }
 .paper-message {
-  color: var(--color-positive);
-  background: var(--color-positive-dim);
-  border: 1px solid var(--color-positive);
+  color: var(--color-success);
+  background: var(--color-success-dim);
+  border: 1px solid var(--color-success);
   border-radius: var(--radius-md);
   padding: 8px 12px;
   font-size: 13px;
@@ -4818,9 +4821,9 @@ tr:hover td {
   box-shadow: var(--shadow-md);
   animation: toast-in var(--duration-normal) var(--ease-out);
 }
-.toast-success { border-color: var(--color-positive); color: var(--color-positive); }
+.toast-success { border-color: var(--color-success); color: var(--color-success); }
 .toast-info { border-color: var(--color-info); color: var(--color-info); }
-.toast-error { border-color: var(--color-negative); color: var(--color-negative); }
+.toast-error { border-color: var(--color-danger); color: var(--color-danger); }
 .toast-close {
   background: none; border: none; color: var(--text-muted);
   cursor: pointer; font-size: 11px; padding: 0 2px;
@@ -4850,10 +4853,10 @@ tr:hover td {
   color: var(--text-primary); background: var(--bg-card);
 }
 .watchlist-alert-level { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: var(--radius-pill); }
-.watchlist-alert.alert-bull { border-left: 3px solid var(--color-negative); }
-.watchlist-alert.alert-bull .watchlist-alert-level { background: var(--color-negative-dim); color: var(--color-negative); }
-.watchlist-alert.alert-bear { border-left: 3px solid var(--color-positive); }
-.watchlist-alert.alert-bear .watchlist-alert-level { background: var(--color-positive-dim); color: var(--color-positive); }
+.watchlist-alert.alert-bull { border-left: 3px solid var(--color-positive); }
+.watchlist-alert.alert-bull .watchlist-alert-level { background: var(--color-positive-dim); color: var(--color-positive); }
+.watchlist-alert.alert-bear { border-left: 3px solid var(--color-negative); }
+.watchlist-alert.alert-bear .watchlist-alert-level { background: var(--color-negative-dim); color: var(--color-negative); }
 .watchlist-alert.alert-impact { border-left: 3px solid var(--color-warning); }
 .watchlist-alert.alert-impact .watchlist-alert-level { background: var(--color-warning-dim); color: var(--color-warning); }
 .watchlist-alert-stock b { color: var(--accent); font-variant-numeric: tabular-nums; }
