@@ -49,8 +49,8 @@ function lastCloseMarkLine(closes: number[]) {
       formatter: last.toFixed(2),
       color: '#fff',
       backgroundColor: color,
-      padding: [2, 5] as [number, number],
-      fontSize: 10,
+      padding: [1, 4] as [number, number],
+      fontSize: 9,
       borderRadius: 2,
     },
     data: [{ yAxis: last }],
@@ -187,7 +187,7 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
     // 布局：价 / 量 / (MACD) 三宫格共享 X 轴，紧凑分隔（行业通用）
     const hasMacd = macdOn;
     const left = 8;
-    const right = 54; // 右侧价格轴留白
+    const right = 64; // 右侧价格轴留白（给最新价标签足够空间，避免贴边裁切）
     let priceTop: number, priceH: number, volTop: number, volH: number, macdTop: number, macdH: number;
     if (hasMacd) {
       priceTop = 4; priceH = 44; volTop = 52; volH = 13; macdTop = 69; macdH = 13;
@@ -418,7 +418,10 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
         <div className="trend-legend">
           <span className="tl-date">{c.date}</span>
           <span className="tl-ohlc">
-            开 <b>{r2(c.open)}</b> 高 <b>{r2(c.high)}</b> 低 <b>{r2(c.low)}</b> 收{' '}
+            <span className="tl-label">开</span> <b className="tl-val">{r2(c.open)}</b>{' '}
+            <span className="tl-label">高</span> <b className="tl-val">{r2(c.high)}</b>{' '}
+            <span className="tl-label">低</span> <b className="tl-val">{r2(c.low)}</b>{' '}
+            <span className="tl-label">收</span>{' '}
             <b style={{ color: up ? UP : DOWN }}>{r2(c.close)}</b>
           </span>
           <span className="tl-chg" style={{ color: up ? UP : DOWN }}>
@@ -451,7 +454,11 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
               ) : null;
             })()}
         </div>
-        <EChart option={option} style={{ height: macdOn ? 600 : 480 }} onChartReady={handleReady} />
+        <EChart
+          option={option}
+          className={`trend-plot-chart ${macdOn ? 'trend-plot-chart-macd' : ''}`}
+          onChartReady={handleReady}
+        />
       </div>
     </div>
   );
