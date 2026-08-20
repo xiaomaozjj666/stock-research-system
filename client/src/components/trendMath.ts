@@ -63,6 +63,37 @@ export function computeMACD(closes: number[]): MacdPoint[] {
   });
 }
 
+export interface BollPoint {
+  mid: number; // 中轨 = N 日收盘均线
+  upper: number; // 上轨 = mid + K·σ
+  lower: number; // 下轨 = mid - K·σ
+}
+
+/**
+ * 布林带（BOLL，同花顺/东方财富口径）：
+ * - 中轨 MID = N 日收盘简单均线（默认 20）
+ * - 上轨 UPPER = MID + K·σ，下轨 LOWER = MID − K·σ（σ 为 N 日样本标准差，默认 K=2）
+ * 前 N−1 个位置返回 NaN（样本不足）。
+ */
+export function computeBOLL(closes: number[], n = 20, k = 2): BollPoint[] {
+  const out: BollPoint[] = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (i < n - 1) {
+      out.push({ mid: NaN, upper: NaN, lower: NaN });
+      continue;
+    }
+    let sum = 0;
+    for (let j = i - n + 1; j <= i; j++) sum += closes[j];
+    const mid = sum / n;
+    let variance = 0;
+    for (let j = i - n + 1; j <= i; j++) variance += (closes[j] - mid) ** 2;
+    const sd = Math.sqrt(variance / n);
+    const r = (x: number) => Math.round(x * 1000) / 1000;
+    out.push({ mid: r(mid), upper: r(mid + k * sd), lower: r(mid - k * sd) });
+  }
+  return out;
+}
+
 export interface Candle {
   date: string;
   open: number;

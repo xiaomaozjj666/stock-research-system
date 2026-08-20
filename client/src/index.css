@@ -1129,6 +1129,59 @@ tr:hover td {
   background: var(--accent, #2dd4bf);
 }
 
+/* 走势图绘图画布（相对定位容器，承载吸顶实况图例） */
+.trend-plot {
+  position: relative;
+  width: 100%;
+}
+/* 吸顶 OHLC 实况图例：覆盖在价格区左上角，悬停实时刷新，可点击隐藏均线 */
+.trend-legend {
+  position: absolute;
+  top: 6px;
+  left: 12px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(13, 13, 13, 0.55);
+  backdrop-filter: blur(2px);
+  font-size: 11px;
+  line-height: 1.4;
+  color: #cfcfcf;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  max-width: calc(100% - 72px);
+}
+.trend-legend .tl-date {
+  color: #fff;
+  font-weight: 600;
+}
+.trend-legend b {
+  font-weight: 600;
+}
+.trend-legend .tl-chg {
+  font-weight: 600;
+}
+.trend-legend .tl-ma {
+  pointer-events: auto;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font: inherit;
+  padding: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.trend-legend .tl-ma:hover {
+  opacity: 0.65;
+  text-decoration: underline;
+}
+.trend-legend .tl-boll {
+  color: #c9cdd4;
+}
+
 /* ===== Scoring Table ===== */
 .scoring-row {
   display: flex;
