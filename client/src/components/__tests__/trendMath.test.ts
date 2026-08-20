@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   aggregateCandles,
+  computeBOLL,
   computeEMA,
   computeMACD,
   computeMA,
@@ -108,5 +109,32 @@ describe('aggregateCandles', () => {
 
   it('空序列安全返回空', () => {
     expect(aggregateCandles([], 'month')).toEqual([]);
+  });
+});
+
+describe('computeBOLL', () => {
+  it('返回与收盘价等长，前 N-1 个为 NaN', () => {
+    const closes = Array.from({ length: 30 }, (_, i) => 100 + Math.sin(i) * 3);
+    const b = computeBOLL(closes, 20, 2);
+    expect(b).toHaveLength(30);
+    expect(Number.isNaN(b[18].mid)).toBe(true);
+    expect(Number.isNaN(b[19].mid)).toBe(false);
+  });
+
+  it('上轨 ≥ 中轨 ≥ 下轨', () => {
+    const closes = Array.from({ length: 40 }, (_, i) => 100 + i * 0.2);
+    const b = computeBOLL(closes, 20, 2);
+    const last = b[39];
+    expect(last.upper).toBeGreaterThanOrEqual(last.mid);
+    expect(last.mid).toBeGreaterThanOrEqual(last.lower);
+  });
+
+  it('常数序列的中轨等于该常数，上下轨对称', () => {
+    const closes = Array.from({ length: 30 }, () => 50);
+    const b = computeBOLL(closes, 20, 2);
+    const last = b[29];
+    expect(last.mid).toBeCloseTo(50, 6);
+    expect(last.upper).toBeCloseTo(50, 6);
+    expect(last.lower).toBeCloseTo(50, 6);
   });
 });
