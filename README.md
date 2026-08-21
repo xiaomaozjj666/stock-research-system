@@ -1,8 +1,42 @@
 # 投研系统 · Stock Research System
 
+<p align="center">
+  <img src="https://img.shields.io/badge/TypeScript-5-3178C6" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
+  <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
+  <img src="https://img.shields.io/badge/tests-923%20cases-brightgreen" alt="923 测试用例" />
+  <img src="https://img.shields.io/badge/CI-GitHub%20Actions-brightgreen" alt="CI" />
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
+</p>
+
 > 面向 A 股的全栈智能投研平台：多专家协同研判、专业 K 线行情分析、量化回测与防过拟合评估、可插拔交易成本模型与风险归因、模拟盘研究闭环、自选股异动监控，以及对话式研究助手。
 
 ![深度研究报告总览](docs/screenshots/report-overview.png)
+
+## 系统架构
+
+```mermaid
+flowchart TB
+    subgraph CLIENT["client/ · React 19 + Vite + ECharts"]
+        K[K 线行情 · 报告 · 回测 · 模拟盘 · 对话 UI]
+    end
+    subgraph SERVER["server/ · Express 5 + TypeScript"]
+        SV[services/ 分析流水线]
+        EX[experts/ 多专家仲裁<br/>基本面 · 估值 · 风险 · 行业 · 资金流 · 题材 · 政策 · 解禁]
+        Q[quant/ 量化内核<br/>回测 · 因子 · 风险归因 · 模拟盘]
+        QA[quant/agents/ DataEngineer · BacktestAuditor · StrategyOptimizer]
+        LLM[llm/ 模型路由 · RAG · 知识图谱 · MCP]
+        DATA[data/ 证券主数据 · 审计日志 · 研究历史]
+    end
+    CLIENT -->|REST / SSE| SV
+    SV --> EX
+    SV --> Q
+    Q --> QA
+    SV --> LLM
+    LLM --> DATA
+    Q --> DATA
+    DATA -->|公开行情/财务数据| EXT["东方财富等公开数据源"]
+```
 
 ## 目录
 
