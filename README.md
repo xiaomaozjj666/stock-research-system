@@ -23,7 +23,7 @@
 蜡烛图（红涨绿跌）、MA5/10/20/60 均线、BOLL 布林通道、MACD、成交量、日/周/月周期切换、区间缩放、右侧价格轴与最新价标线、吸顶 OHLC 图例。
 
 **量化回测与防过拟合评估**
-可配置策略（均线交叉 / 动量 / 均值回归）回测引擎：**T+1 信号延迟成交**（信号日收盘生成、次一交易日开盘价成交，杜绝前视）、**可插拔交易成本模型**（A 股真实费率：佣金万 2.5 双边 + 印花税万 5 仅卖出单边 + 最低佣金 5 元 + 二次方市场冲击）、**可插拔绩效分析器**（总收益 / 年化 / Sharpe / Sortino / 最大回撤 / 胜率 / 盈亏比，可自定义扩展）；并以 Deflated Sharpe Ratio（DSR）、CSCV 回测过拟合概率（PBO）、Walk-Forward 样本外检验扣除"多试取优"的搜索偏差。
+可配置策略（均线交叉 / 动量 / 均值回归）回测引擎：**双层防前视**（K 线数据截止校验剔除区间外行 + **T+1 信号延迟成交**：信号日收盘生成、次一交易日开盘价成交）、**可插拔交易成本模型**（A 股真实费率：佣金万 2.5 双边 + 印花税万 5 仅卖出单边 + 最低佣金 5 元 + 二次方市场冲击）、**可插拔绩效分析器**（总收益 / 年化 / Sharpe / Sortino / 最大回撤 / 胜率 / 盈亏比，可自定义扩展）；并以 Deflated Sharpe Ratio（DSR）、CSCV 回测过拟合概率（PBO）、Walk-Forward 样本外检验扣除"多试取优"的搜索偏差。
 
 **风险归因（风格因子暴露）**
 对标 GS Quant RiskModel 的轻量版：规模 / 价值 / 动量 / 盈利 / 杠杆五风格因子暴露（z 分数）+ 系统风险 / 特异风险分解 + 因子解释占比，报告风险区可视化呈现。
@@ -60,8 +60,9 @@
 | RiskModel 风险归因  | gs-quant                            | 风格因子暴露 + 系统/特异风险分解（经验波动率常量版）                                   |
 | 可插拔成本模型      | backtrader / qlib / gs-quant        | `CostModel {openRate, closeRate, minCost, slippage, impactCost}`，A 股真实费率一键启用 |
 | T+1 信号延迟成交    | backtrader Market 单 / qlib shift=1 | 信号 T 日生成、T+1 开盘成交，杜绝收盘价即时成交的不可实现口径                          |
+| K 线数据截止校验    | TradingAgents                       | look-ahead 过滤：剔除回测区间外的未来/越界行，与 T+1 构成双层防前视防线                |
 | 每日截面 IC 序列    | qlib calc_ic / ICIR                 | 因子按日截面 Spearman IC + ICIR（mean/std）加权，避免跨期秩混合扭曲                    |
-| 记忆反思闭环        | TradingAgents                       | 分析头部展示与上次分析的评级/评分变化（vs_previous）                                   |
+| 记忆反思闭环        | TradingAgents                       | 分析头部展示与上次分析的评级/评分变化（vs_previous），导出报告同样携带                 |
 
 ## 技术架构
 
@@ -79,7 +80,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 前端组件，913 用例）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
+- 测试：Vitest（服务 / 量化 / 前端组件，923 用例）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
 
 ## 快速开始
 
@@ -126,7 +127,7 @@ Windows 一键启动：双击 `启动系统.bat`（零依赖，自动安装并�
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（913 用例：服务 / 量化 / 前端组件）
+npm test              # Vitest 全量单测（923 用例：服务 / 量化 / 前端组件）
 npm run test:e2e      # Playwright 端到端（9 用例，真实浏览器 + 隔离数据）
 npm run lint          # ESLint
 npm run format:check  # Prettier 格式检查
