@@ -50,3 +50,6 @@ server/src/data/watchlist.json
 
 # UI screenshot artifacts (dev only)
 _shots/
+
+# 临时截图/脚本（README 截图生成中间产物）
+_shots2/

@@ -307,7 +307,9 @@ export function ComparisonView() {
   return (
     <div className="comparison-setup">
       <h2 className="comparison-setup-title">股票对比</h2>
-      <p className="comparison-setup-desc">选择 2–3 只股票进行多维度横向对比分析</p>
+      <p className="comparison-setup-desc">
+        添加 2–3 只股票，一键生成财务、估值、趋势的多维度横向对比报告
+      </p>
 
       <div className="comparison-input-row">
         <div className="comparison-input-wrap">
@@ -319,12 +321,12 @@ export function ComparisonView() {
               setError('');
             }}
             onKeyDown={(e) => e.key === 'Enter' && addStock()}
-            placeholder="输入股票代码，如 600519"
+            placeholder="输入 6 位股票代码，如 600519"
             className="comparison-input"
             maxLength={6}
           />
           <button className="btn-add" onClick={() => addStock()} disabled={stocks.length >= 3}>
-            添加
+            ＋ 添加
           </button>
         </div>
       </div>
@@ -341,7 +343,7 @@ export function ComparisonView() {
         ))}
         {Array.from({ length: 3 - stocks.length }).map((_, i) => (
           <span key={`empty-${i}`} className="comparison-tag comparison-tag-empty">
-            待添加
+            ＋ 添加第 {stocks.length + i + 1} 只
           </span>
         ))}
       </div>
@@ -358,8 +360,10 @@ export function ComparisonView() {
             <span className="loading-dot" />
             分析中...
           </span>
+        ) : stocks.length < 2 ? (
+          '请至少添加 2 只股票'
         ) : (
-          `开始对比（${stocks.length}/3）`
+          `开始对比分析（${stocks.length}/3）`
         )}
       </button>
     </div>

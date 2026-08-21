@@ -62,7 +62,7 @@ test.describe('自选股 CRUD（隔离数据）', () => {
 
     // 移除
     await page.getByRole('button', { name: '移除 600519' }).click();
-    await expect(page.getByText('暂无自选股，先在上方添加。')).toBeVisible();
+    await expect(page.getByText('还没有关注的股票')).toBeVisible();
   });
 
   test('非法代码被拒绝并提示', async ({ page }) => {

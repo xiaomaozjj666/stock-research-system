@@ -205,7 +205,7 @@ export default function QuantPage() {
               disabled={loading}
               onChange={(e) => setUseNews(e.target.checked)}
             />
-            结合最新消息进行回测（实时抓取）
+            启用最新消息情绪叠加（实时抓取）
           </label>
           <p className="quant-news-hint">或粘贴最新消息（每行一条，自动情绪打分）：</p>
           <textarea
@@ -269,7 +269,12 @@ export default function QuantPage() {
               <path d="M16 20v-4" />
               <path d="M21 20V10" />
             </svg>
-            <p className="quant-empty-text">配置左侧策略参数，点击"开始研究"启动量化分析</p>
+            <p className="quant-empty-text">
+              配置左侧策略后点击「开始研究」，将依次完成数据获取、质量校验、回测与审计，输出完整量化报告
+            </p>
+            <p className="quant-empty-hint">
+              支持均线交叉 / 动量 / 均值回归策略，可叠加最新消息情绪与 A 股真实交易费率
+            </p>
           </div>
         )}
       </div>

@@ -234,6 +234,14 @@ export interface StockPoolItem {
       explainedRatio: number;
     };
   };
+  /** 与上次分析的对比（记忆反思闭环，可选） */
+  vs_previous?: {
+    previous_date: string;
+    previous_rating: string;
+    previous_score: number;
+    score_delta: number;
+    rating_changed: boolean;
+  };
 }
 
 // 完整分析结果

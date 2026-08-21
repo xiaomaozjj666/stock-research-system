@@ -782,6 +782,30 @@ tr:hover td {
   border-radius: var(--radius-sm);
   margin-top: 6px;
 }
+/* 较上次分析（记忆反思闭环） */
+.vs-previous-tag {
+  display: inline-block;
+  font-size: var(--text-caption);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.vs-previous-up {
+  background: var(--color-negative-dim);
+  color: var(--color-negative);
+}
+.vs-previous-down {
+  background: var(--color-positive-dim);
+  color: var(--color-positive);
+}
+.vs-previous-flat {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+}
+.vs-previous-rating {
+  opacity: 0.85;
+}
 
 /* ===== Core Summary V2 ===== */
 .core-summary-v2 {
@@ -3858,7 +3882,23 @@ tr:hover td {
   color: var(--color-danger);
   border-color: var(--color-danger);
 }
-.watchlist-empty,
+.watchlist-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 8px 0;
+  text-align: center;
+  padding: 40px 16px;
+}
+.watchlist-empty-title {
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.watchlist-empty-hint {
+  color: var(--text-muted);
+  font-size: 13px;
+}
 .watchlist-note {
   color: var(--text-muted);
   font-size: 13px;

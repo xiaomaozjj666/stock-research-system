@@ -215,9 +215,15 @@ export default function PaperTradingPage() {
       <div className="paper-header">
         <h2>模拟盘</h2>
         <p className="paper-sub">
-          无实盘资金的研究闭环：日 K 收盘撮合 + A 股规则（T+1 / 涨跌停 / 整手 / 费用）。
-          当前交易日：{portfolio?.currentDate ?? '未设置'}，可用现金 ¥
-          {portfolio ? fmtMoney(portfolio.cash) : '—'}。
+          使用真实 A 股规则（T+1 结算、涨跌停限制、整手买卖、佣金印花税）进行日 K
+          收盘撮合，全程无实盘资金，验证策略后即可放心实战。
+          {portfolio ? (
+            <>
+              当前交易日：{portfolio.currentDate}，可用现金 ¥{fmtMoney(portfolio.cash)}。
+            </>
+          ) : (
+            '当前交易日：未设置，请先下单或同步日期。'
+          )}
         </p>
       </div>
 

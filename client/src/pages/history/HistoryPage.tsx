@@ -81,7 +81,7 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
       <div className="history-header">
         <h2>研究历史</h2>
         <p className="history-sub">
-          每次分析完成后自动保存（同股票只保留最新一次）。点击「查看」可恢复完整研究报告。
+          每次深度研究完成自动保存，同一股票仅保留最新一次报告。点击「查看」即可恢复完整研究报告。
         </p>
       </div>
 
