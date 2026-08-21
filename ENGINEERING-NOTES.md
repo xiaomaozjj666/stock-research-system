@@ -230,6 +230,13 @@
 - **语义陷阱**：对比必须在 `saveHistoryEntry` **之前**读取旧记录（保存会覆盖同代码条目）；`createdAt` 用单调时钟，日期展示取 `slice(0,10)`。
 - TradingAgents 其余建议（对抗式多空辩论升级、数据防幻觉套件、结构化输出统一封装、checkpoint 断点续跑）已评估：**回测 look-ahead 过滤已由 T+1 信号延迟覆盖**，其余记录为后续路径。
 
+### 3. 回测 look-ahead 过滤（TradingAgents 数据防幻觉工程）
+
+- TradingAgents `stockstats_utils` 的 look-ahead 过滤是其 v0.3.1 修复重点（历史回测时剔除分析日期之后的数据行）。风险实况：东财 K 线接口的 beg/end 参数是"服务端建议"，**API 边界行为不可控**（lmt=1000 截断、跨月返回等），且 12 小时缓存命中路径**不经过 API**——两处都可能混入 endDate 之后的未来行。
+- 落地：`filterOHLCVByRange(data, startDate, endDate)` 纯函数（字符串日期比较，兼容带/不带连字符），在 API 返回与缓存命中两个路径都调用；越界剔除记录 `logger.warn`（含 trimmed 数量）。
+- **双层防前视防线**：数据层 = 本过滤（无未来行）；成交层 = T+1 信号延迟（backtestEngine，无当日收盘即时成交）。
+- TradingAgents 其余建议评估：确定性验证快照（专家层精确数值注入，中成本）、结构化输出封装（DeepSeek tool_choice 兼容坑）、对抗式辩论升级（可开关 + A/B）、checkpoint 断点续跑（当前单次分析 <2 分钟价值有限）——均记录为后续路径。
+
 ## 2026-08-18 量化层升级记录（Analyzer 模式 + 风险归因 + 可插拔成本模型）
 
 对标 backtrader（22.9k⭐）/ qlib（47.7k⭐）/ gs-quant（12k⭐）三个高 star 量化引擎，落地三项高价值优化：

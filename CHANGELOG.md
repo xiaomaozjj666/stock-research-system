@@ -3,6 +3,18 @@
 股票研究系统（AI 多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-08-18 — 回测 look-ahead 过滤（TradingAgents 数据防幻觉工程借鉴）
+
+### K 线数据截止校验（fix）
+
+- `fetchOHLCVData` 返回前对数据做 **[startDate, endDate] 二次过滤**（新增纯函数 `filterOHLCVByRange`）：剔除 endDate 之后的未来行（回测混入未来数据会让 Sharpe/回撤失真）与 startDate 之前的越界行；API 路径、缓存命中路径均生效，越界剔除记录 warning 日志。
+- 对应 TradingAgents `stockstats_utils` 的 look-ahead 过滤（其 v0.3.1 修复重点）；与既有 T+1 信号延迟（成交层防前视）构成双层防线。
+- 新增 5 个测试用例：范围内保留 / 剔除未来行 / 剔除越界行 / 日期格式兼容 / 空输入。
+
+### 验证
+
+- **918 tests 全绿**（+5）/ E2E 9/9 / 双端 tsc / lint / format:check / 双端 build 全过。
+
 ## 2026-08-18 — 界面去模板感 + 记忆反思闭环 + 图文 README（TradingAgents 借鉴）
 
 ### 全页面 AI 味诊断与优化（ux）
