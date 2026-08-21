@@ -219,7 +219,9 @@ export default function PaperTradingPage() {
           收盘撮合，全程无实盘资金，验证策略后即可放心实战。
           {portfolio ? (
             <>
-              当前交易日：{portfolio.currentDate}，可用现金 ¥{fmtMoney(portfolio.cash)}。
+              当前交易日：
+              {portfolio.currentDate || '未设置'}
+              ，可用现金 ¥{fmtMoney(portfolio.cash)}。
             </>
           ) : (
             '当前交易日：未设置，请先下单或同步日期。'

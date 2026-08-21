@@ -131,7 +131,7 @@ function App() {
     const item = analysisResult?.stock_pool?.[0];
     document.title = item
       ? `${item.stock_name}(${item.stock_code}) 研究报告 - 投研系统`
-      : '投研系统 - AI 多专家股票研究';
+      : '投研系统 - 多专家股票研究';
   }, [analysisResult]);
   /** 在途 SSE 的取消函数 */
   const cancelRef = useRef<(() => void) | null>(null);

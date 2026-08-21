@@ -76,13 +76,25 @@ flowchart TB
 
 ## 界面展示
 
-|        K 线走势（蜡烛/均线/BOLL/MACD）        |          五维评分与多空争议（红涨绿跌）          |
-| :-------------------------------------------: | :----------------------------------------------: |
-| ![K线走势](docs/screenshots/report-kline.png) | ![综合评分](docs/screenshots/report-scoring.png) |
+|               深度研究报告（总览）                |        K 线走势（蜡烛/均线/BOLL/MACD）        |
+| :-----------------------------------------------: | :-------------------------------------------: |
+| ![报告总览](docs/screenshots/report-overview.png) | ![K线走势](docs/screenshots/report-kline.png) |
 
-|         财务图表（营收/利润/盈利能力）          |          量化回测（策略配置与结果研判）          |
-| :---------------------------------------------: | :----------------------------------------------: |
-| ![财务图表](docs/screenshots/report-charts.png) | ![量化回测](docs/screenshots/quant-backtest.png) |
+|                五维评分与多空争议                |         财务图表（营收/利润/盈利能力）          |
+| :----------------------------------------------: | :---------------------------------------------: |
+| ![综合评分](docs/screenshots/report-scoring.png) | ![财务图表](docs/screenshots/report-charts.png) |
+
+|          量化回测（策略配置与结果研判）          |           对比分析（多股票横向对比）           |
+| :----------------------------------------------: | :--------------------------------------------: |
+| ![量化回测](docs/screenshots/quant-backtest.png) | ![对比分析](docs/screenshots/shot-compare.png) |
+
+|                自选股与异动监控                |           模拟盘（A 股规则撮合）           |
+| :--------------------------------------------: | :----------------------------------------: |
+| ![自选股](docs/screenshots/shot-watchlist.png) | ![模拟盘](docs/screenshots/shot-paper.png) |
+
+|               对话式研究助手                |              研究历史（记忆闭环）              |
+| :-----------------------------------------: | :--------------------------------------------: |
+| ![研究助手](docs/screenshots/shot-chat.png) | ![研究历史](docs/screenshots/shot-history.png) |
 
 ## 量化内核
 
@@ -123,6 +135,8 @@ npm install --legacy-peer-deps --dangerously-allow-all-scripts
 npm run dev:server    # 后端 → http://localhost:3001
 npm run dev:client    # 前端 → http://localhost:5173
 ```
+
+> 安装说明：`--legacy-peer-deps` 用于绕过 TypeScript 7 与 typescript-eslint 的 peer 依赖冲突；`--dangerously-allow-all-scripts` 用于放行 esbuild 等构建工具的原生安装脚本（本仓库依赖无第三方 postinstall 恶意脚本，仅本机安装依赖时使用该参数）。
 
 生产构建：
 

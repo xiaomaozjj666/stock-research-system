@@ -113,7 +113,7 @@ export function generateReportMarkdown(result: AnalysisResult): string {
   }
 
   push('---');
-  push('> 本报告由 AI 多专家投研系统自动生成，基于公开数据模拟分析，不构成投资建议。');
+  push('> 本报告由多专家投研系统自动生成，基于公开数据模拟分析，不构成投资建议。');
   return lines.join('\n');
 }
 

@@ -181,7 +181,7 @@
 ### ✨ 架构与设计
 
 1. **依赖注入模式**: `chatAgent.ts` 的 `createChatAgent(deps)` 模式非常好，极大提升了可测试性。
-2. **分层清晰**: services/ 业务逻辑、quant/ 量化引擎、llm/ AI 层、utils/ 工具函数，职责明确。
+2. **分层清晰**: services/ 业务逻辑、quant/ 量化引擎、llm/ 模型层、utils/ 工具函数，职责明确。
 3. **SSE 流式设计**: 分析进度和对话都采用 SSE 流式推送，用户体验好。
 
 ### ✨ 前端工程

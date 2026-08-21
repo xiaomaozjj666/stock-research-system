@@ -156,7 +156,7 @@ export async function runAnalysis(
   }
 
   // 2. 多专家独立研判（并行调用，保留并行潜力以备未来异步化）
-  emit({ phase: 'experts', message: '8 位 AI 专家独立研判中...' });
+  emit({ phase: 'experts', message: '8 位专家独立研判中...' });
   const [
     fundOpinion,
     valOpinion,
