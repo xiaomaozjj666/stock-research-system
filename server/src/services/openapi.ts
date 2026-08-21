@@ -45,11 +45,11 @@ export function buildOpenApiDocument() {
       title: 'Stock Research System API',
       version: '1.0.0',
       description:
-        '全栈股票研究平台：多专家 AI 仲裁、量化回测与受控评估（DSR/CSCV/Walk-Forward）、模拟盘研究闭环、合规审计（金融监管 8 号文）。所有内容仅供学术投研参考，不构成投资建议。',
+        '全栈股票研究平台：多专家仲裁、量化回测与受控评估（DSR/CSCV/Walk-Forward）、模拟盘研究闭环、合规审计（金融监管 8 号文）。所有内容仅供学术投研参考，不构成投资建议。',
     },
     servers: [{ url: '/', description: '同源部署（前端与 API 单端口）' }],
     tags: [
-      { name: 'analysis', description: '多专家 AI 研判' },
+      { name: 'analysis', description: '多专家研判' },
       { name: 'quant', description: '量化回测与受控评估' },
       { name: 'paper', description: '模拟盘研究闭环（无实盘资金）' },
       { name: 'watchlist', description: '自选股与异动监控' },
@@ -63,8 +63,8 @@ export function buildOpenApiDocument() {
       '/api/analyze': {
         post: {
           tags: ['analysis'],
-          summary: '单股多专家 AI 研判',
-          description: '8 位 AI 专家独立研判 + 辩论仲裁 + 量化打分 + 策略回测。耗时约 1-3 分钟。',
+          summary: '单股多专家研判',
+          description: '8 位专家独立研判 + 辩论仲裁 + 量化打分 + 策略回测。耗时约 1-3 分钟。',
           requestBody: jsonBody({
             type: 'object',
             properties: { stockCode: stockCodeSchema },

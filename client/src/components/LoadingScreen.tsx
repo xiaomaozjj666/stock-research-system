@@ -4,7 +4,7 @@ import type { AnalysisStage } from '../api/client';
 // 阶段顺序与目标进度映射（与后端 AnalysisStage 对齐）
 const STAGE_ORDER: { phase: AnalysisStage['phase']; label: string; progress: number }[] = [
   { phase: 'data', label: '数据获取', progress: 20 },
-  { phase: 'experts', label: 'AI 专家研判', progress: 50 },
+  { phase: 'experts', label: '专家独立研判', progress: 50 },
   { phase: 'arbitration', label: '辩论仲裁', progress: 70 },
   { phase: 'scoring', label: '量化打分', progress: 85 },
   { phase: 'strategy', label: '策略回测', progress: 95 },
@@ -72,7 +72,7 @@ export default function LoadingScreen({ stage }: Props) {
         </div>
         <p className="loading-progress-text">{Math.round(displayProgress)}%</p>
 
-        <p className="loading-hint">AI 深度分析预计需要 1-3 分钟，请耐心等待</p>
+        <p className="loading-hint">深度分析预计需要 1-3 分钟，请耐心等待</p>
       </div>
     </div>
   );
