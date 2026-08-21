@@ -6,13 +6,13 @@ echo ========================================
 echo.
 
 echo [1/2] 启动后端服务 (端口 3001)...
-cd /d D:\XIAOMAO\Projects\stock-research-system\server
+cd /d "%~dp0server"
 start "Stock-Backend" cmd /k "npx tsx watch src/index.ts"
 
 timeout /t 3 /nobreak >nul
 
 echo [2/2] 启动前端服务 (端口 5173)...
-cd /d D:\XIAOMAO\Projects\stock-research-system\client
+cd /d "%~dp0client"
 start "Stock-Frontend" cmd /k "npx vite --host"
 
 echo.
