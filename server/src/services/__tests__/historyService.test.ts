@@ -8,9 +8,11 @@ import {
   getHistoryItem,
   deleteHistoryItem,
   getPreviousAnalysis,
+  computeVsPrevious,
   MAX_HISTORY_ITEMS,
   type HistoryEntryInput,
   type HistoryItem,
+  type HistorySummary,
 } from '../historyService.js';
 
 // 落盘重定向到进程专属临时文件（HISTORY_FILE env，与 watchlist/paper/audit 同模式）
@@ -147,6 +149,44 @@ describe('historyService 研究历史', () => {
     const prev2 = getPreviousAnalysis('600036');
     expect(prev2!.totalScore).toBe(85);
     expect(prev2!.rating).toBe('优先跟踪');
+  });
+
+  it('computeVsPrevious：无上次记录返回 null', () => {
+    expect(computeVsPrevious({ rating: '优先跟踪', totalScore: 90 }, null)).toBeNull();
+  });
+
+  it('computeVsPrevious：计算评分增量与评级变化（round 2 位）', () => {
+    const prev: HistorySummary = {
+      id: 'x',
+      stockCode: '600519',
+      stockName: '贵州茅台',
+      createdAt: '2026-07-01T08:00:00.000Z',
+      rating: '持续观察',
+      totalScore: 78.5,
+    };
+    const vs = computeVsPrevious({ rating: '优先跟踪', totalScore: 85.123 }, prev);
+    expect(vs).toEqual({
+      previous_date: '2026-07-01',
+      previous_rating: '持续观察',
+      previous_score: 78.5,
+      score_delta: 6.62,
+      rating_changed: true,
+    });
+  });
+
+  it('computeVsPrevious：评分持平且评级未变时标记正确', () => {
+    const prev: HistorySummary = {
+      id: 'x',
+      stockCode: '600519',
+      stockName: '贵州茅台',
+      createdAt: '2026-07-01T08:00:00.000Z',
+      rating: '持续观察',
+      totalScore: 80,
+    };
+    const vs = computeVsPrevious({ rating: '持续观察', totalScore: 80 }, prev);
+    expect(vs!.score_delta).toBe(0);
+    expect(vs!.rating_changed).toBe(false);
+    expect(vs!.previous_date).toBe('2026-07-01'); // createdAt 取日期部分
   });
 
   it('容量超上限时淘汰最旧记录（保留最新 MAX_HISTORY_ITEMS 条）', () => {
