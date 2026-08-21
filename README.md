@@ -18,24 +18,24 @@
 ```mermaid
 flowchart TB
     subgraph CLIENT["client/ · React 19 + Vite + ECharts"]
-        K[K 线行情 · 报告 · 回测 · 模拟盘 · 对话 UI]
+        K["K 线行情 · 报告 · 回测 · 模拟盘 · 对话 UI"]
     end
     subgraph SERVER["server/ · Express 5 + TypeScript"]
-        SV[services/ 分析流水线]
-        EX[experts/ 多专家仲裁<br/>基本面 · 估值 · 风险 · 行业 · 资金流 · 题材 · 政策 · 解禁]
-        Q[quant/ 量化内核<br/>回测 · 因子 · 风险归因 · 模拟盘]
-        QA[quant/agents/ DataEngineer · BacktestAuditor · StrategyOptimizer]
-        LLM[llm/ 模型路由 · RAG · 知识图谱 · MCP]
-        DATA[data/ 证券主数据 · 审计日志 · 研究历史]
+        SV["services/ 分析流水线"]
+        EX["experts/ 多专家仲裁<br/>基本面 · 估值 · 风险 · 行业 · 资金流 · 题材 · 政策 · 解禁"]
+        Q["quant/ 量化内核<br/>回测 · 因子 · 风险归因 · 模拟盘"]
+        QA["quant/agents/ DataEngineer · BacktestAuditor · StrategyOptimizer"]
+        LLM["llm/ 模型路由 · RAG · 知识图谱 · MCP"]
+        DATA["data/ 证券主数据 · 审计日志 · 研究历史"]
     end
-    CLIENT -->|REST / SSE| SV
+    CLIENT -->|"REST / SSE"| SV
     SV --> EX
     SV --> Q
     Q --> QA
     SV --> LLM
     LLM --> DATA
     Q --> DATA
-    DATA -->|公开行情/财务数据| EXT["东方财富等公开数据源"]
+    DATA -->|"公开行情/财务数据"| EXT["东方财富等公开数据源"]
 ```
 
 ## 目录
