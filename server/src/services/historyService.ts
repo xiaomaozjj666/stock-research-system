@@ -148,6 +148,19 @@ export function listHistory(limit = 50): HistorySummary[] {
     .map(({ result: _result, ...summary }) => summary);
 }
 
+/**
+ * 该股票上一次分析的摘要（记忆反思闭环用）：
+ * 在 saveHistoryEntry 之前调用，返回同股票当前最新记录（即"上一次分析"）；
+ * 无记录返回 null。
+ */
+export function getPreviousAnalysis(stockCode: string): HistorySummary | null {
+  const store = readStore();
+  const prev = store.items.find((it) => it.stockCode === stockCode);
+  if (!prev) return null;
+  const { result: _result, ...summary } = prev;
+  return summary;
+}
+
 /** 历史详情（含完整 result，供前端恢复研究报告） */
 export function getHistoryItem(id: string): HistoryItem | null {
   const store = readStore();

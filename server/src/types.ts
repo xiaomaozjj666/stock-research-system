@@ -244,6 +244,17 @@ export interface AnalysisResult {
     };
     /** MCP 外部工具上下文（可选；仅配置 MCP_SERVER_URL 时附加） */
     mcpContext?: { serverUrl: string; toolCount: number; tools: string[] };
+    /**
+     * 与上次分析的对比（可选；记忆反思闭环：该股票存在历史分析时附加，
+     * 展示评级/评分随时间的演化——借鉴 TradingAgents 记忆-反思机制）
+     */
+    vs_previous?: {
+      previous_date: string;
+      previous_rating: string;
+      previous_score: number;
+      score_delta: number;
+      rating_changed: boolean;
+    };
     /** 行情历史（日K线，用于走势图渲染；取数失败时为模拟数据，isSimulated=true） */
     priceHistory?: PriceHistoryPoint[];
   }[];

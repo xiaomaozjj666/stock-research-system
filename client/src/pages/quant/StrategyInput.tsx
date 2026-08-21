@@ -159,13 +159,13 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
           value={costModel}
           onChange={(e) => setCostModel(e.target.value as 'default' | 'a_share')}
         >
-          <option value="default">自定义佣金（默认万三对称）</option>
+          <option value="default">自定义费率（默认佣金 0.03%）</option>
           <option value="a_share">A 股真实费率（佣金万2.5 + 印花税卖出万5 + 最低5元）</option>
         </select>
       </div>
 
       <div className="quant-form-group">
-        <label>佣金率</label>
+        <label>佣金率（买入费率）</label>
         <input
           type="number"
           value={commission}

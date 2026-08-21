@@ -18,7 +18,6 @@ const QUICK_PROMPTS = [
   '对 600519 做 ma_cross 回测',
   '600519 该看多还是看空？来一场多空辩论',
 ];
-
 const PLAN_LABEL: Record<string, string> = {
   direct: '直接对话',
   tools: '工具调用',
@@ -155,7 +154,8 @@ export default function ChatPanel() {
           </div>
         </div>
         <p className="chat-subtitle">
-          用自然语言提问：分析个股、对比、回测、多空辩论。支持路由规划、工具调用、证据引用与事实校验。
+          输入您想研究的股票或策略，例如「分析 600519
+          的估值逻辑」「对比茅台与五粮液」「回测均线策略」。系统会自动调用模型与数据工具，输出带数据支撑的研究结论。
         </p>
       </div>
       {showEnhance && <ResearchEnhance sessionId={sessionId} />}
@@ -316,7 +316,7 @@ export default function ChatPanel() {
         <textarea
           aria-label="对话输入"
           className="chat-input"
-          placeholder="输入问题，Enter 发送，Shift+Enter 换行…"
+          placeholder="输入研究需求，如「分析贵州茅台未来半年估值空间」…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}

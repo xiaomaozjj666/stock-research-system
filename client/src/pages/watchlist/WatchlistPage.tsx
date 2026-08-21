@@ -121,7 +121,7 @@ export default function WatchlistPage() {
       <div className="watchlist-header">
         <h2>自选股 / 持仓监控</h2>
         <p className="watchlist-sub">
-          添加关注的股票，一键对全部自选股批量运行「含最新消息回测」（新闻情绪叠加仓位）。
+          添加关注的股票，一键批量回测最新消息对仓位的影响，并监控异动预警。
         </p>
       </div>
 
@@ -164,7 +164,12 @@ export default function WatchlistPage() {
 
       <div className="watchlist-list">
         {codes.length === 0 ? (
-          <div className="watchlist-empty">暂无自选股，先在上方添加。</div>
+          <div className="watchlist-empty">
+            <p className="watchlist-empty-title">还没有关注的股票</p>
+            <p className="watchlist-empty-hint">
+              在上方输入 6 位代码（如 600519）添加，即可批量回测与异动监控。
+            </p>
+          </div>
         ) : (
           <ul className="watchlist-items">
             {codes.map((code) => (

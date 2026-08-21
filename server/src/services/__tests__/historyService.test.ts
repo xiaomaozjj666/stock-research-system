@@ -7,6 +7,7 @@ import {
   listHistory,
   getHistoryItem,
   deleteHistoryItem,
+  getPreviousAnalysis,
   MAX_HISTORY_ITEMS,
   type HistoryEntryInput,
   type HistoryItem,
@@ -121,6 +122,31 @@ describe('historyService 研究历史', () => {
     expect(deleteHistoryItem(saved!.id)).toBe(true);
     expect(getHistoryItem(saved!.id)).toBeNull();
     expect(deleteHistoryItem('no-such-id')).toBe(false);
+  });
+
+  it('getPreviousAnalysis：无记录返回 null；有记录返回上次分析摘要（不含 result）', () => {
+    expect(getPreviousAnalysis('999999')).toBeNull();
+
+    saveHistoryEntry(makeEntry('600519', { totalScore: 80, rating: '持续观察' }));
+    const prev = getPreviousAnalysis('600519');
+    expect(prev).not.toBeNull();
+    expect(prev!.stockCode).toBe('600519');
+    expect(prev!.totalScore).toBe(80);
+    expect(prev!.rating).toBe('持续观察');
+    expect(prev).not.toHaveProperty('result'); // 摘要不携带完整结果
+  });
+
+  it('getPreviousAnalysis 在保存前调用 = 上一次分析（记忆闭环语义）', () => {
+    // 第一次分析 → 无上次
+    saveHistoryEntry(makeEntry('600036', { totalScore: 70, rating: '持续观察' }));
+    // 第二次分析前读取 → 返回第一次的 70 分
+    const prev1 = getPreviousAnalysis('600036');
+    expect(prev1!.totalScore).toBe(70);
+    // 保存第二次 → 之后再读返回第二次
+    saveHistoryEntry(makeEntry('600036', { totalScore: 85, rating: '优先跟踪' }));
+    const prev2 = getPreviousAnalysis('600036');
+    expect(prev2!.totalScore).toBe(85);
+    expect(prev2!.rating).toBe('优先跟踪');
   });
 
   it('容量超上限时淘汰最旧记录（保留最新 MAX_HISTORY_ITEMS 条）', () => {

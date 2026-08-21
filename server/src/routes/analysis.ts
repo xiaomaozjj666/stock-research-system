@@ -6,6 +6,7 @@ import { analyzeLimiter, circuitBreakerGuard } from '../middleware.js';
 import { runAnalysis } from '../services/analysisPipeline.js';
 import {
   saveHistoryEntry,
+  getPreviousAnalysis,
   listHistory,
   getHistoryItem,
   deleteHistoryItem,
@@ -14,11 +15,29 @@ import logger from '../utils/logger.js';
 
 const router = Router();
 
-/** 分析结果自动写入研究历史（同代码去重；任何失败静默降级，不阻断主流程） */
+/**
+ * 分析结果自动写入研究历史（同代码去重；任何失败静默降级，不阻断主流程）。
+ * 记忆反思闭环（借鉴 TradingAgents）：保存前读取该股票上一次分析，
+ * 把评级/评分变化（vs_previous）附加到结果，随报告一同呈现——
+ * 让每次分析都能对照历史观点，看到观点演化而非孤立快照。
+ */
 function persistAnalysisHistory(result: unknown): void {
   try {
     const item = (result as { stock_pool?: Array<Record<string, unknown>> })?.stock_pool?.[0];
     if (!item || typeof item.stock_code !== 'string') return;
+
+    const prev = getPreviousAnalysis(item.stock_code);
+    if (prev) {
+      const scoreDelta = (Number(item.total_score) || 0) - prev.totalScore;
+      item.vs_previous = {
+        previous_date: prev.createdAt.slice(0, 10),
+        previous_rating: prev.rating,
+        previous_score: prev.totalScore,
+        score_delta: Math.round(scoreDelta * 100) / 100,
+        rating_changed: String(item.rating ?? '') !== prev.rating,
+      };
+    }
+
     saveHistoryEntry({
       stockCode: item.stock_code,
       stockName: String(item.stock_name ?? item.stock_code),

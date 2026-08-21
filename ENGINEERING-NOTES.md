@@ -215,6 +215,21 @@
 - **测试**：`historyService.test.ts`（8 用例：增删查/去重/容量淘汰/损坏容错/写失败/limit 钳制）+ `history.routes.test.ts`（5 用例 CRUD 路由）+ `HistoryPage.test.tsx`（3 用例列表/查看回调/删除）；e2e「全部 Tab」用例补历史页。
 - **验证**：823 tests 全绿（+16 新用例）/ client build OK / E2E 9/9 / 双端 tsc / lint / format:check 全过。
 
+## 2026-08-18 界面去模板感与记忆反思闭环记录
+
+### 1. 全页面 AI 味诊断方法论
+
+- 真实浏览器（生产模式 `NODE_ENV=production` 单端口托管）逐 tab 截图 → 视觉模型逐张审查。**视觉审查比结构审查更能发现 AI 味**（布局失衡、占位符堆砌、术语堆砌文案），但需注意视觉端点限流（429）时降级用 accessibility snapshot + innerText 结构审查。
+- 诊断出的共性问题模式：① 空态占位符重复（"待添加"×3）→ 序号化 + 状态驱动文案；② 术语堆砌（"万三对称"、"日K收盘撮合 + A股规则(T+1/涨跌停/整手/费用)"）→ 用户导向改写；③ 功能罗列式副标题（"支持路由规划、工具调用…"）→ 场景示例式；④ 装饰图标无信息量 → 配合有信息量的文案。
+- **改动前先 grep 测试引用**：空态/按钮文案被 E2E（smoke.spec.ts 引用"暂无自选股，先在上方添加。"）与组件测试引用，须同步更新。
+
+### 2. 记忆反思闭环（借鉴 TradingAgents）
+
+- TradingAgents（99.1K star）核心模式之一：决策 → 结算 → **反思 → 回注**（同 ticker 决策 + 已实现 alpha + LLM 教训注入下次）。营销与真金标注：**记忆反思闭环 = 真金**（唯一能随时间变强的机制）。
+- 落地轻量版：`historyService.getPreviousAnalysis(stockCode)`（保存前调用返回"上一次分析"摘要，因同代码去重更新，保存后该条即被覆盖）→ 路由 `persistAnalysisHistory` 计算 `vs_previous {previous_date, previous_rating, previous_score, score_delta, rating_changed}` 附加到 `stock_pool[0]` → `ReportHeader` 展示（▲ 红升 / ▼ 绿降 / ＝ 平，A 股红涨绿跌配色与风险归因一致）。
+- **语义陷阱**：对比必须在 `saveHistoryEntry` **之前**读取旧记录（保存会覆盖同代码条目）；`createdAt` 用单调时钟，日期展示取 `slice(0,10)`。
+- TradingAgents 其余建议（对抗式多空辩论升级、数据防幻觉套件、结构化输出统一封装、checkpoint 断点续跑）已评估：**回测 look-ahead 过滤已由 T+1 信号延迟覆盖**，其余记录为后续路径。
+
 ## 2026-08-18 量化层升级记录（Analyzer 模式 + 风险归因 + 可插拔成本模型）
 
 对标 backtrader（22.9k⭐）/ qlib（47.7k⭐）/ gs-quant（12k⭐）三个高 star 量化引擎，落地三项高价值优化：
