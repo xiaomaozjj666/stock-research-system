@@ -140,4 +140,51 @@ describe('generateReportMarkdown 报告导出', () => {
     expect(md).not.toContain('## 风险清单');
     expect(md).toContain('# 平安银行（000001）研究报告');
   });
+
+  it('导出包含「较上次分析」对比（评分变化 + 评级演化）', () => {
+    const withPrev: AnalysisResult = {
+      ...SAMPLE,
+      stock_pool: [
+        {
+          ...SAMPLE.stock_pool[0],
+          total_score: 95,
+          rating: '优先跟踪',
+          vs_previous: {
+            previous_date: '2026-07-01',
+            previous_rating: '持续观察',
+            previous_score: 88,
+            score_delta: 7,
+            rating_changed: true,
+          },
+        },
+      ],
+    };
+    const md = generateReportMarkdown(withPrev);
+    expect(md).toContain('较上次分析（2026-07-01）');
+    expect(md).toContain('▲ +7 分');
+    expect(md).toContain('评级演化：持续观察 → 优先跟踪');
+  });
+
+  it('评分下降时导出 ▼ 负增量（绿跌语义）', () => {
+    const withPrev: AnalysisResult = {
+      ...SAMPLE,
+      stock_pool: [
+        {
+          ...SAMPLE.stock_pool[0],
+          total_score: 70,
+          rating: '持续观察',
+          vs_previous: {
+            previous_date: '2026-07-01',
+            previous_rating: '优先跟踪',
+            previous_score: 88,
+            score_delta: -18,
+            rating_changed: true,
+          },
+        },
+      ],
+    };
+    const md = generateReportMarkdown(withPrev);
+    expect(md).toContain('▼ -18 分');
+    expect(md).toContain('评级演化：优先跟踪 → 持续观察');
+  });
 });

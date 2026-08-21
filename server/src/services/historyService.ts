@@ -161,6 +161,31 @@ export function getPreviousAnalysis(stockCode: string): HistorySummary | null {
   return summary;
 }
 
+/**
+ * 计算「较上次分析」对比（记忆反思闭环，纯函数便于单测）：
+ * 由当前条目（评级/评分）与上次摘要（getPreviousAnalysis 返回值）计算
+ * vs_previous 结构；prev 为 null 时返回 null。
+ */
+export function computeVsPrevious(
+  current: { rating: string; totalScore: number },
+  prev: HistorySummary | null,
+): {
+  previous_date: string;
+  previous_rating: string;
+  previous_score: number;
+  score_delta: number;
+  rating_changed: boolean;
+} | null {
+  if (!prev) return null;
+  return {
+    previous_date: prev.createdAt.slice(0, 10),
+    previous_rating: prev.rating,
+    previous_score: prev.totalScore,
+    score_delta: Math.round((current.totalScore - prev.totalScore) * 100) / 100,
+    rating_changed: current.rating !== prev.rating,
+  };
+}
+
 /** 历史详情（含完整 result，供前端恢复研究报告） */
 export function getHistoryItem(id: string): HistoryItem | null {
   const store = readStore();

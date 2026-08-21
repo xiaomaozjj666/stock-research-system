@@ -7,6 +7,7 @@ import { runAnalysis } from '../services/analysisPipeline.js';
 import {
   saveHistoryEntry,
   getPreviousAnalysis,
+  computeVsPrevious,
   listHistory,
   getHistoryItem,
   deleteHistoryItem,
@@ -27,16 +28,11 @@ function persistAnalysisHistory(result: unknown): void {
     if (!item || typeof item.stock_code !== 'string') return;
 
     const prev = getPreviousAnalysis(item.stock_code);
-    if (prev) {
-      const scoreDelta = (Number(item.total_score) || 0) - prev.totalScore;
-      item.vs_previous = {
-        previous_date: prev.createdAt.slice(0, 10),
-        previous_rating: prev.rating,
-        previous_score: prev.totalScore,
-        score_delta: Math.round(scoreDelta * 100) / 100,
-        rating_changed: String(item.rating ?? '') !== prev.rating,
-      };
-    }
+    const vsPrevious = computeVsPrevious(
+      { rating: String(item.rating ?? ''), totalScore: Number(item.total_score) || 0 },
+      prev,
+    );
+    if (vsPrevious) item.vs_previous = vsPrevious;
 
     saveHistoryEntry({
       stockCode: item.stock_code,

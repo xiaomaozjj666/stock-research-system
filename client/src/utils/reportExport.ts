@@ -13,6 +13,14 @@ export function generateReportMarkdown(result: AnalysisResult): string {
   push(`# ${s.stock_name}（${s.stock_code}）研究报告`);
   push('');
   push(`> 行业：${s.industry}｜综合评分：**${s.total_score}**｜评级：**${s.rating}**`);
+  // 记忆反思闭环：较上次分析的评分/评级演化（可选）
+  if (s.vs_previous) {
+    const v = s.vs_previous;
+    const delta = v.score_delta;
+    const arrow = delta > 0 ? '▲ +' : delta < 0 ? '▼ ' : '＝ ';
+    push(`> 较上次分析（${v.previous_date}）：**${arrow}${Math.round(delta * 100) / 100} 分**`);
+    if (v.rating_changed) push(`> 评级演化：${v.previous_rating} → ${s.rating}`);
+  }
   if (s.valuation?.currentPrice)
     push(
       `> 现价：¥${s.valuation.currentPrice}｜PE：${s.valuation.pe ?? '—'}｜PB：${s.valuation.pb ?? '—'}`,

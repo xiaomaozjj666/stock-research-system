@@ -3,6 +3,18 @@
 股票研究系统（AI 多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-08-18 — 记忆闭环测试补齐 + 导出报告含历史对比
+
+### 验证与优化（qa / feat）
+
+- **vs_previous 计算逻辑抽为可测试纯函数** `computeVsPrevious`（historyService，路由持久化前调用），补齐此前仅在路由内部函数中、无直接单测的缺口；新增 3 个测试用例（无上次记录 / 评分增量 + 评级变化 / 持平标记）。
+- **导出报告补「较上次分析」**：Markdown 导出在头部追加历史对比行（▲ +7 分 / ▼ -18 分 + 评级演化），记忆闭环信息随报告导出；新增 2 个测试用例。
+- 确认 look-ahead 过滤覆盖全部回测数据入口（analysisPipeline / quant 路由 / llm tools / watchlistBacktest / quant pipeline 均经 fetchOHLCVData）。
+
+### 验证
+
+- **923 tests 全绿**（+5）/ E2E 9/9 / 双端 tsc / lint / format:check / 双端 build 全过。
+
 ## 2026-08-18 — 回测 look-ahead 过滤（TradingAgents 数据防幻觉工程借鉴）
 
 ### K 线数据截止校验（fix）
