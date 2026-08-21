@@ -48,6 +48,34 @@ export function resolveSecid(code: string): string {
  * 获取股票日K线历史数据
  * 使用东方财富公开API
  */
+/**
+ * 按日期范围过滤 K 线（look-ahead 防御，借鉴 TradingAgents stockstats_utils）：
+ * 剔除 endDate 之后（未来数据——回测混入未来行会让 Sharpe/回撤失真）
+ * 与 startDate 之前（越界数据）的行；返回保留行数与剔除行数。
+ */
+export function filterOHLCVByRange(
+  data: OHLCVData[],
+  startDate: string,
+  endDate: string,
+): { data: OHLCVData[]; trimmed: number } {
+  const start = startDate.replace(/-/g, '');
+  const end = endDate.replace(/-/g, '');
+  const kept: OHLCVData[] = [];
+  let trimmed = 0;
+  for (const d of data) {
+    const ymd = d.date.replace(/-/g, '');
+    if (ymd < start || ymd > end) {
+      trimmed++;
+    } else {
+      kept.push(d);
+    }
+  }
+  return { data: kept, trimmed };
+}
+
+/**
+ * 获取 K 线数据（含 look-ahead 防御：返回前按 [startDate, endDate] 二次过滤）。
+ */
 export async function fetchOHLCVData(
   stockCode: string,
   startDate: string,
@@ -62,8 +90,17 @@ export async function fetchOHLCVData(
     const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
     const age = Date.now() - cached.timestamp;
     if (age < 12 * 60 * 60 * 1000) {
-      // 12小时缓存
-      return cached.data;
+      // 12小时缓存；仍做范围过滤（防御历史脏缓存混入未来行）
+      const { data, trimmed } = filterOHLCVByRange(cached.data, startDate, endDate);
+      if (trimmed > 0) {
+        logger.warn('缓存K线存在越界行，已剔除', {
+          stockCode,
+          startDate,
+          endDate,
+          trimmed,
+        });
+      }
+      return data;
     }
   }
 
@@ -91,9 +128,20 @@ export async function fetchOHLCVData(
         };
       });
 
+      // look-ahead 防御：剔除超出请求范围的行（API 边界行为不可控，本地二次校验兜底）
+      const { data: filtered, trimmed } = filterOHLCVByRange(data, startDate, endDate);
+      if (trimmed > 0) {
+        logger.warn('K线返回越界行，已剔除（look-ahead 防御）', {
+          stockCode,
+          startDate,
+          endDate,
+          trimmed,
+        });
+      }
+
       // 写入缓存
-      fs.writeFileSync(cacheFile, JSON.stringify({ data, timestamp: Date.now() }));
-      return data;
+      fs.writeFileSync(cacheFile, JSON.stringify({ data: filtered, timestamp: Date.now() }));
+      return filtered;
     }
   } catch (error) {
     logger.warn('获取K线数据失败', { stockCode, startDate, endDate, err: error });
