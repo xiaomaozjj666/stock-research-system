@@ -1,7 +1,7 @@
 # 投研系统 · Stock Research System
 
 <p align="center">
-  <img src="https://img.shields.io/badge/TypeScript-5-3178C6" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
   <img src="https://img.shields.io/badge/tests-923%20cases-brightgreen" alt="923 测试用例" />
@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
 
-> A 股投研系统：多专家研判、K 线行情分析、量化回测（防过拟合）、模拟盘、自选股监控，外加对话式研究助手。
+> 面向 A 股的全栈投研平台：多专家协同研判、专业 K 线行情分析、量化回测与防过拟合评估、可插拔交易成本模型与风险归因、模拟盘研究闭环、自选股异动监控，以及对话式研究助手。
 
 ![深度研究报告总览](docs/screenshots/report-overview.png)
 

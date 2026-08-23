@@ -1,5 +1,5 @@
 /**
- * 对话式智能体：自然语言入口（POST + SSE 流式）与持久记忆清空。
+ * 对话式助手：自然语言入口（POST + SSE 流式）与持久记忆清空。
  */
 import { Router } from 'express';
 import { chatLimiter, circuitBreakerGuard } from '../middleware.js';
@@ -9,7 +9,7 @@ import logger from '../utils/logger.js';
 
 const router = Router();
 
-// === 对话式智能体接口（自然语言入口） ===
+// === 对话式助手接口（自然语言入口） ===
 router.post('/api/chat', chatLimiter, circuitBreakerGuard, async (req, res) => {
   try {
     const body = req.body ?? {};

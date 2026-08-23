@@ -175,7 +175,7 @@ export async function runWatchlistNewsBacktest(
   }
 }
 
-// === 对话式智能体 ===
+// === 对话式助手 ===
 export interface ChatEvidence {
   id: string;
   source: string;

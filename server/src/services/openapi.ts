@@ -53,7 +53,7 @@ export function buildOpenApiDocument() {
       { name: 'quant', description: '量化回测与受控评估' },
       { name: 'paper', description: '模拟盘研究闭环（无实盘资金）' },
       { name: 'watchlist', description: '自选股与异动监控' },
-      { name: 'chat', description: '对话式研究智能体' },
+      { name: 'chat', description: '对话式研究助手' },
       { name: 'autonomous', description: '自治监控循环' },
       { name: 'documents', description: '研报/公告 RAG 入库' },
       { name: 'intl', description: '港美股财务估值' },
@@ -325,7 +325,7 @@ export function buildOpenApiDocument() {
       '/api/chat': {
         post: {
           tags: ['chat'],
-          summary: '自然语言研究智能体',
+          summary: '自然语言研究助手',
           description: '路由规划 / 工具调用 / 多空辩论 / 证据引用与事实校验。',
           requestBody: jsonBody({
             type: 'object',

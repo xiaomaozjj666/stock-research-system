@@ -53,3 +53,6 @@ _shots/
 
 # 临时截图/脚本（README 截图生成中间产物）
 _shots2/
+
+# WorkBuddy 运行时目录（工具数据/记忆，非项目源码，避免误提交）
+.workbuddy/
