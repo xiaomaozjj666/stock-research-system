@@ -53,9 +53,12 @@ test.describe('自选股 CRUD（隔离数据）', () => {
     await page.getByRole('button', { name: '自选股' }).click();
     await expect(page.getByRole('heading', { name: '自选股 / 持仓监控' })).toBeVisible();
 
-    const input = page.getByPlaceholder('输入 6 位代码，如 600519');
+    const input = page.getByPlaceholder('输入股票代码或名称，如 600519 / 贵州茅台', {
+      exact: true,
+    });
     await input.fill('600519');
-    await page.getByRole('button', { name: '添加', exact: true }).click();
+    // 6 位代码可回车直接添加（名称搜索不可用时也支持，离线安全路径）
+    await input.press('Enter');
 
     // 列表中出现该代码
     await expect(page.getByText('600519', { exact: true }).first()).toBeVisible();
@@ -65,15 +68,20 @@ test.describe('自选股 CRUD（隔离数据）', () => {
     await expect(page.getByText('还没有关注的股票')).toBeVisible();
   });
 
-  test('非法代码被拒绝并提示', async ({ page }) => {
+  test('无效查询给出提示且不添加自选股', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: '自选股' }).click();
 
-    const input = page.getByPlaceholder('输入 6 位代码，如 600519');
-    await input.fill('abc');
-    await page.getByRole('button', { name: '添加', exact: true }).click();
+    const input = page.getByPlaceholder('输入股票代码或名称，如 600519 / 贵州茅台', {
+      exact: true,
+    });
+    await input.fill('zzzz9999');
+    await input.press('Enter');
 
-    await expect(page.getByText('请输入有效的 6 位股票代码')).toBeVisible();
+    // 名称无法解析时给出明确提示（未找到 / 服务不可用均算提示，不硬性依赖外网）
+    await expect(page.getByText(/未找到|暂不可用/)).toBeVisible();
+    // 不会误添加：列表仍为空
+    await expect(page.getByText('还没有关注的股票')).toBeVisible();
   });
 });
 

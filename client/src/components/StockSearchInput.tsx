@@ -158,7 +158,7 @@ export default function StockSearchInput({
           commit(cleaned[0].code, cleaned[0].name);
         } else if (cleaned.length === 0) {
           setResults([]);
-          setShowDropdown(false);
+          setShowDropdown(true);
           setHint(`未找到「${trimmed}」对应的股票，请确认名称或改用 6 位代码`);
         } else {
           setResults(cleaned);
@@ -169,6 +169,7 @@ export default function StockSearchInput({
       })
       .catch(() => {
         if (mySeq !== seqRef.current) return;
+        setShowDropdown(true);
         setHint('搜索服务暂不可用，请改用 6 位股票代码');
       })
       .finally(() => {
