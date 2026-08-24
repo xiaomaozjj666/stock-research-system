@@ -72,8 +72,9 @@ test.describe('自选股 CRUD（隔离数据）', () => {
 
     const input = page.getByLabel('自选股搜索');
     await input.fill('zzzz9999');
-    // 名称无法解析时，debounced 搜索会给出明确提示（未找到 / 服务不可用均算提示）
-    await expect(page.getByText(/未找到|暂不可用/)).toBeVisible();
+    // 名称无法解析时，debounced 搜索会给出明确提示（未找到 / 服务不可用均算提示）。
+    // 后端调东方财富有 8s 超时，CI 中可能挂满才返回空，故放宽可见性等待至 20s。
+    await expect(page.getByText(/未找到|暂不可用/)).toBeVisible({ timeout: 20_000 });
     // 不会误添加：列表仍为空
     await expect(page.getByText('还没有关注的股票')).toBeVisible();
   });
