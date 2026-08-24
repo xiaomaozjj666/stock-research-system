@@ -132,7 +132,7 @@
   - **历史删除无确认**（误删风险）→ 二次确认交互（3 秒自动复位），测试同步更新
 - 验证：826 tests / E2E 9/9（smoke）+ 自测 2+3+2 用例全过 / 首屏无 echarts 采样确认
 
-### 性能与体验极致化（perf / ux）
+### 性能与体验优化（perf / ux）
 
 - **前端首屏 -65%**（~295KB → ~107KB gzip）：`ChartsSection` 与 `WatchlistPage` 懒加载，echarts 运行时（195.57KB gzip）彻底移出首屏按需加载；图表区轻量 fallback。
 - **EChart 重绘防抖**：option 内容级比较（JSON），滚动等无关重渲染不再反复全量重绘图表。

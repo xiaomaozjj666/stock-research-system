@@ -298,7 +298,7 @@ backtrader 主循环事实：Cerebro 只做组装与广播，**撮合真相在 B
 - TS 严格模式：`??` 表达式不收窄原变量（`TS18048`），可选嵌套字段先提局部变量再判 `!== undefined`。
 - 验证：889 tests（+38 新增）/ E2E 9/9 / 双端 tsc / lint / format:check / build 全过；真实浏览器验证 600519 风险归因区渲染 0 pageerror。
 
-## 2026-08-14 性能与体验极致化记录
+## 2026-08-14 性能与体验优化记录
 
 - **前端首屏 -65%**（~295KB → ~107KB gzip）：
   - `ChartsSection` 改为 `React.lazy`（分析结果出现才加载）——echarts 运行时不再进首屏 modulepreload；
