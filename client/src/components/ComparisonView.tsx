@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { compareStocks } from '../api/client';
+import StockSearchInput from '../components/StockSearchInput';
 import { ErrorBoundary } from './ErrorBoundary';
 
 interface StockData {
@@ -185,26 +186,22 @@ function ComparisonRow({
 }
 
 export function ComparisonView() {
-  const [inputCode, setInputCode] = useState('');
   const [stocks, setStocks] = useState<string[]>([]);
+  const [stockNames, setStockNames] = useState<Record<string, string>>({});
   const [results, setResults] = useState<StockData[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const addStock = (code?: string) => {
-    const c = (code ?? inputCode).trim();
+  const addStock = (code: string, name?: string) => {
+    const c = code.trim();
     if (!c) return;
-    if (!/^\d{6}$/.test(c)) {
-      setError('请输入有效的6位股票代码');
-      return;
-    }
     if (stocks.includes(c)) {
       setError('该股票已添加');
       return;
     }
     if (stocks.length >= 3) return;
     setStocks((prev) => [...prev, c]);
-    setInputCode('');
+    setStockNames((prev) => ({ ...prev, [c]: name || prev[c] || c }));
     setError('');
   };
 
@@ -228,7 +225,7 @@ export function ComparisonView() {
   const reset = () => {
     setResults(null);
     setStocks([]);
-    setInputCode('');
+    setStockNames({});
     setError('');
   };
 
@@ -312,29 +309,20 @@ export function ComparisonView() {
       </p>
 
       <div className="comparison-input-row">
-        <div className="comparison-input-wrap">
-          <input
-            type="text"
-            value={inputCode}
-            onChange={(e) => {
-              setInputCode(e.target.value);
-              setError('');
-            }}
-            onKeyDown={(e) => e.key === 'Enter' && addStock()}
-            placeholder="输入 6 位股票代码，如 600519"
-            className="comparison-input"
-            maxLength={6}
-          />
-          <button className="btn-add" onClick={() => addStock()} disabled={stocks.length >= 3}>
-            ＋ 添加
-          </button>
-        </div>
+        <StockSearchInput
+          onSelect={(code, name) => addStock(code, name)}
+          actionLabel="＋ 添加"
+          disabled={stocks.length >= 3}
+          placeholder="输入股票代码或名称，如 600519 / 贵州茅台"
+          ariaLabel="对比股票搜索"
+        />
       </div>
 
       <div className="comparison-tags">
         {stocks.map((code, idx) => (
           <span key={code} className="comparison-tag">
             <span className="tag-index">{idx + 1}</span>
+            <span className="tag-name">{stockNames[code] || code}</span>
             <span className="tag-code">{code}</span>
             <button className="tag-remove" onClick={() => removeStock(code)}>
               ×

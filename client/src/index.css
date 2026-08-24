@@ -528,6 +528,24 @@ tr:hover td {
   color: var(--text-secondary);
 }
 
+/* 可复用股票搜索输入框（对比/自选股/模拟盘共用） */
+.stock-search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1;
+  min-width: 0;
+}
+.stock-search-input-wrap .stock-search-input {
+  flex: 1;
+  min-width: 0;
+}
+/* 模拟盘字段内嵌时不渲染操作按钮，输入框占满该字段 */
+.paper-field .stock-search-input-wrap {
+  width: 100%;
+}
+
 /* === Search History === */
 .search-history {
   padding: 8px 0;
@@ -4714,6 +4732,11 @@ tr:hover td {
 .paper-field label {
   font-size: 12px;
   color: var(--text-muted);
+}
+.paper-code-name {
+  margin-left: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 .paper-field input,
 .paper-field select {

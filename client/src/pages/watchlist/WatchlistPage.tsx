@@ -9,6 +9,7 @@ import {
 import type { WatchlistNewsBacktestReport, WatchlistAlert } from '../../types';
 import { normalizeApiError } from '../../api/client';
 import NewsPostureHeatBar from '../../components/NewsPostureHeatBar';
+import StockSearchInput from '../../components/StockSearchInput';
 import { useToast } from '../../components/Toast';
 
 function polarityLabel(p: number): { text: string; cls: string } {
@@ -27,7 +28,7 @@ const ALERT_LEVEL: Record<WatchlistAlert['level'], { text: string; cls: string }
 export default function WatchlistPage() {
   const { showToast } = useToast();
   const [codes, setCodes] = useState<string[]>([]);
-  const [input, setInput] = useState('');
+  const [names, setNames] = useState<Record<string, string>>({});
   const [loadingList, setLoadingList] = useState(false);
   const [running, setRunning] = useState(false);
   const [monitoring, setMonitoring] = useState(false);
@@ -51,21 +52,18 @@ export default function WatchlistPage() {
     loadList();
   }, [loadList]);
 
-  const handleAdd = useCallback(async () => {
-    const code = input.trim();
-    if (!/^\d{6}$/.test(code)) {
-      setError('请输入有效的 6 位股票代码');
-      return;
-    }
+  const handleAdd = useCallback(async (code: string, name: string) => {
+    const c = code.trim();
+    if (!c) return;
     setError(null);
     try {
-      const res = await addToWatchlist(code);
+      const res = await addToWatchlist(c);
       setCodes(res.codes ?? []);
-      setInput('');
+      setNames((prev) => ({ ...prev, [c]: name || prev[c] || c }));
     } catch (err) {
       setError(normalizeApiError(err, '添加失败').message);
     }
-  }, [input]);
+  }, []);
 
   const handleRemove = useCallback(async (code: string) => {
     setError(null);
@@ -126,19 +124,13 @@ export default function WatchlistPage() {
       </div>
 
       <div className="watchlist-add">
-        <input
-          className="watchlist-input"
-          placeholder="输入 6 位代码，如 600519"
-          value={input}
-          maxLength={6}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleAdd();
-          }}
+        <StockSearchInput
+          onSelect={(code, name) => handleAdd(code, name)}
+          actionLabel="添加"
+          disabled={loadingList}
+          placeholder="输入股票代码或名称，如 600519 / 贵州茅台"
+          ariaLabel="自选股搜索"
         />
-        <button className="btn-primary" onClick={handleAdd} disabled={loadingList}>
-          添加
-        </button>
         <button
           className="btn-primary watchlist-run"
           onClick={handleRun}
@@ -167,18 +159,19 @@ export default function WatchlistPage() {
           <div className="watchlist-empty">
             <p className="watchlist-empty-title">还没有关注的股票</p>
             <p className="watchlist-empty-hint">
-              在上方输入 6 位代码（如 600519）添加，即可批量回测与异动监控。
+              在上方输入股票代码或名称（如 600519 / 贵州茅台）添加，即可批量回测与异动监控。
             </p>
           </div>
         ) : (
           <ul className="watchlist-items">
             {codes.map((code) => (
               <li key={code} className="watchlist-item">
+                <span className="watchlist-name">{names[code] || code}</span>
                 <span className="watchlist-code">{code}</span>
                 <button
                   className="watchlist-remove"
                   onClick={() => handleRemove(code)}
-                  aria-label={`移除 ${code}`}
+                  aria-label={`移除 ${names[code] || code} ${code}`}
                 >
                   移除
                 </button>
