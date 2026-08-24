@@ -64,9 +64,12 @@ export default function StockSearchInput({
   }, []);
 
   // 卸载时清理防抖定时器
-  useEffect(() => () => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    },
+    [],
+  );
 
   const runSearch = useCallback(
     async (kw: string) => {
