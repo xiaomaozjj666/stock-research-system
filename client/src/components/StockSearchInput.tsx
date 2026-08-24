@@ -88,9 +88,10 @@ export default function StockSearchInput({
         }
       } catch {
         if (mySeq !== seqRef.current) return;
-        // 搜索失败：6 位代码仍可直加，名称则提示改用代码
+        // 搜索失败：6 位代码仍可直加，名称则提示改用代码。
+        // 注意：下拉必须保持可见，否则「暂不可用」提示会被一并隐藏（非 6 位代码路径）。
         setResults([]);
-        setShowDropdown(CODE_RE.test(kw));
+        setShowDropdown(true);
         if (!CODE_RE.test(kw)) setHint('搜索服务暂不可用，请改用 6 位股票代码');
       } finally {
         if (mySeq === seqRef.current) setSearching(false);
