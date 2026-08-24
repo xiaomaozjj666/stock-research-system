@@ -8,6 +8,7 @@ import {
   getIntlFundamentals,
   normalizeApiError,
 } from '../../api/client';
+import StockSearchInput from '../../components/StockSearchInput';
 import type {
   PaperPortfolio,
   PaperStats,
@@ -61,6 +62,7 @@ export default function PaperTradingPage() {
 
   // 下单表单
   const [orderCode, setOrderCode] = useState('');
+  const [orderName, setOrderName] = useState('');
   const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
   const [orderQty, setOrderQty] = useState('');
@@ -154,6 +156,7 @@ export default function PaperTradingPage() {
       });
       setMessage('下单成功，日终结算时按收盘价撮合');
       setOrderCode('');
+      setOrderName('');
       setOrderQty('');
       setOrderPrice('');
       await loadAccount();
@@ -280,12 +283,14 @@ export default function PaperTradingPage() {
           <h3 className="paper-card-title">模拟下单</h3>
           <div className="paper-form-row">
             <div className="paper-field">
-              <label>代码</label>
-              <input
-                value={orderCode}
-                maxLength={6}
-                placeholder="如 600519"
-                onChange={(e) => setOrderCode(e.target.value)}
+              <label>代码{orderName && <span className="paper-code-name">{orderName}</span>}</label>
+              <StockSearchInput
+                onSelect={(code, name) => {
+                  setOrderCode(code);
+                  setOrderName(name);
+                }}
+                placeholder="如 600519 / 贵州茅台"
+                ariaLabel="下单股票代码"
               />
             </div>
             <div className="paper-field">
