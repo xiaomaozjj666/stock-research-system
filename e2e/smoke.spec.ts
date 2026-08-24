@@ -53,9 +53,7 @@ test.describe('自选股 CRUD（隔离数据）', () => {
     await page.getByRole('button', { name: '自选股' }).click();
     await expect(page.getByRole('heading', { name: '自选股 / 持仓监控' })).toBeVisible();
 
-    const input = page.getByPlaceholder('输入股票代码或名称，如 600519 / 贵州茅台', {
-      exact: true,
-    });
+    const input = page.getByLabel('自选股搜索');
     await input.fill('600519');
     // 6 位代码可回车直接添加（名称搜索不可用时也支持，离线安全路径）
     await input.press('Enter');
@@ -72,13 +70,9 @@ test.describe('自选股 CRUD（隔离数据）', () => {
     await page.goto('/');
     await page.getByRole('button', { name: '自选股' }).click();
 
-    const input = page.getByPlaceholder('输入股票代码或名称，如 600519 / 贵州茅台', {
-      exact: true,
-    });
+    const input = page.getByLabel('自选股搜索');
     await input.fill('zzzz9999');
-    await input.press('Enter');
-
-    // 名称无法解析时给出明确提示（未找到 / 服务不可用均算提示，不硬性依赖外网）
+    // 名称无法解析时，debounced 搜索会给出明确提示（未找到 / 服务不可用均算提示）
     await expect(page.getByText(/未找到|暂不可用/)).toBeVisible();
     // 不会误添加：列表仍为空
     await expect(page.getByText('还没有关注的股票')).toBeVisible();

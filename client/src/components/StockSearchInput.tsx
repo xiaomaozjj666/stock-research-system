@@ -83,6 +83,9 @@ export default function StockSearchInput({
         setResults(cleaned);
         setShowDropdown(true);
         setActiveIndex(-1);
+        if (cleaned.length === 0) {
+          setHint(`未找到「${kw}」对应的股票，请确认名称或改用 6 位代码`);
+        }
       } catch {
         if (mySeq !== seqRef.current) return;
         // 搜索失败：6 位代码仍可直加，名称则提示改用代码
