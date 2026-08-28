@@ -50,6 +50,8 @@
 - `dataProvider.ts`：`parseInt('AAPL')` NaN 使模拟曲线全 NaN → 确定性哈希种子；`getDay()` 本地时区与 `toISOString()` UTC 标签错位 → 统一 UTC。
 - `dataProvider.ts`：缓存文件名直接拼未校验的 stockCode，`../../` 可路径穿越 → token 白名单清洗。
 - `pipeline.ts`：`runQuantPipeline` 不检查 `isSimulated`（路由层检查了，这条独立路径没查）→ 模拟数据显式声明结论无效。
+- `dataProvider`：lmt 按请求跨度估算（2026-08-29 补齐），长区间不再静默截断。
+- **newsOverlay 严格时序（2026-08-29 补齐）**：新增 `items` 分段情绪时间线——引擎对每个 bar 只使用发布日 ≤ bar 的新闻、按半衰期 5.8 天指数衰减加权聚合极性（导出纯函数 `newsOverlayPostureAt`），全程无未来信息，彻底消除前视偏差；`NewsSignal.timeline` 由 `aggregateNewsSentiment` 自动产出并全链路（analyze/evaluate/策略列表/chat 工具）透传；无 items 时退化为 since 常数旧口径。配套 8 个测试（衰减/多空混合/未来新闻不影响历史权益曲线）。
 - `newsSignal.ts`：BULLISH_WORDS `'利好'` 重复，命中计 2 次扭曲 polarity → 去重。
 - `paperTrading.ts`：印花税 0.1% 是 2023-08-28 前旧税率，与 costModel 万 5 自相矛盾 → 统一 0.0005。
 
@@ -72,14 +74,12 @@
 
 ## 二、未修复（记录在案）
 
-| 项                                                                        | 原因                                                     |
-| ------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `trust proxy` 未设置（反代后限流失效）                                    | 部署拓扑相关，需按实际环境显式配置并文档化               |
-| `backtest/evaluate` newsOverlay 前视偏差（最新新闻叠加到整段历史）        | 属情景假设语义，需产品层面决定"仅新闻日后应用"或报告标注 |
-| `dataProvider` lmt=1000 静默截断长区间                                    | 正确修复需分段抓取，改动面大                             |
-| audit.log 无轮转、明文存 prompt/response                                  | 需要轮转策略与脱敏规范，属独立工程项                     |
-| M 级性能项：report 区块 React.memo、EChart stringify 优化、审计日志结构化 | 收益需基准数据支撑，避免本轮引入回归                     |
-| eslint 对 TS 实际空转（typescript-eslint 未兼容 TS7）                     | 已有说明注释，待 TS7 兼容后接入                          |
+| 项                                                                        | 原因                                       |
+| ------------------------------------------------------------------------- | ------------------------------------------ |
+| `trust proxy` 未设置（反代后限流失效）                                    | 部署拓扑相关，需按实际环境显式配置并文档化 |
+| audit.log 无轮转、明文存 prompt/response                                  | 需要轮转策略与脱敏规范，属独立工程项       |
+| M 级性能项：report 区块 React.memo、EChart stringify 优化、审计日志结构化 | 收益需基准数据支撑，避免本轮引入回归       |
+| eslint 对 TS 实际空转（typescript-eslint 未兼容 TS7）                     | 已有说明注释，待 TS7 兼容后接入            |
 
 ## 三、测试与验证
 

@@ -74,7 +74,11 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
       backtestResult = runBacktest(ohlcvData, {
         ...strategyConfig,
         // since=新闻最早发布日：姿态仅作用于该日之后的建仓，避免前视偏差
-        newsOverlay: { polarity: newsSignal.polarity, since: earliestNewsDate(newsSignal.items) },
+        newsOverlay: {
+          polarity: newsSignal.polarity,
+          since: earliestNewsDate(newsSignal.items),
+          items: newsSignal.timeline,
+        },
       });
     }
 
@@ -114,7 +118,9 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
     }
     if (backtestResult.newsAware) {
       limitations.push(
-        `新闻情绪叠加仅作用于 ${backtestResult.newsSince ?? '新闻发布日'} 之后的区间，此前区间与基线一致；多条新闻按聚合极性整体应用，属情景假设而非严格时序回测`,
+        strategyConfig.newsOverlay?.items?.length
+          ? '新闻情绪按发布时间分段加权（各时点仅使用已知新闻，时效半衰期 5.8 天），严格时序无前视偏差'
+          : `新闻情绪为聚合常数叠加${backtestResult.newsSince ? `（自 ${backtestResult.newsSince} 起）` : ''}，属情景假设`,
       );
     }
     limitations.push('历史回测不代表未来收益');
@@ -176,6 +182,7 @@ router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, asy
           newsOverlay: {
             polarity: ns.signal.polarity,
             since: earliestNewsDate(ns.signal.items),
+            items: ns.signal.timeline,
           },
         };
       }

@@ -140,6 +140,12 @@ export interface NewsSignal {
   items: NewsItem[];
   /** 是否有可用新闻 */
   hasNews: boolean;
+  /**
+   * 分段情绪时间线（严格时序）：每条新闻的 {发布日, 确定性极性}。
+   * 供回测 newsOverlay.items 使用——引擎对各 bar 只用发布日 ≤ bar 的条目，
+   * 消除"聚合常数叠加"的前视偏差。空输入/无有效日期时不产出（字段缺省）。
+   */
+  timeline?: Array<{ publishedAt: string; polarity: number }>;
 }
 
 /**
@@ -252,6 +258,13 @@ export function aggregateNewsSentiment(items: NewsItem[], opts: AggregateOptions
   // 按时效升序排序（最新在前）
   const sorted = [...scored].sort((a, b) => a.age - b.age).map((s) => s.item);
 
+  // 分段情绪时间线：仅保留可解析出 YYYY-MM-DD 发布日的条目（供引擎做严格时序叠加）
+  const timeline = scored
+    .map((s) => ({ publishedAt: s.item.publishedAt, polarity: s.p }))
+    .filter((pt) => /^\d{4}-\d{2}-\d{2}/.test(String(pt.publishedAt)))
+    .map((pt) => ({ publishedAt: String(pt.publishedAt).slice(0, 10), polarity: pt.polarity }));
+  const timelineField = timeline.length > 0 ? { timeline } : {};
+
   return {
     polarity,
     sentimentZ,
@@ -261,6 +274,7 @@ export function aggregateNewsSentiment(items: NewsItem[], opts: AggregateOptions
     weightedImpact,
     items: sorted,
     hasNews: true,
+    ...timelineField,
   };
 }
 
