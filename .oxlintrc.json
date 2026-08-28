@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "rules": {
+    "unicorn/no-new-array": "off",
+    "unicorn/no-useless-fallback-in-spread": "off"
+  },
+  "overrides": [
+    {
+      "files": ["server/src/**/*.test.ts", "client/src/**/*.test.ts", "client/src/**/*.test.tsx"],
+      "rules": {}
+    }
+  ],
+  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "**/coverage/**"]
+}

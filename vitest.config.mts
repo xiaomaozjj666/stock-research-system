@@ -33,7 +33,11 @@ export default defineConfig({
         'server/src/index.ts', // Express 入口，由集成与手动验证覆盖
         'server/src/routes/**', // 路由模块（index.ts 拆分），由 supertest 集成测试覆盖
         'server/src/middleware.ts', // 中间件（限流/熔断/安全头），由集成测试覆盖
-        'server/src/llm/**', // 外部 LLM 调用，网络相关，单独集成测试覆盖
+        // llm/ 目录中仅排除真实网络/子进程模块；rag/prompts/tools/knowledgeGraph 等
+        // 纯逻辑模块已有单测，必须纳入覆盖率统计（整目录排除会让门禁形同虚设）
+        'server/src/llm/client.ts',
+        'server/src/llm/mcpClient.ts',
+        'server/src/llm/expertRunner.ts', // LLM 编排，网络相关
         'client/src/main.tsx',
         'client/src/vite-env.d.ts',
       ],
