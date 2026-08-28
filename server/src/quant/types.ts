@@ -28,12 +28,19 @@ export interface StrategyConfig {
   costModel?: 'a_share';
   /**
    * 最新消息情绪叠加层（可选）：
-   * - polarity ∈ [−1,1]，按新闻姿态缩放建仓仓位；
-   * - since（YYYY-MM-DD，可选但强烈建议）：姿态仅应用于该日期及之后的 bar。
-   *   不传时叠加到整段历史——用"现在才知道的消息"改写历史交易构成前视偏差，
-   *   compareBacktests 对这种回测做显著性检验会得出伪 alpha 结论。
+   * - polarity ∈ [−1,1]，聚合极性（展示/旧口径用）；
+   * - since（YYYY-MM-DD）：旧口径下姿态自该日起常数生效；
+   * - items（严格时序，推荐）：按条给出的 {发布日, 极性}。引擎对每个 bar 只使用
+   *   发布日 ≤ bar 日期的新闻、按时效半衰期衰减加权——无未来信息、无前视偏差；
+   *   items 存在时优先生效，缺失时退化为旧口径。
    */
-  newsOverlay?: { polarity: number; since?: string };
+  newsOverlay?: { polarity: number; since?: string; items?: NewsSentimentPoint[] };
+}
+
+/** 单点新闻情绪：发布日（YYYY-MM-DD 或 ISO datetime）+ 确定性极性 ∈ [−1,1] */
+export interface NewsSentimentPoint {
+  publishedAt: string;
+  polarity: number;
 }
 
 // 交易记录

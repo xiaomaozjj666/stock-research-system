@@ -90,7 +90,11 @@ async function processCode(
       code,
       ohlcv,
       newsSignal?.hasNews
-        ? { polarity: newsSignal.polarity, since: earliestNewsDate(newsSignal.items) }
+        ? {
+            polarity: newsSignal.polarity,
+            since: earliestNewsDate(newsSignal.items),
+            timeline: newsSignal.timeline,
+          }
         : null,
     );
 

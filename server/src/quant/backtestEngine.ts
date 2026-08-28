@@ -11,6 +11,75 @@ import {
 } from './costModel.js';
 
 /**
+ * 新闻时效衰减半衰期（天）：与 newsSignal.NEWS_MODEL_CONSTANTS.HALF_LIFE_DAYS 保持一致。
+ * 引擎内自带常量而非跨模块 import，保持回测内核零依赖（backtrader 同款取舍）。
+ */
+const NEWS_HALF_LIFE_DAYS = 5.8;
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
+
+/**
+ * 计算 bar 日期的新闻姿态 posture ∈ [0,1]（建仓资金缩放系数）。
+ * 严格时序语义（items 存在时优先）：
+ *   只使用发布日 ≤ barDate 的新闻，按 exp 半衰期（NEWS_HALF_LIFE_DAYS）衰减加权聚合极性，
+ *   posture = 0.5 + 0.5·polarity；本 bar 尚无任何已知新闻时返回 1（与基线一致）——
+ *   全程无未来信息，消除"聚合常数叠加"的前视偏差。
+ * 旧口径回退（无 items）：聚合极性常数，自 since 起生效，此前返回 1。
+ * @returns posture ∈ [0,1]；无叠加层时恒为 1
+ */
+export function newsOverlayPostureAt(
+  overlay:
+    | { polarity: number; since?: string; items?: { publishedAt: string; polarity: number }[] }
+    | undefined,
+  barDate: string,
+): number {
+  if (!overlay) return 1;
+
+  // 严格时序：归一化 + 排序 + 逐条判定发布日
+  const timeline = (overlay.items ?? [])
+    .map((pt) => ({
+      date: String(pt.publishedAt ?? '').slice(0, 10),
+      polarity: Number(pt.polarity),
+    }))
+    .filter((pt) => /^\d{4}-\d{2}-\d{2}$/.test(pt.date) && Number.isFinite(pt.polarity))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  if (timeline.length > 0) {
+    let wSum = 0;
+    let pSum = 0;
+    for (const pt of timeline) {
+      if (pt.date > barDate) break; // 已排序：其后条目均晚于本 bar（未来信息，跳过）
+      const age = Math.max(0, (Date.parse(barDate) - Date.parse(pt.date)) / 86400000);
+      const w = Math.pow(2, -age / NEWS_HALF_LIFE_DAYS);
+      wSum += w;
+      pSum += w * Math.max(-1, Math.min(1, pt.polarity));
+    }
+    if (!(wSum > 0)) return 1; // 尚无已知新闻：与基线一致（不缩仓）
+    const p = Math.max(-1, Math.min(1, pSum / wSum));
+    return clamp01(0.5 + 0.5 * p);
+  }
+
+  // 旧口径：聚合常数，自 since 起
+  if (overlay.since && barDate < overlay.since) return 1;
+  return clamp01(0.5 + 0.5 * Math.max(-1, Math.min(1, overlay.polarity)));
+}
+
+/** 把 items 时间线归一化为排序后的日期列表（取最早发布日等场景用） */
+function overlayFirstDate(
+  overlay:
+    | { polarity: number; since?: string; items?: { publishedAt: string; polarity: number }[] }
+    | undefined,
+): string | undefined {
+  const dates = (overlay?.items ?? [])
+    .map((pt) => String(pt.publishedAt ?? '').slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  return dates[0];
+}
+
+/**
  * 运行回测
  * 逐K线回放，严格按时间顺序，杜绝未来函数；
  * 成交采用 T+1 信号延迟（backtrader Market 单 / qlib shift=1 语义）：信号 T 日收盘生成、
@@ -40,11 +109,15 @@ export function runBacktest(
   // 最新消息情绪叠加层：posture = clamp(0.5 + 0.5·polarity, 0, 1)
   //   polarity=+1(全面利好) → posture=1 满仓；polarity=0(中性) → 0.5 半仓；
   //   polarity=−1(全面利空) → 0 不建仓。仅在「建仓」时缩放仓位，平仓不受影响。
-  //   since（新闻最早发布日）之后才生效——此前区间与基线一致，避免用未来信息改写历史。
+  //   严格时序：items 时间线存在时逐 bar 只用已知新闻（newsOverlayPostureAt）；
+  //   否则退化为旧口径（自 since 起常数 posture）。
   const newsOverlay = strategy.newsOverlay;
   const newsAware = !!newsOverlay;
-  const newsSince = newsOverlay?.since;
-  const newsPosture = newsOverlay ? Math.max(0, Math.min(1, 0.5 + 0.5 * newsOverlay.polarity)) : 1;
+  const newsSince = newsOverlay?.since ?? overlayFirstDate(newsOverlay);
+  const newsPosture = newsOverlay
+    ? newsOverlayPostureAt(newsOverlay, data[data.length - 1]?.date ?? '')
+    : 1;
+  const postureAt = (barDate: string) => newsOverlayPostureAt(newsOverlay, barDate);
 
   let cash = initialCapital;
   let position = 0; // 持仓股数
@@ -76,12 +149,12 @@ export function runBacktest(
     //    避免停牌日照常按 open 成交、系统性高估可成交性
     const tradable = bar.volume > 0;
     if (tradable && pending === 'buy' && position === 0) {
-      // 情绪姿态仅对 since（新闻发布日）之后的建仓生效；无 since 时退化为全程叠加（调用方未适配）
-      const postureActive = !newsSince || bar.date >= newsSince;
-      if (newsPosture > 0 && postureActive) {
+      // 本 bar 的新闻姿态：严格时序（已知新闻加权）或旧口径（since 起常数），无叠加时为 1
+      const posture = postureAt(bar.date);
+      if (posture > 0) {
         const price = bar.open * (1 + costModel.slippage);
         // 按新闻姿态缩放可用资金（强空新闻 posture→0 时不建仓）
-        const deployable = cash * newsPosture;
+        const deployable = cash * posture;
         // A股100股整数倍；每股价按含买入费率估算（成交额×(1+openRate)，minCost 忽略以便整手取整）
         const shares = Math.floor(deployable / (price * (1 + costModel.openRate)) / 100) * 100;
         if (shares > 0) {
@@ -99,7 +172,7 @@ export function runBacktest(
             commission: Math.round((fee + impact) * 100) / 100,
             reason:
               getSignalReason(strategy, 'buy') +
-              (newsAware ? `（新闻姿态${(newsPosture * 100).toFixed(0)}%）` : ''),
+              (newsAware ? `（新闻姿态${(posture * 100).toFixed(0)}%）` : ''),
           });
         }
       }

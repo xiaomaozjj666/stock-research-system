@@ -62,7 +62,8 @@ const BULLISH: NewsSignal = {
   newsCount: 3,
   freshness: 0.8,
   weightedImpact: 0.5,
-  items: [{ id: 'n1', title: '超预期增长', publishedAt: new Date().toISOString() }],
+  // 发布日固定在行情窗口内（2024-01-01 起的 120 天）：严格时序下 posture 需按 bar 日期生效
+  items: [{ id: 'n1', title: '超预期增长', publishedAt: '2024-02-01T09:00:00Z' }],
   hasNews: true,
 };
 const NEUTRAL: NewsSignal = {
@@ -85,7 +86,7 @@ vi.mock('../quant/newsSignal.js', () => ({
   extractNewsSignal: mocks.extractNewsSignal,
   aggregateNewsSentiment: vi.fn(() => ({ ...NEUTRAL })),
   // watchlistBacktest 会取新闻最早发布日作为 newsOverlay.since（防前视偏差）
-  earliestNewsDate: vi.fn(() => new Date().toISOString().slice(0, 10)),
+  earliestNewsDate: vi.fn(() => '2024-02-01'),
   fetchLatestNews: vi.fn(async () => []),
   lexiconPolarity: vi.fn(() => 0),
   NEWS_MODEL_CONSTANTS: { RECENCY_LAMBDA: 0.12, Z_CLIP: 0.001, HALF_LIFE_DAYS: 5.8 },

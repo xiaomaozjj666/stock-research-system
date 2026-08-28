@@ -46,6 +46,8 @@ export interface ToolDeps {
       hasNews: boolean;
       /** 带发布日期的原始新闻：用于计算 newsOverlay.since（防前视偏差） */
       items?: Array<{ publishedAt?: string }>;
+      /** 分段情绪时间线：透传给 newsOverlay.items，引擎按各 bar 已知新闻严格时序叠加 */
+      timeline?: Array<{ publishedAt: string; polarity: number }>;
     };
     source: string;
   }>;
@@ -225,7 +227,10 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
                   .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
                   .sort()[0]
               : undefined;
-            expCfg = { ...expCfg, newsOverlay: { polarity: ns.signal.polarity, since } };
+            expCfg = {
+              ...expCfg,
+              newsOverlay: { polarity: ns.signal.polarity, since, items: ns.signal.timeline },
+            };
           }
         } catch {
           // 新闻抓取失败：实验组退化为基线，评估器会判 inconclusive/tie

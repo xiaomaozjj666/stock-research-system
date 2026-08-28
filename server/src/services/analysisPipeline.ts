@@ -450,7 +450,11 @@ export async function runAnalysis(
         info.code,
         ohlcvData,
         newsSignal?.hasNews
-          ? { polarity: newsSignal.polarity, since: earliestNewsDate(newsSignal.items) }
+          ? {
+              polarity: newsSignal.polarity,
+              since: earliestNewsDate(newsSignal.items),
+              timeline: newsSignal.timeline,
+            }
           : null,
       );
       strategyList = rawStrategies.map((s) => ({

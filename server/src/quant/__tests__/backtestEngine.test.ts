@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runBacktest } from '../backtestEngine.js';
+import { newsOverlayPostureAt, runBacktest } from '../backtestEngine.js';
 import { A_SHARE_COST_MODEL, makeCostModel, marketImpactCost } from '../costModel.js';
 import type { OHLCVData, StrategyConfig } from '../types.js';
 
@@ -276,5 +276,104 @@ describe('runBacktest 可插拔成本模型', () => {
     }
     // 恢复交易后信号仍会成交（顺延语义），交易数量与正常行情一致
     expect(r.tradeCount).toBe(normal.tradeCount);
+  });
+});
+
+// ============================================================
+// 新闻情绪叠加：严格时序（newsOverlay.items 分段加权）
+// ============================================================
+
+describe('newsOverlayPostureAt 新闻姿态（严格时序）', () => {
+  it('无叠加层时恒为 1（与基线一致）', () => {
+    expect(newsOverlayPostureAt(undefined, '2025-06-01')).toBe(1);
+  });
+
+  it('旧口径：聚合极性常数，自 since 起生效，此前为 1', () => {
+    const overlay = { polarity: 0.6, since: '2025-06-01' };
+    expect(newsOverlayPostureAt(overlay, '2025-05-31')).toBe(1);
+    expect(newsOverlayPostureAt(overlay, '2025-06-01')).toBeCloseTo(0.8, 10);
+    // 无 since 时全程常数（旧调用方兼容）
+    expect(newsOverlayPostureAt({ polarity: 0.6 }, '2025-01-01')).toBeCloseTo(0.8, 10);
+  });
+
+  it('items 优先：本 bar 尚无已知新闻时为 1，已知新闻按极性给姿态', () => {
+    const overlay = { polarity: 1, items: [{ publishedAt: '2025-06-01', polarity: 1 }] };
+    // 新闻发布日前：无已知信息 → 与基线一致
+    expect(newsOverlayPostureAt(overlay, '2025-05-31')).toBe(1);
+    // 发布当日：单一极性 +1 → 满仓
+    expect(newsOverlayPostureAt(overlay, '2025-06-01')).toBe(1);
+  });
+
+  it('多空混合按时效衰减加权：旧看多消息随时间淡出，新利空主导', () => {
+    const overlay = {
+      polarity: 0,
+      items: [
+        { publishedAt: '2025-06-01', polarity: 1 },
+        { publishedAt: '2025-07-01', polarity: -1 },
+      ],
+    };
+    // 第一条新闻次日：只知道看多 → 满仓
+    expect(newsOverlayPostureAt(overlay, '2025-06-02')).toBe(1);
+    // 一个月后：+1 已衰减（半衰期 5.8 天），-1 主导 → 姿态接近 0
+    const late = newsOverlayPostureAt(overlay, '2025-07-15');
+    expect(late).toBeGreaterThan(0);
+    expect(late).toBeLessThan(0.1);
+    // 未来新闻不参与：回到 2025-06-02 仍只看得到第一条
+    expect(newsOverlayPostureAt(overlay, '2025-06-02')).toBe(1);
+  });
+
+  it('items 为空数组时退化为旧口径', () => {
+    expect(newsOverlayPostureAt({ polarity: 0.6, items: [] }, '2025-01-01')).toBeCloseTo(0.8, 10);
+  });
+});
+
+describe('runBacktest 新闻情绪时间线（严格时序、无前视偏差）', () => {
+  const osc = oscillatingSeries();
+  // 首个金叉买入约在 bar 21+（flat=20），bar 9 发布利空 → 全部建仓都被压制
+  const earlyBearish: StrategyConfig = {
+    ...maConfig(),
+    newsOverlay: {
+      polarity: -0.4,
+      items: [{ publishedAt: '2025-01-10', polarity: -0.4 }],
+    },
+  };
+  const baseline = runBacktest(osc, maConfig());
+  const withNews = runBacktest(osc, earlyBearish);
+
+  it('新闻发布后的建仓按姿态缩放：买入股数严格小于基线', () => {
+    expect(withNews.tradeCount).toBe(baseline.tradeCount);
+    const baseBuy = baseline.trades.find((t) => t.type === 'buy');
+    const newsBuy = withNews.trades.find((t) => t.type === 'buy');
+    expect(baseBuy).toBeDefined();
+    expect(newsBuy).toBeDefined();
+    expect(newsBuy!.shares).toBeLessThan(baseBuy!.shares);
+    // 姿态 0.3 写入成交记录，便于审计
+    expect(withNews.trades.some((t) => t.reason.includes('新闻姿态30%'))).toBe(true);
+    expect(withNews.newsAware).toBe(true);
+    expect(withNews.newsSince).toBe('2025-01-10');
+  });
+
+  it('未来发布的新闻不影响历史交易（无前视偏差）：权益曲线与基线完全一致', () => {
+    // 行情窗口 2025-01-01 ~ 2025-04-30，新闻发布于窗口之外
+    const futureNews: StrategyConfig = {
+      ...maConfig(),
+      newsOverlay: {
+        polarity: -1,
+        items: [{ publishedAt: '2025-06-15', polarity: -1 }],
+      },
+    };
+    const r = runBacktest(osc, futureNews);
+    expect(r.tradeCount).toBe(baseline.tradeCount);
+    expect(r.equityCurve).toEqual(baseline.equityCurve);
+  });
+
+  it('旧口径（无 items）行为保持：自 since 起常数姿态', () => {
+    const legacy: StrategyConfig = {
+      ...maConfig(),
+      newsOverlay: { polarity: -0.4, since: '2025-04-01' },
+    };
+    const r = runBacktest(osc, legacy);
+    // 窗口内全部买入都在 since 之前 → 不受影响，与基线一致
+    expect(r.equityCurve).toEqual(baseline.equityCurve);
   });
 });
