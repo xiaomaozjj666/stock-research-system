@@ -12,6 +12,7 @@ import {
   getHistoryItem,
   deleteHistoryItem,
 } from '../services/historyService.js';
+import { createSseChannel } from '../utils/sse.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -74,28 +75,27 @@ router.get('/api/analyze/stream', analyzeLimiter, circuitBreakerGuard, async (re
     return res.status(400).json({ error: '请提供有效的6位股票代码' });
   }
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders?.();
-
-  const send = (data: unknown) => {
-    try {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    } catch {
-      /* 客户端已断开 */
-    }
-  };
+  // 断开感知：客户端关闭页面后，下一次 emit 抛错使管线在阶段边界提前中止，
+  // 不再白跑 1-3 分钟的专家研判/外部请求
+  const sse = createSseChannel(req, res);
 
   try {
-    const result = await runAnalysis(stockCode, (stage) => send(stage));
+    const result = await runAnalysis(stockCode, (stage) => sse.send(stage));
     persistAnalysisHistory(result); // 分析完成自动入库（失败静默）
-    send({ phase: 'done', message: '分析完成', result });
+    sse.trySend({ phase: 'done', message: '分析完成', result });
   } catch (error) {
-    send({ phase: 'error', message: (error as Error).message || '分析过程出错' });
+    if (sse.isClosed()) {
+      logger.info('SSE 客户端已断开，分析提前中止', { route: '/api/analyze/stream', stockCode });
+    } else {
+      logger.error('Stream analysis error', {
+        route: '/api/analyze/stream',
+        stockCode,
+        err: error,
+      });
+      sse.trySend({ phase: 'error', message: (error as Error).message || '分析过程出错' });
+    }
   } finally {
-    res.end();
+    if (!res.writableEnded) res.end();
   }
 });
 

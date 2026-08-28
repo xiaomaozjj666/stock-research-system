@@ -44,7 +44,7 @@ const HIGH_PE_THRESHOLD = 60;
 function hotMoneyExpertRule(
   _financial: FinancialData,
   valuation: ValuationData,
-  info: StockInfo,
+  _info: StockInfo,
 ): ExpertOpinion {
   const arguments_: ExpertOpinion['arguments'] = [];
   const keyPoints: string[] = [];

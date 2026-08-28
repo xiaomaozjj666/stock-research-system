@@ -34,6 +34,27 @@ loadEnv();
 
 export const app = express();
 
+// === 信任代理：反代（nginx/负载均衡）后必须配置，否则 req.ip 恒为代理 IP ===
+// 所有客户端共享限流配额（一人打满全员 429），express-rate-limit 检测到
+// X-Forwarded-For 而 trust proxy 未配置时还会抛验证错误。
+// TRUST_PROXY 取值：预设名（loopback/linklocal/uniquelocal）、跳数（正整数）、
+// CIDR 列表（逗号分隔）或 true/false；直连部署不设置即可（默认不信任）。
+const trustProxyRaw = process.env.TRUST_PROXY?.trim();
+if (trustProxyRaw) {
+  const asNumber = Number(trustProxyRaw);
+  const trustProxy =
+    trustProxyRaw === 'true' || trustProxyRaw === 'false'
+      ? trustProxyRaw === 'true'
+      : Number.isInteger(asNumber) && asNumber > 0
+        ? asNumber
+        : trustProxyRaw
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+  app.set('trust proxy', trustProxy);
+  logger.info('[env] trust proxy 已配置', { trustProxy });
+}
+
 // === CORS 配置：生产环境限制来源，开发环境允许所有 ===
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())

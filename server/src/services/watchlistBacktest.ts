@@ -1,5 +1,5 @@
 import { fetchOHLCVData } from '../quant/dataProvider.js';
-import { extractNewsSignal } from '../quant/newsSignal.js';
+import { earliestNewsDate, extractNewsSignal } from '../quant/newsSignal.js';
 import { generateStrategyList } from './strategyListEngine.js';
 import { loadStockMaster } from './stockMaster.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
@@ -89,7 +89,9 @@ async function processCode(
     const strategyList = await generateStrategyList(
       code,
       ohlcv,
-      newsSignal?.hasNews ? { polarity: newsSignal.polarity } : null,
+      newsSignal?.hasNews
+        ? { polarity: newsSignal.polarity, since: earliestNewsDate(newsSignal.items) }
+        : null,
     );
 
     const name = await resolveName(code);

@@ -40,9 +40,15 @@ export interface ToolDeps {
   };
   fetchOHLCVData?: (code: string, start: string, end: string) => Promise<unknown[]>;
   /** 提取新闻情绪信号（受控评估用：实验组叠加 newsOverlay） */
-  extractNewsSignal?: (
-    code: string,
-  ) => Promise<{ signal: { polarity: number; hasNews: boolean }; source: string }>;
+  extractNewsSignal?: (code: string) => Promise<{
+    signal: {
+      polarity: number;
+      hasNews: boolean;
+      /** 带发布日期的原始新闻：用于计算 newsOverlay.since（防前视偏差） */
+      items?: Array<{ publishedAt?: string }>;
+    };
+    source: string;
+  }>;
 }
 
 function truncate(s: string, n = 4000): string {
@@ -210,7 +216,16 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
         try {
           const ns = await deps.extractNewsSignal(code);
           if (ns.signal.hasNews) {
-            expCfg = { ...expCfg, newsOverlay: { polarity: ns.signal.polarity } };
+            // since=新闻最早发布日：叠加仅作用于该日之后，避免前视偏差
+            // （内联计算而不 import newsSignal 的 helper，避免 llm↔quant 循环依赖）
+            // items 缺失/为空时退化为 undefined=全程叠加，与旧调用方兼容
+            const since = Array.isArray(ns.signal.items)
+              ? ns.signal.items
+                  .map((n) => (typeof n.publishedAt === 'string' ? n.publishedAt.slice(0, 10) : ''))
+                  .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+                  .sort()[0]
+              : undefined;
+            expCfg = { ...expCfg, newsOverlay: { polarity: ns.signal.polarity, since } };
           }
         } catch {
           // 新闻抓取失败：实验组退化为基线，评估器会判 inconclusive/tie

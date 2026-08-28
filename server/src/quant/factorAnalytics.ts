@@ -154,7 +154,14 @@ export function selectOptimalFactors(
   let kept = scored.filter((s) => s.keep);
   if (kept.length === 0) kept = scored; // 回退等权
 
-  const totalEff = kept.reduce((s, f) => s + f.effective, 0) || kept.length;
+  const totalEff = kept.reduce((s, f) => s + f.effective, 0);
+  // 全部保留因子有效性为 0 时（如 IC 序列均值恰为 0），显式回退等权；
+  // 否则 0/totalEff 会让 Σweight=0，违反「归一化 Σ=1」契约并使下游 compositeZ 恒为 0
+  if (totalEff <= 0) {
+    return kept
+      .map((f) => ({ name: f.name, ic: f.ic, ir: f.ir, weight: 1 / kept.length }))
+      .sort((a, b) => b.weight - a.weight);
+  }
   return kept
     .map((f) => ({
       name: f.name,
@@ -251,23 +258,28 @@ export function validateFactorModel(
 
   const names = Array.from(new Set(panel.flatMap((row) => Object.keys(row.factors))));
   const forward = panel.map((row) => row.forwardReturn);
-  const fwdStd = Math.sqrt(
-    forward.reduce(
-      (s, v) => s + (v - forward.reduce((a, b) => a + b, 0) / forward.length) ** 2,
-      0,
-    ) / forward.length,
-  );
+  const fwdMean = forward.reduce((a, b) => a + b, 0) / forward.length;
+  const fwdStd = Math.sqrt(forward.reduce((s, v) => s + (v - fwdMean) ** 2, 0) / forward.length);
 
   // 每日截面分组（qlib calc_ic 口径）：仅当面板每行都有 date 时启用
   const hasDates = panel.every((row) => typeof row.date === 'string' && row.date.length > 0);
-  const dates = hasDates ? Array.from(new Set(panel.map((row) => row.date))) : null;
+  // 单遍构建 Map<date, rows[]>：避免 dates.map(d => panel.filter(...)) 的 O(D×N) 重复扫描
+  const byDate = new Map<string, FactorPanelRow[]>();
+  if (hasDates) {
+    for (const row of panel) {
+      const list = byDate.get(row.date as string);
+      if (list) list.push(row);
+      else byDate.set(row.date as string, [row]);
+    }
+  }
+  const dates = hasDates ? Array.from(byDate.keys()) : null;
 
   const candidates: FactorCandidate[] = names.map((name) => {
     if (dates) {
       // 每日截面 Spearman IC 序列：该日组内样本的因子值 vs 未来收益的秩相关
       const icSeries = dates
         .map((d) => {
-          const dayRows = panel.filter((row) => row.date === d);
+          const dayRows = byDate.get(d) as FactorPanelRow[];
           if (dayRows.length < 2) return null;
           return spearmanRankIC(
             dayRows.map((row) => row.factors[name] ?? 0),
@@ -292,18 +304,22 @@ export function validateFactorModel(
   const weightMap: Record<string, number> = {};
   selected.forEach((s) => (weightMap[s.name] = s.weight));
 
-  // 逐行预测：用面板截面 z 合成组合 z
+  // 逐行预测：每个因子先跨面板行（截面）标准化，再按权重合成组合 z。
+  // 注意：此前把「同一行内不同因子的值」做 z 标准化——不同量纲/含义的因子互相比
+  // 在统计上无意义，会使 directionalAccuracy / RMSE 完全失真。
+  const zByRowByFactor: Record<string, number[]> = {};
+  for (const name of names) {
+    zByRowByFactor[name] = crossSectionalZScore(panel.map((row) => row.factors[name] ?? 0));
+  }
   let correct = 0;
   const sqErr: number[] = [];
-  for (const row of panel) {
-    const factorVals = names.map((n) => row.factors[n] ?? 0);
-    const zs = crossSectionalZScore(factorVals);
+  for (let r = 0; r < panel.length; r++) {
     const zByFactor: Record<string, number> = {};
-    names.forEach((n, i) => (zByFactor[n] = zs[i]));
+    for (const name of names) zByFactor[name] = zByRowByFactor[name][r];
     const cz = compositeZ(zByFactor, weightMap);
     const predicted = cz * (fwdStd || 1);
-    if (Math.sign(predicted) === Math.sign(row.forwardReturn) && predicted !== 0) correct++;
-    sqErr.push((predicted - row.forwardReturn) ** 2);
+    if (Math.sign(predicted) === Math.sign(panel[r].forwardReturn) && predicted !== 0) correct++;
+    sqErr.push((predicted - panel[r].forwardReturn) ** 2);
   }
 
   return {

@@ -5,6 +5,7 @@ import { Router } from 'express';
 import { chatLimiter, circuitBreakerGuard } from '../middleware.js';
 import { chatAgent } from '../services/chatAgent.js';
 import { clearHistory } from '../services/chatMemory.js';
+import { createSseChannel } from '../utils/sse.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -45,19 +46,8 @@ router.get('/api/chat/stream', chatLimiter, circuitBreakerGuard, async (req, res
     return res.status(400).json({ error: '请提供对话内容' });
   }
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders?.();
-
-  const send = (data: unknown) => {
-    try {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    } catch {
-      /* 已断开 */
-    }
-  };
+  // 断开感知：客户端关闭页面后，下一次 emit 抛错使对话在阶段边界提前中止
+  const sse = createSseChannel(req, res);
 
   try {
     await chatAgent.runStream(
@@ -65,12 +55,17 @@ router.get('/api/chat/stream', chatLimiter, circuitBreakerGuard, async (req, res
         message,
         sessionId: typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined,
       },
-      (event) => send(event),
+      (event) => sse.send(event),
     );
   } catch (error) {
-    send({ phase: 'error', message: (error as Error).message || '对话处理失败' });
+    if (sse.isClosed()) {
+      logger.info('SSE 客户端已断开，对话提前中止', { route: '/api/chat/stream' });
+    } else {
+      logger.error('Chat stream error', { route: '/api/chat/stream', err: error });
+      sse.trySend({ phase: 'error', message: (error as Error).message || '对话处理失败' });
+    }
   } finally {
-    res.end();
+    if (!res.writableEnded) res.end();
   }
 });
 

@@ -22,7 +22,8 @@ export interface CostModel {
   slippage: number;
   /**
    * 二次方市场冲击系数（qlib Exchange `impact_cost`，推荐 0.1）：
-   * 冲击成本 = impactCost × (成交额 / 当日成交量)²——单笔成交占当日成交比例越大，冲击越显著；
+   * 冲击金额 = impactCost × (成交股数/当日成交量)² × 成交额——无量纲参与率越高冲击越大，
+   * 且金额有上界 impactCost × 成交额；
    * 0 / 缺省 = 不模拟市场冲击。
    */
   impactCost?: number;
@@ -57,13 +58,23 @@ export function makeCostModel(overrides: Partial<CostModel>): CostModel {
 }
 
 /**
- * 二次方市场冲击成本（qlib Exchange：`adj_cost_ratio = impact_cost × (trade_val/total_vol)²`）：
- * 冲击成本 = impactCost × (成交额 / 当日成交量)²；系数缺省/≤0 或成交量无效时返回 0。
+ * 二次方市场冲击成本（qlib Exchange impact_cost 语义，按无量纲参与率计算）：
+ * 冲击金额 = impactCost × (tradeShares / volumeShares)² × tradeVal。
+ * 参与率为「股/股」同单位比值（qlib 口径），参与率 100% 时冲击封顶 impactCost × 成交额。
+ * 注意：旧公式 impactCost × (成交额/成交量)² 混用「元/手」量纲——既不是比例也不是金额，
+ * 低流动性个股（如 100 万成交额 vs 1000 手成交量）会凭空算出 10 万元冲击吃掉 10% 本金。
+ * 系数缺省/≤0 或任一输入无效时返回 0。
  */
-export function marketImpactCost(model: CostModel, tradeVal: number, volume: number): number {
+export function marketImpactCost(
+  model: CostModel,
+  tradeVal: number,
+  volumeShares: number,
+  tradeShares: number,
+): number {
   const k = model.impactCost ?? 0;
-  if (k <= 0 || !(volume > 0) || tradeVal <= 0) return 0;
-  return k * Math.pow(tradeVal / volume, 2);
+  if (k <= 0 || !(volumeShares > 0) || tradeVal <= 0 || !(tradeShares > 0)) return 0;
+  const participation = Math.min(1, tradeShares / volumeShares);
+  return k * participation * participation * tradeVal;
 }
 
 /** 买入成本：总支出 = 成交额 + 费用（费用 = max(成交额×openRate, minCost)） */

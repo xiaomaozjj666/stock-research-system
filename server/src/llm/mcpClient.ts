@@ -74,6 +74,8 @@ interface SdkLike {
 const JSON_RPC_VERSION = '2.0';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MCP_PROTOCOL_VERSION = '2024-11-05';
+/** SSE 初始连接超时：对端丢包（防火墙 DROP）时 fetch 永久 pending，需主动超时 */
+const SSE_CONNECT_TIMEOUT_MS = 10_000;
 
 /**
  * 尝试动态加载 @modelcontextprotocol/sdk。
@@ -221,11 +223,21 @@ export class MCPClient {
     this.child = child;
     child.stdout?.setEncoding('utf-8');
     child.stdout?.on('data', (chunk: string) => this.onStdoutData(chunk));
-    child.on('error', (err) => this.failAll(err));
+    child.on('error', (err) => {
+      this.initialized = false;
+      this.failAll(err);
+    });
     child.on('exit', (code) => {
-      if (code !== null && code !== 0) {
-        this.failAll(new Error(`MCP 子进程退出，code=${code}`));
-      }
+      // 不论退出码都视为断连：pending 请求立即失败（而非等满 30s 超时），
+      // 后续 callTool/listTools 走"未连接"降级路径
+      this.initialized = false;
+      this.failAll(new Error(`MCP 子进程退出，code=${code}`));
+    });
+    // 子进程退出后向已关闭的管道写入会异步抛 EPIPE 事件；无监听器会变成
+    // uncaughtException 崩掉整个进程，故必须挂 error 处理器走降级
+    child.stdin?.on('error', (err) => {
+      this.initialized = false;
+      this.failAll(err);
     });
   }
 
@@ -235,23 +247,39 @@ export class MCPClient {
     this.endpointPromise = new Promise<void>((resolve) => {
       this.endpointResolve = resolve;
     });
+    // 连接超时：对端丢包不拒绝连接（防火墙 DROP 是常态）时 fetch 永久 pending，
+    // 会把上层 connectAll / 分析管线整体挂死
     const resp = await fetch(cfg.url, {
       method: 'GET',
       headers: { Accept: 'text/event-stream', ...(cfg.headers ?? {}) },
-      signal: this.sseController.signal,
+      signal: AbortSignal.any([
+        this.sseController.signal,
+        AbortSignal.timeout(SSE_CONNECT_TIMEOUT_MS),
+      ]),
     });
     if (!resp.ok || !resp.body) {
       throw new Error(`SSE 连接失败: HTTP ${resp.status}`);
     }
     // 后台读取 SSE 流（不 await，让 endpoint 事件能触发 resolve）
     this.readSseStream(resp.body).catch((err) => this.failAll(err as Error));
-    // 等待服务端推送 endpoint 事件，带超时兜底
-    await Promise.race([
-      this.endpointPromise,
-      new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('SSE 等待 endpoint 超时')), DEFAULT_TIMEOUT_MS),
-      ),
-    ]);
+    // 等待服务端推送 endpoint 事件，带超时兜底；超时后 abort 连接，避免僵尸 SSE 悬挂
+    let endpointTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.endpointPromise,
+        new Promise<void>((_, reject) => {
+          endpointTimer = setTimeout(
+            () => reject(new Error('SSE 等待 endpoint 超时')),
+            DEFAULT_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } catch (err) {
+      this.sseController.abort();
+      throw err;
+    } finally {
+      if (endpointTimer) clearTimeout(endpointTimer);
+    }
   }
 
   private async readSseStream(body: ReadableStream<Uint8Array>): Promise<void> {
@@ -266,17 +294,19 @@ export class MCPClient {
   }
 
   private processSseBuffer(): void {
-    let idx = this.sseBuffer.indexOf('\n\n');
-    while (idx !== -1) {
-      const raw = this.sseBuffer.slice(0, idx);
-      this.sseBuffer = this.sseBuffer.slice(idx + 2);
+    // 事件边界按 SSE 规范支持 CRLF / LF / CR 三种换行（严格 CRLF 服务端兼容）
+    const boundary = /\r\n\r\n|\n\n|\r\r/;
+    for (;;) {
+      const match = boundary.exec(this.sseBuffer);
+      if (!match) break;
+      const raw = this.sseBuffer.slice(0, match.index);
+      this.sseBuffer = this.sseBuffer.slice(match.index + match[0].length);
       this.handleSseEvent(raw);
-      idx = this.sseBuffer.indexOf('\n\n');
     }
   }
 
   private handleSseEvent(raw: string): void {
-    const lines = raw.split('\n');
+    const lines = raw.split(/\r\n|\n|\r/);
     let event = 'message';
     const dataParts: string[] = [];
     for (const line of lines) {
@@ -556,7 +586,10 @@ export class MCPRegistry {
             try {
               await client.connect();
               const tools = await client.listTools();
-              for (const t of tools) this.toolIndex.set(t.name, client);
+              // 回填前校验实例仍在注册表：并发 unregister 时避免把已断连实例填回索引
+              if (this.clients.get(client.name) === client) {
+                for (const t of tools) this.toolIndex.set(t.name, client);
+              }
             } catch {
               // 单个 server 连接失败不影响其它
             }

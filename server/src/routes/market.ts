@@ -15,6 +15,7 @@ router.get('/api/stocks', async (_req, res) => {
     const stocks = await getSupportedStocks();
     res.json(stocks);
   } catch (error) {
+    logger.warn('获取股票列表失败，返回兜底数据', { err: error });
     res.json([{ code: '600519', name: '贵州茅台', industry: '白酒' }]);
   }
 });
@@ -29,6 +30,7 @@ router.get('/api/stocks/search', searchLimiter, async (req, res) => {
     const results = await searchStocks(keyword);
     res.json(results);
   } catch (error) {
+    logger.warn('股票搜索失败，返回空结果', { keyword: req.query.keyword, err: error });
     res.json([]);
   }
 });

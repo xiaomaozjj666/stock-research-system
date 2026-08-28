@@ -50,9 +50,18 @@ export function dataEngineer(data: OHLCVData[]): DataQualityReport {
   const existingDateSet = new Set(dates);
   const missingDates = findMissingTradingDays(start, end, existingDateSet);
   if (missingDates.length > 0) {
-    score -= missingDates.length * 2;
-    issues.push(`发现 ${missingDates.length} 个缺失交易日`);
-    suggestions.push('补充缺失交易日数据或确认停牌信息');
+    // 法定节假日容差：A 股每年约 12-14 个工作日休市（纯函数拿不到真实交易日历），
+    // 按跨度每月 ~1 个工作日给容差、仅对超出部分扣分——否则 2 年回测约 26 个节假日
+    // 工作日会扣 52 分，把完美真实数据的质量分系统性打崩（模拟数据反而得满分）
+    const spanDays =
+      (new Date(end + 'T00:00:00').getTime() - new Date(start + 'T00:00:00').getTime()) / 86400000;
+    const holidayTolerance = Math.floor(Math.max(0, spanDays) / 30);
+    const excessMissing = missingDates.length - holidayTolerance;
+    if (excessMissing > 0) {
+      score -= excessMissing * 2;
+      issues.push(`发现 ${missingDates.length} 个缺失交易日`);
+      suggestions.push('补充缺失交易日数据或确认停牌信息');
+    }
   }
 
   // --- 4. 异常值检查 ---

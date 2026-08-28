@@ -7,13 +7,7 @@
  *   - 目标价区间 = targetPriceRange（当前价 × (1+E[r]) × (1±band)）。
  * 不再使用原先的 0.4/0.3/0.3 魔法权重与 0.9/1.2 等随意目标价倍数。
  */
-import type {
-  ExpertOpinion,
-  FinancialData,
-  ValuationData,
-  StockInfo,
-  NewsSignal,
-} from '../types.js';
+import type { ExpertOpinion, FinancialData, ValuationData, StockInfo } from '../types.js';
 import {
   expectedForwardReturnFromData,
   scenarioProbabilities,

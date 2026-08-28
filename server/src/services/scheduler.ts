@@ -61,6 +61,22 @@ export function startAutonomousLoop(opts: AutonomousOptions): AutonomousControll
   /** 连续失败次数（成功后清零），用于退避与自动停止（H-02） */
   let consecutiveErrors = 0;
 
+  // 收尾调度（不在 finally 中做控制流：finally 里的 return 会吞掉 try/catch 的异常路径）
+  const scheduleNext = (): void => {
+    if (!state.running) return;
+    // 连续失败达到上限：自动停止循环，避免数据源持续不可用时无限重试（H-02）
+    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+      state.running = false;
+      timer = null;
+      return;
+    }
+    // 指数退避：第 2 次连续失败起间隔翻倍，封顶 MAX_BACKOFF_MULTIPLIER 倍；
+    // 首次失败仍按原间隔重试，成功后清零恢复原节奏
+    const backoffMultiplier =
+      consecutiveErrors <= 1 ? 1 : Math.min(2 ** (consecutiveErrors - 1), MAX_BACKOFF_MULTIPLIER);
+    timer = setTimeout(tick, intervalMs * backoffMultiplier);
+  };
+
   const tick = async (): Promise<void> => {
     // 轮次先自增：失败轮次也应计入，便于观测「跑了几轮 / 错了几轮」
     state.runCount += 1;
@@ -79,20 +95,8 @@ export function startAutonomousLoop(opts: AutonomousOptions): AutonomousControll
       state.errorCount += 1;
       consecutiveErrors += 1;
       state.lastError = err instanceof Error ? err.message : String(err);
-    } finally {
-      if (!state.running) return;
-      // 连续失败达到上限：自动停止循环，避免数据源持续不可用时无限重试（H-02）
-      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-        state.running = false;
-        timer = null;
-        return;
-      }
-      // 指数退避：第 2 次连续失败起间隔翻倍，封顶 MAX_BACKOFF_MULTIPLIER 倍；
-      // 首次失败仍按原间隔重试，成功后清零恢复原节奏
-      const backoffMultiplier =
-        consecutiveErrors <= 1 ? 1 : Math.min(2 ** (consecutiveErrors - 1), MAX_BACKOFF_MULTIPLIER);
-      timer = setTimeout(tick, intervalMs * backoffMultiplier);
     }
+    scheduleNext();
   };
 
   // 首次延迟一个间隔启动（避免与请求同步阻塞）；之后按间隔循环

@@ -130,11 +130,28 @@ export function cleanDisplayName(name: string, code?: string): string {
   return name.replace(/^[CN](?=[一-龥])/, '');
 }
 
-export async function getData(stockCode: string): Promise<StockDataSet> {
+// === single-flight：同一股票的并发未命中只发起一次外部抓取 ===
+// /api/compare 天然 2-3 只并发、SSE+POST 双端可能同时请求同一代码，
+// 无 single-flight 时每个请求各自打 3 个外部接口并对上游造成放大压力。
+const inFlight = new Map<string, Promise<StockDataSet>>();
+
+export function getData(stockCode: string): Promise<StockDataSet> {
   // 0. 内存 LRU 缓存（最热路径，避免文件 I/O）
   const memHit = memCacheGet(stockCode);
-  if (memHit) return memHit;
+  if (memHit) return Promise.resolve(memHit);
 
+  // 并发去重：同代码已有在途抓取时复用同一个 Promise
+  const pending = inFlight.get(stockCode);
+  if (pending) return pending;
+
+  const promise = fetchDataAndCache(stockCode).finally(() => {
+    inFlight.delete(stockCode);
+  });
+  inFlight.set(stockCode, promise);
+  return promise;
+}
+
+async function fetchDataAndCache(stockCode: string): Promise<StockDataSet> {
   // 1. 检查文件缓存（异步文件 I/O）
   const cacheFile = path.join(CACHE_DIR, `${stockCode}.json`);
   try {
@@ -212,9 +229,21 @@ export async function getData(stockCode: string): Promise<StockDataSet> {
   }
 }
 
+// /api/stocks 列表的内存缓存：列表内容只在新增缓存文件时变化，
+// 无需每次请求都全量 readdir + 读文件 + JSON.parse（最多 2000 个）。
+let stocksListCache: {
+  data: { code: string; name: string; industry: string }[];
+  at: number;
+} | null = null;
+const STOCKS_LIST_TTL_MS = 60 * 1000;
+
 export async function getSupportedStocks(): Promise<
   { code: string; name: string; industry: string }[]
 > {
+  if (stocksListCache && Date.now() - stocksListCache.at < STOCKS_LIST_TTL_MS) {
+    return stocksListCache.data;
+  }
+
   const stocks: { code: string; name: string; industry: string }[] = [];
 
   // 从缓存目录读取已查询过的股票（异步）
@@ -246,6 +275,7 @@ export async function getSupportedStocks(): Promise<
     stocks.unshift({ code: '600519', name: '贵州茅台', industry: '白酒' });
   }
 
+  stocksListCache = { data: stocks, at: Date.now() };
   return stocks;
 }
 

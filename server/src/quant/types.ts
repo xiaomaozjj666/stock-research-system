@@ -26,8 +26,14 @@ export interface StrategyConfig {
    * - 未设置：按 commission/slippage 构造对称模型（历史行为）。
    */
   costModel?: 'a_share';
-  /** 最新消息情绪叠加层（可选）：polarity ∈ [−1,1]，用于按新闻姿态缩放仓位 */
-  newsOverlay?: { polarity: number };
+  /**
+   * 最新消息情绪叠加层（可选）：
+   * - polarity ∈ [−1,1]，按新闻姿态缩放建仓仓位；
+   * - since（YYYY-MM-DD，可选但强烈建议）：姿态仅应用于该日期及之后的 bar。
+   *   不传时叠加到整段历史——用"现在才知道的消息"改写历史交易构成前视偏差，
+   *   compareBacktests 对这种回测做显著性检验会得出伪 alpha 结论。
+   */
+  newsOverlay?: { polarity: number; since?: string };
 }
 
 // 交易记录
@@ -57,6 +63,8 @@ export interface BacktestResult {
   newsAware?: boolean;
   /** 新闻姿态：posture = clamp(0.5 + 0.5·polarity, 0, 1)，用于仓位缩放 */
   newsPosture?: number;
+  /** 情绪叠加生效起始日期（YYYY-MM-DD）：仅该日期及之后的建仓按姿态缩放 */
+  newsSince?: string;
 }
 
 // 数据质量报告

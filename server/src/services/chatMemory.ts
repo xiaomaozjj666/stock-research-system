@@ -15,6 +15,14 @@ export interface ChatTurn {
 const DEFAULT_HISTORY_FILE = path.join(import.meta.dirname, '..', 'data', 'chatHistory.json');
 /** 每个 session 保留的最大轮次数（1 轮 = user+assistant） */
 export const MAX_TURNS = 40;
+/** 最多保留的 session 数：超出时淘汰最旧的 session，防止文件被无限刷大 */
+export const MAX_SESSIONS = 200;
+/** sessionId 白名单：客户端生成格式为 `sess-` + base36；拒绝 `__proto__` 等原型链键与超长串 */
+const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+function isValidSessionId(sessionId: string): boolean {
+  return SESSION_ID_RE.test(sessionId);
+}
 
 type Store = Record<string, ChatTurn[]>;
 
@@ -51,12 +59,15 @@ function writeStore(store: Store): void {
 }
 
 export function loadHistory(sessionId: string): ChatTurn[] {
+  if (!isValidSessionId(sessionId)) return [];
   const store = readStore();
   return store[sessionId] ?? [];
 }
 
 export function appendTurn(sessionId: string, turn: ChatTurn): void {
+  if (!isValidSessionId(sessionId)) return; // 非法键（含 __proto__ 等原型链键）不落盘
   const store = readStore();
+  const isNewSession = !(sessionId in store);
   const list = store[sessionId] ?? [];
   list.push(turn);
   // 截断：保留最近 MAX_TURNS*2 条（user+assistant 成对）
@@ -64,6 +75,13 @@ export function appendTurn(sessionId: string, turn: ChatTurn): void {
     store[sessionId] = list.slice(list.length - MAX_TURNS * 2);
   } else {
     store[sessionId] = list;
+  }
+  // session 数上限：新增 session 超出配额时，按写入顺序淘汰最旧的 session
+  if (isNewSession) {
+    const keys = Object.keys(store);
+    for (const key of keys.slice(0, Math.max(0, keys.length - MAX_SESSIONS))) {
+      delete store[key];
+    }
   }
   writeStore(store);
 }

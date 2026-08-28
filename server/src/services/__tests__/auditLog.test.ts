@@ -41,13 +41,11 @@ function createLogger(
 
 describe('AuditLogger — 审计条目创建和查询', () => {
   let logger: AuditLogger;
-  let tick: (ms: number) => void;
   let clock: () => number;
 
   beforeEach(() => {
     const r = createLogger();
     logger = r.logger;
-    tick = r.tick;
     clock = r.clock;
   });
 

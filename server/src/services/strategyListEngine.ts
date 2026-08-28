@@ -28,7 +28,7 @@ export interface StrategyRecommendation {
 export async function generateStrategyList(
   stockCode: string,
   ohlcvData: OHLCVData[],
-  newsSignal?: { polarity: number } | null,
+  newsSignal?: { polarity: number; since?: string } | null,
 ): Promise<StrategyRecommendation[]> {
   const strategies: StrategyRecommendation[] = [];
 
@@ -79,7 +79,7 @@ export async function generateStrategyList(
       if (newsSignal && isFinite(newsSignal.polarity)) {
         const awareConfig: StrategyConfig = {
           ...strategyConfig,
-          newsOverlay: { polarity: newsSignal.polarity },
+          newsOverlay: { polarity: newsSignal.polarity, since: newsSignal.since },
         };
         const aware = runBacktest(ohlcvData, awareConfig);
         rec.newsAware = {

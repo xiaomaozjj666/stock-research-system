@@ -303,6 +303,51 @@ export class AuditLogger {
 /** 审计日志默认落盘路径（JSON 行追加） */
 const DEFAULT_AUDIT_LOG_FILE = path.join(import.meta.dirname, '..', 'data', 'audit.log');
 
+/** 单文件大小上限（字节，默认 5MB）：超过即轮转，防止 audit.log 无限增长撑爆磁盘 */
+const AUDIT_LOG_MAX_BYTES = Number(process.env.AUDIT_LOG_MAX_BYTES) || 5 * 1024 * 1024;
+/** 轮转保留份数：audit.log.1 ~ audit.log.N，更早的删除 */
+const AUDIT_LOG_KEEP = Math.max(1, Number(process.env.AUDIT_LOG_ROTATE_KEEP) || 3);
+/** metadata 中字符串字段落盘截断长度：完整 prompt/response 属用户对话明文，不应无界留存 */
+const AUDIT_METADATA_STR_MAX = 800;
+
+/** 当前文件大小缓存（字节）；null = 需要重新 stat */
+let auditFileSize: number | null = null;
+
+/** 递归截断 metadata 中的字符串字段（保留结构与数字） */
+function truncateStrings(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') {
+    return value.length > AUDIT_METADATA_STR_MAX
+      ? `${value.slice(0, AUDIT_METADATA_STR_MAX)}…[已截断，原文 ${value.length} 字符]`
+      : value;
+  }
+  if (Array.isArray(value) && depth < 4) {
+    return value.map((v) => truncateStrings(v, depth + 1));
+  }
+  if (value !== null && typeof value === 'object' && depth < 4) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = truncateStrings(v, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** 轮转：audit.log.N → audit.log.N+1，audit.log → audit.log.1（Windows 下 rename 不覆盖，先删目标） */
+function rotateAuditFile(file: string): void {
+  for (let i = AUDIT_LOG_KEEP - 1; i >= 1; i--) {
+    const src = `${file}.${i}`;
+    if (fs.existsSync(src)) {
+      fs.rmSync(`${file}.${i + 1}`, { force: true });
+      fs.renameSync(src, `${file}.${i + 1}`);
+    }
+  }
+  if (fs.existsSync(file)) {
+    fs.rmSync(`${file}.1`, { force: true });
+    fs.renameSync(file, `${file}.1`);
+  }
+}
+
 /**
  * 运行时解析落盘路径：支持 AUDIT_LOG_FILE 环境变量重定向（与 watchlist/paper 同模式）。
  * 在「每次调用时」解析，测试可在 beforeAll 设置临时路径实现进程级隔离。
@@ -318,14 +363,32 @@ export const AUDIT_LOG_FILE = DEFAULT_AUDIT_LOG_FILE;
 
 /**
  * 默认落盘持久化钩子：把每条审计条目追加为一行 JSON。
+ * - metadata 字符串截断（脱敏：完整 prompt/response 不明文无界落盘）；
+ * - 按大小轮转（audit.log.1/.2/.3），防止单文件无限增长。
  * IO 失败静默降级（审计主流程不受影响，条目仍保留在内存中）。
  */
 export function filePersistenceHook(entry: AuditEntry): void {
   try {
     const file = resolveAuditLogFile();
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.appendFileSync(file, JSON.stringify(entry) + '\n', 'utf-8');
+    const line =
+      JSON.stringify({
+        ...entry,
+        metadata: entry.metadata ? truncateStrings(entry.metadata) : entry.metadata,
+      }) + '\n';
+
+    if (auditFileSize === null) {
+      auditFileSize = fs.existsSync(file) ? fs.statSync(file).size : 0;
+    }
+    if (auditFileSize + Buffer.byteLength(line, 'utf-8') > AUDIT_LOG_MAX_BYTES) {
+      rotateAuditFile(file);
+      auditFileSize = 0;
+    }
+    fs.appendFileSync(file, line, 'utf-8');
+    auditFileSize += Buffer.byteLength(line, 'utf-8');
   } catch {
+    // 大小状态不可信（可能轮转中途失败），下次重新 stat
+    auditFileSize = null;
     // 磁盘写入失败：静默降级，审计日志仍保留在内存中
   }
 }

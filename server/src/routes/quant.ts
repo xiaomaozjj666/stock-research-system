@@ -8,6 +8,7 @@ import type { StrategyConfig } from '../quant/types.js';
 import {
   extractNewsSignal,
   aggregateNewsSentiment,
+  earliestNewsDate,
   type NewsItem,
   type NewsSignal,
 } from '../quant/newsSignal.js';
@@ -72,7 +73,8 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
     if (newsSignal?.hasNews) {
       backtestResult = runBacktest(ohlcvData, {
         ...strategyConfig,
-        newsOverlay: { polarity: newsSignal.polarity },
+        // since=新闻最早发布日：姿态仅作用于该日之后的建仓，避免前视偏差
+        newsOverlay: { polarity: newsSignal.polarity, since: earliestNewsDate(newsSignal.items) },
       });
     }
 
@@ -109,6 +111,11 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
     }
     if (audit.overfittingRisk === 'high') {
       limitations.push('存在过拟合风险，策略可能在未来表现不佳');
+    }
+    if (backtestResult.newsAware) {
+      limitations.push(
+        `新闻情绪叠加仅作用于 ${backtestResult.newsSince ?? '新闻发布日'} 之后的区间，此前区间与基线一致；多条新闻按聚合极性整体应用，属情景假设而非严格时序回测`,
+      );
     }
     limitations.push('历史回测不代表未来收益');
 
@@ -161,12 +168,19 @@ router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, asy
     // 实验组：叠加新闻情绪信号
     let expCfg: StrategyConfig = { ...baseCfg };
     try {
-      const ns = await extractNewsSignal(stockCode);
+      // 与 /api/quant/analyze 一致：限时 5s，防止新闻抓取（逐端点 8s + LLM 评分 30s）挂住限流窗口
+      const ns = await withTimeout(extractNewsSignal(stockCode), 5000);
       if (ns.signal.hasNews) {
-        expCfg = { ...expCfg, newsOverlay: { polarity: ns.signal.polarity } };
+        expCfg = {
+          ...expCfg,
+          newsOverlay: {
+            polarity: ns.signal.polarity,
+            since: earliestNewsDate(ns.signal.items),
+          },
+        };
       }
     } catch {
-      // 新闻抓取失败：实验组退化为基线，评估器会判 inconclusive/tie
+      // 新闻抓取失败/超时：实验组退化为基线，评估器会判 inconclusive/tie
     }
     const experiment = runBacktest(ohlcv, expCfg);
 

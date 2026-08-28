@@ -20,7 +20,7 @@ import { generateStrategyList } from './strategyListEngine.js';
 import { safeDiv } from './safeDiv.js';
 import { calculateScores } from './scoreEngine.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
-import { extractNewsSignal, type NewsSignal } from '../quant/newsSignal.js';
+import { extractNewsSignal, earliestNewsDate, type NewsSignal } from '../quant/newsSignal.js';
 import { auditDataAccess, auditLLMCall, auditTradeSignal } from './auditLog.js';
 import { buildFinancialGraph } from '../llm/knowledgeGraph.js';
 import { calculateSectorRotation, type SectorData } from '../quant/sectorRotation.js';
@@ -449,7 +449,9 @@ export async function runAnalysis(
       const rawStrategies = await generateStrategyList(
         info.code,
         ohlcvData,
-        newsSignal?.hasNews ? { polarity: newsSignal.polarity } : null,
+        newsSignal?.hasNews
+          ? { polarity: newsSignal.polarity, since: earliestNewsDate(newsSignal.items) }
+          : null,
       );
       strategyList = rawStrategies.map((s) => ({
         strategyType: s.strategyType,
@@ -575,13 +577,17 @@ export async function runAnalysis(
         url: process.env.MCP_SERVER_URL,
       });
       await registry.connectAll();
-      const tools = await registry.listAllTools();
-      mcpContext = {
-        serverUrl: process.env.MCP_SERVER_URL,
-        toolCount: tools.length,
-        tools: tools.map((t) => t.name),
-      };
-      await registry.disconnectAll();
+      try {
+        const tools = await registry.listAllTools();
+        mcpContext = {
+          serverUrl: process.env.MCP_SERVER_URL,
+          toolCount: tools.length,
+          tools: tools.map((t) => t.name),
+        };
+      } finally {
+        // listAllTools 抛错时也必须断连，避免 SSE 连接悬挂泄漏
+        await registry.disconnectAll();
+      }
     } catch (err) {
       logger.warn('MCP 增强失败，降级跳过', { stockCode: info.code, err: err as Error });
     }

@@ -179,7 +179,15 @@ describe('tool registry', () => {
           benchmark: [],
         };
       },
-      extractNewsSignal: async () => ({ signal: { polarity: 0.6, hasNews: true }, source: 'live' }),
+      extractNewsSignal: async () => ({
+        signal: {
+          polarity: 0.6,
+          hasNews: true,
+          // 带发布日期：evaluate_backtest 会取最早日期作为 newsOverlay.since（防前视偏差）
+          items: [{ id: 'n1', title: '利好', publishedAt: '2025-06-01T09:00:00Z' }],
+        },
+        source: 'live',
+      }),
     };
     const r = await executeToolCall(
       {
