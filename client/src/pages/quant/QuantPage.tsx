@@ -122,73 +122,78 @@ export default function QuantPage() {
     };
   }, []);
 
-  const handleStart = useCallback(async (config: StrategyConfig) => {
-    setLoading(true);
-    setError(null);
-    setReport(null);
-    setCurrentStage('fetch');
-    setCompletedStages([]);
-    setStageElapsed({});
-    stageStartRef.current = Date.now();
+  const handleStart = useCallback(
+    async (config: StrategyConfig) => {
+      setLoading(true);
+      setError(null);
+      setReport(null);
+      setCurrentStage('fetch');
+      setCompletedStages([]);
+      setStageElapsed({});
+      stageStartRef.current = Date.now();
 
-    // 模拟进度推进（后端是同步返回，所以用轮询式模拟）
-    let stageIdx = 0;
-    intervalRef.current = setInterval(() => {
-      if (stageIdx < STAGE_ORDER.length - 1) {
-        const doneStage = STAGE_ORDER[stageIdx];
-        const elapsed = Date.now() - stageStartRef.current;
-        setCompletedStages((prev) => [...prev, doneStage]);
-        setStageElapsed((prev) => ({ ...prev, [doneStage]: elapsed - (prev[doneStage] ?? 0) }));
-        stageIdx++;
-        setCurrentStage(STAGE_ORDER[stageIdx]);
+      // 模拟进度推进（后端是同步返回，所以用轮询式模拟）
+      let stageIdx = 0;
+      intervalRef.current = setInterval(() => {
+        if (stageIdx < STAGE_ORDER.length - 1) {
+          const doneStage = STAGE_ORDER[stageIdx];
+          const elapsed = Date.now() - stageStartRef.current;
+          setCompletedStages((prev) => [...prev, doneStage]);
+          setStageElapsed((prev) => ({ ...prev, [doneStage]: elapsed - (prev[doneStage] ?? 0) }));
+          stageIdx++;
+          setCurrentStage(STAGE_ORDER[stageIdx]);
+        }
+      }, 800);
+
+      try {
+        // 解析用户粘贴的最新消息（每行一条），优先于实时抓取
+        const trimmed = newsText.trim();
+        const newsItems: NewsItem[] | undefined = trimmed
+          ? trimmed
+              .split('\n')
+              .map((line, i) => ({
+                id: `pasted-${i}`,
+                title: line.trim(),
+                publishedAt: new Date().toISOString(),
+              }))
+              .filter((n) => n.title.length > 0)
+          : undefined;
+
+        const result = await runQuantAnalysis({
+          strategy: config,
+          useNews: useNews || !newsItems,
+          newsItems,
+        });
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+
+        // 标记所有阶段完成
+        const allElapsed: Record<string, number> = {};
+        const totalMs = Date.now() - stageStartRef.current;
+        STAGE_ORDER.forEach((s) => {
+          allElapsed[s] = Math.round((totalMs / STAGE_ORDER.length) * (0.8 + Math.random() * 0.4));
+        });
+        setCompletedStages([...STAGE_ORDER]);
+        setStageElapsed(allElapsed);
+        setCurrentStage(null);
+        setReport(result);
+      } catch {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+        setError('量化研究失败，请检查后端服务是否启动');
+        setCurrentStage(null);
+      } finally {
+        setLoading(false);
       }
-    }, 800);
-
-    try {
-      // 解析用户粘贴的最新消息（每行一条），优先于实时抓取
-      const trimmed = newsText.trim();
-      const newsItems: NewsItem[] | undefined = trimmed
-        ? trimmed
-            .split('\n')
-            .map((line, i) => ({
-              id: `pasted-${i}`,
-              title: line.trim(),
-              publishedAt: new Date().toISOString(),
-            }))
-            .filter((n) => n.title.length > 0)
-        : undefined;
-
-      const result = await runQuantAnalysis({
-        strategy: config,
-        useNews: useNews || !newsItems,
-        newsItems,
-      });
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-
-      // 标记所有阶段完成
-      const allElapsed: Record<string, number> = {};
-      const totalMs = Date.now() - stageStartRef.current;
-      STAGE_ORDER.forEach((s) => {
-        allElapsed[s] = Math.round((totalMs / STAGE_ORDER.length) * (0.8 + Math.random() * 0.4));
-      });
-      setCompletedStages([...STAGE_ORDER]);
-      setStageElapsed(allElapsed);
-      setCurrentStage(null);
-      setReport(result);
-    } catch {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      setError('量化研究失败，请检查后端服务是否启动');
-      setCurrentStage(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      // 依赖 newsText/useNews：此前依赖数组为空，闭包永远捕获首次渲染值，
+      // 用户粘贴的最新消息与"启用情绪叠加"开关被静默忽略
+    },
+    [newsText, useNews],
+  );
 
   return (
     <div className="quant-page">

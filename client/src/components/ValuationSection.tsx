@@ -1,3 +1,4 @@
+import { memo } from 'react';
 interface ValuationData {
   currentPrice?: number;
   pe?: number;
@@ -34,11 +35,7 @@ function formatCap(cap?: number) {
   return cap.toFixed(0) + '亿';
 }
 
-export default function ValuationSection({
-  data,
-  valuation_level,
-  stockName,
-}: ValuationSectionProps) {
+function ValuationSection({ data, valuation_level, stockName }: ValuationSectionProps) {
   const levelClass = getValLevelClass(valuation_level);
 
   return (
@@ -113,3 +110,6 @@ export default function ValuationSection({
     </div>
   );
 }
+
+// App 的滚动/悬停等本地状态变化频率高，memo 避免纯数据展示区块随之全量重渲染
+export default memo(ValuationSection);

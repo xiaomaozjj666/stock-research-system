@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
-import { analyzeStockStream, type AnalysisStage } from './api/client';
+import { analyzeStockStream, AnalysisCancelledError, type AnalysisStage } from './api/client';
 import type { AnalysisResult } from './types';
 import StockSelector from './components/StockSelector';
 import LoadingScreen from './components/LoadingScreen';
@@ -135,6 +135,8 @@ function App() {
   }, [analysisResult]);
   /** 在途 SSE 的取消函数 */
   const cancelRef = useRef<(() => void) | null>(null);
+  /** 分析代际号：旧分析的收尾逻辑不得清理新分析的状态 */
+  const analyzeSeqRef = useRef(0);
 
   // 滚动监听，更新导航高亮 + 滚动进度
   // 用 rAF 节流，避免高频 setState 引发重渲染；section 仅在变化时才 setState
@@ -223,6 +225,7 @@ function App() {
     // 有在途分析先取消，避免两条 SSE 竞争写同一份状态
     cancelRef.current?.();
     lastCodeRef.current = stockCode;
+    const gen = ++analyzeSeqRef.current;
     setLoading(true);
     setError(null);
     setAnalysisStage(null);
@@ -233,14 +236,20 @@ function App() {
       });
       cancelRef.current = cancel;
       const result = await done;
+      if (gen !== analyzeSeqRef.current) return; // 已被更新的分析接管
       setAnalysisResult(result);
     } catch (err: unknown) {
+      // cancel() 触发的拒绝：状态由新分析或手动取消逻辑接管，此处不覆盖
+      if (err instanceof AnalysisCancelledError) return;
+      if (gen !== analyzeSeqRef.current) return;
       const message = err instanceof Error ? err.message : '分析请求失败';
       setError(message);
     } finally {
-      cancelRef.current = null;
-      setLoading(false);
-      setAnalysisStage(null);
+      if (gen === analyzeSeqRef.current) {
+        cancelRef.current = null;
+        setLoading(false);
+        setAnalysisStage(null);
+      }
     }
   }, []);
 
@@ -338,7 +347,7 @@ function App() {
             </div>
           )}
           {stockData && !loading && (
-            <div className="report-layout">
+            <div className="report-layout" key={stockData.stock_code}>
               {/* 左侧导航锚点 */}
               <nav className="side-nav">
                 <a href="#summary" className={activeSection === 'summary' ? 'active' : ''}>

@@ -5,9 +5,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import App from './App';
 
-// mock SSE 流式分析 API（不发起真实网络请求）
+// mock SSE 流式分析 API（不发起真实网络请求）；需包含 App 引用的全部导出
 const apiMock = vi.hoisted(() => ({ analyzeStockStream: vi.fn() }));
-vi.mock('./api/client', () => ({ analyzeStockStream: apiMock.analyzeStockStream }));
+vi.mock('./api/client', () => ({
+  analyzeStockStream: apiMock.analyzeStockStream,
+  AnalysisCancelledError: class AnalysisCancelledError extends Error {
+    constructor(message = '分析已取消') {
+      super(message);
+      this.name = 'AnalysisCancelledError';
+    }
+  },
+}));
 
 // mock UI 基础设施 hooks / 组件
 vi.mock('./components/Toast', () => ({ useToast: () => ({ showToast: vi.fn() }) }));

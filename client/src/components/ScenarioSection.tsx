@@ -1,3 +1,4 @@
+import { memo } from 'react';
 interface ScenarioResult {
   name: '乐观' | '中性' | '悲观';
   probability: number;
@@ -17,7 +18,7 @@ function getScenarioClass(name: string): string {
   return 'neutral';
 }
 
-export default function ScenarioSection({ data }: Props) {
+function ScenarioSection({ data }: Props) {
   if (!data || data.length === 0) return null;
 
   return (
@@ -81,3 +82,6 @@ export default function ScenarioSection({ data }: Props) {
     </div>
   );
 }
+
+// App 的滚动/悬停等本地状态变化频率高，memo 避免纯数据展示区块随之全量重渲染
+export default memo(ScenarioSection);

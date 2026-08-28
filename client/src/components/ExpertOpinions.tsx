@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 
 interface ExpertArgument {
   text: string;
@@ -32,7 +32,7 @@ function sentimentLabel(s: string) {
   return '中性';
 }
 
-export default function ExpertOpinions({ data = [] }: ExpertOpinionsProps) {
+function ExpertOpinions({ data = [] }: ExpertOpinionsProps) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
   if (data.length === 0) return null;
@@ -70,7 +70,7 @@ export default function ExpertOpinions({ data = [] }: ExpertOpinionsProps) {
                 </div>
               ))}
             </div>
-            {exp.keyPoints.length > 0 && (
+            {(exp.keyPoints ?? []).length > 0 && (
               <div className="expert-keypoints">
                 <strong className="keypoints-label">关键要点：</strong>
                 <ul>
@@ -86,3 +86,6 @@ export default function ExpertOpinions({ data = [] }: ExpertOpinionsProps) {
     </div>
   );
 }
+
+// App 的滚动/悬停等本地状态变化频率高，memo 避免纯数据展示区块随之全量重渲染
+export default memo(ExpertOpinions);

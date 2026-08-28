@@ -1,3 +1,4 @@
+import { memo } from 'react';
 interface ExpertArgument {
   text: string;
   confidence: number;
@@ -36,7 +37,7 @@ function evidenceTagLabel(type?: string): string {
   return '';
 }
 
-export default function CapitalFlowSection({ data }: Props) {
+function CapitalFlowSection({ data }: Props) {
   if (!data) return null;
 
   return (
@@ -85,3 +86,6 @@ export default function CapitalFlowSection({ data }: Props) {
     </div>
   );
 }
+
+// App 的滚动/悬停等本地状态变化频率高，memo 避免纯数据展示区块随之全量重渲染
+export default memo(CapitalFlowSection);

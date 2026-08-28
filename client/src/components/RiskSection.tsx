@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { StockPoolItem } from '../types';
 
 interface RiskSectionProps {
@@ -19,7 +20,7 @@ const FACTOR_LABELS: Array<{
   { key: 'leverage', label: '杠杆', hint: '负债率越高暴露越高' },
 ];
 
-export default function RiskSection({ data = [], attribution }: RiskSectionProps) {
+function RiskSection({ data = [], attribution }: RiskSectionProps) {
   const hasAttribution = !!attribution?.exposures && !!attribution?.decomposition;
   if (data.length === 0 && !hasAttribution) return null;
 
@@ -75,3 +76,6 @@ export default function RiskSection({ data = [], attribution }: RiskSectionProps
     </div>
   );
 }
+
+// App 的滚动/悬停等本地状态变化频率高，memo 避免纯数据展示区块随之全量重渲染
+export default memo(RiskSection);

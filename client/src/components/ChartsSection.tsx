@@ -1,3 +1,4 @@
+import { memo } from 'react';
 // 图表渲染统一走自研轻量封装 EChart（替代 echarts-for-react@3.0.7：
 // 该版本被 npm 标记 "published in error"，生产构建下 default 互操作会得到模块对象，
 // 导致 "Element type is invalid: got object" 渲染崩溃）
@@ -47,7 +48,7 @@ const transparent = 'transparent';
 
 const chartTextStyle = { color: textSecondary };
 
-export default function ChartsSection({ data }: ChartsSectionProps) {
+function ChartsSection({ data }: ChartsSectionProps) {
   const years = data.finance_metrics?.years || [];
   const revenue = data.finance_metrics?.revenue || [];
   const netProfit = data.finance_metrics?.netProfit || [];
@@ -422,3 +423,6 @@ export default function ChartsSection({ data }: ChartsSectionProps) {
     </div>
   );
 }
+
+// App 的滚动/悬停等本地状态变化频率高，memo 避免纯数据展示区块随之全量重渲染
+export default memo(ChartsSection);
