@@ -42,13 +42,13 @@ export function generateReportMarkdown(result: AnalysisResult): string {
     push('');
   }
 
-  if (s.strengths.length > 0) {
+  if ((s.strengths ?? []).length > 0) {
     push('## 核心优势');
     s.strengths.forEach((x) => push(`- ${x}`));
     push('');
   }
 
-  if (s.expert_opinions.length > 0) {
+  if ((s.expert_opinions ?? []).length > 0) {
     push('## 专家观点');
     for (const o of s.expert_opinions) {
       const sentiment =
@@ -65,7 +65,7 @@ export function generateReportMarkdown(result: AnalysisResult): string {
     }
   }
 
-  if (s.controversy_points.length > 0) {
+  if ((s.controversy_points ?? []).length > 0) {
     push('## 争议焦点');
     for (const c of s.controversy_points) {
       push(`- **${c.topic}**（置信度 ${c.confidence}）`);
@@ -76,7 +76,7 @@ export function generateReportMarkdown(result: AnalysisResult): string {
     push('');
   }
 
-  if (s.risk_list.length > 0) {
+  if ((s.risk_list ?? []).length > 0) {
     push('## 风险清单');
     s.risk_list.forEach((x) => push(`- ${x}`));
     push('');
@@ -106,7 +106,7 @@ export function generateReportMarkdown(result: AnalysisResult): string {
     push('');
   }
 
-  if (s.follow_up_indicators.length > 0) {
+  if ((s.follow_up_indicators ?? []).length > 0) {
     push('## 后续跟踪指标');
     s.follow_up_indicators.forEach((x) => push(`- [ ] ${x}`));
     push('');

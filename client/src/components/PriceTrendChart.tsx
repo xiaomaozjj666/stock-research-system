@@ -63,7 +63,7 @@ function tooltipFormatter(
   candles: Candle[],
   activeMas: number[],
   maOn: boolean,
-  closes: number[],
+  maValues: Map<number, (number | null)[]>,
 ): string {
   const arr = params as { dataIndex: number }[];
   if (!arr.length) return '';
@@ -85,7 +85,7 @@ function tooltipFormatter(
   rows.push(`量 ${(c.volume / 10000).toFixed(2)} 万手`);
   if (maOn) {
     for (const n of activeMas) {
-      const v = computeMA(closes, n)[i];
+      const v = maValues.get(n)?.[i];
       if (v != null) rows.push(`<span style="color:${MA_COLORS[n]}">MA${n} ${v.toFixed(2)}</span>`);
     }
   }
@@ -108,6 +108,15 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
   // 把最新 candles 存进 ref，供图表事件回调读取（避免闭包拿到旧值）
   const candlesRef = useRef(candles);
   candlesRef.current = candles;
+
+  // 收盘价与均线/布林：悬停逐帧重渲染时复用缓存（此前每帧对全部 K 线重算 4 条 MA + BOLL）
+  const closes = useMemo(() => candles.map((c) => c.close), [candles]);
+  const maValues = useMemo(() => {
+    const map = new Map<number, (number | null)[]>();
+    for (const n of MA_PERIODS) map.set(n, computeMA(closes, n));
+    return map;
+  }, [closes]);
+  const boll = useMemo(() => computeBOLL(closes, 20, 2), [closes]);
 
   const isSimulated = useMemo(
     () => candles.length > 0 && candles.every((c) => c.isSimulated),
@@ -137,19 +146,18 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
     const dates = candles.map((c) => c.date);
     // 蜡烛数据：ECharts 要求 [open, close, low, high]
     const kline = candles.map((c) => [c.open, c.close, c.low, c.high]);
-    const closes = candles.map((c) => c.close);
     const volumes = candles.map((c, i) => ({
       value: c.volume,
       itemStyle: { color: c.close >= c.open ? UP : DOWN },
       _i: i,
     }));
 
-    // 均线
+    // 均线（复用组件级缓存 maValues，避免 option 重建时重复计算）
     const maSeries = maOn
       ? activeMas.map((n) => ({
           name: `MA${n}`,
           type: 'line' as const,
-          data: computeMA(closes, n),
+          data: maValues.get(n),
           smooth: true,
           showSymbol: false,
           lineStyle: { width: 1.2, color: MA_COLORS[n] },
@@ -158,10 +166,10 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
         }))
       : [];
 
-    // 布林带
+    // 布林带（复用组件级缓存 boll）
     const bollSeries: unknown[] = [];
     if (bollOn) {
-      const b = computeBOLL(closes, 20, 2);
+      const b = boll;
       const mk = (name: string, arr: number[], color: string, opacity: number) => ({
         name,
         type: 'line' as const,
@@ -389,7 +397,8 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
         borderWidth: 1,
         padding: [8, 10],
         textStyle: { color: '#e6e6e6', fontSize: 12 },
-        formatter: (params: unknown) => tooltipFormatter(params, candles, activeMas, maOn, closes),
+        formatter: (params: unknown) =>
+          tooltipFormatter(params, candles, activeMas, maOn, maValues),
       },
       grid: grids,
       xAxis: xAxes,
@@ -420,11 +429,10 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
       ],
       series,
     };
-  }, [candles, maOn, activeMas, bollOn, macdOn]);
+  }, [candles, closes, maValues, boll, maOn, activeMas, bollOn, macdOn]);
 
   if (!data || data.length === 0) return null;
 
-  const closes = candles.map((c) => c.close);
   const idx = hoverIdx != null && candles[hoverIdx] ? hoverIdx : candles.length - 1;
   const c = candles[idx];
   const prev = idx > 0 ? candles[idx - 1] : null;
@@ -504,7 +512,7 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
           </span>
           {maOn &&
             activeMas.map((n) => {
-              const v = computeMA(closes, n)[idx];
+              const v = maValues.get(n)?.[idx];
               return v != null ? (
                 <button
                   key={n}
@@ -519,7 +527,7 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
             })}
           {bollOn &&
             (() => {
-              const m = computeBOLL(closes, 20, 2)[idx]?.mid;
+              const m = boll[idx]?.mid;
               return m != null && !Number.isNaN(m) ? (
                 <span className="tl-boll" style={{ color: '#c9cdd4' }}>
                   BOLL {m.toFixed(2)}

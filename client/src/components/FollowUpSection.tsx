@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 
 interface FollowUpSectionProps {
   /** 报告生成的跟踪指标（每次分析动态生成） */
@@ -35,7 +35,7 @@ function loadState(stockCode?: string): FollowUpState {
   }
 }
 
-export default function FollowUpSection({ data = [], stockCode }: FollowUpSectionProps) {
+function FollowUpSection({ data = [], stockCode }: FollowUpSectionProps) {
   const [state, setState] = useState<FollowUpState>(() => loadState(stockCode));
   const [customInput, setCustomInput] = useState('');
 
@@ -138,3 +138,6 @@ export default function FollowUpSection({ data = [], stockCode }: FollowUpSectio
     </div>
   );
 }
+
+// App 的滚动/悬停等本地状态变化频率高，memo 避免纯数据展示区块随之全量重渲染
+export default memo(FollowUpSection);

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 interface StrategyRecommendation {
   strategyType: string;
   sharpeRatio: number;
@@ -20,7 +21,7 @@ interface Props {
   data: StrategyRecommendation[];
 }
 
-export default function StrategyListSection({ data }: Props) {
+function StrategyListSection({ data }: Props) {
   if (!data || data.length === 0) {
     return (
       <div className="card">
@@ -95,3 +96,6 @@ export default function StrategyListSection({ data }: Props) {
     </div>
   );
 }
+
+// App 的滚动/悬停等本地状态变化频率高，memo 避免纯数据展示区块随之全量重渲染
+export default memo(StrategyListSection);

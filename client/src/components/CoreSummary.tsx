@@ -1,3 +1,4 @@
+import { memo } from 'react';
 interface CoreSummaryProps {
   data: {
     core_summary?: string;
@@ -6,7 +7,7 @@ interface CoreSummaryProps {
   };
 }
 
-export default function CoreSummary({ data }: CoreSummaryProps) {
+function CoreSummary({ data }: CoreSummaryProps) {
   const strengths = data.strengths || [];
   const risks = data.risk_list || [];
 
@@ -54,3 +55,6 @@ export default function CoreSummary({ data }: CoreSummaryProps) {
     </div>
   );
 }
+
+// App 的滚动/悬停等本地状态变化频率高，memo 避免纯数据展示区块随之全量重渲染
+export default memo(CoreSummary);

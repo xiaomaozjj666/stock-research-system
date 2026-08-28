@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import FollowUpSection from '../FollowUpSection';
 
 const DATA = ['季度营收/净利润增速变化', '经营现金流/净利润比率', '毛利率/净利率趋势变化'];

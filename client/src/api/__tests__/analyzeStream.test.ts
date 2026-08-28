@@ -100,11 +100,14 @@ describe('analyzeStockStream', () => {
   });
 
   it('cancel 后不再触发重连', async () => {
-    const { cancel } = analyzeStockStream('600519', () => {});
+    const { cancel, done } = analyzeStockStream('600519', () => {});
     MockEventSource.instances[0].emitError();
     cancel();
+    // cancel 现在会以取消错误拒绝 done：先挂上断言防 unhandled rejection
+    const p = expect(done).rejects.toThrow(/已取消/);
     await vi.advanceTimersByTimeAsync(10000);
     expect(MockEventSource.instances).toHaveLength(1); // 未创建新连接
+    await p;
   });
 
   it('接收过事件后断开 → 连接中断', async () => {
@@ -115,17 +118,23 @@ describe('analyzeStockStream', () => {
     await expect(done).rejects.toThrow(/连接中断/);
   });
 
-  it('cancel 中断连接且不再触发 done', async () => {
+  it('cancel 中断连接、done 以取消错误拒绝，后续事件不再触发 resolve', async () => {
     const { done, cancel } = analyzeStockStream('600519', () => {});
     const es = MockEventSource.instances[0];
     cancel();
     expect(es.closed).toBe(true);
-    let settled = false;
-    done.then(() => {
-      settled = true;
-    });
+    // cancel 的拒绝语义：await done 的调用方可以收尾（此前永久挂起）
+    const p = expect(done).rejects.toThrow(/已取消/);
+    let resolved = false;
+    Promise.resolve(done).then(
+      () => {
+        resolved = true;
+      },
+      () => {},
+    );
     es.emit({ phase: 'done', message: 'x', result: {} as never });
     await Promise.resolve(); // 冲刷微任务
-    expect(settled).toBe(false); // 不会因 cancel 后的事件而 resolve
+    expect(resolved).toBe(false); // cancel 后的事件不 resolve
+    await p;
   });
 });

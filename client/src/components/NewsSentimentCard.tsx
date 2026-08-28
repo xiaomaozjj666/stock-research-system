@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { NewsSignal } from '../types';
 
 interface Props {
@@ -14,7 +15,7 @@ function polarityLabel(p: number): { text: string; cls: string } {
   return { text: '中性', cls: 'neutral' };
 }
 
-export default function NewsSentimentCard({ data }: Props) {
+function NewsSentimentCard({ data }: Props) {
   if (!data.hasNews) return null;
   const label = polarityLabel(data.polarity);
 
@@ -71,3 +72,6 @@ export default function NewsSentimentCard({ data }: Props) {
     </div>
   );
 }
+
+// App 的滚动/悬停等本地状态变化频率高，memo 避免纯数据展示区块随之全量重渲染
+export default memo(NewsSentimentCard);

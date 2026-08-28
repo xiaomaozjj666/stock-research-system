@@ -1,3 +1,4 @@
+import { memo } from 'react';
 interface FinanceMetrics {
   years?: string[];
   revenue?: number[];
@@ -30,7 +31,7 @@ function yoyArrow(val: number | undefined): string {
   return val > 0 ? ' ↑' : val < 0 ? ' ↓' : '';
 }
 
-export default function FinancialSection({ data }: FinancialSectionProps) {
+function FinancialSection({ data }: FinancialSectionProps) {
   const years = data.years || [];
   if (years.length === 0) return null;
 
@@ -68,8 +69,12 @@ export default function FinancialSection({ data }: FinancialSectionProps) {
                 <td>{row.label}</td>
                 {row.values.map((v, i) => {
                   const prev = i > 0 ? row.values[i - 1] : undefined;
-                  const change =
-                    prev && prev !== 0 ? ((v! - prev) / Math.abs(prev)) * 100 : undefined;
+                  const rawChange =
+                    prev && prev !== 0 && v !== undefined
+                      ? ((v - prev) / Math.abs(prev)) * 100
+                      : undefined;
+                  // 中间年份缺数据时避免 NaN 渲染成 NaN%
+                  const change = Number.isFinite(rawChange) ? rawChange : undefined;
                   return (
                     <td key={i} className={yoyColor(change)}>
                       {fmt(v, row.type)}
@@ -90,3 +95,6 @@ export default function FinancialSection({ data }: FinancialSectionProps) {
     </div>
   );
 }
+
+// App 的滚动/悬停等本地状态变化频率高，memo 避免纯数据展示区块随之全量重渲染
+export default memo(FinancialSection);

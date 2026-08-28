@@ -399,8 +399,13 @@ export type ChatStreamEvent =
 export function chatWithAgentStream(
   message: string,
   onEvent: (event: ChatStreamEvent) => void,
+  options: { sessionId?: string } = {},
 ): { cancel: () => void } {
-  const es = new EventSource(`/api/chat/stream?message=${encodeURIComponent(message)}`);
+  // sessionId 参与会话记忆：否则后端把每次流式提问当独立会话，
+  // "第二轮无需重复股票代码"在流式主路径不可用
+  const params = new URLSearchParams({ message });
+  if (options.sessionId) params.set('sessionId', options.sessionId);
+  const es = new EventSource(`/api/chat/stream?${params.toString()}`);
   let settled = false;
   /** 首包看门狗：20 秒内没收到任何事件即判定服务不可用，避免静默挂起 */
   let watchdog: ReturnType<typeof setTimeout> | null = setTimeout(() => {
@@ -456,10 +461,18 @@ export interface AnalyzeStreamOptions {
   maxRetries?: number;
 }
 
+/** 取消导致的 Promise 拒绝：调用方应静默处理（区别于真实失败） */
+export class AnalysisCancelledError extends Error {
+  constructor(message = '分析已取消') {
+    super(message);
+    this.name = 'AnalysisCancelledError';
+  }
+}
+
 /**
  * 流式股票分析（SSE）
  * onStage 在每次阶段进度更新时回调；返回的 done Promise 在分析完成时 resolve 结果。
- * 调用方可通过 cancel() 主动中断。
+ * 调用方可通过 cancel() 主动中断（done 会以 AnalysisCancelledError 拒绝，await 方可收尾）。
  *
  * 连接健壮性（H-03）：尚未收到任何事件时连接失败，按指数退避自动重连
  * （1s → 2s → 4s，默认最多 3 次）；已收到事件后断开则直接报错
@@ -568,10 +581,11 @@ export function analyzeStockStream(
   return {
     cancel: () => {
       cancelled = true;
-      settled = true;
       clearWatchdog();
       if (retryTimer) clearTimeout(retryTimer);
       es?.close();
+      // settle done：让 `await done` 的调用方能收尾（此前永久挂起，靠调用方手动兜底掩盖）
+      finish(new AnalysisCancelledError());
     },
     done,
   };

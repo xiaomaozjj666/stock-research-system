@@ -84,21 +84,25 @@ export default function ChatPanel() {
     try {
       await new Promise<void>((resolve, reject) => {
         let cancelled = false;
-        const handle = chatWithAgentStream(content, (evt: ChatStreamEvent) => {
-          if (cancelled) return; // 取消后忽略迟到的事件
-          if (evt.phase === 'done') {
-            streamSettled = true;
-            setMessages([
-              ...next,
-              { role: 'assistant', content: evt.response.answer, meta: evt.response },
-            ]);
-            resolve();
-          } else if (evt.phase === 'error') {
-            reject(new Error(evt.message || '流式对话失败'));
-          } else {
-            setStage(evt.message);
-          }
-        });
+        const handle = chatWithAgentStream(
+          content,
+          (evt: ChatStreamEvent) => {
+            if (cancelled) return; // 取消后忽略迟到的事件
+            if (evt.phase === 'done') {
+              streamSettled = true;
+              setMessages([
+                ...next,
+                { role: 'assistant', content: evt.response.answer, meta: evt.response },
+              ]);
+              resolve();
+            } else if (evt.phase === 'error') {
+              reject(new Error(evt.message || '流式对话失败'));
+            } else {
+              setStage(evt.message);
+            }
+          },
+          { sessionId },
+        );
         streamCancelRef.current = () => {
           cancelled = true;
           handle.cancel();
@@ -205,18 +209,18 @@ export default function ChatPanel() {
                       路由: {PLAN_LABEL[m.meta.plan.action] ?? m.meta.plan.action}
                     </span>
                   )}
-                  {m.meta.toolsUsed.length > 0 && (
+                  {(m.meta.toolsUsed ?? []).length > 0 && (
                     <span className="chat-badge chat-badge-tool">
-                      工具: {m.meta.toolsUsed.join('、')}
+                      工具: {(m.meta.toolsUsed ?? []).join('、')}
                     </span>
                   )}
 
-                  {m.meta.evidence.length > 0 && (
+                  {(m.meta.evidence ?? []).length > 0 && (
                     <button
                       className="chat-evidence-toggle"
                       onClick={() => setOpenEvidence((s) => ({ ...s, [i]: !s[i] }))}
                     >
-                      证据 {m.meta.evidence.length} 条 {openEvidence[i] ? '▲' : '▼'}
+                      证据 {(m.meta.evidence ?? []).length} 条 {openEvidence[i] ? '▲' : '▼'}
                     </button>
                   )}
                 </div>
@@ -226,7 +230,7 @@ export default function ChatPanel() {
                 <div className="chat-verification" role="alert">
                   <strong>⚠️ 事实校验</strong>
                   {m.meta.verification.warning && <p>{m.meta.verification.warning}</p>}
-                  {m.meta.verification.unverified.length > 0 && (
+                  {(m.meta.verification.unverified ?? []).length > 0 && (
                     <ul>
                       {m.meta.verification.unverified.map((u, idx) => (
                         <li key={idx}>{u}</li>

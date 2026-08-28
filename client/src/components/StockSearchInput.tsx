@@ -143,8 +143,15 @@ export default function StockSearchInput({
       commit(s.code, s.name);
       return;
     }
-    if (results.length >= 1) {
+    if (results.length === 1) {
       commit(results[0].code, results[0].name);
+      return;
+    }
+    if (results.length > 1) {
+      // 与异步提交路径一致：多命中不臆测第一个（本组件用于自选股/模拟盘等资金类操作）
+      setShowDropdown(true);
+      setActiveIndex(-1);
+      setHint(`「${trimmed}」匹配到多支股票，请在下拉中选择`);
       return;
     }
     if (CODE_RE.test(trimmed)) {
