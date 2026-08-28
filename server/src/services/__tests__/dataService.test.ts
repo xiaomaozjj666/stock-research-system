@@ -42,8 +42,7 @@ describe('searchStocks', () => {
   });
 
   it('品牌名「长鑫存储」经别名改写后命中 688825，且名称规范化', async () => {
-    const fetchSpy = vi.fn(async (url: string | URL) => {
-      const u = decodeURIComponent(String(url));
+    const fetchSpy = vi.fn(async (_url: string | URL) => {
       return new Response(
         JSON.stringify({
           QuotationCodeTable: {

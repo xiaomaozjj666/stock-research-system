@@ -81,8 +81,8 @@ export async function fetchOHLCVData(
   startDate: string,
   endDate: string,
 ): Promise<OHLCVData[]> {
-  // 1. 检查缓存
-  const cacheKey = `${stockCode}_${startDate}_${endDate}`;
+  // 1. 检查缓存（缓存文件名对代码做白名单清洗：未校验的 stockCode 含 `../` 时防路径穿越）
+  const cacheKey = `${sanitizeCacheToken(stockCode)}_${sanitizeCacheToken(startDate)}_${sanitizeCacheToken(endDate)}`;
   const cacheDir = getCacheDir();
   if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
   const cacheFile = path.join(cacheDir, `${cacheKey}.json`);
@@ -109,7 +109,14 @@ export async function fetchOHLCVData(
   const beg = startDate.replace(/-/g, '');
   const end = endDate.replace(/-/g, '');
 
-  const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57&klt=101&fqt=1&beg=${beg}&end=${end}&lmt=1000`;
+  // lmt 按请求跨度估算：固定 1000 会在约 4 年以上的区间静默截断
+  // （API 只返回前 1000 根且无告警，回测区间悄悄缩水）；日历天数 ≥ 交易日数，
+  // 再加 10 天余量即可保证不截断，封顶防滥用
+  const spanDays =
+    Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1;
+  const lmt = Math.min(Math.max(Number.isFinite(spanDays) ? spanDays + 10 : 1000, 1000), 100000);
+
+  const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57&klt=101&fqt=1&beg=${beg}&end=${end}&lmt=${lmt}`;
 
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
@@ -153,6 +160,11 @@ export async function fetchOHLCVData(
   return simulated.map((d) => ({ ...d, isSimulated: true }));
 }
 
+/** 缓存文件名 token 清洗：只保留字母/数字/下划线/连字符，防 `../` 等路径穿越 */
+function sanitizeCacheToken(token: string): string {
+  return token.replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
 /**
  * 生成模拟K线数据（当API不可用时降级使用）
  */
@@ -161,14 +173,23 @@ function generateSimulatedData(stockCode: string, startDate: string, endDate: st
   const start = new Date(startDate);
   const end = new Date(endDate);
 
-  // 基于股票代码生成确定性的"随机"价格
-  let price = 50 + (parseInt(stockCode) % 100);
-  const seed = parseInt(stockCode.slice(-3));
+  // 基于股票代码生成确定性的"随机"价格：
+  // 字母代码（如 AAPL）parseInt 得 NaN 会让整条模拟曲线全是 NaN，先做确定性哈希
+  function codeSeed(s: string): number {
+    const digits = s.replace(/\D/g, '');
+    if (digits.length >= 3) return parseInt(digits.slice(-3), 10);
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return Math.abs(h) % 1000;
+  }
+  let price = 50 + (codeSeed(stockCode) % 100);
+  const seed = codeSeed(stockCode.slice(-3));
 
   const current = new Date(start);
   while (current <= end) {
-    // 跳过周末
-    if (current.getDay() !== 0 && current.getDay() !== 6) {
+    // 跳过周末：日期标签用 toISOString（UTC），星期判断也必须用 UTC 口径，
+    // 否则 UTC 负偏移服务器上周末跳过与日期标签错位
+    if (current.getUTCDay() !== 0 && current.getUTCDay() !== 6) {
       const daySeed = (seed * current.getDate() * (current.getMonth() + 1)) % 100;
       const change = (daySeed - 50) / 500; // ±10% 波动
       price = price * (1 + change);

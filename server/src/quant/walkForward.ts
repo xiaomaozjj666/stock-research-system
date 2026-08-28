@@ -170,8 +170,12 @@ export function walkForwardBacktest(
 
   const avgTrainSharpe = folds.reduce((s, f) => s + f.train.sharpeRatio, 0) / folds.length;
   const avgTestSharpe = folds.reduce((s, f) => s + f.test.sharpeRatio, 0) / folds.length;
+  // 任一侧 Sharpe ≤ 0（样本内外都在亏钱）时 ratio 记 0：
+  // 否则双负组合（如 -1 与 -0.5）会得出 +0.5 的"稳定"假象
   const oosRatio =
-    isFinite(avgTrainSharpe) && avgTrainSharpe !== 0 ? avgTestSharpe / avgTrainSharpe : 0;
+    !isFinite(avgTrainSharpe) || avgTrainSharpe <= 0 || avgTestSharpe < 0
+      ? 0
+      : avgTestSharpe / avgTrainSharpe;
 
   return {
     folds,

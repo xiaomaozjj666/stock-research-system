@@ -62,26 +62,31 @@ describe('costModel 可插拔成本模型', () => {
   });
 });
 
-describe('marketImpactCost 二次方市场冲击（qlib Exchange）', () => {
-  it('冲击成本 = impactCost × (成交额/成交量)²', () => {
-    // 成交额 100 万、当日成交量 1 亿 → 占比 0.01 → 0.1 × 0.0001 = 1e-5
+describe('marketImpactCost 二次方市场冲击（qlib Exchange，无量纲参与率口径）', () => {
+  it('冲击金额 = impactCost × (成交股数/当日成交量)² × 成交额', () => {
+    // 成交 100 万股、当日成交量 1 亿股（参与率 1%）、成交额 100 万 → 0.1 × 0.0001 × 1e6 = 10 元
     const m = makeCostModel({ impactCost: 0.1 });
-    expect(marketImpactCost(m, 1_000_000, 100_000_000)).toBeCloseTo(1e-5, 10);
+    expect(marketImpactCost(m, 1_000_000, 100_000_000, 1_000_000)).toBeCloseTo(10, 6);
   });
 
-  it('成交占比越高冲击越大（非线性二次方）', () => {
+  it('参与率越高冲击越大（非线性二次方），且封顶 impactCost × 成交额', () => {
     const m = makeCostModel({ impactCost: 0.1 });
-    const small = marketImpactCost(m, 1_000_000, 100_000_000); // 占比 1%
-    const big = marketImpactCost(m, 5_000_000, 100_000_000); // 占比 5%
+    const small = marketImpactCost(m, 1_000_000, 100_000_000, 1_000_000); // 参与率 1% → 10 元
+    const big = marketImpactCost(m, 1_000_000, 100_000_000, 5_000_000); // 参与率 5% → 250 元
     // (5%)² / (1%)² = 25 倍
-    expect(big).toBeCloseTo(small * 25, 10);
+    expect(big).toBeCloseTo(small * 25, 6);
+    // 参与率 100% 封顶：0.1 × 1 × 100 万 = 10 万
+    expect(marketImpactCost(m, 1_000_000, 1_000_000, 5_000_000)).toBeCloseTo(100_000, 6);
   });
 
-  it('系数缺省/≤0、成交量无效或成交额≤0 时返回 0', () => {
-    expect(marketImpactCost(DEFAULT_COST_MODEL, 1_000_000, 100_000_000)).toBe(0);
-    expect(marketImpactCost(makeCostModel({ impactCost: 0 }), 1_000_000, 100_000_000)).toBe(0);
-    expect(marketImpactCost(A_SHARE_COST_MODEL, 1_000_000, 0)).toBe(0);
-    expect(marketImpactCost(A_SHARE_COST_MODEL, 0, 100_000_000)).toBe(0);
+  it('系数缺省/≤0、成交量无效、成交额≤0 或成交股数≤0 时返回 0', () => {
+    expect(marketImpactCost(DEFAULT_COST_MODEL, 1_000_000, 100_000_000, 1_000_000)).toBe(0);
+    expect(
+      marketImpactCost(makeCostModel({ impactCost: 0 }), 1_000_000, 100_000_000, 1_000_000),
+    ).toBe(0);
+    expect(marketImpactCost(A_SHARE_COST_MODEL, 1_000_000, 0, 1_000_000)).toBe(0);
+    expect(marketImpactCost(A_SHARE_COST_MODEL, 0, 100_000_000, 1_000_000)).toBe(0);
+    expect(marketImpactCost(A_SHARE_COST_MODEL, 1_000_000, 100_000_000, 0)).toBe(0);
   });
 
   it('A 股真实模型默认启用冲击系数 0.1（qlib 推荐值）', () => {

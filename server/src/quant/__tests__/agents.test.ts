@@ -290,7 +290,7 @@ describe('backtestAuditor', () => {
   });
 
   it('缺失 trades/tradeCount 字段时安全降级为默认值', () => {
-    const { trades, tradeCount, ...rest } = makeBacktest();
+    const { trades: _trades, tradeCount: _tradeCount, ...rest } = makeBacktest();
     const report = backtestAuditor(rest as BacktestResult, makeStrategy());
     // tradeCount 默认 0 → 过拟合(-15) + 统计(-8) = 77
     expect(report.riskScore).toBe(77);
@@ -752,7 +752,13 @@ describe('strategyOptimizer', () => {
   it('缺失可选字段时安全降级（?? 回退 + 买卖配对失败分支）', () => {
     // 去掉 maxDrawdown / sharpeRatio / winRate，触发 ?? 0 回退；
     // 交易只有两笔 buy，找不到配对 sell → maxConsecutiveLoss 保持 0
-    const { trades, maxDrawdown, sharpeRatio, winRate, ...rest } = makeBacktest();
+    const {
+      trades: _trades,
+      maxDrawdown: _maxDrawdown,
+      sharpeRatio: _sharpeRatio,
+      winRate: _winRate,
+      ...rest
+    } = makeBacktest();
     const report = strategyOptimizer(
       {
         ...rest,

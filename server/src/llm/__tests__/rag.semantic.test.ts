@@ -3,7 +3,6 @@ import {
   retrieveEvidence,
   retrieveEvidenceFromDocs,
   buildVectorIndex,
-  semanticSearch,
   cosine,
   type EvidenceDoc,
   type Embedder,

@@ -19,17 +19,19 @@ router.get('/api/health', async (_req, res) => {
   };
 
   // Check external API reachability
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
     const response = await fetch('https://www.eastmoney.com/', {
       method: 'HEAD',
       signal: controller.signal,
     });
-    clearTimeout(timeout);
     health.externalApi = { status: 'reachable', httpStatus: response.status };
   } catch (err) {
     health.externalApi = { status: 'unreachable', error: (err as Error).message };
+  } finally {
+    // 无论成功失败都释放定时器，避免健康检查定时器悬挂 5s
+    clearTimeout(timeout);
   }
 
   // Check cache directory

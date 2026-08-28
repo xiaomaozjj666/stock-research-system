@@ -27,8 +27,9 @@ export function runBacktest(
   costModelOverride?: CostModel,
 ): BacktestResult {
   const initialCapital = strategy.initialCapital || 1000000;
-  const commission = strategy.commission || 0.0003; // 万三
-  const slippage = strategy.slippage || 0.001; // 0.1%
+  // 显式传 0（关掉费用做对照实验）必须生效，不能用 || 吞成默认万三
+  const commission = strategy.commission ?? 0.0003; // 万三
+  const slippage = strategy.slippage ?? 0.001; // 0.1%
 
   const costModel: CostModel =
     costModelOverride ??
@@ -39,8 +40,10 @@ export function runBacktest(
   // 最新消息情绪叠加层：posture = clamp(0.5 + 0.5·polarity, 0, 1)
   //   polarity=+1(全面利好) → posture=1 满仓；polarity=0(中性) → 0.5 半仓；
   //   polarity=−1(全面利空) → 0 不建仓。仅在「建仓」时缩放仓位，平仓不受影响。
+  //   since（新闻最早发布日）之后才生效——此前区间与基线一致，避免用未来信息改写历史。
   const newsOverlay = strategy.newsOverlay;
   const newsAware = !!newsOverlay;
+  const newsSince = newsOverlay?.since;
   const newsPosture = newsOverlay ? Math.max(0, Math.min(1, 0.5 + 0.5 * newsOverlay.polarity)) : 1;
 
   let cash = initialCapital;
@@ -68,9 +71,14 @@ export function runBacktest(
   for (let i = 0; i < data.length; i++) {
     const bar = data[i];
 
-    // 1. 先执行上一 bar 生成的信号（本 bar 开盘价成交）
-    if (pending === 'buy' && position === 0) {
-      if (newsPosture > 0) {
+    // 1. 先执行上一 bar 生成的信号（本 bar 开盘价成交）。
+    //    停牌 bar（volume=0）无法撮合：信号顺延到下一根有成交的 bar（市场单语义），
+    //    避免停牌日照常按 open 成交、系统性高估可成交性
+    const tradable = bar.volume > 0;
+    if (tradable && pending === 'buy' && position === 0) {
+      // 情绪姿态仅对 since（新闻发布日）之后的建仓生效；无 since 时退化为全程叠加（调用方未适配）
+      const postureActive = !newsSince || bar.date >= newsSince;
+      if (newsPosture > 0 && postureActive) {
         const price = bar.open * (1 + costModel.slippage);
         // 按新闻姿态缩放可用资金（强空新闻 posture→0 时不建仓）
         const deployable = cash * newsPosture;
@@ -78,8 +86,9 @@ export function runBacktest(
         const shares = Math.floor(deployable / (price * (1 + costModel.openRate)) / 100) * 100;
         if (shares > 0) {
           const { total, fee } = buyCost(costModel, shares, price);
-          // 二次方市场冲击成本（qlib Exchange）：impactCost × (成交额/当日成交量)²
-          const impact = marketImpactCost(costModel, shares * price, bar.volume);
+          // 二次方市场冲击成本（qlib Exchange）：impactCost × 参与率² × 成交额
+          // （bar.volume 单位为手，×100 换算为股，与 shares 同单位）
+          const impact = marketImpactCost(costModel, shares * price, bar.volume * 100, shares);
           cash -= total + impact;
           position = shares;
           trades.push({
@@ -94,10 +103,11 @@ export function runBacktest(
           });
         }
       }
-    } else if (pending === 'sell' && position > 0) {
+      pending = null;
+    } else if (tradable && pending === 'sell' && position > 0) {
       const price = bar.open * (1 - costModel.slippage);
       const { proceeds, fee } = sellProceeds(costModel, position, price);
-      const impact = marketImpactCost(costModel, position * price, bar.volume);
+      const impact = marketImpactCost(costModel, position * price, bar.volume * 100, position);
       cash += proceeds - impact;
       trades.push({
         date: bar.date,
@@ -108,8 +118,8 @@ export function runBacktest(
         reason: getSignalReason(strategy, 'sell'),
       });
       position = 0;
+      pending = null;
     }
-    pending = null;
 
     // 2. 用本 bar 数据生成新信号（下一 bar 开盘成交）
     const signal = generateSignal(data, i, strategy, maAt);
@@ -146,6 +156,7 @@ export function runBacktest(
     benchmark: getBenchmarkCurve(data),
     newsAware,
     newsPosture,
+    ...(newsSince ? { newsSince } : {}),
   };
 }
 

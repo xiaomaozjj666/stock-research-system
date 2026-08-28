@@ -18,10 +18,15 @@ export interface EvidenceDoc {
 
 /** 运行时注入的文档（研报/财报/用户粘贴），进入 RAG 语料，重启即失（演示用） */
 const ingestedDocs: EvidenceDoc[] = [];
+/** 注入文档上限：超出后淘汰最早注入的（FIFO），防长驻进程内存缓慢膨胀 */
+const INGESTED_DOCS_MAX = 1000;
 
 /** 注入一份文档到 RAG 语料（内存态） */
 export function ingestDocument(doc: EvidenceDoc): void {
   ingestedDocs.push(doc);
+  while (ingestedDocs.length > INGESTED_DOCS_MAX) {
+    ingestedDocs.shift();
+  }
 }
 
 /** 读取已注入文档（管理/测试用） */
@@ -179,21 +184,80 @@ export function semanticSearch(
 /**
  * 对外检索：优先语义（若提供 embedder），否则回退 BM25-lite。
  * embedder 由调用方注入（默认走 llm/embed）；无 embedder 或嵌入失败时纯关键词召回。
+ *
+ * 性能：文档向量按 id+文本指纹缓存，语料不变时跨查询复用（此前每次查询都对
+ * 全量语料重新嵌入，成本与延迟随语料线性膨胀）；新增/变更文档分批嵌入，
+ * 避免语料变大后单请求超过嵌入端点批量上限。
  */
+const vectorCache = new Map<string, number[]>();
+const VECTOR_CACHE_MAX = 2000;
+const EMBED_BATCH_SIZE = 64;
+
+/** 文本指纹：长度 + FNV-1a 变体哈希，足够区分语料文档的变更 */
+function textFingerprint(text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  return `${text.length}:${h}`;
+}
+
+function vectorCacheKey(doc: EvidenceDoc): string {
+  return `${doc.id}::${textFingerprint(doc.text)}`;
+}
+
+async function embedInBatches(
+  embedder: Embedder,
+  texts: string[],
+  batchSize = EMBED_BATCH_SIZE,
+): Promise<number[][]> {
+  const out: number[][] = [];
+  for (let i = 0; i < texts.length; i += batchSize) {
+    out.push(...(await embedder(texts.slice(i, i + batchSize))));
+  }
+  return out;
+}
+
 export async function retrieveEvidence(
   query: string,
   opts: { topK?: number; stockCode?: string; embedder?: Embedder; docs?: EvidenceDoc[] } = {},
 ): Promise<EvidenceDoc[]> {
   const docs = opts.docs ?? indexCorpus();
-  if (opts.embedder && docs.length > 0) {
+  const embedder = opts.embedder;
+  if (embedder && docs.length > 0) {
     try {
-      const [qVec, dVecs] = await Promise.all([
-        opts.embedder([query]),
-        opts.embedder(docs.map((d) => d.text)),
+      // 命中缓存的向量直接复用，仅嵌入新增/变更文档（与查询嵌入并行）
+      const docVecs: (number[] | undefined)[] = docs.map((d) => vectorCache.get(vectorCacheKey(d)));
+      const [qVecArr] = await Promise.all([
+        embedder([query]),
+        (async () => {
+          const missingIdx: number[] = [];
+          docs.forEach((_, i) => {
+            if (!docVecs[i]) missingIdx.push(i);
+          });
+          if (missingIdx.length === 0) return;
+          const missingVecs = await embedInBatches(
+            embedder,
+            missingIdx.map((i) => docs[i].text),
+          );
+          for (let j = 0; j < missingIdx.length; j++) {
+            const vec = missingVecs[j];
+            const docIdx = missingIdx[j];
+            docVecs[docIdx] = vec;
+            if (vec && vec.length > 0) {
+              vectorCache.set(vectorCacheKey(docs[docIdx]), vec);
+              // 容量上限：FIFO 淘汰（Map 迭代顺序即插入顺序）
+              while (vectorCache.size > VECTOR_CACHE_MAX) {
+                const oldest = vectorCache.keys().next().value;
+                if (oldest === undefined) break;
+                vectorCache.delete(oldest);
+              }
+            }
+          }
+        })(),
       ]);
-      if (qVec[0] && qVec[0].length > 0) {
-        const idx = buildVectorIndex(docs, dVecs);
-        const sem = semanticSearch(qVec[0], idx, opts);
+      if (qVecArr[0] && qVecArr[0].length > 0) {
+        const vectors = docVecs.map((v) => v ?? []);
+        const idx = buildVectorIndex(docs, vectors);
+        const sem = semanticSearch(qVecArr[0], idx, opts);
         if (sem.length > 0) return sem;
       }
     } catch {

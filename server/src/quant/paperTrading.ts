@@ -26,7 +26,7 @@ import * as path from 'path';
 // 默认交易参数
 const DEFAULTS = {
   commissionRate: 0.0003, // 佣金率：万三
-  stampDutyRate: 0.001, // 卖出印花税：0.1%
+  stampDutyRate: 0.0005, // 卖出印花税：万5（2023-08-28 起，与 costModel A_SHARE_COST_MODEL 一致）
   limitPct: 0.1, // 涨跌停幅度：主板 ±10%
 };
 

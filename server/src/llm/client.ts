@@ -14,6 +14,8 @@ import {
 } from './config.js';
 import { recordUsage } from './cost.js';
 import { getTracer, withSpan, type TelemetrySpan } from '../services/telemetry.js';
+import { withTimeout } from '../utils/timeout.js';
+import logger from '../utils/logger.js';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -39,6 +41,87 @@ export interface LLMOptions {
   task?: LLMTask;
 }
 
+// ============================================================================
+// 请求层：统一超时 + 限流重试
+// ============================================================================
+
+/** 可重试的 HTTP 状态：限流与上游瞬时故障 */
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+/** 默认重试次数（不含首次）：一次分析会扇出多个 LLM 调用，429 不重试会被静默降级掩盖 */
+const LLM_MAX_RETRIES = 2;
+
+class RetryableStatusError extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfterMs: number | null,
+  ) {
+    super(`HTTP ${status}`);
+  }
+}
+
+function parseRetryAfter(headerValue: string | null): number | null {
+  if (!headerValue) return null;
+  const seconds = Number(headerValue);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 10_000);
+  const date = Date.parse(headerValue);
+  if (Number.isFinite(date)) return Math.min(Math.max(date - Date.now(), 0), 10_000);
+  return null;
+}
+
+/** 指数退避 + 抖动：1s → 2s → 4s（封顶 8s） */
+function backoffDelay(attempt: number): number {
+  return Math.min(1000 * 2 ** attempt, 8000) + Math.floor(Math.random() * 250);
+}
+
+/**
+ * 带超时与重试的 fetch：
+ * - 每次尝试独立超时（AbortController），linkSignal（外部取消）联动生效；
+ * - 429/5xx/网络错误按指数退避重试，尊重 Retry-After（上限 10s）；
+ * - 超时 abort 与外部取消不重试（保持原有立即抛错语义）。
+ * 适用于 LLM 这类请求体固定、重发安全的幂等调用。
+ */
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  opts: { timeoutMs: number; linkSignal?: AbortSignal; maxRetries?: number } = {
+    timeoutMs: 60_000,
+  },
+): Promise<Response> {
+  const maxRetries = opts.maxRetries ?? LLM_MAX_RETRIES;
+  let lastError: unknown = new Error('fetch failed');
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const attemptController = new AbortController();
+    const timer = setTimeout(() => attemptController.abort(), opts.timeoutMs);
+    try {
+      const signal = opts.linkSignal
+        ? AbortSignal.any([opts.linkSignal, attemptController.signal])
+        : attemptController.signal;
+      const response = await fetch(url, { ...init, signal });
+      if (!response.ok && RETRYABLE_STATUS.has(response.status) && attempt < maxRetries) {
+        const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
+        await response.text().catch(() => ''); // 释放连接后再退避
+        throw new RetryableStatusError(response.status, retryAfterMs);
+      }
+      clearTimeout(timer);
+      return response;
+    } catch (err) {
+      clearTimeout(timer);
+      lastError = err;
+      // 仅瞬时故障重试：超时 abort / 外部取消 / 4xx 语义错误不重试
+      const retryable =
+        err instanceof RetryableStatusError ||
+        (err instanceof TypeError && !opts.linkSignal?.aborted);
+      if (!retryable || attempt >= maxRetries) break;
+      const delayMs =
+        err instanceof RetryableStatusError && err.retryAfterMs !== null
+          ? err.retryAfterMs
+          : backoffDelay(attempt);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastError;
+}
+
 /**
  * 非流式对话，返回完整文本
  */
@@ -58,36 +141,33 @@ export async function chat(messages: ChatMessage[], options: LLMOptions = {}): P
       body.response_format = { type: 'json_object' };
     }
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeout ?? 60000);
-    // 若外部传入 signal，联动取消
-    if (options.signal) {
-      options.signal.addEventListener('abort', () => controller.abort(), { once: true });
-    }
-
-    try {
-      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    const response = await fetchWithRetry(
+      `${config.baseUrl}/chat/completions`,
+      {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.apiKey}`,
         },
         body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        throw new Error(`LLM 请求失败 (${response.status}): ${errText.slice(0, 300)}`);
-      }
-      const data = (await response.json()) as {
-        choices?: { message?: { content?: string } }[];
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-      };
-      recordLLMUsage(model, data.usage, options.task, span);
-      return data.choices?.[0]?.message?.content || '';
-    } finally {
-      clearTimeout(timer);
+      },
+      { timeoutMs: options.timeout ?? 60000, linkSignal: options.signal },
+    );
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`LLM 请求失败 (${response.status}): ${errText.slice(0, 300)}`);
     }
+    const data = (await response.json()) as {
+      choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    recordLLMUsage(model, data.usage, options.task, span);
+    const content = data.choices?.[0]?.message?.content || '';
+    if (!data.choices) {
+      // 结构异常与"模型返回空回答"不可混淆，至少留痕便于排查
+      logger.warn('LLM 响应缺少 choices 字段', { model, task: options.task });
+    }
+    return content;
   });
 }
 
@@ -117,24 +197,35 @@ export async function chatStream(
       body.response_format = { type: 'json_object' };
     }
 
-    // 与 chat() 一致的超时控制：默认 60s，外部 signal 联动取消。
-    // 此前直接透传 options.signal 且无超时，连接 stall 会永久挂起。
+    // 空闲超时（而非总时长）：每收到一个 chunk 就重置定时器，
+    // 活跃生成的长流不会被误杀，而连接 stall 仍会及时 abort。
+    // abort 携带 reason，调用方可区分"超时"与"外部取消"。
+    const idleMs = options.timeout ?? 60000;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeout ?? 60000);
-    if (options.signal) {
-      options.signal.addEventListener('abort', () => controller.abort(), { once: true });
-    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const armIdleTimer = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(new Error('LLM 流式空闲超时')), idleMs);
+    };
+    armIdleTimer();
 
     try {
-      const response = await fetch(`${config.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.apiKey}`,
+      const linkSignal = options.signal
+        ? AbortSignal.any([options.signal, controller.signal])
+        : controller.signal;
+      const response = await fetchWithRetry(
+        `${config.baseUrl}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${config.apiKey}`,
+          },
+          body: JSON.stringify(body),
         },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
+        // fetch（响应头）阶段仍用超时兜底；读取阶段的空闲超时由上面的 controller 负责
+        { timeoutMs: idleMs, linkSignal },
+      );
       if (!response.ok || !response.body) {
         const errText = await response.text().catch(() => '');
         throw new Error(`LLM 流式请求失败 (${response.status}): ${errText.slice(0, 300)}`);
@@ -146,6 +237,7 @@ export async function chatStream(
       let buffer = '';
       let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
       while (true) {
+        armIdleTimer(); // 每个 chunk 前重置：总时长语义 → 空闲语义
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -228,33 +320,26 @@ export async function chatWithTools(
       tool_choice: 'auto',
     };
 
-    // 每轮请求独立超时控制（与 chat 一致）：此前直接透传 options.signal，
-    // options.timeout 被静默忽略（chatAgent 传入 timeout:60000 实际无效），
-    // 单轮挂死会让整个工具调用回路卡满 5 轮。
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeout ?? 60000);
-    if (options.signal) {
-      options.signal.addEventListener('abort', () => controller.abort(), { once: true });
-    }
-    let response: Response;
-    try {
-      response = await fetch(`${config.baseUrl}/chat/completions`, {
+    // 每轮请求独立超时控制（与 chat 一致）：单轮挂死会让整个工具调用回路卡满 5 轮。
+    // 429/5xx 由 fetchWithRetry 退避重试；响应体读取用 withTimeout 兜底
+    // （fetch 返回仅代表收到响应头，body stall 仍会挂起）。
+    const response = await fetchWithRetry(
+      `${config.baseUrl}/chat/completions`,
+      {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.apiKey}`,
         },
         body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
+      },
+      { timeoutMs: options.timeout ?? 60000, linkSignal: options.signal },
+    );
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
       throw new Error(`LLM 工具调用失败 (${response.status}): ${errText.slice(0, 300)}`);
     }
-    const data = (await response.json()) as {
+    const data = (await withTimeout(response.json(), 15000)) as {
       choices?: {
         message?: {
           content?: string;
@@ -304,7 +389,17 @@ export async function chatWithTools(
     }
     return { content: msg.content || '', toolCalls: used };
   }
-  return { content: conv[conv.length - 1]?.content || '', toolCalls: used };
+  // 5 轮耗尽：最后一条是 tool 消息（被截断的原始 JSON），不能当回答返回。
+  // 取最后一条 assistant 消息，为空时返回明确的降级文案。
+  const lastAssistantContent = [...conv]
+    .reverse()
+    .find((m) => m.role === 'assistant')
+    ?.content?.trim();
+  return {
+    content:
+      lastAssistantContent || '（工具调用轮次已达上限，未能生成最终回答，请重试或缩小问题范围）',
+    toolCalls: used,
+  };
 }
 
 /**
@@ -318,19 +413,24 @@ export async function embed(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
   const config = getLLMConfig();
   const body = { model: getEmbedModel(), input: texts };
-  const response = await fetch(`${getEmbedBaseUrl()}/embeddings`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
+  // 与其他 API 调用一致的超时与重试：此前完全无超时，端点 stall 会永久挂起
+  const response = await fetchWithRetry(
+    `${getEmbedBaseUrl()}/embeddings`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
+    { timeoutMs: 30000 },
+  );
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
     throw new Error(`LLM 嵌入失败 (${response.status}): ${errText.slice(0, 300)}`);
   }
-  const data = (await response.json()) as {
+  const data = (await withTimeout(response.json(), 15000)) as {
     data?: { embedding: number[] }[];
   };
   if (!data.data || data.data.length !== texts.length) {

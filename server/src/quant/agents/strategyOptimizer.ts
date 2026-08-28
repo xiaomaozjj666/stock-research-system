@@ -231,7 +231,10 @@ function calcRiskMetrics(backtest: BacktestResult): OptimizationReport['riskMetr
     if (dailyReturns.length > 0) {
       dailyReturns.sort((a, b) => a - b);
       const idx = Math.floor(dailyReturns.length * 0.05);
-      var95 = Math.abs(dailyReturns[idx]) * 100; // 转为百分比
+      // 仅当 5% 分位为负收益时取绝对值记 VaR；单边上涨样本的分位为正，
+      // 取绝对值会把盈利误报成 VaR
+      const quantile = dailyReturns[idx];
+      var95 = quantile < 0 ? Math.abs(quantile) * 100 : 0; // 转为百分比
     }
   }
 

@@ -174,6 +174,8 @@ export function normalizeExpertOpinion(raw: {
 }
 
 function clampInt(v: unknown, min: number, max: number, fallback: number): number {
+  // null/undefined/'' 经 Number() 会变成 0/NaN，必须先走 fallback（如 clampInt(null,0,100,50) 应得 50）
+  if (v === null || v === undefined || v === '') return fallback;
   const n = Number(v);
   if (!isFinite(n)) return fallback;
   return Math.round(Math.min(max, Math.max(min, n)));

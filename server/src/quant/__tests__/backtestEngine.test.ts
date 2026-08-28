@@ -198,12 +198,13 @@ describe('runBacktest 可插拔成本模型', () => {
     // 振荡行情下应产生卖出
     const sells = r.trades.filter((t) => t.type === 'sell');
     expect(sells.length).toBeGreaterThan(0);
-    // 每笔费用 = max(成交额 × closeRate, minCost) + 二次方市场冲击（impactCost × (成交额/成交量)²）
+    // 每笔费用 = max(成交额 × closeRate, minCost) + 二次方市场冲击
+    // （impactCost × 参与率² × 成交额；bar.volume=1_000_000 手 = 1e8 股，与 s.shares 同单位）
     // （交易记录 price 保留 2 位小数，费用按未舍入价计算，容差 ±0.05）
     for (const s of sells) {
       const gross = s.shares * s.price;
       const fee = Math.max(gross * A_SHARE_COST_MODEL.closeRate, A_SHARE_COST_MODEL.minCost);
-      const impact = marketImpactCost(A_SHARE_COST_MODEL, gross, 1_000_000);
+      const impact = marketImpactCost(A_SHARE_COST_MODEL, gross, 100_000_000, s.shares);
       const expected = Math.round((fee + impact) * 100) / 100;
       expect(s.commission).toBeCloseTo(expected, 1);
     }
@@ -242,8 +243,9 @@ describe('runBacktest 可插拔成本模型', () => {
     }
   });
 
-  it('市场冲击经引擎路径生效：成交占比高时费用更高（qlib 二次方冲击）', () => {
-    // 低成交量行情（2 万）：成交额 ~100 万 → 成交占比 ~50 → 冲击 = 0.1 × 50² = 250 元/笔，显著可见
+  it('市场冲击经引擎路径生效：成交参与率高时费用更高（qlib 二次方冲击）', () => {
+    // 低成交量行情（2 万手 = 2e6 股）：成交 ~1 万股 → 参与率 ~0.5% →
+    // 冲击 = 0.1 × 0.005² × 100 万 ≈ 2.5 元/笔，低于默认费率但显著可测
     const thin = osc.map((b) => ({ ...b, volume: 20_000 }));
     const withImpact = runBacktest(
       thin,
@@ -252,10 +254,27 @@ describe('runBacktest 可插拔成本模型', () => {
     );
     const withoutImpact = runBacktest(thin, maConfig());
     expect(withImpact.tradeCount).toBe(withoutImpact.tradeCount);
-    expect(withImpact.totalReturn).toBeLessThan(withoutImpact.totalReturn);
+    // 冲击金额（~2.5 元/笔）低于权益曲线 0.01% 的展示精度，用逐笔费用断言验证
+    expect(withImpact.totalReturn).toBeLessThanOrEqual(withoutImpact.totalReturn);
     // 冲击成本逐笔计入 commission 字段
     for (let i = 0; i < withImpact.trades.length; i++) {
       expect(withImpact.trades[i].commission).toBeGreaterThan(withoutImpact.trades[i].commission);
     }
+  });
+
+  it('停牌 bar（volume=0）不撮合，信号顺延到恢复交易后成交', () => {
+    const suspended = oscillatingSeries().map((b, i) => ({
+      ...b,
+      volume: i === 5 || i === 6 ? 0 : b.volume, // 连续两根停牌
+    }));
+    const normal = runBacktest(oscillatingSeries(), maConfig());
+    const r = runBacktest(suspended, maConfig());
+    // 停牌日的 open 上没有成交记录
+    const suspendedDates = new Set([suspended[5].date, suspended[6].date]);
+    for (const t of r.trades) {
+      expect(suspendedDates.has(t.date)).toBe(false);
+    }
+    // 恢复交易后信号仍会成交（顺延语义），交易数量与正常行情一致
+    expect(r.tradeCount).toBe(normal.tradeCount);
   });
 });

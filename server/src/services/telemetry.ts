@@ -65,6 +65,8 @@ export interface TracerOptions {
   exportHook?: ExportHook;
   /** 是否在导出时同时打印到 console；默认 false */
   logToConsole?: boolean;
+  /** 内存中最多保留的 trace 数（FIFO 淘汰最旧）；防每个请求永久残留导致内存单调增长。默认 1000 */
+  maxTraces?: number;
 }
 
 /**
@@ -105,10 +107,12 @@ export class TelemetryTracer {
   private readonly store = new Map<string, TelemetrySpan[]>();
   private readonly exportHook?: ExportHook;
   private readonly logToConsole: boolean;
+  private readonly maxTraces: number;
 
   constructor(options: TracerOptions = {}) {
     this.exportHook = options.exportHook;
     this.logToConsole = options.logToConsole ?? false;
+    this.maxTraces = options.maxTraces ?? 1000;
   }
 
   /**
@@ -135,12 +139,20 @@ export class TelemetryTracer {
     const list = this.store.get(traceId);
     if (list) list.push(span);
     else this.store.set(traceId, [span]);
+    // FIFO 容量上限：expressTracerMiddleware 为每个 HTTP 请求建 root span（新 traceId），
+    // 无上限时生产长跑内存单调增长；淘汰最旧 trace（Map 迭代顺序即插入顺序）
+    while (this.store.size > this.maxTraces) {
+      const oldest = this.store.keys().next().value;
+      if (oldest === undefined) break;
+      this.store.delete(oldest);
+    }
     return { span, ctx: { traceId, spanId } };
   }
 
   /**
    * 结束 span：写入 endTime / durationMs / status，并触发导出 hook。
    * 重复结束会被忽略（幂等），避免双计。
+   * 已结束的 span 保留在内存中供 getTrace / exportTrace 查询，由 maxTraces FIFO 上限兜底内存。
    */
   endSpan(span: TelemetrySpan, status: SpanStatus = 'ok'): void {
     if (span.endTime !== null) return; // 幂等

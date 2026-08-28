@@ -58,7 +58,6 @@ const BULLISH_WORDS: string[] = [
   '提价',
   '上调',
   '增资',
-  '利好',
   '复苏',
   '放量',
   '拐点',
@@ -143,6 +142,19 @@ export interface NewsSignal {
   hasNews: boolean;
 }
 
+/**
+ * 取新闻集合的最早发布日期（YYYY-MM-DD）。
+ * 供回测 newsOverlay.since 使用：情绪姿态仅应用于该日期及之后的 bar，
+ * 避免用「现在才知道的消息」改写历史交易（前视偏差）。
+ */
+export function earliestNewsDate(items: NewsItem[]): string | undefined {
+  const dates = items
+    .map((n) => (typeof n.publishedAt === 'string' ? n.publishedAt.slice(0, 10) : ''))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  return dates[0] || undefined;
+}
+
 /** 词典法：对单条文本给出确定性极性 ∈ [−1, 1] */
 export function lexiconPolarity(text: string): number {
   if (!text) return 0;
@@ -174,10 +186,10 @@ export function scoreNewsItem(item: NewsItem): number {
 }
 
 /** 计算新闻发布至今的天数；解析失败视为 30 天前（低时效权重） */
-function ageInDays(publishedAt: string): number {
+function ageInDays(publishedAt: string, now: number): number {
   const ts = Date.parse(publishedAt);
   if (!isFinite(ts)) return 30;
-  const days = (Date.now() - ts) / (24 * 60 * 60 * 1000);
+  const days = (now - ts) / (24 * 60 * 60 * 1000);
   return days < 0 ? 0 : days; // 未来时间按当日计
 }
 
@@ -217,7 +229,7 @@ export function aggregateNewsSentiment(items: NewsItem[], opts: AggregateOptions
   const scored = items.map((it) => ({
     item: it,
     p: scoreNewsItem(it),
-    age: ageInDays(it.publishedAt),
+    age: ageInDays(it.publishedAt, now),
   }));
 
   let sumW = 0;

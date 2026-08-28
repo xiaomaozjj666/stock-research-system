@@ -133,9 +133,9 @@ describe('PaperAccount 撮合与记账', () => {
     const sell = acct.orders[1];
     expect(sell.fillPrice).toBe(110);
     expect(sell.commission).toBeCloseTo(16.5, 2); // 500*110*0.0003
-    expect(sell.stampDuty).toBeCloseTo(55, 2); // 500*110*0.001
-    // 现金 = 100000 - 50015 + (55000 - 16.5 - 55)
-    expect(acct.cash).toBeCloseTo(104913.5, 2);
+    expect(sell.stampDuty).toBeCloseTo(27.5, 2); // 500*110*0.0005（2023-08-28 起万5）
+    // 现金 = 100000 - 50015 + (55000 - 16.5 - 27.5)
+    expect(acct.cash).toBeCloseTo(104941, 2);
     expect(acct.positions.get('600519')).toBeUndefined();
   });
 

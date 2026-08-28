@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { computePbo } from '../cscv.js';
-import type { CscvOptions, CscvResult } from '../cscv.js';
 
 // ============================================================
 // 合成数据工具（固定 seed，保证测试可复现）
