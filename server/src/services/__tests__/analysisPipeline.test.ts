@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runAnalysis } from '../analysisPipeline.js';
 import type { StockDataSet, FinancialData, ValuationData, StockInfo } from '../../types.js';
 import { buildFinancialGraph } from '../../llm/knowledgeGraph.js';
@@ -57,6 +59,11 @@ vi.mock('../../quant/dataProvider.js', () => ({
   fetchOHLCVData: vi.fn(async () => []), // 无K线 -> 策略清单为空，不触发网络
 }));
 
+// 新闻抓取走真实东财接口：单测不依赖外网（高负载下 3s 超时路径曾疑似拖垮用例）
+vi.mock('../../quant/newsSignal.js', () => ({
+  extractNewsSignal: vi.fn(async () => ({ signal: null, source: 'none' })),
+}));
+
 // 可选增强模块默认返回 undefined → 流水线内部降级跳过；成功/失败路径在用例中切换
 vi.mock('../../llm/knowledgeGraph.js', () => ({
   buildFinancialGraph: vi.fn(),
@@ -73,6 +80,10 @@ import { getData } from '../dataService.js';
 beforeAll(() => {
   vi.stubEnv('DEEPSEEK_API_KEY', '');
   vi.stubEnv('OPENAI_API_KEY', '');
+  // 断点与评级台账重定向到临时目录：流水线每次运行都会写 data 阶段断点，
+  // outcomeTracker 会读台账——不能让单测触碰真实 server/src/data/
+  vi.stubEnv('ANALYSIS_CHECKPOINT_DIR', join(tmpdir(), 'srs-pipeline-ck-'));
+  vi.stubEnv('OUTCOME_FILE', join(tmpdir(), 'srs-pipeline-outcomes.json'));
 });
 afterAll(() => {
   vi.unstubAllEnvs();
