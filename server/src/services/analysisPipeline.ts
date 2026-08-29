@@ -105,6 +105,12 @@ export async function runAnalysis(
       phase: 'data',
       message: `从上次中断处继续（已完成至「${stageLabel(ck.stage)}」阶段，跳过已完成的环节）`,
     });
+  } else {
+    // 全新分析：丢弃磁盘上任何残留断点（含未被读取清理的已过期代）。
+    // saveCheckpoint 按 patch 合并，若不先清理，上一代的 experts/arbitration 产物
+    // 会混入新生成的断点——新分析若在 experts 完成前中断，后续 resume 会把
+    // 新取的数据与旧代专家结论拼在一起（跨代错配）。
+    clearCheckpoint(stockCode);
   }
 
   // 1. 数据获取 + 新闻情绪 + 行情历史：三者都只依赖股票代码，并行拉取（省网络往返）
