@@ -85,6 +85,23 @@ export interface ExpertOpinion {
   keyPoints: string[];
 }
 
+/**
+ * 评级命中率统计（决策-结果闭环）。
+ * accuracyPct 在样本量不足时为 null，避免小样本噪声被误读为真实准确率。
+ */
+export interface RatingAccuracy {
+  /** 已评估样本数 */
+  sampleCount: number;
+  /** 参与命中判定的样本数（排除中性评级） */
+  judgedCount: number;
+  /** 命中数 */
+  hitCount: number;
+  /** 命中率（%）；样本不足时为 null */
+  accuracyPct: number | null;
+  /** 平均区间收益（%） */
+  avgReturnPct: number | null;
+}
+
 // 争议点
 export interface ControversyPoint {
   topic: string;
@@ -257,6 +274,20 @@ export interface AnalysisResult {
     };
     /** 行情历史（日K线，用于走势图渲染；取数失败时为模拟数据，isSimulated=true） */
     priceHistory?: PriceHistoryPoint[];
+    /**
+     * 本次降级的专家名单（可选；单个专家研判失败时记入，无降级时不出现）。
+     * 借鉴 TradingAgents 的节点级 crash-safety：单专家失败不再拖垮整次分析，
+     * 但需如实披露实际参与研判的专家数量，避免读者按满员研判理解置信度。
+     */
+    degraded_experts?: string[];
+    /**
+     * 评级事后校准（可选；决策-结果闭环：该股与全样本的历史评级命中率）。
+     * 借鉴 TradingAgents 的 decision log——从"观点如何漂移"推进到"观点是否兑现"。
+     */
+    rating_accuracy?: {
+      stock: RatingAccuracy;
+      overall: RatingAccuracy;
+    };
   }[];
   data_sources: DataSource[];
   research_confidence: string;

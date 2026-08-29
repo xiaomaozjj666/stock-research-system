@@ -15,6 +15,12 @@ export interface ArbitrationInput {
   valuation: ValuationData;
   info: StockInfo;
   opinions: ExpertOpinion[];
+  /**
+   * 该股票历史评级的事后校准提示（可选；样本不足时为 null）。
+   * 决策-结果闭环：把"历次评级是否兑现"的统计注入仲裁，
+   * 让仲裁在系统性偏乐观/悲观时能自我校准（借鉴 TradingAgents 的 decision log 反思注入）。
+   */
+  ratingAccuracy?: string | null;
 }
 
 const EXPERT_NAME = '数据仲裁官（综合研判）';
@@ -386,11 +392,16 @@ export async function arbitrationExpert(input: ArbitrationInput): Promise<{
     })
     .join('\n\n');
 
+  // 事后校准提示：有历史样本时附加，供仲裁校准自信程度
+  const accuracyBlock = input.ratingAccuracy
+    ? `\n\n=== 历史评级事后校准（决策-结果闭环）===\n${input.ratingAccuracy}`
+    : '';
+
   const messages: ChatMessage[] = [
     { role: 'system', content: SYSTEM_PROMPT },
     {
       role: 'user',
-      content: `${formatContext(input.financial, input.valuation, input.info)}\n\n=== 各专家研判意见 ===\n${opinionsBrief}\n\n${ARBITRATION_SCHEMA}`,
+      content: `${formatContext(input.financial, input.valuation, input.info)}\n\n=== 各专家研判意见 ===\n${opinionsBrief}${accuracyBlock}\n\n${ARBITRATION_SCHEMA}`,
     },
   ];
 

@@ -4,6 +4,7 @@ import type {
   DataSource,
   SectorRotationSignal,
   PriceHistoryPoint,
+  ControversyPoint,
 } from '../types.js';
 import { getData } from './dataService.js';
 import { fundamentalExpert } from './experts/fundamentalExpert.js';
@@ -15,6 +16,14 @@ import { policyExpert } from './experts/policyExpert.js';
 import { hotMoneyExpert } from './experts/hotMoneyExpert.js';
 import { unlockExpert } from './experts/unlockExpert.js';
 import { arbitrationExpert } from './experts/arbitrationExpert.js';
+import { runExpertsWithDegradation } from './expertRunner.js';
+import {
+  loadCheckpoint,
+  saveCheckpoint,
+  clearCheckpoint,
+  stageLabel,
+} from './analysisCheckpoint.js';
+import { evaluateOutcomes, getRatingAccuracy, formatAccuracyHint } from './outcomeTracker.js';
 import { generateScenarios } from './scenarioEngine.js';
 import { generateStrategyList } from './strategyListEngine.js';
 import { safeDiv } from './safeDiv.js';
@@ -30,6 +39,9 @@ import logger from '../utils/logger.js';
 
 /** 特异波动经验基准（%）：无残差收益序列时使用（A 股中位单股波动水平） */
 const SPECIFIC_RISK_BASELINE = 25;
+
+/** 参与研判的专家总数（用于覆盖度披露；与实际并发任务数保持一致） */
+const EXPERT_TOTAL = 8;
 
 /**
  * 拉取近 2 年日K线，映射为前端走势图可用的 PriceHistoryPoint。
@@ -67,29 +79,78 @@ export type AnalysisStage =
   | { phase: 'strategy'; message: string }
   | { phase: 'done'; message: string; result: AnalysisResult };
 
+/** 运行选项 */
+export interface RunAnalysisOptions {
+  /**
+   * 是否允许从上次中断处继续（断点续跑）。
+   * 为 true 时读取该股票的断点，跳过已完成的高成本阶段（取数 / 专家研判 / 仲裁），
+   * 中断后重入可省去已支付过的 LLM 成本；无断点或断点已过期则自动全新开始。
+   */
+  resume?: boolean;
+}
+
 export async function runAnalysis(
   stockCode: string,
   onProgress?: (stage: AnalysisStage) => void,
+  options: RunAnalysisOptions = {},
 ): Promise<AnalysisResult> {
   const emit = (stage: AnalysisStage) => {
     onProgress?.(stage);
   };
 
+  // 断点续跑：仅在显式请求 resume 时读取，避免陈旧中间态被误用
+  const ck = options.resume ? loadCheckpoint(stockCode) : null;
+  if (ck) {
+    emit({
+      phase: 'data',
+      message: `从上次中断处继续（已完成至「${stageLabel(ck.stage)}」阶段，跳过已完成的环节）`,
+    });
+  }
+
   // 1. 数据获取 + 新闻情绪 + 行情历史：三者都只依赖股票代码，并行拉取（省网络往返）
-  emit({ phase: 'data', message: '正在获取行情/财务/新闻数据...' });
-  const [dataResult, newsResult, priceHistory] = await Promise.all([
-    getData(stockCode),
-    // 新闻情绪尽力而为：限时 3s，失败/超时视为无新闻（不阻塞主流程）
-    withTimeout(extractNewsSignal(stockCode), 3000).catch(() => ({
-      signal: null as NewsSignal | null,
-      source: 'none' as const,
-    })),
-    // 行情历史（日K）：近 2 年，限时 12s，失败/超时降级为模拟数据（不阻塞主流程）
-    withTimeout(fetchPriceHistory(stockCode), 12000).catch(() => [] as PriceHistoryPoint[]),
-  ]);
+  //    断点命中时直接复用，跳过网络往返
+  let dataResult: Awaited<ReturnType<typeof getData>>;
+  let newsSignal: NewsSignal | null;
+  let priceHistory: PriceHistoryPoint[];
+
+  if (ck?.data) {
+    dataResult = {
+      info: ck.data.info,
+      financial: ck.data.financial,
+      valuation: ck.data.valuation,
+    };
+    newsSignal = ck.data.newsSignal;
+    priceHistory = ck.data.priceHistory;
+  } else {
+    emit({ phase: 'data', message: '正在获取行情/财务/新闻数据...' });
+    const [fetchedData, newsResult, fetchedPrices] = await Promise.all([
+      getData(stockCode),
+      // 新闻情绪尽力而为：限时 3s，失败/超时视为无新闻（不阻塞主流程）
+      withTimeout(extractNewsSignal(stockCode), 3000).catch(() => ({
+        signal: null as NewsSignal | null,
+        source: 'none' as const,
+      })),
+      // 行情历史（日K）：近 2 年，限时 12s，失败/超时降级为模拟数据（不阻塞主流程）
+      withTimeout(fetchPriceHistory(stockCode), 12000).catch(() => [] as PriceHistoryPoint[]),
+    ]);
+    dataResult = fetchedData;
+    newsSignal = newsResult.signal;
+    priceHistory = fetchedPrices;
+    // 落盘保存「未经 PE/PB 修正」的原始数据：后续修正是确定性纯计算，
+    // 续跑时重放得到同样结果，避免修正被重复叠加。
+    saveCheckpoint(stockCode, {
+      stage: 'data',
+      data: {
+        info: fetchedData.info,
+        financial: fetchedData.financial,
+        valuation: fetchedData.valuation,
+        newsSignal,
+        priceHistory: fetchedPrices,
+      },
+    });
+  }
   const { info, financial, valuation } = dataResult;
   const n = financial.years.length;
-  const newsSignal = newsResult.signal;
 
   // 审计：数据访问完成（合规留痕；runAnalysis 无会话上下文，以股票代码作为审计会话键）
   try {
@@ -155,49 +216,90 @@ export async function runAnalysis(
     valuation.historicalPE = historicalPE;
   }
 
-  // 2. 多专家独立研判（并行调用，保留并行潜力以备未来异步化）
-  emit({ phase: 'experts', message: '8 位专家独立研判中...' });
-  const [
-    fundOpinion,
-    valOpinion,
-    indOpinionResult,
-    riskOpinion,
-    capitalOpinion,
-    policyOpinion,
-    hotMoneyOpinion,
-    unlockOpinion,
-  ] = await Promise.all([
-    fundamentalExpert(financial, valuation, info),
-    valuationExpert(financial, valuation, info),
-    industryExpert(financial, valuation, info),
-    riskExpert(financial, valuation, info),
-    capitalFlowExpert(financial, valuation, info),
-    policyExpert(financial, valuation, info),
-    hotMoneyExpert(financial, valuation, info),
-    unlockExpert(financial, valuation, info),
-  ]);
+  // 2. 多专家独立研判（并行 + 单专家降级 + 断点复用）
+  //    借鉴 TradingAgents 的节点级 crash-safety：单个专家失败不再拖垮整次分析，
+  //    失败者从仲裁输入中剔除并记入 degradedExperts，由报告如实披露覆盖度。
+  let expertOpinions: ExpertOpinion[];
+  let degradedExperts: string[];
+  let expertByKey: Record<string, ExpertOpinion | undefined>;
 
-  // 提取行业专家结果和景气度建议
-  const indOpinion: IndustryExpertResult = indOpinionResult;
-  const expertOpinions: ExpertOpinion[] = [
-    fundOpinion,
-    valOpinion,
-    indOpinion,
-    riskOpinion,
-    capitalOpinion,
-    policyOpinion,
-    hotMoneyOpinion,
-    unlockOpinion,
-  ];
+  if (ck?.expertOpinions?.length) {
+    expertOpinions = ck.expertOpinions;
+    degradedExperts = ck.degradedExperts ?? [];
+    expertByKey = ck.expertByKey ?? {};
+    emit({
+      phase: 'experts',
+      message: `复用上次专家研判结果（${expertOpinions.length}/${EXPERT_TOTAL} 位）`,
+    });
+  } else {
+    emit({ phase: 'experts', message: '8 位专家独立研判中...' });
+    const expertOutcome = await runExpertsWithDegradation([
+      {
+        key: 'fundamental',
+        name: '基本面专家',
+        run: () => fundamentalExpert(financial, valuation, info),
+      },
+      {
+        key: 'valuation',
+        name: '估值专家',
+        run: () => valuationExpert(financial, valuation, info),
+      },
+      { key: 'industry', name: '行业专家', run: () => industryExpert(financial, valuation, info) },
+      { key: 'risk', name: '风险专家', run: () => riskExpert(financial, valuation, info) },
+      {
+        key: 'capital',
+        name: '资金流专家',
+        run: () => capitalFlowExpert(financial, valuation, info),
+      },
+      { key: 'policy', name: '政策专家', run: () => policyExpert(financial, valuation, info) },
+      { key: 'hotMoney', name: '题材专家', run: () => hotMoneyExpert(financial, valuation, info) },
+      { key: 'unlock', name: '解禁专家', run: () => unlockExpert(financial, valuation, info) },
+    ]);
+    // 全部专家均失败时无法形成有效研判，直接抛错交由上层（500 / SSE error）处理
+    if (expertOutcome.opinions.length === 0) {
+      throw new Error('全部 8 位专家研判均失败，无法生成分析报告');
+    }
+    expertOpinions = expertOutcome.opinions;
+    degradedExperts = expertOutcome.degradedExperts;
+    expertByKey = expertOutcome.byKey;
+    saveCheckpoint(stockCode, { stage: 'experts', expertOpinions, degradedExperts, expertByKey });
+  }
 
-  // 3. 辩论仲裁
-  emit({ phase: 'arbitration', message: '多专家辩论仲裁中...' });
-  const { controversies, finalOpinion } = await arbitrationExpert({
-    financial,
-    valuation,
-    info,
-    opinions: expertOpinions,
-  });
+  /** 按 key 取专家情绪；该专家降级时以 neutral 兜底，保证下游自省逻辑不中断 */
+  const sentimentOf = (key: string): ExpertOpinion['overallSentiment'] =>
+    expertByKey[key]?.overallSentiment ?? 'neutral';
+
+  // 3. 辩论仲裁（断点命中时复用上次结论，省去一次大上下文 LLM 调用）
+  let controversies: ControversyPoint[];
+  let finalOpinion: ExpertOpinion;
+  // 决策-结果闭环：先回填到期评级的实际结果，再把历史命中率注入仲裁，
+  // 让"历次判断是否兑现"参与本次裁决（限时 8s，失败不阻断主流程）。
+  let ratingAccuracyHint: string | null = null;
+  let accuracySummary: ReturnType<typeof getRatingAccuracy> | null = null;
+  if (ck?.finalOpinion && ck.controversies) {
+    controversies = ck.controversies;
+    finalOpinion = ck.finalOpinion;
+    emit({ phase: 'arbitration', message: '复用上次仲裁结论' });
+  } else {
+    try {
+      await withTimeout(evaluateOutcomes(3), 8000).catch(() => 0);
+      accuracySummary = getRatingAccuracy(stockCode);
+      ratingAccuracyHint = formatAccuracyHint(stockCode);
+    } catch {
+      /* 事后校准失败不影响主流程 */
+    }
+    emit({ phase: 'arbitration', message: '多专家辩论仲裁中...' });
+    const arbitration = await arbitrationExpert({
+      financial,
+      valuation,
+      info,
+      opinions: expertOpinions,
+      ratingAccuracy: ratingAccuracyHint,
+    });
+    controversies = arbitration.controversies;
+    finalOpinion = arbitration.finalOpinion;
+    saveCheckpoint(stockCode, { stage: 'arbitration', controversies, finalOpinion });
+  }
 
   const allOpinions = [...expertOpinions, finalOpinion];
 
@@ -243,9 +345,26 @@ export async function runAnalysis(
   // 4. 双层自省
   const reflectionNotes: string[] = [];
 
+  // 专家覆盖度披露：有专家降级时如实说明，避免读者按满员研判理解置信度
+  if (degradedExperts.length > 0) {
+    reflectionNotes.push(
+      `【自省·覆盖度】本次 ${EXPERT_TOTAL - degradedExperts.length}/${EXPERT_TOTAL} 位专家参与研判，${degradedExperts.join('、')}未能返回结果，已自动降级剔除，结论置信度相应下调。`,
+    );
+  }
+
+  // 事后校准披露：让报告读者知道这套评级在该股上的历史兑现情况
+  if (accuracySummary && accuracySummary.stock.sampleCount > 0) {
+    const s = accuracySummary.stock;
+    const calibration =
+      s.accuracyPct !== null
+        ? `该股历史评级命中率 ${s.accuracyPct}%（${s.hitCount}/${s.judgedCount} 次方向判断兑现）`
+        : `该股已累积 ${s.sampleCount} 次评级样本，样本量尚不足以统计命中率`;
+    reflectionNotes.push(`【自省·事后校准】${calibration}，本次结论请结合该历史表现审慎采信。`);
+  }
+
   // 第一层：事实自省 - 基于数据阈值触发
   // 营收增速与专家情绪矛盾检查
-  if (revenueGrowthLatest < 5 && fundOpinion.overallSentiment === 'bullish') {
+  if (revenueGrowthLatest < 5 && sentimentOf('fundamental') === 'bullish') {
     reflectionNotes.push(
       `【自省】营收增速仅${revenueGrowthLatest.toFixed(1)}%，基本面专家仍看多，可能存在乐观偏差。`,
     );
@@ -308,15 +427,16 @@ export async function runAnalysis(
 
   // 逻辑闭环④：关键跟踪指标（基于专家情绪动态判断）
   const topConcern =
-    indOpinion.overallSentiment === 'bearish'
+    sentimentOf('industry') === 'bearish'
       ? '行业景气度下行'
-      : valOpinion.overallSentiment === 'bearish'
+      : sentimentOf('valuation') === 'bearish'
         ? '估值压力'
         : '基本面变化';
   reflectionNotes.push(`【逻辑闭环④】如果只能跟踪一个方向，应重点关注：${topConcern}。`);
 
-  // 5. 量化打分（传入行业景气度建议）
-  const industrySuggestion = (indOpinion as IndustryExpertResult).industryScoreSuggestion;
+  // 5. 量化打分（传入行业景气度建议；行业专家降级时不传，由打分引擎取默认）
+  const industrySuggestion = (expertByKey.industry as IndustryExpertResult | undefined)
+    ?.industryScoreSuggestion;
   const scoreDetail = calculateScores(financial, valuation, info, industrySuggestion);
   const totalScore =
     scoreDetail.profit_quality +
@@ -348,10 +468,11 @@ export async function runAnalysis(
   else valuationLevel = '历史高估';
 
   // 8. 生成核心摘要（动态，无硬编码文本）
+  const fundamentalSentiment = sentimentOf('fundamental');
   const sentimentWord =
-    fundOpinion.overallSentiment === 'bullish'
+    fundamentalSentiment === 'bullish'
       ? '优秀'
-      : fundOpinion.overallSentiment === 'bearish'
+      : fundamentalSentiment === 'bearish'
         ? '偏弱'
         : '中等';
   const coreSummary =
@@ -607,6 +728,9 @@ export async function runAnalysis(
   });
   const riskDecomposition = decomposeRisk(styleExposures, SPECIFIC_RISK_BASELINE);
 
+  // 分析成功：清除断点（中间产物已无用，避免陈旧数据被后续误用）
+  clearCheckpoint(stockCode);
+
   return {
     stock_pool: [
       {
@@ -638,10 +762,14 @@ export async function runAnalysis(
         },
         mcpContext,
         priceHistory,
+        // 专家降级名单（可选；无降级时不出现该字段，保持既有输出契约）
+        degraded_experts: degradedExperts.length > 0 ? degradedExperts : undefined,
+        // 评级事后校准（可选；无历史评级样本时不出现该字段）
+        rating_accuracy: accuracySummary ?? undefined,
       },
     ],
     data_sources: dataSources,
-    research_confidence: `基于${allOpinions.length}位专家独立研判+仲裁综合，整体置信度${Math.round(allOpinions.reduce((s, o) => s + o.confidence, 0) / allOpinions.length)}%。财务数据置信度高（上市公司年报审计），行业判断置信度中等（存在政策不确定性）。`,
+    research_confidence: `基于${expertOpinions.length}位专家独立研判+仲裁综合，整体置信度${Math.round(allOpinions.reduce((s, o) => s + o.confidence, 0) / allOpinions.length)}%。财务数据置信度高（上市公司年报审计），行业判断置信度中等（存在政策不确定性）。`,
     limitation_explain:
       '本分析基于公开财务数据和行业信息，未包含非公开信息、实地调研、管理层访谈等。数据截止至最近年报，可能存在滞后性。分析模型为定性+定量结合，不构成投资建议。',
   };
