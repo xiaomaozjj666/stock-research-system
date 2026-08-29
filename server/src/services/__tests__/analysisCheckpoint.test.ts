@@ -73,8 +73,16 @@ describe('analysisCheckpoint 断点续跑', () => {
   it('断点过期后返回 null 并顺带清理（避免陈旧行情被复用）', () => {
     saveCheckpoint('600519', { stage: 'data', data: makeData('600519') });
     process.env.ANALYSIS_CHECKPOINT_TTL_MS = '0'; // 立即过期
+    // 回归用例：写入与读取可能落在同一毫秒（age === 0）。
+    // 判定必须是「age >= ttl 或 ttl <= 0」而非 age > ttl，否则 ttl=0 会被误判为未过期。
     expect(loadCheckpoint('600519')).toBeNull();
     expect(existsSync(join(tmpDir, '600519.json'))).toBe(false);
+  });
+
+  it('有效期为 0 时，同一毫秒内写入也不复用（age===0 边界）', () => {
+    process.env.ANALYSIS_CHECKPOINT_TTL_MS = '0';
+    saveCheckpoint('000001', { stage: 'data', data: makeData('000001') });
+    expect(loadCheckpoint('000001')).toBeNull();
   });
 
   it('文件内容与股票代码不一致时视为无效断点', () => {

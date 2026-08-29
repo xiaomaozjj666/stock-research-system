@@ -86,8 +86,11 @@ export function loadCheckpoint(stockCode: string): AnalysisCheckpoint | null {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as AnalysisCheckpoint;
     if (!parsed || parsed.stockCode !== stockCode) return null;
 
+    const ttl = getTtlMs();
     const age = Date.now() - new Date(parsed.updatedAt).getTime();
-    if (!Number.isFinite(age) || age > getTtlMs()) {
+    // ttl <= 0 表示不复用任何断点；age >= ttl 视为过期（age 与 ttl 相等即刚好到期）。
+    // 不可用 age > ttl：写入与读取落在同一毫秒时 age === 0，ttl 为 0 会被误判为未过期。
+    if (!Number.isFinite(age) || ttl <= 0 || age >= ttl) {
       clearCheckpoint(stockCode); // 过期即清理，避免陈旧数据被误用
       return null;
     }
