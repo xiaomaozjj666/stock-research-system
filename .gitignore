@@ -20,6 +20,10 @@ server/data/chatHistory.json
 server/src/data/audit.log
 # 研究历史记录（运行时生成，不入库）
 server/src/data/history.json
+# 分析断点续跑中间产物（运行时生成，不入库）
+server/src/data/checkpoints/
+# 评级事后校准台账（运行时生成，不入库）
+server/src/data/outcomes.json
 .coverage_tmp/
 
 # Test artifacts

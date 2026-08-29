@@ -12,6 +12,7 @@ import {
   getHistoryItem,
   deleteHistoryItem,
 } from '../services/historyService.js';
+import { recordAnalysis } from '../services/outcomeTracker.js';
 import { createSseChannel } from '../utils/sse.js';
 import logger from '../utils/logger.js';
 
@@ -43,6 +44,16 @@ function persistAnalysisHistory(result: unknown): void {
       totalScore: Number(item.total_score) || 0,
       result: result as never,
     });
+
+    // 决策-结果闭环：记下本次评级与发出时的价格，到期后回填实际收益用于命中率校准
+    recordAnalysis({
+      stockCode: item.stock_code,
+      rating: String(item.rating ?? ''),
+      totalScore: Number(item.total_score) || 0,
+      entryPrice: Number(
+        (item.valuation as { currentPrice?: number } | undefined)?.currentPrice ?? 0,
+      ),
+    });
   } catch {
     /* 历史落盘失败不影响分析响应 */
   }
@@ -51,11 +62,12 @@ function persistAnalysisHistory(result: unknown): void {
 // === 核心分析接口 ===
 router.post('/api/analyze', analyzeLimiter, circuitBreakerGuard, async (req, res) => {
   try {
-    const { stockCode } = req.body;
+    const { stockCode, resume } = req.body;
     if (!stockCode || !/^\d{6}$/.test(stockCode)) {
       return res.status(400).json({ error: '请提供有效的6位股票代码' });
     }
-    const result = await runAnalysis(stockCode);
+    // resume：上次分析中断时，从最后一个成功阶段续跑（省去已支付过的 LLM 成本）
+    const result = await runAnalysis(stockCode, undefined, { resume: resume === true });
     persistAnalysisHistory(result); // 分析完成自动入库（失败静默，不影响响应）
     res.json(result);
   } catch (error) {
@@ -80,7 +92,9 @@ router.get('/api/analyze/stream', analyzeLimiter, circuitBreakerGuard, async (re
   const sse = createSseChannel(req, res);
 
   try {
-    const result = await runAnalysis(stockCode, (stage) => sse.send(stage));
+    // resume=1：上次分析中断（如客户端断开）时，从最后一个成功阶段续跑
+    const resume = req.query.resume === '1' || req.query.resume === 'true';
+    const result = await runAnalysis(stockCode, (stage) => sse.send(stage), { resume });
     persistAnalysisHistory(result); // 分析完成自动入库（失败静默）
     sse.trySend({ phase: 'done', message: '分析完成', result });
   } catch (error) {
