@@ -30,7 +30,9 @@ describe('对话长期记忆持久化', () => {
     expect(h[1].content).toBe('b');
   });
 
-  it('超过上限截断最旧轮次', () => {
+  // 该用例做 168 次同步读+写（O(n²) 全文件重写），常态 ~730ms；
+  // 极端负载下曾疑似逼近 vitest 默认 5s 超时，显式放宽到 30s 防误判。
+  it('超过上限截断最旧轮次', { timeout: 30000 }, () => {
     const pairs = MAX_TURNS * 2 + 4;
     for (let i = 0; i < pairs; i++) {
       appendTurn(SID, { role: 'user', content: `m${i}` });

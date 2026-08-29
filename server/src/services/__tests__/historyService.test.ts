@@ -189,7 +189,8 @@ describe('historyService 研究历史', () => {
     expect(vs!.previous_date).toBe('2026-07-01'); // createdAt 取日期部分
   });
 
-  it('容量超上限时淘汰最旧记录（保留最新 MAX_HISTORY_ITEMS 条）', () => {
+  // 写 MAX+5 条、每条全文件重写（O(n²)），常态 ~730ms；显式放宽超时防极端负载误判。
+  it('容量超上限时淘汰最旧记录（保留最新 MAX_HISTORY_ITEMS 条）', { timeout: 30000 }, () => {
     // createdAt 由服务端单调时钟保证严格递增（同毫秒保存也 +1ms），
     // 因此"最早保存 = createdAt 最小 = 必被淘汰"的语义恒定成立
     const first = saveHistoryEntry(makeEntry('600001'));
