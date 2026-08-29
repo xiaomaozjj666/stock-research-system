@@ -17,11 +17,31 @@ const DEFAULT_HISTORY_FILE = path.join(import.meta.dirname, '..', 'data', 'chatH
 export const MAX_TURNS = 40;
 /** 最多保留的 session 数：超出时淘汰最旧的 session，防止文件被无限刷大 */
 export const MAX_SESSIONS = 200;
-/** sessionId 白名单：客户端生成格式为 `sess-` + base36；拒绝 `__proto__` 等原型链键与超长串 */
+/** sessionId 白名单：客户端生成格式为 `sess-` + base36；拒绝超长串与非法字符 */
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+/** `prototype` 不在 Object.prototype 上（在 Function.prototype 上），需显式拒绝 */
+const RESERVED_KEYS = new Set(['prototype']);
 
 function isValidSessionId(sessionId: string): boolean {
-  return SESSION_ID_RE.test(sessionId);
+  // `__proto__`/`constructor`/`toString`/`valueOf` 等全部命中 Object.prototype 继承键，
+  // 一并拒绝——charset 白名单挡不住全由合法字符组成的原型链键
+  return (
+    SESSION_ID_RE.test(sessionId) &&
+    !(sessionId in Object.prototype) &&
+    !RESERVED_KEYS.has(sessionId)
+  );
+}
+
+/**
+ * 仅读取自身属性：charset 白名单挡不住 `toString`/`valueOf` 这类同样匹配白名单的
+ * Object.prototype 继承键，必须用 hasOwnProperty 把访问限制在 JSON 落盘的真实数据上。
+ */
+function getOwnTurns(store: Store, sessionId: string): ChatTurn[] | undefined {
+  return Object.prototype.hasOwnProperty.call(store, sessionId) ? store[sessionId] : undefined;
+}
+
+function hasOwnKey(store: Store, sessionId: string): boolean {
+  return Object.prototype.hasOwnProperty.call(store, sessionId);
 }
 
 type Store = Record<string, ChatTurn[]>;
@@ -61,14 +81,14 @@ function writeStore(store: Store): void {
 export function loadHistory(sessionId: string): ChatTurn[] {
   if (!isValidSessionId(sessionId)) return [];
   const store = readStore();
-  return store[sessionId] ?? [];
+  return getOwnTurns(store, sessionId) ?? [];
 }
 
 export function appendTurn(sessionId: string, turn: ChatTurn): void {
-  if (!isValidSessionId(sessionId)) return; // 非法键（含 __proto__ 等原型链键）不落盘
+  if (!isValidSessionId(sessionId)) return; // 非法/保留键不落盘
   const store = readStore();
-  const isNewSession = !(sessionId in store);
-  const list = store[sessionId] ?? [];
+  const isNewSession = !hasOwnKey(store, sessionId);
+  const list = getOwnTurns(store, sessionId) ?? [];
   list.push(turn);
   // 截断：保留最近 MAX_TURNS*2 条（user+assistant 成对）
   if (list.length > MAX_TURNS * 2) {

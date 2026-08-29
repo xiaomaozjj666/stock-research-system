@@ -52,3 +52,27 @@ describe('对话长期记忆持久化', () => {
     expect(loadHistory('other-session')).toEqual([]);
   });
 });
+
+describe('sessionId 安全校验（原型链键防护）', () => {
+  it.each(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty'])(
+    '危险键 %s：读取安全返回空、写入被拒绝且不污染存储',
+    (sid) => {
+      expect(loadHistory(sid)).toEqual([]); // 不抛 TypeError（history is not iterable）
+      expect(() => appendTurn(sid, { role: 'user', content: 'x' })).not.toThrow();
+      expect(loadHistory(sid)).toEqual([]);
+      // 存储文件中不得出现该键
+      const raw = JSON.parse(require('node:fs').readFileSync(tmpFile, 'utf-8'));
+      expect(Object.getOwnPropertyNames(raw)).not.toContain(sid);
+    },
+  );
+
+  it.each(['a'.repeat(65), '包含空格', 'sess/../../etc', ''])('非法格式 %j：拒绝落盘', (sid) => {
+    appendTurn(sid, { role: 'user', content: 'x' });
+    expect(loadHistory(sid)).toEqual([]);
+  });
+
+  it('合法 sessionId 正常读写', () => {
+    appendTurn('sess-abc123', { role: 'user', content: 'hi' });
+    expect(loadHistory('sess-abc123')).toHaveLength(1);
+  });
+});

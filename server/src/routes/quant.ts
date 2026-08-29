@@ -70,15 +70,22 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
     // 3. 运行回测：baseline（不含新闻）+ 含最新消息情绪叠加层（news-aware）
     const backtestBaseline = runBacktest(ohlcvData, strategyConfig);
     let backtestResult = backtestBaseline;
+    // 记录实际应用的叠加层：limitations 文案需区分严格时序（items）与旧口径（聚合常数）
+    let newsOverlayUsed: {
+      polarity: number;
+      since?: string;
+      items?: { publishedAt: string; polarity: number }[];
+    } | null = null;
     if (newsSignal?.hasNews) {
+      newsOverlayUsed = {
+        polarity: newsSignal.polarity,
+        since: earliestNewsDate(newsSignal.items),
+        items: newsSignal.timeline,
+      };
       backtestResult = runBacktest(ohlcvData, {
         ...strategyConfig,
-        // since=新闻最早发布日：姿态仅作用于该日之后的建仓，避免前视偏差
-        newsOverlay: {
-          polarity: newsSignal.polarity,
-          since: earliestNewsDate(newsSignal.items),
-          items: newsSignal.timeline,
-        },
+        // since=新闻最早发布日；items=分段情绪时间线（引擎按各 bar 已知新闻严格时序叠加）
+        newsOverlay: newsOverlayUsed,
       });
     }
 
@@ -118,7 +125,7 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
     }
     if (backtestResult.newsAware) {
       limitations.push(
-        strategyConfig.newsOverlay?.items?.length
+        newsOverlayUsed?.items?.length
           ? '新闻情绪按发布时间分段加权（各时点仅使用已知新闻，时效半衰期 5.8 天），严格时序无前视偏差'
           : `新闻情绪为聚合常数叠加${backtestResult.newsSince ? `（自 ${backtestResult.newsSince} 起）` : ''}，属情景假设`,
       );
