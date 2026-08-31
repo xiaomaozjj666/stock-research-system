@@ -459,6 +459,11 @@ export interface AnalysisStage {
 export interface AnalyzeStreamOptions {
   /** 连接失败（尚未收到任何事件）时的自动重连次数上限，默认 3；设 0 关闭 */
   maxRetries?: number;
+  /**
+   * 是否从上次中断处续跑（断点续跑）。
+   * 服务端无断点或断点已过期时自动全新开始，因此失败重试场景可放心恒传 true。
+   */
+  resume?: boolean;
 }
 
 /** 取消导致的 Promise 拒绝：调用方应静默处理（区别于真实失败） */
@@ -475,8 +480,8 @@ export class AnalysisCancelledError extends Error {
  * 调用方可通过 cancel() 主动中断（done 会以 AnalysisCancelledError 拒绝，await 方可收尾）。
  *
  * 连接健壮性（H-03）：尚未收到任何事件时连接失败，按指数退避自动重连
- * （1s → 2s → 4s，默认最多 3 次）；已收到事件后断开则直接报错
- * （分析无法断点续传，重跑会造成重复消耗）。
+ * （1s → 2s → 4s，默认最多 3 次）；已收到事件后断开则直接报错。
+ * 断开后的重试可传 resume: true，从服务端最后成功阶段续跑，不重复支付已完成阶段。
  */
 export function analyzeStockStream(
   stockCode: string,
@@ -484,7 +489,9 @@ export function analyzeStockStream(
   options: AnalyzeStreamOptions = {},
 ): { cancel: () => void; done: Promise<AnalysisResult> } {
   const maxRetries = options.maxRetries ?? 3;
-  const url = `/api/analyze/stream?stockCode=${encodeURIComponent(stockCode)}`;
+  const url = `/api/analyze/stream?stockCode=${encodeURIComponent(stockCode)}${
+    options.resume ? '&resume=1' : ''
+  }`;
 
   let resolveDone!: (r: AnalysisResult) => void;
   let rejectDone!: (e: Error) => void;

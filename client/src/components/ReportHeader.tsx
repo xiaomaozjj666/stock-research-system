@@ -1,3 +1,12 @@
+/** 评级命中率统计（与后端 RatingAccuracy 结构对齐；样本不足时 accuracyPct 为 null） */
+interface RatingAccuracyStat {
+  sampleCount: number;
+  judgedCount: number;
+  hitCount: number;
+  accuracyPct: number | null;
+  avgReturnPct: number | null;
+}
+
 interface StockData {
   stock_code: string;
   stock_name: string;
@@ -15,6 +24,13 @@ interface StockData {
     previous_score: number;
     score_delta: number;
     rating_changed: boolean;
+  };
+  /** 本次降级未参与研判的专家名单（无降级时不出现） */
+  degraded_experts?: string[];
+  /** 评级事后校准（历史命中率；无已评估样本时不出现） */
+  rating_accuracy?: {
+    stock: RatingAccuracyStat;
+    overall: RatingAccuracyStat;
   };
 }
 
@@ -69,6 +85,33 @@ function VsPreviousTag({
   );
 }
 
+/** 本次降级未参与研判的专家提示（覆盖度披露，避免按满员研判理解置信度） */
+function DegradedTag({ names }: { names: string[] }) {
+  return (
+    <div
+      className="degraded-tag"
+      title={`未能返回结果：${names.join('、')}。已自动降级剔除，结论置信度相应下调`}
+    >
+      {names.length} 位专家降级未参与
+    </div>
+  );
+}
+
+/** 历史评级命中率（决策-结果闭环展示；样本不足时 accuracyPct 为 null，不显示） */
+function AccuracyTag({ stat }: { stat: RatingAccuracyStat }) {
+  if (stat.accuracyPct === null) return null;
+  return (
+    <div
+      className="accuracy-tag"
+      title={`近 ${stat.judgedCount} 次方向判断命中 ${stat.hitCount} 次${
+        stat.avgReturnPct !== null ? `，评级后平均区间收益 ${stat.avgReturnPct}%` : ''
+      }`}
+    >
+      历史命中率 {stat.accuracyPct}%（{stat.hitCount}/{stat.judgedCount}）
+    </div>
+  );
+}
+
 export default function ReportHeader({ data, research_confidence, onExport }: ReportHeaderProps) {
   return (
     <div className="card report-header">
@@ -98,6 +141,10 @@ export default function ReportHeader({ data, research_confidence, onExport }: Re
           {data.vs_previous && (
             <VsPreviousTag prev={data.vs_previous} currentRating={data.rating} />
           )}
+          {data.degraded_experts && data.degraded_experts.length > 0 && (
+            <DegradedTag names={data.degraded_experts} />
+          )}
+          {data.rating_accuracy && <AccuracyTag stat={data.rating_accuracy.stock} />}
           {research_confidence && (
             <div className="confidence-tag">研究置信度：{research_confidence}</div>
           )}

@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import type { StrategyConfig } from './types';
+import StockSearchInput from '../../components/StockSearchInput';
 
 interface Props {
   onSubmit: (config: StrategyConfig) => void;
@@ -48,6 +49,7 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
     'ma_cross',
   );
   const [stockCode, setStockCode] = useState('600519');
+  const [stockName, setStockName] = useState('');
   const [startDate, setStartDate] = useState(getDefaultStartDate());
   const [endDate, setEndDate] = useState(getDefaultEndDate());
   const [initialCapital, setInitialCapital] = useState(1000000);
@@ -108,13 +110,21 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
       </div>
 
       <div className="quant-form-group">
-        <label>股票代码</label>
-        <input
-          type="text"
-          value={stockCode}
-          onChange={(e) => setStockCode(e.target.value)}
-          placeholder="如 600519"
+        <label>标的</label>
+        <StockSearchInput
+          onSelect={(code, name) => {
+            setStockCode(code);
+            setStockName(name);
+          }}
+          placeholder="输入股票代码或名称，如 600519 / 贵州茅台"
+          ariaLabel="量化标的搜索"
         />
+        {stockCode && (
+          <div className="quant-selected-stock">
+            当前标的：{stockCode}
+            {stockName ? ` ${stockName}` : ''}
+          </div>
+        )}
       </div>
 
       <div className="quant-form-group">

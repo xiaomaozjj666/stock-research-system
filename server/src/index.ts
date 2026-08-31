@@ -10,6 +10,7 @@ import helmet from 'helmet';
 import * as fs from 'fs';
 import * as path from 'path';
 import { loadStockMaster } from './services/stockMaster.js';
+import { startOutcomeRefresher, stopOutcomeRefresher } from './services/outcomeTracker.js';
 import { configureTracer, expressTracerMiddleware } from './services/telemetry.js';
 import { httpMetricsMiddleware } from './services/metrics.js';
 import logger from './utils/logger.js';
@@ -259,6 +260,8 @@ if (process.env.NODE_ENV !== 'test') {
     loadStockMaster().catch((err) =>
       logger.warn('[stockMaster] 预热失败，首次搜索将按需加载', { err: err as Error }),
     );
+    // 评级结果定时回填：无人分析时台账也能按期评估，命中率统计不失真
+    startOutcomeRefresher();
   });
 
   // === Graceful Shutdown ===
@@ -270,6 +273,9 @@ if (process.env.NODE_ENV !== 'test') {
 
     logger.info('收到关闭信号，开始优雅关闭', { signal });
     logger.info('[Shutdown] 等待进行中的请求完成');
+
+    // 停止后台定时任务，避免关闭期间再触发回填
+    stopOutcomeRefresher();
 
     // 30 秒后强制退出，避免长连接阻塞关闭
     const forceExit = setTimeout(() => {

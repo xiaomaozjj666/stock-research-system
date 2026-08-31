@@ -221,7 +221,7 @@ function App() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, [analysisResult]);
 
-  const handleAnalyze = useCallback(async (stockCode: string) => {
+  const handleAnalyze = useCallback(async (stockCode: string, opts?: { resume?: boolean }) => {
     // 有在途分析先取消，避免两条 SSE 竞争写同一份状态
     cancelRef.current?.();
     lastCodeRef.current = stockCode;
@@ -231,9 +231,13 @@ function App() {
     setAnalysisStage(null);
     setViewingHistory(false); // 新分析开始：退出历史快照模式
     try {
-      const { done, cancel } = analyzeStockStream(stockCode, (stage) => {
-        setAnalysisStage(stage);
-      });
+      const { done, cancel } = analyzeStockStream(
+        stockCode,
+        (stage) => {
+          setAnalysisStage(stage);
+        },
+        { resume: opts?.resume === true },
+      );
       cancelRef.current = cancel;
       const result = await done;
       if (gen !== analyzeSeqRef.current) return; // 已被更新的分析接管
@@ -254,7 +258,9 @@ function App() {
   }, []);
 
   const handleRetry = useCallback(() => {
-    if (lastCodeRef.current) handleAnalyze(lastCodeRef.current);
+    // 失败重试默认走断点续跑：从服务端最后成功阶段继续，不重复支付已完成的 LLM 成本；
+    // 无断点或断点过期时服务端会自动全新开始。
+    if (lastCodeRef.current) handleAnalyze(lastCodeRef.current, { resume: true });
   }, [handleAnalyze]);
 
   const handleCancel = useCallback(() => {
