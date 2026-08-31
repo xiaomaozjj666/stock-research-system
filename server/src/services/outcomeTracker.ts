@@ -262,3 +262,49 @@ export function formatAccuracyHint(stockCode: string): string | null {
   }
   return parts.join('；') + '。请据此校准本次判断的自信程度，命中率偏低时应更保守。';
 }
+
+// === 定时回填 ===
+// evaluateOutcomes 目前只在分析触发时执行（每次限量），若某只股票长期无人分析，
+// 其台账将停留在"待评估"，命中率统计随之失真。此处提供进程级定时回填。
+
+/** 默认回填间隔：6 小时（行情时效与成本平衡） */
+const DEFAULT_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/** 启动后首次回填的错峰延迟 */
+const FIRST_RUN_DELAY_MS = 30 * 1000;
+/** 每轮回填条数上限 */
+const REFRESH_BATCH_SIZE = 5;
+
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let refreshInterval: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * 启动评级结果定时回填（仅进程入口调用；测试环境经 NODE_ENV!=='test' 隔离）。
+ * 首轮在启动后错峰执行，之后按间隔周期回填；单轮失败静默，下次再试。
+ * 重复调用为幂等（已启动则忽略）。
+ */
+export function startOutcomeRefresher(intervalMs = DEFAULT_REFRESH_INTERVAL_MS): void {
+  if (refreshTimer || refreshInterval) return;
+  const tick = () => {
+    void evaluateOutcomes(REFRESH_BATCH_SIZE).catch(() => undefined);
+  };
+  refreshTimer = setTimeout(tick, FIRST_RUN_DELAY_MS);
+  refreshInterval = setInterval(tick, intervalMs);
+  // 不阻止进程退出（与 scheduler.ts 自治循环同一约定）
+  for (const t of [refreshTimer, refreshInterval]) {
+    if (typeof (t as { unref?: () => void }).unref === 'function') {
+      (t as { unref: () => void }).unref();
+    }
+  }
+}
+
+/** 停止定时回填（优雅关闭时调用）；未启动时为安全空操作 */
+export function stopOutcomeRefresher(): void {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+  if (refreshInterval) {
+    clearInterval(refreshInterval);
+    refreshInterval = null;
+  }
+}

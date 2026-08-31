@@ -824,6 +824,26 @@ tr:hover td {
 .vs-previous-rating {
   opacity: 0.85;
 }
+/* 报告头部补充标签：专家覆盖度披露 / 评级事后校准 */
+.degraded-tag {
+  display: inline-block;
+  background: var(--color-warning-dim);
+  color: var(--color-warning);
+  font-size: var(--text-caption);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+}
+.accuracy-tag {
+  display: inline-block;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ===== Core Summary V2 ===== */
 .core-summary-v2 {
@@ -1868,6 +1888,11 @@ tr:hover td {
   height: 1px;
   background: var(--border-default);
   margin: var(--space-xs) 0;
+}
+/* 量化表单：搜索选中后的当前标的提示（搜索框选中即清空，需回显所选项） */
+.quant-selected-stock {
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
 }
 .quant-start-btn {
   margin-top: var(--space-sm);

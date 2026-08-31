@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-970%20cases-brightgreen" alt="970 测试用例" />
+  <img src="https://img.shields.io/badge/tests-977%20cases-brightgreen" alt="977 测试用例" />
   <img src="https://img.shields.io/badge/CI-GitHub%20Actions-brightgreen" alt="CI" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -183,7 +183,7 @@ Windows 一键启动：双击 `启动系统.bat`（零依赖，自动安装并�
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（970 用例：服务 / 量化 / 前端组件）
+npm test              # Vitest 全量单测（977 用例：服务 / 量化 / 前端组件）
 npm run test:e2e      # Playwright 端到端（9 用例，真实浏览器 + 隔离数据）
 npm run lint          # ESLint
 npm run format:check  # Prettier 格式检查
