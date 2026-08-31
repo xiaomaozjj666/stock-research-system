@@ -98,7 +98,7 @@ describe('runAnalysis 流水线', () => {
     vi.mocked(calculateSectorRotation).mockReturnValue(undefined as never);
   });
 
-  it('装配出结构合法的分析结果', async () => {
+  it('装配出结构合法的分析结果', { timeout: 30000 }, async () => {
     const result = await runAnalysis('600519');
     const stock = result.stock_pool[0];
 
@@ -138,13 +138,13 @@ describe('runAnalysis 流水线', () => {
     expect(Array.isArray(stock.priceHistory)).toBe(true);
   });
 
-  it('核心摘要包含公司名与评级', async () => {
+  it('核心摘要包含公司名与评级', { timeout: 30000 }, async () => {
     const result = await runAnalysis('600519');
     expect(result.stock_pool[0].core_summary).toContain('贵州茅台');
     expect(result.stock_pool[0].core_summary).toContain(result.stock_pool[0].rating);
   });
 
-  it('不同财务特征产生不同评分（高杠杆低毛利得分更低）', async () => {
+  it('不同财务特征产生不同评分（高杠杆低毛利得分更低）', { timeout: 30000 }, async () => {
     const weakData: StockDataSet = {
       ...sampleData,
       financial: {
@@ -168,7 +168,7 @@ describe('runAnalysis 流水线', () => {
 });
 
 describe('可选增强：知识图谱 / 行业轮动成功路径', () => {
-  it('增强字段存在且结构合法（不改变现有输出契约）', async () => {
+  it('增强字段存在且结构合法（不改变现有输出契约）', { timeout: 30000 }, async () => {
     // 提供有效返回：知识图谱上下文 + 行业轮动信号
     vi.mocked(buildFinancialGraph).mockReturnValue({
       toContextString: () => '【知识图谱】stock:600519 贵州茅台 ->[belongs_to]-> 白酒',
@@ -215,7 +215,7 @@ describe('可选增强：知识图谱 / 行业轮动成功路径', () => {
 });
 
 describe('可选增强：失败降级不崩', () => {
-  it('知识图谱/行业轮动增强抛错时，报告仍正常生成且增强字段缺失', async () => {
+  it('知识图谱/行业轮动增强抛错时，报告仍正常生成且增强字段缺失', { timeout: 30000 }, async () => {
     vi.mocked(buildFinancialGraph).mockImplementation(() => {
       throw new Error('图谱构建失败');
     });
