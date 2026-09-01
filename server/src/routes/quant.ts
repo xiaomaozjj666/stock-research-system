@@ -19,7 +19,12 @@ import {
   type FactorPredictability,
 } from '../quant/factorPredictability.js';
 import { evaluateFactor, judgeFactor, type FactorObservation } from '../quant/factorEvaluation.js';
-import { fetchOHLCVData } from '../quant/dataProvider.js';
+import {
+  fetchOHLCVData,
+  fetchBenchmarkReturns,
+  marketOf,
+  A_SHARE_BENCHMARK_SECID,
+} from '../quant/dataProvider.js';
 import { runBacktest } from '../quant/backtestEngine.js';
 import { withTimeout } from '../utils/timeout.js';
 import logger from '../utils/logger.js';
@@ -101,10 +106,33 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
     //     而不是当成 0 参与加权——那等价于给「无法计算」的标的安一个居中值。
     //     同时计算每只因子对「这只股票自身」远期收益的时间序列预测力（IC / t / p /
     //     是否显著）：截面 IC 需多股票横截面，单股场景下时间序列 IC 才是可证伪口径。
-    const priceVolumeFactorsSnapshot = computePriceVolumeFactors({ bars: ohlcvData });
+    // 3.6 市场基准收益（A 股用沪深300）：Beta / 特异波动率 / 残差动量需要「市场收益」
+    //     才能计算；个股自身买入持有曲线不是市场代理（会令 Beta 恒为 1）。指数拉取
+    //     失败（网络/跨市场）时降级为无市场收益，Beta 类因子仍按 NaN 处理，不拖垮报告。
+    let marketReturns: number[] | undefined;
+    try {
+      if (marketOf(strategyConfig.stockCode) === 'A') {
+        marketReturns =
+          (await fetchBenchmarkReturns(
+            ohlcvData.map((b) => b.date),
+            strategyConfig.startDate,
+            strategyConfig.endDate,
+            A_SHARE_BENCHMARK_SECID,
+          )) ?? undefined;
+      }
+    } catch (e) {
+      logger.warn('市场基准收益获取失败，Beta 类因子降级为无预测力', { err: e });
+    }
+    const priceVolumeFactorsSnapshot = computePriceVolumeFactors({
+      bars: ohlcvData,
+      marketReturns,
+    });
     let factorPredictability: FactorPredictability[] = [];
     try {
-      factorPredictability = evaluatePriceVolumeFactorPredictability({ bars: ohlcvData });
+      factorPredictability = evaluatePriceVolumeFactorPredictability({
+        bars: ohlcvData,
+        marketReturns,
+      });
     } catch (e) {
       // 预测力计算失败不应拖垮整份报告；降级为「无预测力数据」
       logger.warn('因子时间序列预测力计算跳过', { err: e });

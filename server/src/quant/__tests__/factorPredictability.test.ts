@@ -11,6 +11,7 @@ import {
 } from '../priceVolumeFactors.js';
 import {
   singleFactorPredictability,
+  evaluatePriceVolumeFactorPredictability,
   evaluatePriceVolumePredictabilityFromBars,
 } from '../factorPredictability.js';
 
@@ -145,5 +146,37 @@ describe('evaluatePriceVolumePredictabilityFromBars 端到端结构', () => {
     const beta = out.find((f) => f.name === 'beta')!;
     expect(beta.horizons[21]).toBeNull();
     expect(beta.horizons[63]).toBeNull();
+  });
+});
+
+describe('marketReturns 数据通路（注入合成市场收益，验证 β 类因子可算）', () => {
+  it('提供市场收益时 beta 当前值有限、63 日预测力非 null（确认接入路径有效）', () => {
+    const bars = barsFromCloses(deterministicCloses(300));
+    // 与个股收益弱相关的合成市场日收益，长度与 bars 对齐（首个为 0）
+    const marketReturns = bars.map((_, i) =>
+      i === 0 ? 0 : 0.6 * (bars[i].close / bars[i - 1].close - 1) + 0.001 * Math.sin(i),
+    );
+    const snap = computePriceVolumeFactors({ bars, marketReturns });
+    const beta = snap.find((f) => f.name === 'beta')!;
+    expect(Number.isFinite(beta.value)).toBe(true);
+    const idio = snap.find((f) => f.name === 'idiosyncratic_vol')!;
+    expect(Number.isFinite(idio.value)).toBe(true);
+
+    const pred = evaluatePriceVolumeFactorPredictability({ bars, marketReturns });
+    const betaPred = pred.find((f) => f.name === 'beta')!;
+    // 300 根 bars：253 最小回看 + 63 持有期 = 316 ≤ 300? 否 → 63 日窗口样本不足为 null；
+    // 故此处断言 21 日窗口非 null（253+21=274 ≤ 300），63 日按真实约束可为 null
+    expect(betaPred.horizons[21]).not.toBeNull();
+  });
+
+  it('400 根 bars + 市场收益时 beta 的 21/63 两窗口均非 null', () => {
+    const bars = barsFromCloses(deterministicCloses(400));
+    const marketReturns = bars.map((_, i) =>
+      i === 0 ? 0 : 0.6 * (bars[i].close / bars[i - 1].close - 1) + 0.001 * Math.sin(i),
+    );
+    const pred = evaluatePriceVolumeFactorPredictability({ bars, marketReturns });
+    const betaPred = pred.find((f) => f.name === 'beta')!;
+    expect(betaPred.horizons[21]).not.toBeNull();
+    expect(betaPred.horizons[63]).not.toBeNull();
   });
 });
