@@ -105,6 +105,66 @@ export interface OptimizationReport {
   iterationDirections: string[];
 }
 
+// 量价因子（A 股方向已校正）
+export type PriceVolumeFactorName =
+  | 'volatility_1m'
+  | 'volatility_3m'
+  | 'idiosyncratic_vol'
+  | 'reversal_1m'
+  | 'reversal_3m'
+  | 'residual_momentum_6m'
+  | 'momentum_12_1'
+  | 'turnover_ratio_reversal'
+  | 'amihud_illiquidity'
+  | 'beta'
+  | 'max_daily_return_1m';
+
+export type FactorCategory =
+  'volatility' | 'reversal' | 'momentum' | 'liquidity' | 'volume' | 'risk';
+
+/** 单因子、单持有期的预测力（时间序列 IC） */
+export interface FactorPredictabilityHorizon {
+  /** Spearman 秩相关 IC ∈ [-1, 1] */
+  ic: number;
+  /** 经济方向 IC = ic × direction；>0 表示因子预期方向与真实收益一致 */
+  effectiveIc: number;
+  /** t 统计量 */
+  tStat: number;
+  /** Student t 双侧 p 值 */
+  pValue: number;
+  /** p < 0.05 视为统计显著 */
+  significant: boolean;
+  /** 有效样本数 */
+  n: number;
+}
+
+export interface FactorPredictability {
+  name: PriceVolumeFactorName;
+  direction: 1 | -1;
+  category: FactorCategory;
+  /** 持有期（交易日）→ 预测力；样本不足时为 null */
+  horizons: Record<number, FactorPredictabilityHorizon | null>;
+  /** 是否有任一持有期达到统计显著 */
+  hasSignal: boolean;
+}
+
+export interface PriceVolumeFactor {
+  name: PriceVolumeFactorName;
+  /** 当前快照值；数据不足时为 NaN（available=false） */
+  value: number;
+  /** +1 = 值越高预期收益越高；−1 = 值越低预期收益越高 */
+  direction: 1 | -1;
+  category: FactorCategory;
+  /** 实证依据摘要 */
+  evidence: string;
+  /** 是否按 A 股实证做过方向翻转 */
+  aShareAdjusted: boolean;
+  /** 当前快照值是否可用（Number.isFinite） */
+  available: boolean;
+  /** 该因子对这只股票自身远期收益的时间序列预测力（21/63 交易日） */
+  predictability?: FactorPredictability;
+}
+
 // 完整报告
 export interface QuantResearchReport {
   strategy: StrategyConfig;
@@ -117,6 +177,8 @@ export interface QuantResearchReport {
   summary: string;
   confidence: string;
   limitations: string;
+  /** 量价因子快照值 + 时间序列预测力（IC/t/p/显著） */
+  priceVolumeFactors?: PriceVolumeFactor[];
 }
 
 // 进度阶段
