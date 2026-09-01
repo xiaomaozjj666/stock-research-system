@@ -51,7 +51,8 @@ function hotMoneyExpertRule(
   const marketCapRaw = valuation.marketCap;
   const peRaw = valuation.pe;
   const priceRaw = valuation.currentPrice;
-  const hasMarketCap = typeof marketCapRaw === 'number' && isFinite(marketCapRaw) && marketCapRaw > 0;
+  const hasMarketCap =
+    typeof marketCapRaw === 'number' && isFinite(marketCapRaw) && marketCapRaw > 0;
   const hasPe = typeof peRaw === 'number' && isFinite(peRaw) && peRaw > 0;
   const hasPrice = typeof priceRaw === 'number' && isFinite(priceRaw) && priceRaw > 0;
   const marketCap = hasMarketCap ? marketCapRaw : 0;
@@ -170,9 +171,7 @@ function hotMoneyExpertRule(
     overallSentiment = 'neutral';
   }
 
-  const avgConfidence = Math.round(
-    arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs,
-  );
+  const avgConfidence = Math.round(arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs);
 
   return {
     expert: EXPERT_NAME,

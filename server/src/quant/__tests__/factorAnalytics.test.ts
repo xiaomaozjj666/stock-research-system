@@ -245,3 +245,60 @@ describe('validateFactorModel 每日截面 IC 序列（qlib calc_ic 口径）', 
     expect(a.ic).toBeCloseTo(1, 6);
   });
 });
+
+describe('validateFactorModel 缺失值处理', () => {
+  const base: FactorPanelRow[] = [
+    { date: '2025-01-02', factors: { A: 3 }, forwardReturn: 0.3 },
+    { date: '2025-01-02', factors: { A: 2 }, forwardReturn: 0.2 },
+    { date: '2025-01-02', factors: { A: 1 }, forwardReturn: -0.2 },
+    { date: '2025-01-02', factors: { A: NaN }, forwardReturn: 0.9 },
+  ];
+
+  it('缺失因子值的行被丢弃，而不是当成 0 参与计算', () => {
+    // 回归测试：此前 `row.factors[name] ?? 0` 把 NaN 当 0，等价于给「数据缺失」
+    // 的标的安了一个偏低的因子值，会系统性污染 IC 方向与权重。
+    const rep = validateFactorModel(base, { maxLoss: 0.5 });
+    expect(rep.n).toBe(4);
+    expect(rep.dropped).toBe(1);
+    expect(rep.used).toBe(3);
+  });
+
+  it('丢弃后 IC 不受缺失行的干扰（缺失行的极端收益被排除）', () => {
+    const rep = validateFactorModel(base, { maxLoss: 0.5 });
+    const a = rep.perFactor.find((f) => f.name === 'A')!;
+    // 保留的 3 行因子值与收益完全同序 → IC = 1
+    expect(a.ic).toBeCloseTo(1, 6);
+  });
+
+  it('因子键不存在的行同样被丢弃', () => {
+    const panel: FactorPanelRow[] = [
+      { date: 'd1', factors: { A: 3 }, forwardReturn: 0.3 },
+      { date: 'd1', factors: { A: 2 }, forwardReturn: 0.2 },
+      { date: 'd1', factors: { A: 1 }, forwardReturn: 0.1 },
+      { date: 'd1', factors: {}, forwardReturn: 0.9 },
+    ];
+    const rep = validateFactorModel(panel, { maxLoss: 0.5 });
+    expect(rep.used).toBe(3);
+    expect(rep.dropped).toBe(1);
+  });
+
+  it('丢弃比例超过 maxLoss 时抛错（不静默接受大面积缺失）', () => {
+    // base 丢弃比例恰为 25%：「maxLoss = 允许丢弃的最大比例」，等于阈值时放行，
+    // 严格超过才抛错（与 alphalens `dropped > max_loss` 口径一致）
+    expect(() => validateFactorModel(base, { maxLoss: 0.2 })).toThrow(/maxLoss/);
+    expect(() => validateFactorModel(base, { maxLoss: 0.9 })).not.toThrow();
+    expect(() => validateFactorModel(base)).not.toThrow();
+  });
+
+  it('无缺失时 dropped = 0，used = n', () => {
+    const rep = validateFactorModel(base.slice(0, 3));
+    expect(rep.dropped).toBe(0);
+    expect(rep.used).toBe(3);
+  });
+
+  it('样本不足提前返回时 used = 0', () => {
+    const rep = validateFactorModel(base.slice(0, 2));
+    expect(rep.used).toBe(0);
+    expect(rep.dropped).toBe(2);
+  });
+});

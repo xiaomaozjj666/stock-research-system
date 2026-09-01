@@ -178,12 +178,51 @@ export function buildOpenApiDocument() {
           responses: {
             200: {
               description:
-                '完整量化报告（strategy/dataQuality/backtest/audit/optimization/summary/confidence/limitations）',
+                '完整量化报告（strategy/dataQuality/backtest/priceVolumeFactors/audit/optimization/summary/confidence/limitations）',
             },
             400: errorResponse('缺少策略配置'),
             422: errorResponse('无法获取 K 线数据'),
             429: errorResponse('触发限流（默认每分钟 5 次）'),
             500: errorResponse('量化分析失败'),
+            503: errorResponse('合规熔断触发'),
+          },
+        },
+      },
+      '/api/quant/factor/evaluate': {
+        post: {
+          tags: ['quant'],
+          summary: '单因子评估 tear sheet（IC 显著性 / 分层回测 / 换手率 / alpha-beta）',
+          description:
+            '输入截面面板（多标的 × 多交易日），方法学对齐 alphalens / qlib。' +
+            '返回逐持有期的 IC 均值、IR、t 统计量与双侧 p 值，各分位收益与多空价差、单调性，' +
+            '因子换手率与排序自相关，以及因子加权多空组合的年化 alpha / beta；' +
+            '并附「是否采信」判定（IC 显著 + 分层单调 + 多空价差为正三者同时成立）。',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              observations: {
+                type: 'array',
+                description:
+                  '因子观测面板：{ date(YYYY-MM-DD), symbol?, value, returns: { [持有期]: 收益 }, marketCap?, group?, weight? }',
+                items: { type: 'object' },
+              },
+              options: {
+                type: 'object',
+                description:
+                  '评估参数：quantiles(默认5)、maxLoss(默认0.25)、neutralize、winsorize、periods、lag(默认1)、demeaned、groupAdjust',
+              },
+            },
+            required: ['observations'],
+          }),
+          responses: {
+            200: {
+              description:
+                '评估报告（periods/byPeriod[ic/quantile/turnover/alphaBeta/longShortCumulative/verdict]/sampleSize/dropped/dropRatio/neutralized）',
+            },
+            400: errorResponse('observations 缺失或字段不合法'),
+            413: errorResponse('observations 数量超过上限（200000）'),
+            422: errorResponse('因子数据缺失比例超过 maxLoss'),
+            429: errorResponse('触发限流（默认每分钟 5 次）'),
             503: errorResponse('合规熔断触发'),
           },
         },

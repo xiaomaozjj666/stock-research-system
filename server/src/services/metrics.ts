@@ -52,6 +52,7 @@ const KNOWN_ROUTES = new Set([
   '/api/autonomous/stop',
   '/api/autonomous/status',
   '/api/quant/analyze',
+  '/api/quant/factor/evaluate',
 ]);
 
 /** 自选股删除路由带路径参数：/api/watchlist/600519 → /api/watchlist/:code */
