@@ -176,11 +176,30 @@ export async function fetchOHLCVData(
 export const A_SHARE_BENCHMARK_SECID = '1.000300';
 
 /**
+ * 各市场宽基基准（东方财富 secid），供量价因子作市场收益。
+ * - A 股：沪深300（`1.000300`）
+ * - 美股：标普500（`100.SPX`，东方财富全球指数前缀 `100.` + 代码 SPX）
+ * - 港股：恒生指数（`100.HSI`）
+ * Beta / 特异波动率 / 残差动量需要「市场收益」才能计算；个股自身买入持有曲线
+ * （getBenchmarkCurve）不是市场代理（用它算 Beta 会恒为 1），必须拉真实宽基指数。
+ */
+export const BENCHMARK_SECID_BY_MARKET: Record<Market, string> = {
+  A: A_SHARE_BENCHMARK_SECID,
+  US: '100.SPX',
+  HK: '100.HSI',
+};
+
+/** 按市场取宽基基准 secid（未知市场回退沪深300） */
+export function benchmarkSecidForMarket(market: Market): string {
+  return BENCHMARK_SECID_BY_MARKET[market] ?? A_SHARE_BENCHMARK_SECID;
+}
+
+/**
  * 拉取宽基指数日收益，按股票 bars 的日期对齐，供量价因子作市场基准。
  *
  * @param barDates 股票 K 线日期序列（升序），marketReturns 将与之等长对齐
  * @param startDate/endDate 与股票相同的区间（缓存/请求用）
- * @param indexSecid 指数 secid；默认 A 股沪深300。非 A 股（港股/美股）调用方应传对应指数或留空降级
+ * @param indexSecid 指数 secid；默认 A 股沪深300。调用方通常用 `benchmarkSecidForMarket(marketOf(code))` 按市场选基准
  * @returns 与 barDates 等长的日收益数组（缺失处为 NaN）；对齐率 < 50% 或拉取失败返回 null（降级）
  */
 export async function fetchBenchmarkReturns(

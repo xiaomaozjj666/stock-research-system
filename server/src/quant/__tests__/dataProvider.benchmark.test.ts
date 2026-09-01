@@ -6,7 +6,12 @@ import { describe, it, expect, afterEach, beforeAll, afterAll, vi } from 'vitest
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fetchBenchmarkReturns } from '../dataProvider.js';
+import {
+  fetchBenchmarkReturns,
+  benchmarkSecidForMarket,
+  BENCHMARK_SECID_BY_MARKET,
+  type Market,
+} from '../dataProvider.js';
 
 let CACHE_DIR = '';
 const origCacheDir = process.env.DATA_CACHE_DIR;
@@ -61,5 +66,32 @@ describe('fetchBenchmarkReturns — 对齐与降级', () => {
     vi.spyOn(global, 'fetch').mockRejectedValue(new Error('network'));
     const r = await fetchBenchmarkReturns(['2024-05-02', '2024-05-03'], '2024-05-01', '2024-05-31');
     expect(r).toBeNull();
+  });
+
+  it('非 A 股（美股）按 SPX secid 拉取并同样按股票日期对齐', async () => {
+    const barDates = ['2024-06-02', '2024-06-03', '2024-06-04', '2024-06-05'];
+    const idxCloses = [5000, 5050, 4980, 5100];
+    mockIndexFetch(barDates, idxCloses);
+    const r = await fetchBenchmarkReturns(barDates, '2024-06-01', '2024-06-30', '100.SPX');
+    expect(r).not.toBeNull();
+    expect(Number.isNaN(r![0])).toBe(true);
+    expect(r![1]).toBeCloseTo(5050 / 5000 - 1, 6);
+    expect(r![2]).toBeCloseTo(4980 / 5050 - 1, 6);
+    expect(r![3]).toBeCloseTo(5100 / 4980 - 1, 6);
+  });
+});
+
+describe('benchmarkSecidForMarket — 按市场选基准', () => {
+  it('A/美股/港股分别映射到沪深300/标普500/恒生', () => {
+    expect(benchmarkSecidForMarket('A')).toBe('1.000300');
+    expect(benchmarkSecidForMarket('US')).toBe('100.SPX');
+    expect(benchmarkSecidForMarket('HK')).toBe('100.HSI');
+  });
+
+  it('覆盖全部 Market 取值，无遗漏', () => {
+    const markets: Market[] = ['A', 'HK', 'US'];
+    for (const m of markets) {
+      expect(benchmarkSecidForMarket(m)).toBe(BENCHMARK_SECID_BY_MARKET[m]);
+    }
   });
 });
