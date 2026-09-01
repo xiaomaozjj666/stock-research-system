@@ -59,12 +59,7 @@ function unlockExpertRule(
 
   const marketCap = valuation.marketCap || 0;
   let unlockPhase:
-    | 'unknown'
-    | 'pre_first'
-    | 'first_window'
-    | 'between'
-    | 'second_window'
-    | 'post_mature';
+    'unknown' | 'pre_first' | 'first_window' | 'between' | 'second_window' | 'post_mature';
 
   if (yearsSinceIPO < 0) {
     unlockPhase = 'unknown';
@@ -171,9 +166,7 @@ function unlockExpertRule(
     overallSentiment = 'neutral';
   }
 
-  const avgConfidence = Math.round(
-    arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs,
-  );
+  const avgConfidence = Math.round(arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs);
 
   return {
     expert: EXPERT_NAME,

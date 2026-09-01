@@ -221,9 +221,7 @@ function industryExpertRule(
   if (supportCount > opposeCount + 2) overallSentiment = 'bullish';
   else if (opposeCount > supportCount + 2) overallSentiment = 'bearish';
 
-  const avgConfidence = Math.round(
-    arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs,
-  );
+  const avgConfidence = Math.round(arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs);
 
   keyPoints.push(`行业景气度评分建议：${industryScoreSuggestion}/20`);
 

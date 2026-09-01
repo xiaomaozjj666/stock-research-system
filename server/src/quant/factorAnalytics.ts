@@ -14,7 +14,7 @@
  */
 
 /** 平均秩（处理并列值）：返回与输入等长、元素为平均秩(0-based)的数组。 */
-function averageRanks(values: number[]): number[] {
+export function averageRanks(values: number[]): number[] {
   const indexed = values.map((v, i) => [v, i] as [number, number]);
   indexed.sort((a, b) => a[0] - b[0]);
   const ranks = new Array<number>(values.length).fill(0);
@@ -217,6 +217,20 @@ export interface FactorPanelRow {
   date?: string;
 }
 
+/** 因子模型验证的缺失处理与筛选参数 */
+export interface FactorValidationOptions extends FactorSelectionOptions {
+  /**
+   * 允许丢弃的最大缺失比例 ∈ [0,1]；实际丢弃比例超出时抛错（默认 0.25，alphalens 同默认）。
+   * 缺失行 = 因子值非有限、或该因子键不存在的样本。
+   *
+   * 背景：此前这类样本被 `?? 0` 当成真实的 0 参与排序与标准化，等价于把
+   * 「数据缺失」伪装成「因子值中位数偏下」，会系统性污染 IC 方向与权重大小。
+   * 现按 alphalens `get_clean_factor_and_forward_returns` 口径显式丢弃，
+   * 并在丢弃比例过大时抛错——静默接受大面积缺失比报错更危险。
+   */
+  maxLoss?: number;
+}
+
 export interface FactorValidationReport {
   /** 每个因子的 IC / IR / ICIR / 是否入选 / 权重 */
   perFactor: {
@@ -231,8 +245,12 @@ export interface FactorValidationReport {
   directionalAccuracy: number;
   /** 预测收益（组合z×已实现波动）与实现收益的 RMSE ≥ 0 */
   rmse: number;
-  /** 面板样本数 */
+  /** 输入面板样本数 */
   n: number;
+  /** 因因子值缺失被丢弃的样本数 */
+  dropped: number;
+  /** 实际参与计算的样本数 = n − dropped */
+  used: number;
 }
 
 /**
@@ -246,27 +264,46 @@ export interface FactorValidationReport {
  */
 export function validateFactorModel(
   panel: FactorPanelRow[],
-  opts: FactorSelectionOptions = {},
+  opts: FactorValidationOptions = {},
 ): FactorValidationReport {
   const empty: FactorValidationReport = {
     perFactor: [],
     directionalAccuracy: 0,
     rmse: 0,
     n: panel.length,
+    dropped: panel.length,
+    used: 0,
   };
   if (panel.length < 3) return empty;
 
   const names = Array.from(new Set(panel.flatMap((row) => Object.keys(row.factors))));
-  const forward = panel.map((row) => row.forwardReturn);
+
+  // 缺失处理：任一因子值非有限（含键不存在）的整行丢弃。
+  // 不能用 `?? 0` 兜底——那会把缺失伪装成真实的 0，使其参与截面排序与 z 标准化，
+  // 等价于给「数据缺失」的标的安了一个偏低的因子值，方向性污染 IC。
+  const complete = panel.filter((row) =>
+    names.every((name) => Number.isFinite(row.factors?.[name])),
+  );
+  const dropped = panel.length - complete.length;
+  const dropRatio = panel.length > 0 ? dropped / panel.length : 0;
+  const maxLoss = opts.maxLoss ?? 0.25;
+  if (dropRatio > maxLoss) {
+    throw new Error(
+      `因子面板缺失过大：丢弃 ${dropped}/${panel.length}（${(dropRatio * 100).toFixed(1)}%），` +
+        `超过 maxLoss=${(maxLoss * 100).toFixed(1)}%。请检查数据源或显式放宽 maxLoss。`,
+    );
+  }
+
+  const forward = complete.map((row) => row.forwardReturn);
   const fwdMean = forward.reduce((a, b) => a + b, 0) / forward.length;
   const fwdStd = Math.sqrt(forward.reduce((s, v) => s + (v - fwdMean) ** 2, 0) / forward.length);
 
   // 每日截面分组（qlib calc_ic 口径）：仅当面板每行都有 date 时启用
-  const hasDates = panel.every((row) => typeof row.date === 'string' && row.date.length > 0);
+  const hasDates = complete.every((row) => typeof row.date === 'string' && row.date.length > 0);
   // 单遍构建 Map<date, rows[]>：避免 dates.map(d => panel.filter(...)) 的 O(D×N) 重复扫描
   const byDate = new Map<string, FactorPanelRow[]>();
   if (hasDates) {
-    for (const row of panel) {
+    for (const row of complete) {
       const list = byDate.get(row.date as string);
       if (list) list.push(row);
       else byDate.set(row.date as string, [row]);
@@ -276,13 +313,14 @@ export function validateFactorModel(
 
   const candidates: FactorCandidate[] = names.map((name) => {
     if (dates) {
-      // 每日截面 Spearman IC 序列：该日组内样本的因子值 vs 未来收益的秩相关
+      // 每日截面 Spearman IC 序列：该日组内样本的因子值 vs 未来收益的秩相关。
+      // complete 已保证所有 name 均有限，无需再兜底
       const icSeries = dates
         .map((d) => {
           const dayRows = byDate.get(d) as FactorPanelRow[];
           if (dayRows.length < 2) return null;
           return spearmanRankIC(
-            dayRows.map((row) => row.factors[name] ?? 0),
+            dayRows.map((row) => row.factors[name]),
             dayRows.map((row) => row.forwardReturn),
           );
         })
@@ -294,7 +332,7 @@ export function validateFactorModel(
       name,
       icSeries: [
         spearmanRankIC(
-          panel.map((row) => row.factors[name] ?? 0),
+          complete.map((row) => row.factors[name]),
           forward,
         ),
       ],
@@ -307,19 +345,20 @@ export function validateFactorModel(
   // 逐行预测：每个因子先跨面板行（截面）标准化，再按权重合成组合 z。
   // 注意：此前把「同一行内不同因子的值」做 z 标准化——不同量纲/含义的因子互相比
   // 在统计上无意义，会使 directionalAccuracy / RMSE 完全失真。
+  // complete 已过滤掉任一因子缺失的行，这里可直接取值
   const zByRowByFactor: Record<string, number[]> = {};
   for (const name of names) {
-    zByRowByFactor[name] = crossSectionalZScore(panel.map((row) => row.factors[name] ?? 0));
+    zByRowByFactor[name] = crossSectionalZScore(complete.map((row) => row.factors[name]));
   }
   let correct = 0;
   const sqErr: number[] = [];
-  for (let r = 0; r < panel.length; r++) {
+  for (let r = 0; r < complete.length; r++) {
     const zByFactor: Record<string, number> = {};
     for (const name of names) zByFactor[name] = zByRowByFactor[name][r];
     const cz = compositeZ(zByFactor, weightMap);
     const predicted = cz * (fwdStd || 1);
-    if (Math.sign(predicted) === Math.sign(panel[r].forwardReturn) && predicted !== 0) correct++;
-    sqErr.push((predicted - panel[r].forwardReturn) ** 2);
+    if (Math.sign(predicted) === Math.sign(complete[r].forwardReturn) && predicted !== 0) correct++;
+    sqErr.push((predicted - complete[r].forwardReturn) ** 2);
   }
 
   return {
@@ -336,8 +375,10 @@ export function validateFactorModel(
         weight: sel?.weight ?? 0,
       };
     }),
-    directionalAccuracy: correct / panel.length,
-    rmse: Math.sqrt(sqErr.reduce((a, b) => a + b, 0) / sqErr.length),
+    directionalAccuracy: complete.length > 0 ? correct / complete.length : 0,
+    rmse: sqErr.length > 0 ? Math.sqrt(sqErr.reduce((a, b) => a + b, 0) / sqErr.length) : 0,
     n: panel.length,
+    dropped,
+    used: complete.length,
   };
 }

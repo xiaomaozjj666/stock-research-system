@@ -170,9 +170,7 @@ function policyExpertRule(
     overallSentiment = 'neutral';
   }
 
-  const avgConfidence = Math.round(
-    arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs,
-  );
+  const avgConfidence = Math.round(arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs);
 
   return {
     expert: EXPERT_NAME,

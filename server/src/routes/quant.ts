@@ -1,5 +1,6 @@
 /**
- * 量化研究：回测 + 数据质量 + 审计 + 优化 + 摘要；受控回测评估（基线 vs 新闻叠加）。
+ * 量化研究：回测 + 数据质量 + 审计 + 优化 + 摘要；受控回测评估（基线 vs 新闻叠加）；
+ * 量价因子（A 股方向校正）与单因子评估 tear sheet。
  */
 import { Router } from 'express';
 import { quantLimiter, watchlistLimiter, circuitBreakerGuard } from '../middleware.js';
@@ -12,6 +13,8 @@ import {
   type NewsItem,
   type NewsSignal,
 } from '../quant/newsSignal.js';
+import { computePriceVolumeFactors, type PriceVolumeFactor } from '../quant/priceVolumeFactors.js';
+import { evaluateFactor, judgeFactor, type FactorObservation } from '../quant/factorEvaluation.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
 import { runBacktest } from '../quant/backtestEngine.js';
 import { withTimeout } from '../utils/timeout.js';
@@ -89,6 +92,16 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
       });
     }
 
+    // 3.5 量价因子：A 股方向已按本土实证校正（短期反转而非动量），随报告透出。
+    //     数据不足的因子 value 序列化为 null（available=false），调用方据此剔除，
+    //     而不是当成 0 参与加权——那等价于给「无法计算」的标的安一个居中值
+    const priceVolumeFactors: (PriceVolumeFactor & { available: boolean })[] =
+      computePriceVolumeFactors({ bars: ohlcvData }).map((f) => ({
+        ...f,
+        value: f.value,
+        available: Number.isFinite(f.value),
+      }));
+
     // 4. 编排子Agent：数据质量、审计、优化
     const { dataQuality, audit, optimization } = await orchestrate(
       strategyConfig,
@@ -139,6 +152,7 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
       backtest: backtestResult,
       backtestBaseline: newsSignal?.hasNews ? backtestBaseline : undefined,
       newsSentiment: newsSignal?.hasNews ? newsSignal : undefined,
+      priceVolumeFactors,
       audit,
       optimization,
       summary,
@@ -151,6 +165,85 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
     logger.error('Quant analysis error', { route: '/api/quant/analyze', err: error });
     const message = error instanceof Error ? error.message : '量化分析过程出错';
     res.status(500).json({ error: '量化分析失败', detail: message });
+  }
+});
+
+// 单因子评估 tear sheet：IC 显著性 + 分层回测 + 换手率 + alpha/beta。
+// 输入为截面面板（多标的 × 多交易日），方法学对齐 alphalens / qlib。
+router.post('/api/quant/factor/evaluate', quantLimiter, circuitBreakerGuard, (req, res) => {
+  try {
+    const body = (req.body ?? {}) as {
+      observations?: unknown;
+      options?: Record<string, unknown>;
+    };
+    const raw = body.observations;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return res.status(400).json({ error: '请提供因子观测数组（observations）' });
+    }
+    // 上限保护：纯 CPU 计算，防超大面板拖垮事件循环（限流器之外的第二道闸）
+    if (raw.length > 200_000) {
+      return res.status(413).json({ error: `observations 过多（${raw.length} > 200000）` });
+    }
+
+    const observations: FactorObservation[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      const o = raw[i] as Record<string, unknown>;
+      const date = typeof o.date === 'string' ? o.date.trim() : '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: `observations[${i}].date 需为 YYYY-MM-DD` });
+      }
+      const returnsRaw = (o.returns ?? {}) as Record<string, unknown>;
+      const returns: Record<number, number> = {};
+      for (const [k, v] of Object.entries(returnsRaw)) {
+        // JSON 无法表达 NaN：null/undefined 视为「该持有期缺失」并剔除该键，
+        // 绝不能经 Number(null)=0 洗成真实收益
+        if (v === null || v === undefined) continue;
+        const period = Number(k);
+        const r = Number(v);
+        if (Number.isFinite(period) && Number.isFinite(r)) returns[period] = r;
+      }
+      if (Object.keys(returns).length === 0) {
+        return res.status(400).json({ error: `observations[${i}].returns 至少需要一个持有期` });
+      }
+      observations.push({
+        date,
+        symbol: typeof o.symbol === 'string' && o.symbol.trim() ? o.symbol.trim() : undefined,
+        // 同上：null（JSON 化的 NaN）必须落成 NaN 走「缺失剔除」路径，而非 0
+        value: o.value === undefined || o.value === null ? Number.NaN : Number(o.value),
+        returns,
+        marketCap:
+          o.marketCap === undefined || o.marketCap === null ? undefined : Number(o.marketCap),
+        group: typeof o.group === 'string' && o.group.trim() ? o.group.trim() : undefined,
+        weight: o.weight === undefined || o.weight === null ? undefined : Number(o.weight),
+      });
+    }
+
+    const opt = body.options ?? {};
+    const num = (v: unknown): number | undefined => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const report = evaluateFactor(observations, {
+      quantiles: num(opt.quantiles),
+      maxLoss: num(opt.maxLoss),
+      neutralize: opt.neutralize === true,
+      winsorize: opt.winsorize === true,
+      periods: Array.isArray(opt.periods)
+        ? opt.periods.map(num).filter((v): v is number => v !== undefined)
+        : undefined,
+      lag: num(opt.lag),
+      demeaned: opt.demeaned === true,
+      groupAdjust: opt.groupAdjust === true,
+    });
+
+    // 逐持有期附上「是否采信」判定：IC 显著 + 分层单调 + 多空价差为正
+    const byPeriod = report.byPeriod.map((p) => ({ ...p, verdict: judgeFactor(p) }));
+    res.json({ ...report, byPeriod });
+  } catch (error) {
+    // maxLoss 超限属数据问题（调用方可放宽阈值重试），返回 422 而非 500
+    logger.warn('Factor evaluate error', { route: '/api/quant/factor/evaluate', err: error });
+    const message = error instanceof Error ? error.message : '因子评估失败';
+    res.status(422).json({ error: '因子评估失败', detail: message });
   }
 });
 

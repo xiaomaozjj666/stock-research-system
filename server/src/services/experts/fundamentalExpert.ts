@@ -219,9 +219,7 @@ function fundamentalExpertRule(
   if (supportCount > opposeCount + 2) overallSentiment = 'bullish';
   else if (opposeCount > supportCount + 2) overallSentiment = 'bearish';
 
-  const avgConfidence = Math.round(
-    arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs,
-  );
+  const avgConfidence = Math.round(arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs);
 
   return {
     expert: EXPERT_NAME,
