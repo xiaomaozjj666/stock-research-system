@@ -6,6 +6,7 @@ import DataQualityPanel from './DataQualityPanel';
 import AuditPanel from './AuditPanel';
 import OptimizationPanel from './OptimizationPanel';
 import ReportSummary from './ReportSummary';
+import FactorPanel from './FactorPanel';
 import NewsSentimentCard from '../../components/NewsSentimentCard';
 import { runQuantAnalysis } from '../../api/client';
 import type { StrategyConfig, QuantResearchReport, PipelineStage, NewsItem } from './types';
@@ -253,6 +254,9 @@ export default function QuantPage() {
             <DataQualityPanel data={report.dataQuality} />
             <AuditPanel data={report.audit} />
             <OptimizationPanel data={report.optimization} />
+            {report.priceVolumeFactors && report.priceVolumeFactors.length > 0 && (
+              <FactorPanel data={report.priceVolumeFactors} />
+            )}
           </>
         )}
 

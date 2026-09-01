@@ -1171,7 +1171,9 @@ tr:hover td {
   font-size: 12px;
   padding: 4px 10px;
   cursor: pointer;
-  transition: background var(--duration-fast), color var(--duration-fast);
+  transition:
+    background var(--duration-fast),
+    color var(--duration-fast);
 }
 .trend-controls .seg-btn + .seg-btn {
   border-left: 1px solid var(--border-default);
@@ -1666,28 +1668,63 @@ tr:hover td {
 }
 
 /* === 风险归因（风格因子暴露 + 系统/特异风险分解） === */
-.risk-attribution { margin-top: 14px; }
-.risk-attribution-title {
-  font-size: var(--text-caption); color: var(--text-muted);
-  margin-bottom: 8px; font-weight: 500;
+.risk-attribution {
+  margin-top: 14px;
 }
-.risk-factor-list { display: flex; flex-direction: column; gap: 6px; }
-.risk-factor { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.risk-factor-label { width: 40px; color: var(--text-secondary); flex-shrink: 0; }
+.risk-attribution-title {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.risk-factor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.risk-factor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.risk-factor-label {
+  width: 40px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
 .risk-factor-bar {
-  position: relative; flex: 1; height: 8px; border-radius: 4px;
-  background: var(--bg-secondary); border: 1px solid var(--border-default);
+  position: relative;
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
   overflow: hidden;
 }
-.risk-factor-fill { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
-.risk-factor-fill.positive { background: var(--color-danger); }
-.risk-factor-fill.negative { background: var(--color-success); }
+.risk-factor-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+}
+.risk-factor-fill.positive {
+  background: var(--color-danger);
+}
+.risk-factor-fill.negative {
+  background: var(--color-success);
+}
 .risk-factor-value {
-  width: 52px; text-align: right; color: var(--text-secondary);
-  font-variant-numeric: tabular-nums; flex-shrink: 0;
+  width: 52px;
+  text-align: right;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 .risk-decomposition {
-  margin-top: 10px; font-size: var(--text-caption); color: var(--text-muted);
+  margin-top: 10px;
+  font-size: var(--text-caption);
+  color: var(--text-muted);
   line-height: 1.6;
 }
 
@@ -2621,7 +2658,6 @@ tr:hover td {
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
-
 
 /* ===== F4: Loading Screen Enhancements ===== */
 .loading-stages {
@@ -4358,7 +4394,9 @@ tr:hover td {
   min-height: 40px;
   max-height: 120px;
   overflow-y: auto;
-  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+  transition:
+    border-color var(--duration-fast),
+    box-shadow var(--duration-fast);
 }
 .chat-input:focus {
   border-color: var(--border-focus);
@@ -4909,44 +4947,251 @@ tr:hover td {
   box-shadow: var(--shadow-md);
   animation: toast-in var(--duration-normal) var(--ease-out);
 }
-.toast-success { border-color: var(--color-success); color: var(--color-success); }
-.toast-info { border-color: var(--color-info); color: var(--color-info); }
-.toast-error { border-color: var(--color-danger); color: var(--color-danger); }
-.toast-close {
-  background: none; border: none; color: var(--text-muted);
-  cursor: pointer; font-size: 11px; padding: 0 2px;
+.toast-success {
+  border-color: var(--color-success);
+  color: var(--color-success);
 }
-.toast-close:hover { color: var(--text-primary); }
+.toast-info {
+  border-color: var(--color-info);
+  color: var(--color-info);
+}
+.toast-error {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 2px;
+}
+.toast-close:hover {
+  color: var(--text-primary);
+}
 @keyframes toast-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* === 报告导出按钮 === */
-.report-export-btn { font-size: 12px; padding: 4px 12px; align-self: flex-start; flex-shrink: 0; }
+.report-export-btn {
+  font-size: 12px;
+  padding: 4px 12px;
+  align-self: flex-start;
+  flex-shrink: 0;
+}
 
 /* === 自选股异动预警 === */
-.watchlist-monitor { flex-shrink: 0; }
-.watchlist-alerts { margin-top: 16px; }
+.watchlist-monitor {
+  flex-shrink: 0;
+}
+.watchlist-alerts {
+  margin-top: 16px;
+}
 .watchlist-alerts-empty {
-  font-size: 12px; color: var(--text-muted);
-  background: var(--bg-secondary); border: 1px solid var(--border-default);
-  border-radius: var(--radius-md); padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
 }
-.watchlist-alerts-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.watchlist-alerts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .watchlist-alert {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 10px 14px; border-radius: var(--radius-md);
-  border: 1px solid var(--border-default); font-size: 13px;
-  color: var(--text-primary); background: var(--bg-card);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-card);
 }
-.watchlist-alert-level { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: var(--radius-pill); }
-.watchlist-alert.alert-bull { border-left: 3px solid var(--color-positive); }
-.watchlist-alert.alert-bull .watchlist-alert-level { background: var(--color-positive-dim); color: var(--color-positive); }
-.watchlist-alert.alert-bear { border-left: 3px solid var(--color-negative); }
-.watchlist-alert.alert-bear .watchlist-alert-level { background: var(--color-negative-dim); color: var(--color-negative); }
-.watchlist-alert.alert-impact { border-left: 3px solid var(--color-warning); }
-.watchlist-alert.alert-impact .watchlist-alert-level { background: var(--color-warning-dim); color: var(--color-warning); }
-.watchlist-alert-stock b { color: var(--accent); font-variant-numeric: tabular-nums; }
-.watchlist-alert-detail { flex: 1; min-width: 120px; color: var(--text-secondary); }
-.watchlist-alert-meta { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.watchlist-alert-level {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+.watchlist-alert.alert-bull {
+  border-left: 3px solid var(--color-positive);
+}
+.watchlist-alert.alert-bull .watchlist-alert-level {
+  background: var(--color-positive-dim);
+  color: var(--color-positive);
+}
+.watchlist-alert.alert-bear {
+  border-left: 3px solid var(--color-negative);
+}
+.watchlist-alert.alert-bear .watchlist-alert-level {
+  background: var(--color-negative-dim);
+  color: var(--color-negative);
+}
+.watchlist-alert.alert-impact {
+  border-left: 3px solid var(--color-warning);
+}
+.watchlist-alert.alert-impact .watchlist-alert-level {
+  background: var(--color-warning-dim);
+  color: var(--color-warning);
+}
+.watchlist-alert-stock b {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.watchlist-alert-detail {
+  flex: 1;
+  min-width: 120px;
+  color: var(--text-secondary);
+}
+.watchlist-alert-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* === 量价因子面板（FactorPanel）=== */
+.factor-panel .factor-subtitle {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.factor-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.factor-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.factor-table th,
+.factor-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  vertical-align: top;
+}
+.factor-table th {
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--bg-card, #1b1f27);
+}
+.factor-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.factor-row-signal {
+  background: color-mix(in srgb, var(--color-positive) 7%, transparent);
+}
+.factor-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.factor-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 10px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.tag-adjusted {
+  background: var(--color-warning-dim, rgba(217, 139, 31, 0.15));
+  color: var(--color-warning, #d98b1f);
+}
+.factor-cat {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.factor-dir {
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.factor-muted {
+  color: var(--text-muted);
+}
+.factor-horizon {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: nowrap;
+}
+.factor-ic {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.factor-pval {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.factor-badge {
+  display: inline-block;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.sig-valid {
+  color: #2f9e6e;
+}
+.sig-valid.factor-badge,
+.factor-badge.sig-valid {
+  background: rgba(47, 158, 110, 0.15);
+  color: #2f9e6e;
+}
+.sig-inverted {
+  color: #d98b1f;
+}
+.sig-inverted.factor-badge,
+.factor-badge.sig-inverted {
+  background: rgba(217, 139, 31, 0.15);
+  color: #d98b1f;
+}
+.sig-none {
+  color: var(--text-muted);
+}
+.sig-none.factor-badge,
+.factor-badge.sig-none {
+  background: rgba(138, 143, 152, 0.15);
+  color: var(--text-muted);
+}
+.factor-evidence {
+  max-width: 280px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.factor-footnote {
+  margin: 10px 2px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.factor-footnote b {
+  color: var(--text-secondary);
+}
