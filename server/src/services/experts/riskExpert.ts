@@ -206,8 +206,9 @@ function riskExpertRule(
     overallSentiment = 'neutral';
   }
 
+  const totalArgs = arguments_.length || 1;
   const avgConfidence = Math.round(
-    arguments_.reduce((s, a) => s + a.confidence, 0) / arguments_.length,
+    arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs,
   );
 
   return {

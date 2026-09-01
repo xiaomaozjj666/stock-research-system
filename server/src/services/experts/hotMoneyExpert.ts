@@ -48,13 +48,28 @@ function hotMoneyExpertRule(
 ): ExpertOpinion {
   const arguments_: ExpertOpinion['arguments'] = [];
   const keyPoints: string[] = [];
-  const marketCap = valuation.marketCap || 0;
-  const pe = valuation.pe || 0;
-  const price = valuation.currentPrice || 0;
+  const marketCapRaw = valuation.marketCap;
+  const peRaw = valuation.pe;
+  const priceRaw = valuation.currentPrice;
+  const hasMarketCap = typeof marketCapRaw === 'number' && isFinite(marketCapRaw) && marketCapRaw > 0;
+  const hasPe = typeof peRaw === 'number' && isFinite(peRaw) && peRaw > 0;
+  const hasPrice = typeof priceRaw === 'number' && isFinite(priceRaw) && priceRaw > 0;
+  const marketCap = hasMarketCap ? marketCapRaw : 0;
+  const pe = hasPe ? peRaw : 0;
+  const price = hasPrice ? priceRaw : 0;
 
   // === 市值分级 → 游资偏好判断 ===
-  let capCategory: 'micro' | 'small' | 'mid' | 'large';
-  if (marketCap < MICRO_CAP_THRESHOLD) {
+  let capCategory: 'unknown' | 'micro' | 'small' | 'mid' | 'large';
+  if (!hasMarketCap) {
+    capCategory = 'unknown';
+    arguments_.push({
+      text: '缺少市值数据，无法精准判断游资偏好；需结合交易所最新市值评估筹码结构与流动性',
+      confidence: 50,
+      type: 'support',
+      evidenceType: 'hypothesis',
+    });
+    keyPoints.push('市值数据缺失，需补充核查');
+  } else if (marketCap < MICRO_CAP_THRESHOLD) {
     capCategory = 'micro';
   } else if (marketCap < SMALL_CAP_THRESHOLD) {
     capCategory = 'small';
@@ -80,7 +95,7 @@ function hotMoneyExpertRule(
       evidenceType: 'fact',
     });
     keyPoints.push(`大盘股，游资影响力有限`);
-  } else {
+  } else if (capCategory === 'mid') {
     arguments_.push({
       text: `市值${marketCap.toFixed(0)}亿属中盘股，游资与机构博弈并存，需结合题材催化判断短期方向`,
       confidence: 65,
@@ -90,8 +105,8 @@ function hotMoneyExpertRule(
     keyPoints.push(`中盘股，游资机构博弈并存`);
   }
 
-  // === PE 与估值泡沫判断 ===
-  if (pe > HIGH_PE_THRESHOLD && (capCategory === 'micro' || capCategory === 'small')) {
+  // === PE 与估值泡沫判断（数据存在时才判断，避免 0 值误触发） ===
+  if (hasPe && pe > HIGH_PE_THRESHOLD && (capCategory === 'micro' || capCategory === 'small')) {
     arguments_.push({
       text: `PE高达${pe.toFixed(0)}倍且市值偏小，典型题材驱动估值泡沫，游资撤离后估值回归风险极大`,
       confidence: 85,
@@ -99,7 +114,7 @@ function hotMoneyExpertRule(
       evidenceType: 'fact',
     });
     keyPoints.push(`PE ${pe.toFixed(0)}倍 + 小市值 = 题材泡沫风险`);
-  } else if (pe > 0 && pe < 20 && capCategory === 'large') {
+  } else if (hasPe && pe > 0 && pe < 20 && capCategory === 'large') {
     arguments_.push({
       text: `PE仅${pe.toFixed(0)}倍的大盘股，估值合理，以机构长线资金为主，游资短线博弈空间小`,
       confidence: 70,
@@ -109,8 +124,8 @@ function hotMoneyExpertRule(
     keyPoints.push(`低PE大盘股，机构主导`);
   }
 
-  // === 价格绝对值 → 参与门槛 ===
-  if (price > 0 && price < 10) {
+  // === 价格绝对值 → 参与门槛（数据存在时才判断） ===
+  if (hasPrice && price < 10) {
     arguments_.push({
       text: `股价仅¥${price.toFixed(2)}，参与门槛极低，散户/游资参与度高，短期波动加剧`,
       confidence: 72,
@@ -118,7 +133,7 @@ function hotMoneyExpertRule(
       evidenceType: 'fact',
     });
     keyPoints.push(`低价股，散户游资参与度高`);
-  } else if (price > 100) {
+  } else if (hasPrice && price > 100) {
     arguments_.push({
       text: `股价¥${price.toFixed(2)}属高价股，散户参与门槛高，以机构或高净值投资者为主，游资影响力相对有限`,
       confidence: 68,
@@ -142,11 +157,12 @@ function hotMoneyExpertRule(
   // === 综合情绪 ===
   const supportCount = arguments_.filter((a) => a.type === 'support').length;
   const opposeCount = arguments_.filter((a) => a.type === 'oppose').length;
+  const totalArgs = arguments_.length || 1;
 
   let overallSentiment: 'bullish' | 'neutral' | 'bearish';
-  if (capCategory === 'large') {
+  if (capCategory === 'large' || capCategory === 'unknown') {
     overallSentiment = 'neutral';
-  } else if (pe > HIGH_PE_THRESHOLD) {
+  } else if (hasPe && pe > HIGH_PE_THRESHOLD) {
     overallSentiment = 'bearish';
   } else if (supportCount > opposeCount) {
     overallSentiment = 'bullish';
@@ -155,7 +171,7 @@ function hotMoneyExpertRule(
   }
 
   const avgConfidence = Math.round(
-    arguments_.reduce((s, a) => s + a.confidence, 0) / arguments_.length,
+    arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs,
   );
 
   return {

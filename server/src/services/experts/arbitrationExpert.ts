@@ -310,8 +310,8 @@ function arbitrationExpertRule(input: ArbitrationInput): {
     .flatMap((o) => o.arguments.filter((a) => a.type === 'oppose'))
     .slice(0, 3);
 
-  // 动态评估基本面描述
-  const avgROE = financial.roe.reduce((a, b) => a + b, 0) / n;
+  // 动态评估基本面描述（n=0 时以 safeDiv 退化为 0，避免除零导致 downstream "优秀/稳健" 误判）
+  const avgROE = safeDiv(financial.roe.reduce((a, b) => a + b, 0), n);
   const fundamentalLevel =
     avgROE > 20 && grossMarginLatest > 30
       ? '优秀'
