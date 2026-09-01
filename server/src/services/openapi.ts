@@ -178,7 +178,7 @@ export function buildOpenApiDocument() {
           responses: {
             200: {
               description:
-                '完整量化报告（strategy/dataQuality/backtest/priceVolumeFactors[含时间序列预测力 predictability：IC/t/p/显著]/audit/optimization/summary/confidence/limitations）',
+                '完整量化报告（strategy/dataQuality/backtest/priceVolumeFactors[含时间序列预测力 predictability：IC/t/p/显著]/compositeAlpha[多因子按 |t| 置信度加权的方向性组合 alpha、综合方向、显著因子数、方向一致率]/audit/optimization/summary/confidence/limitations）',
             },
             400: errorResponse('缺少策略配置'),
             422: errorResponse('无法获取 K 线数据'),

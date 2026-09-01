@@ -165,6 +165,46 @@ export interface PriceVolumeFactor {
   predictability?: FactorPredictability;
 }
 
+/** 组合方向 */
+export type CompositeDirection = 'up' | 'down' | 'neutral';
+
+/** 单因子对组合 alpha 的贡献（主导项） */
+export interface CompositeContributor {
+  name: PriceVolumeFactorName;
+  /** 方向校正 IC（含符号） */
+  effectiveIc: number;
+  /** 置信度权重 = |tStat| */
+  weight: number;
+  /** 加权贡献 = w · effectiveIc */
+  contribution: number;
+}
+
+/** 单持有期组合 alpha */
+export interface CompositeAlphaHorizon {
+  period: number;
+  /** 组合方向性 alpha ∈ [-1, 1]，IC 置信度加权均值 */
+  alpha: number;
+  /** 综合方向：up / down / neutral */
+  direction: CompositeDirection;
+  /** 达到统计显著的因子数 */
+  significantCount: number;
+  /** 该持有期下有预测力的因子总数（非 null） */
+  evaluableCount: number;
+  /** 显著因子方向一致率 ∈ [0,1] */
+  agreement: number;
+  /** 主导贡献因子（最多 3 项） */
+  topContributors: CompositeContributor[];
+}
+
+/** 跨持有期组合 alpha */
+export interface CompositeAlpha {
+  horizons: CompositeAlphaHorizon[];
+  /** 任一持有期有显著信号 */
+  hasSignal: boolean;
+  /** 综合方向（跨持有期多数表决） */
+  overallDirection: CompositeDirection;
+}
+
 // 完整报告
 export interface QuantResearchReport {
   strategy: StrategyConfig;
@@ -179,6 +219,8 @@ export interface QuantResearchReport {
   limitations: string;
   /** 量价因子快照值 + 时间序列预测力（IC/t/p/显著） */
   priceVolumeFactors?: PriceVolumeFactor[];
+  /** 多因子加权组合 alpha（方向性信号 + 显著因子数 + 方向一致率） */
+  compositeAlpha?: CompositeAlpha;
 }
 
 // 进度阶段
