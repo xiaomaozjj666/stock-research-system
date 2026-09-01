@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { newsOverlayPostureAt, runBacktest } from '../backtestEngine.js';
+import { newsOverlayPostureAt, factorOverlayPostureAt, runBacktest } from '../backtestEngine.js';
 import { A_SHARE_COST_MODEL, makeCostModel, marketImpactCost } from '../costModel.js';
-import type { OHLCVData, StrategyConfig } from '../types.js';
+import type { OHLCVData, StrategyConfig, FactorOverlay } from '../types.js';
 
 /** 构造前段走平、后段上行行情，使均线交叉策略在区间内产生金叉买入 */
 function uptrendSeries(n = 80, flat = 25, low = 100, high = 220): OHLCVData[] {
@@ -62,6 +62,11 @@ function maConfig(polarity?: number): StrategyConfig {
     endDate: ohlcv[ohlcv.length - 1].date,
     newsOverlay: polarity === undefined ? undefined : { polarity },
   };
+}
+
+/** 带因子叠加层（组合 alpha → 仓位姿态）的策略配置 */
+function factorConfig(overlay?: FactorOverlay): StrategyConfig {
+  return { ...maConfig(), factorOverlay: overlay };
 }
 
 describe('runBacktest 新闻情绪叠加层', () => {
@@ -375,5 +380,91 @@ describe('runBacktest 新闻情绪时间线（严格时序、无前视偏差）'
     const r = runBacktest(osc, legacy);
     // 窗口内全部买入都在 since 之前 → 不受影响，与基线一致
     expect(r.equityCurve).toEqual(baseline.equityCurve);
+  });
+});
+
+// ============================================================
+// 组合 alpha 信号叠加层（factorOverlay）：研究信号 → 可交易 overlay
+// ============================================================
+
+describe('factorOverlayPostureAt 组合 alpha 姿态', () => {
+  it('无叠加层时恒为 1（与基线一致）', () => {
+    expect(factorOverlayPostureAt(undefined)).toBe(1);
+  });
+
+  it('由 alpha 推导：alpha>0 → 满仓以上、alpha<0 → 半仓以下、alpha=0 → 半仓', () => {
+    expect(factorOverlayPostureAt({ direction: 'up', alpha: 0.5 })).toBeCloseTo(0.75, 10);
+    expect(factorOverlayPostureAt({ direction: 'down', alpha: -0.5 })).toBeCloseTo(0.25, 10);
+    expect(factorOverlayPostureAt({ direction: 'neutral', alpha: 0 })).toBeCloseTo(0.5, 10);
+  });
+
+  it('显式 posture 优先并截到 [0,1]', () => {
+    expect(factorOverlayPostureAt({ direction: 'up', alpha: 0.5, posture: 0.2 })).toBeCloseTo(
+      0.2,
+      10,
+    );
+    expect(factorOverlayPostureAt({ direction: 'up', alpha: 0.5, posture: 2 })).toBe(1);
+    expect(factorOverlayPostureAt({ direction: 'down', alpha: -0.5, posture: -1 })).toBe(0);
+  });
+
+  it('alpha 极端值 → 满仓/空仓（long-only 看空不建仓）', () => {
+    expect(factorOverlayPostureAt({ direction: 'up', alpha: 1 })).toBe(1);
+    expect(factorOverlayPostureAt({ direction: 'down', alpha: -1 })).toBe(0);
+  });
+});
+
+describe('runBacktest 组合 alpha 叠加层（与新闻 AND 语义）', () => {
+  it('不含因子叠加层 → factorAware=false、与基线一致', () => {
+    const r = runBacktest(ohlcv, factorConfig());
+    expect(r.factorAware).toBe(false);
+    expect(r.tradeCount).toBeGreaterThan(0);
+    expect(r.totalReturn).toBeGreaterThan(0);
+  });
+
+  it('因子看多（alpha>0）→ 缩仓但建仓，收益 < 基线、> 0', () => {
+    const base = runBacktest(ohlcv, factorConfig());
+    const up = runBacktest(ohlcv, factorConfig({ direction: 'up', alpha: 0.3 }));
+    expect(up.factorAware).toBe(true);
+    expect(up.factorDirection).toBe('up');
+    expect(up.factorPosture).toBeCloseTo(0.65, 10);
+    expect(up.tradeCount).toBe(base.tradeCount);
+    expect(up.totalReturn).toBeLessThan(base.totalReturn);
+    expect(up.totalReturn).toBeGreaterThan(0);
+    expect(up.trades.some((t) => t.reason.includes('因子姿态65%'))).toBe(true);
+  });
+
+  it('因子看空（alpha=-1 → posture 0）→ 不建仓、收益≈0', () => {
+    const down = runBacktest(ohlcv, factorConfig({ direction: 'down', alpha: -1 }));
+    expect(down.factorAware).toBe(true);
+    expect(down.factorDirection).toBe('down');
+    expect(down.factorPosture).toBeCloseTo(0, 10);
+    expect(down.tradeCount).toBe(0);
+    expect(down.totalReturn).toBeCloseTo(0, 6);
+  });
+
+  it('因子中性（alpha=0 → posture 0.5）→ 半仓，收益介于 0 与基线之间', () => {
+    const base = runBacktest(ohlcv, factorConfig());
+    const neutral = runBacktest(ohlcv, factorConfig({ direction: 'neutral', alpha: 0 }));
+    expect(neutral.factorPosture).toBeCloseTo(0.5, 10);
+    expect(neutral.tradeCount).toBe(base.tradeCount);
+    expect(neutral.totalReturn).toBeLessThan(base.totalReturn);
+    expect(neutral.totalReturn).toBeGreaterThan(0);
+  });
+
+  it('与新闻叠加取较小值（AND）：新闻满仓 + 因子空仓 → 不建仓', () => {
+    const bullNews = runBacktest(ohlcv, maConfig(1));
+    expect(bullNews.tradeCount).toBeGreaterThan(0); // 仅新闻时正常建仓
+    const combined = runBacktest(ohlcv, factorConfig({ direction: 'down', alpha: -1, posture: 0 }));
+    // 向同一配置叠加新闻满仓：min(1, 0) = 0 → 不建仓
+    const merged: StrategyConfig = {
+      ...maConfig(1),
+      factorOverlay: { direction: 'down', alpha: -1, posture: 0 },
+    };
+    const r = runBacktest(ohlcv, merged);
+    expect(r.newsAware).toBe(true);
+    expect(r.factorAware).toBe(true);
+    expect(r.tradeCount).toBe(0);
+    expect(r.totalReturn).toBeCloseTo(0, 6);
+    expect(combined.tradeCount).toBe(0);
   });
 });

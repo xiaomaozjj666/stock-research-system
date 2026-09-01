@@ -22,7 +22,7 @@
  * 全部纯函数、无副作用、零第三方依赖。
  */
 
-import type { OHLCVData } from './types.js';
+import type { OHLCVData, FactorOverlay } from './types.js';
 import {
   evaluatePriceVolumeFactorPredictability,
   type FactorPredictability,
@@ -68,6 +68,8 @@ export interface CompositeAlpha {
   hasSignal: boolean;
   /** 综合方向（跨持有期多数表决；平票 / 全中性 → neutral） */
   overallDirection: CompositeDirection;
+  /** 综合 alpha 数值（各持有期 alpha 的均值 ∈ [-1,1]），用于回测姿态缩放的卷积度 */
+  overallAlpha: number;
 }
 
 /** 方向判定门槛：|alpha| 大于该值才判 up/down，否则视为信号不足（neutral） */
@@ -145,7 +147,26 @@ export function computeCompositeAlpha(
   }
   const overallDirection: CompositeDirection = up > down ? 'up' : down > up ? 'down' : 'neutral';
 
-  return { horizons: horizonsOut, hasSignal, overallDirection };
+  // 综合 alpha：各持有期 alpha 的均值（±1 间），作为回测姿态缩放的卷积度。
+  // neutral 持有期贡献 0，故多空抵消或平票时 overallAlpha 趋于 0（对应半仓姿态）。
+  const overallAlpha =
+    horizonsOut.length > 0 ? horizonsOut.reduce((s, h) => s + h.alpha, 0) / horizonsOut.length : 0;
+
+  return { horizons: horizonsOut, hasSignal, overallDirection, overallAlpha };
+}
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
+
+/**
+ * 把组合 alpha 翻成回测信号叠加层配置（FactorOverlay）。
+ * posture = clamp(0.5 + 0.5·overallAlpha, 0, 1)：看多满仓、中性半仓、看空 0 空仓；
+ * 调用方（路由）应于综合方向非 neutral 且确有显著信号时才注入，避免叠加层把基线拖成半仓。
+ */
+export function factorOverlayFromCompositeAlpha(ca: CompositeAlpha): FactorOverlay {
+  const alpha = Number.isFinite(ca.overallAlpha) ? ca.overallAlpha : 0;
+  return { direction: ca.overallDirection, alpha, posture: clamp01(0.5 + 0.5 * alpha) };
 }
 
 /** 便捷入口：直接吃 bars + 可选市场收益，内部复用因子预测力评估 */

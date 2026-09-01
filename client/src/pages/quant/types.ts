@@ -56,6 +56,12 @@ export interface BacktestResult {
   benchmark: { date: string; value: number }[];
   newsAware?: boolean;
   newsPosture?: number;
+  /** 是否应用了组合 alpha 信号叠加层（量价因子研究方向性信号 → 仓位缩放） */
+  factorAware?: boolean;
+  /** 组合 alpha 姿态：posture = clamp(0.5 + 0.5·alpha, 0, 1)，用于仓位缩放 */
+  factorPosture?: number;
+  /** 组合 alpha 综合方向（up/down/neutral） */
+  factorDirection?: 'up' | 'down' | 'neutral';
 }
 
 // 数据质量报告

@@ -101,6 +101,14 @@ function NewsBacktestCompare({
           %（看多新闻满仓、中性半仓、利空不建仓）。
         </p>
       )}
+      {aware.factorAware && (
+        <p className="news-compare-note">
+          组合 alpha 信号叠加已生效（综合方向 {aware.factorDirection}
+          {typeof aware.factorPosture === 'number' &&
+            `，姿态仓位系数 ${(aware.factorPosture * 100).toFixed(0)}%`}
+          ）。与新闻姿态取较小值缩放仓位，long-only 下看空不建仓。
+        </p>
+      )}
     </div>
   );
 }

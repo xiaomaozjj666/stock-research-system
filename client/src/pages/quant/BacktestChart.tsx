@@ -118,6 +118,14 @@ export default function BacktestChart({ data }: Props) {
           含最新消息情绪叠加（新闻姿态 {((data.newsPosture ?? 1) * 100).toFixed(0)}% 仓位）
         </div>
       )}
+      {data.factorAware && (
+        <div className="backtest-news-badge backtest-factor-badge">
+          含组合 alpha 信号叠加（综合方向 {data.factorDirection}
+          {typeof data.factorPosture === 'number' &&
+            `，姿态 ${((data.factorPosture ?? 1) * 100).toFixed(0)}% 仓位`}
+          ）
+        </div>
+      )}
       <div className="quant-metrics">
         {metrics.map((m) => (
           <div key={m.label} className="quant-metric-card">
