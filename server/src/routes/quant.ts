@@ -19,6 +19,7 @@ import {
   type FactorPredictability,
 } from '../quant/factorPredictability.js';
 import { computeCompositeAlpha, type CompositeAlpha } from '../quant/compositeAlpha.js';
+import { computeCompositeAlphaForStrategy } from '../quant/compositeService.js';
 import { evaluateFactor, judgeFactor, type FactorObservation } from '../quant/factorEvaluation.js';
 import {
   fetchOHLCVData,
@@ -302,6 +303,37 @@ router.post('/api/quant/factor/evaluate', quantLimiter, circuitBreakerGuard, (re
     logger.warn('Factor evaluate error', { route: '/api/quant/factor/evaluate', err: error });
     const message = error instanceof Error ? error.message : '因子评估失败';
     res.status(422).json({ error: '因子评估失败', detail: message });
+  }
+});
+
+// 多因子加权组合 alpha（单只股票，时间序列 IC 口径）：只算因子预测力与方向性组合信号，
+// 不跑回测/数据质量/审计/优化，适合批量测算单标的的方向性 alpha。
+router.post('/api/quant/factor/composite', quantLimiter, circuitBreakerGuard, async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const stockCode = String(body.stockCode ?? '').trim();
+    if (!stockCode) {
+      return res.status(400).json({ error: '请提供股票代码 stockCode' });
+    }
+    const startDate = String(
+      body.startDate ??
+        new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
+    );
+    const endDate = String(body.endDate ?? new Date().toISOString().split('T')[0]);
+    const horizons = Array.isArray(body.horizons)
+      ? body.horizons
+          .map((h: unknown) => Number(h))
+          .filter((h: number) => Number.isFinite(h) && h > 0)
+      : [21, 63];
+
+    const result = await computeCompositeAlphaForStrategy(stockCode, startDate, endDate, horizons);
+    res.json(result);
+  } catch (error) {
+    logger.error('Composite alpha error', { route: '/api/quant/factor/composite', err: error });
+    const message = error instanceof Error ? error.message : '组合 alpha 计算失败';
+    // 「无法获取 K 线」属数据问题 → 422；其余（意外异常）→ 500
+    const status = error instanceof Error && /无法获取/.test(error.message) ? 422 : 500;
+    res.status(status).json({ error: '组合 alpha 计算失败', detail: message });
   }
 });
 

@@ -227,6 +227,45 @@ export function buildOpenApiDocument() {
           },
         },
       },
+      '/api/quant/factor/composite': {
+        post: {
+          tags: ['quant'],
+          summary: '多因子加权组合 alpha（单只股票，时间序列 IC 口径）',
+          description:
+            '拉取单只股票 K 线与市场基准（按市场选沪深300/标普500/恒生），计算各量价因子对' +
+            '自身远期收益的时间序列 IC（21/63 交易日），再按 |t| 置信度加权方向校正 IC 合成' +
+            '方向性组合 alpha。不跑回测/数据质量/审计/优化，适合批量测算单标的的方向性信号。' +
+            '市场基准拉取失败时优雅降级（Beta 类因子不参与加权）。',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              stockCode: {
+                type: 'string',
+                description: '股票代码（A 股6位 / 美股字母 / 港股5位）',
+              },
+              startDate: { type: 'string', format: 'date', description: '默认近两年' },
+              endDate: { type: 'string', format: 'date', description: '默认今天' },
+              horizons: {
+                type: 'array',
+                items: { type: 'number' },
+                description: '持有期（交易日），默认 [21, 63]',
+              },
+            },
+            required: ['stockCode'],
+          }),
+          responses: {
+            200: {
+              description:
+                '组合 alpha 结果（stockCode/market/benchmarkSecid/horizons/compositeAlpha[综合方向·显著因子数·方向一致率]/factorPredictability[逐因子 IC/t/p/显著]/bars/dataRange/benchmarkAvailable）',
+            },
+            400: errorResponse('缺少股票代码 stockCode'),
+            422: errorResponse('无法获取 K 线数据'),
+            429: errorResponse('触发限流（默认每分钟 5 次）'),
+            500: errorResponse('组合 alpha 计算失败'),
+            503: errorResponse('合规熔断触发'),
+          },
+        },
+      },
       '/api/backtest/evaluate': {
         post: {
           tags: ['quant'],
