@@ -5,14 +5,8 @@
  * 跨窗口多数表决（平票→neutral）；⑤ computeCompositeAlphaFromBars 结构正确。
  */
 import { describe, it, expect } from 'vitest';
-import {
-  computeCompositeAlpha,
-  computeCompositeAlphaFromBars,
-} from '../compositeAlpha.js';
-import type {
-  FactorPredictability,
-  FactorPredictabilityHorizon,
-} from '../factorPredictability.js';
+import { computeCompositeAlpha, computeCompositeAlphaFromBars } from '../compositeAlpha.js';
+import type { FactorPredictability, FactorPredictabilityHorizon } from '../factorPredictability.js';
 import type { PriceVolumeFactorName, FactorCategory } from '../priceVolumeFactors.js';
 import type { OHLCVData } from '../types.js';
 
