@@ -35,6 +35,26 @@ export interface StrategyConfig {
    *   items 存在时优先生效，缺失时退化为旧口径。
    */
   newsOverlay?: { polarity: number; since?: string; items?: NewsSentimentPoint[] };
+  /**
+   * 组合 alpha 信号叠加层（可选，opt-in）：把量价因子研究产出的方向性组合 alpha
+   * 翻成建仓资金缩放系数（posture）。与 newsOverlay 并列、两者取较小值（AND 语义，
+   * 任一看空都将压制仓位，避免两层信号相互叠加放大）。long-only 下看空 → posture=0
+   * 不建仓（不可做空）。计算失败 / 无显著信号 / 综合方向 neutral 时不注入（降级为基线）。
+   */
+  factorOverlay?: FactorOverlay;
+}
+
+/**
+ * 组合 alpha 信号叠加层：方向性组合 alpha 翻成建仓 posture ∈ [0,1]。
+ * - direction：综合方向（up/down/neutral），来自 compositeAlpha.overallDirection；
+ * - alpha：组合 alpha 数值（∈ [-1,1]），用于推导 posture 的卷积度；
+ * - posture：可选显式 posture ∈ [0,1]；缺省由 direction/alpha 推导
+ *   posture = clamp(0.5 + 0.5·alpha, 0, 1)（看多满仓、中性半仓、看空 0 空仓）。
+ */
+export interface FactorOverlay {
+  direction: 'up' | 'down' | 'neutral';
+  alpha: number;
+  posture?: number;
 }
 
 /** 单点新闻情绪：发布日（YYYY-MM-DD 或 ISO datetime）+ 确定性极性 ∈ [−1,1] */
@@ -72,6 +92,12 @@ export interface BacktestResult {
   newsPosture?: number;
   /** 情绪叠加生效起始日期（YYYY-MM-DD）：仅该日期及之后的建仓按姿态缩放 */
   newsSince?: string;
+  /** 是否应用了组合 alpha 信号叠加层（量价因子研究方向性信号 → 仓位缩放） */
+  factorAware?: boolean;
+  /** 组合 alpha 姿态：posture = clamp(0.5 + 0.5·alpha, 0, 1)，用于仓位缩放 */
+  factorPosture?: number;
+  /** 组合 alpha 综合方向（up/down/neutral），随报告透出便于审计 */
+  factorDirection?: 'up' | 'down' | 'neutral';
 }
 
 // 数据质量报告

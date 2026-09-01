@@ -5,7 +5,11 @@
  * 跨窗口多数表决（平票→neutral）；⑤ computeCompositeAlphaFromBars 结构正确。
  */
 import { describe, it, expect } from 'vitest';
-import { computeCompositeAlpha, computeCompositeAlphaFromBars } from '../compositeAlpha.js';
+import {
+  computeCompositeAlpha,
+  computeCompositeAlphaFromBars,
+  factorOverlayFromCompositeAlpha,
+} from '../compositeAlpha.js';
 import type { FactorPredictability, FactorPredictabilityHorizon } from '../factorPredictability.js';
 import type { PriceVolumeFactorName, FactorCategory } from '../priceVolumeFactors.js';
 import type { OHLCVData } from '../types.js';
@@ -139,6 +143,49 @@ describe('computeCompositeAlpha — 加权合成', () => {
     expect(h21.topContributors[0].name).toBe('volatility_1m');
     expect(h21.topContributors[1].name).toBe('momentum_12_1');
     expect(h21.topContributors[2].name).toBe('reversal_1m');
+  });
+});
+
+describe('factorOverlayFromCompositeAlpha — 组合 alpha → 回测叠加层', () => {
+  it('看多（overallAlpha>0）→ direction up、posture 由 alpha 推导', () => {
+    const ca = computeCompositeAlpha([
+      mk('reversal_1m', -1, 'reversal', sig(0.4, 0.4, 8, 0.0001, 100), null),
+      mk('momentum_12_1', 1, 'momentum', sig(0.3, 0.3, 6, 0.001, 100), null),
+    ]);
+    expect(ca.overallDirection).toBe('up');
+    expect(ca.overallAlpha).toBeGreaterThan(0);
+    const overlay = factorOverlayFromCompositeAlpha(ca);
+    expect(overlay.direction).toBe('up');
+    expect(overlay.alpha).toBeCloseTo(ca.overallAlpha, 10);
+    expect(overlay.posture).toBeCloseTo(0.5 + 0.5 * ca.overallAlpha, 10);
+    expect(overlay.posture).toBeGreaterThan(0.5);
+  });
+
+  it('看空（overallAlpha<0）→ direction down、posture<0.5', () => {
+    const ca = computeCompositeAlpha([
+      mk('reversal_1m', -1, 'reversal', sig(0.3, 0.3, 3, 0.005, 100), null),
+      mk('momentum_12_1', 1, 'momentum', sig(-0.5, -0.5, 10, 0.0001, 100), null),
+    ]);
+    expect(ca.overallDirection).toBe('down');
+    expect(ca.overallAlpha).toBeLessThan(0);
+    const overlay = factorOverlayFromCompositeAlpha(ca);
+    expect(overlay.direction).toBe('down');
+    expect(overlay.posture).toBeLessThan(0.5);
+  });
+
+  it('overallAlpha 恒为各持有期 alpha 均值（含平票抵消 → 趋于 0）', () => {
+    const ca = computeCompositeAlpha([
+      mk(
+        'reversal_1m',
+        -1,
+        'reversal',
+        sig(0.4, 0.4, 6, 0.0001, 100),
+        sig(-0.3, -0.3, 5, 0.001, 100),
+      ),
+    ]);
+    const h21 = ca.horizons.find((h) => h.period === 21)!.alpha;
+    const h63 = ca.horizons.find((h) => h.period === 63)!.alpha;
+    expect(ca.overallAlpha).toBeCloseTo((h21 + h63) / 2, 10);
   });
 });
 

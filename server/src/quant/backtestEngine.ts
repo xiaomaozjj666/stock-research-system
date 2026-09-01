@@ -1,4 +1,4 @@
-import type { OHLCVData, StrategyConfig, BacktestResult, Trade } from './types.js';
+import type { OHLCVData, StrategyConfig, BacktestResult, Trade, FactorOverlay } from './types.js';
 import { getBenchmarkCurve } from './dataProvider.js';
 import { computePerformance, type AnalyzerContext } from './analyzers.js';
 import {
@@ -80,6 +80,27 @@ function overlayFirstDate(
 }
 
 /**
+ * 组合 alpha 信号姿态 posture ∈ [0,1]（建仓资金缩放系数）。
+ * 组合 alpha 是「全周期方向性结论」（无逐条时间线），故姿态对每根 bar 为常数：
+ *   - 显式传入 posture 时直接采用并截到 [0,1]；
+ *   - 否则由 alpha 推导 posture = clamp(0.5 + 0.5·alpha, 0, 1)
+ *     （看多满仓、中性半仓、看空 0 空仓，long-only 下不可做空）。
+ * 与 newsOverlay 的 posture 在引擎内取较小值（AND 语义）——任一信号看空都将压制仓位，
+ * 避免两层信号相互叠加放大风险。
+ * @returns posture ∈ [0,1]；无叠加层时恒为 1
+ */
+export function factorOverlayPostureAt(
+  overlay: FactorOverlay | undefined,
+  _barDate?: string,
+): number {
+  if (!overlay) return 1;
+  if (typeof overlay.posture === 'number' && Number.isFinite(overlay.posture)) {
+    return clamp01(overlay.posture);
+  }
+  return clamp01(0.5 + 0.5 * (Number.isFinite(overlay.alpha) ? overlay.alpha : 0));
+}
+
+/**
  * 运行回测
  * 逐K线回放，严格按时间顺序，杜绝未来函数；
  * 成交采用 T+1 信号延迟（backtrader Market 单 / qlib shift=1 语义）：信号 T 日收盘生成、
@@ -117,7 +138,20 @@ export function runBacktest(
   const newsPosture = newsOverlay
     ? newsOverlayPostureAt(newsOverlay, data[data.length - 1]?.date ?? '')
     : 1;
-  const postureAt = (barDate: string) => newsOverlayPostureAt(newsOverlay, barDate);
+  // 组合 alpha 信号叠加层（量价因子研究方向 → 可交易 overlay）：姿态为常数（全周期方向性结论），
+  // posture = clamp(0.5 + 0.5·alpha, 0, 1)。与新闻姿态取较小值（AND 语义）：任一信号看空即压制仓位，
+  // 不互相叠加放大。仅在「建仓」时缩放，平仓不受影响。
+  const factorOverlay = strategy.factorOverlay;
+  const factorAware = !!factorOverlay;
+  const factorDirection = factorOverlay?.direction;
+  const factorPosture = factorOverlay
+    ? factorOverlayPostureAt(factorOverlay, data[data.length - 1]?.date ?? '')
+    : 1;
+  const postureAt = (barDate: string) =>
+    Math.min(
+      newsOverlayPostureAt(newsOverlay, barDate),
+      factorOverlayPostureAt(factorOverlay, barDate),
+    );
 
   let cash = initialCapital;
   let position = 0; // 持仓股数
@@ -172,7 +206,12 @@ export function runBacktest(
             commission: Math.round((fee + impact) * 100) / 100,
             reason:
               getSignalReason(strategy, 'buy') +
-              (newsAware ? `（新闻姿态${(posture * 100).toFixed(0)}%）` : ''),
+              (newsAware
+                ? `（新闻姿态${(newsOverlayPostureAt(newsOverlay, bar.date) * 100).toFixed(0)}%）`
+                : '') +
+              (factorAware
+                ? `（因子姿态${(factorOverlayPostureAt(factorOverlay, bar.date) * 100).toFixed(0)}%）`
+                : ''),
           });
         }
       }
@@ -230,6 +269,8 @@ export function runBacktest(
     newsAware,
     newsPosture,
     ...(newsSince ? { newsSince } : {}),
+    factorAware,
+    ...(factorAware ? { factorPosture, ...(factorDirection ? { factorDirection } : {}) } : {}),
   };
 }
 

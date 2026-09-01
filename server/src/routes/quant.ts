@@ -5,7 +5,7 @@
 import { Router } from 'express';
 import { quantLimiter, watchlistLimiter, circuitBreakerGuard } from '../middleware.js';
 import { parseStrategyInput, orchestrate, generateSummary } from '../quant/agents/orchestrator.js';
-import type { StrategyConfig } from '../quant/types.js';
+import type { StrategyConfig, FactorOverlay } from '../quant/types.js';
 import {
   extractNewsSignal,
   aggregateNewsSentiment,
@@ -18,7 +18,11 @@ import {
   evaluatePriceVolumeFactorPredictability,
   type FactorPredictability,
 } from '../quant/factorPredictability.js';
-import { computeCompositeAlpha, type CompositeAlpha } from '../quant/compositeAlpha.js';
+import {
+  computeCompositeAlpha,
+  factorOverlayFromCompositeAlpha,
+  type CompositeAlpha,
+} from '../quant/compositeAlpha.js';
 import { computeCompositeAlphaForStrategy } from '../quant/compositeService.js';
 import { evaluateFactor, judgeFactor, type FactorObservation } from '../quant/factorEvaluation.js';
 import {
@@ -36,10 +40,12 @@ const router = Router();
 // === Quant Research Endpoint ===
 router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req, res) => {
   try {
-    const { strategy, useNews, newsItems } = req.body as {
+    const { strategy, useNews, newsItems, useFactor } = req.body as {
       strategy: StrategyConfig | string;
       useNews?: boolean;
       newsItems?: NewsItem[];
+      /** 是否把量价因子组合 alpha 作为信号叠加层自动注入回测；默认 true，false 关闭 */
+      useFactor?: boolean;
     };
     if (!strategy) {
       return res.status(400).json({ error: '请提供策略配置（strategy）' });
@@ -79,28 +85,6 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
       }
     } catch {
       newsSignal = null;
-    }
-
-    // 3. 运行回测：baseline（不含新闻）+ 含最新消息情绪叠加层（news-aware）
-    const backtestBaseline = runBacktest(ohlcvData, strategyConfig);
-    let backtestResult = backtestBaseline;
-    // 记录实际应用的叠加层：limitations 文案需区分严格时序（items）与旧口径（聚合常数）
-    let newsOverlayUsed: {
-      polarity: number;
-      since?: string;
-      items?: { publishedAt: string; polarity: number }[];
-    } | null = null;
-    if (newsSignal?.hasNews) {
-      newsOverlayUsed = {
-        polarity: newsSignal.polarity,
-        since: earliestNewsDate(newsSignal.items),
-        items: newsSignal.timeline,
-      };
-      backtestResult = runBacktest(ohlcvData, {
-        ...strategyConfig,
-        // since=新闻最早发布日；items=分段情绪时间线（引擎按各 bar 已知新闻严格时序叠加）
-        newsOverlay: newsOverlayUsed,
-      });
     }
 
     // 3.5 量价因子：A 股方向已按本土实证校正（短期反转而非动量），随报告透出。
@@ -160,6 +144,47 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
       }
     }
 
+    // 3. 运行回测：baseline（不含叠加层）+ 含信号叠加层（news-aware / factor-aware）。
+    //     因子叠加层自动注入条件：组合 alpha 确有显著信号、综合方向非 neutral、且用户未
+    //     显式关闭（useFactor!==false）；用户显式传入 strategy.factorOverlay 时优先采用其配置。
+    const backtestBaseline = runBacktest(ohlcvData, strategyConfig);
+    let backtestResult = backtestBaseline;
+    // 记录实际应用的叠加层：limitations 文案需区分严格时序（items）与旧口径（聚合常数）
+    let newsOverlayUsed: {
+      polarity: number;
+      since?: string;
+      items?: { publishedAt: string; polarity: number }[];
+    } | null = null;
+    let factorOverlayUsed: FactorOverlay | null = null;
+    if (newsSignal?.hasNews) {
+      newsOverlayUsed = {
+        polarity: newsSignal.polarity,
+        since: earliestNewsDate(newsSignal.items),
+        items: newsSignal.timeline,
+      };
+    }
+    if (
+      !strategyConfig.factorOverlay &&
+      useFactor !== false &&
+      compositeAlpha?.hasSignal &&
+      compositeAlpha.overallDirection !== 'neutral'
+    ) {
+      factorOverlayUsed = factorOverlayFromCompositeAlpha(compositeAlpha);
+    }
+    if (newsOverlayUsed || factorOverlayUsed || strategyConfig.factorOverlay) {
+      backtestResult = runBacktest(ohlcvData, {
+        ...strategyConfig,
+        // since=新闻最早发布日；items=分段情绪时间线（引擎按各 bar 已知新闻严格时序叠加）
+        ...(newsOverlayUsed ? { newsOverlay: newsOverlayUsed } : {}),
+        // 因子叠加层：组合 alpha 翻成建仓姿态；与新闻姿态取 min（AND 语义），不叠加放大
+        ...(factorOverlayUsed || strategyConfig.factorOverlay
+          ? { factorOverlay: (factorOverlayUsed ?? strategyConfig.factorOverlay) as FactorOverlay }
+          : {}),
+      });
+    }
+
+    // （因子与组合 alpha 已在上方 step 3.5–3.7 提前计算，供回测叠加层使用）
+
     // 4. 编排子Agent：数据质量、审计、优化
     const { dataQuality, audit, optimization } = await orchestrate(
       strategyConfig,
@@ -199,6 +224,11 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
         newsOverlayUsed?.items?.length
           ? '新闻情绪按发布时间分段加权（各时点仅使用已知新闻，时效半衰期 5.8 天），严格时序无前视偏差'
           : `新闻情绪为聚合常数叠加${backtestResult.newsSince ? `（自 ${backtestResult.newsSince} 起）` : ''}，属情景假设`,
+      );
+    }
+    if (backtestResult.factorAware) {
+      limitations.push(
+        `组合 alpha 信号叠加已生效（综合方向 ${backtestResult.factorDirection}，姿态 ${((backtestResult.factorPosture ?? 0) * 100).toFixed(0)}%），与新闻姿态取较小值缩放仓位，long-only 下看空不建仓`,
       );
     }
     limitations.push('历史回测不代表未来收益');
