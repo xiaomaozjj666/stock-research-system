@@ -49,18 +49,33 @@ function unlockExpertRule(
 
   // === 上市年限 → 解禁窗口推断 ===
   const listingDate = info.listingDate || '';
-  let yearsSinceIPO = 0;
+  let yearsSinceIPO = -1; // -1 表示"未知"（缺失 / 解析失败）
   if (listingDate) {
-    const listingYear = parseInt(listingDate.slice(0, 4));
-    if (!isNaN(listingYear)) {
+    const listingYear = parseInt(listingDate.slice(0, 4), 10);
+    if (!isNaN(listingYear) && listingYear > 1990 && listingYear <= new Date().getFullYear()) {
       yearsSinceIPO = new Date().getFullYear() - listingYear;
     }
   }
 
   const marketCap = valuation.marketCap || 0;
-  let unlockPhase: 'pre_first' | 'first_window' | 'between' | 'second_window' | 'post_mature';
+  let unlockPhase:
+    | 'unknown'
+    | 'pre_first'
+    | 'first_window'
+    | 'between'
+    | 'second_window'
+    | 'post_mature';
 
-  if (yearsSinceIPO < LISTING_YEAR_THRESHOLDS.firstUnlock) {
+  if (yearsSinceIPO < 0) {
+    unlockPhase = 'unknown';
+    arguments_.push({
+      text: '缺少上市日期信息，无法精准判断解禁窗口期；建议结合交易所公告核查近期限售股解禁安排',
+      confidence: 50,
+      type: 'support',
+      evidenceType: 'hypothesis',
+    });
+    keyPoints.push('上市年限未知，需核实解禁安排');
+  } else if (yearsSinceIPO < LISTING_YEAR_THRESHOLDS.firstUnlock) {
     unlockPhase = 'pre_first';
     arguments_.push({
       text: `上市仅${yearsSinceIPO}年，首次解禁窗口（战投/Pre-IPO 12 个月锁定期）尚未到来，需密切关注解禁公告`,
@@ -141,9 +156,12 @@ function unlockExpertRule(
   // === 综合情绪 ===
   const opposeCount = arguments_.filter((a) => a.type === 'oppose').length;
   const supportCount = arguments_.filter((a) => a.type === 'support').length;
+  const totalArgs = arguments_.length || 1; // 防御：空数组时避免除零
 
   let overallSentiment: 'bullish' | 'neutral' | 'bearish';
-  if (unlockPhase === 'post_mature' && supportCount >= opposeCount) {
+  if (unlockPhase === 'unknown') {
+    overallSentiment = 'neutral';
+  } else if (unlockPhase === 'post_mature' && supportCount >= opposeCount) {
     overallSentiment = 'neutral';
   } else if (unlockPhase === 'first_window' || unlockPhase === 'pre_first') {
     overallSentiment = 'bearish';
@@ -154,7 +172,7 @@ function unlockExpertRule(
   }
 
   const avgConfidence = Math.round(
-    arguments_.reduce((s, a) => s + a.confidence, 0) / arguments_.length,
+    arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs,
   );
 
   return {

@@ -157,6 +157,7 @@ function policyExpertRule(
   // === 综合情绪 ===
   const supportCount = arguments_.filter((a) => a.type === 'support').length;
   const opposeCount = arguments_.filter((a) => a.type === 'oppose').length;
+  const totalArgs = arguments_.length || 1;
 
   let overallSentiment: 'bullish' | 'neutral' | 'bearish';
   if (isRestricted) {
@@ -170,7 +171,7 @@ function policyExpertRule(
   }
 
   const avgConfidence = Math.round(
-    arguments_.reduce((s, a) => s + a.confidence, 0) / arguments_.length,
+    arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs,
   );
 
   return {

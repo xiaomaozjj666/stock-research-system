@@ -192,8 +192,9 @@ function valuationExpertRule(
   else if (pePercentile > 70) overallSentiment = 'bearish';
   else overallSentiment = 'neutral';
 
+  const totalArgs = arguments_.length || 1;
   const avgConfidence = Math.round(
-    arguments_.reduce((s, a) => s + a.confidence, 0) / arguments_.length,
+    arguments_.reduce((s, a) => s + a.confidence, 0) / totalArgs,
   );
 
   return {
