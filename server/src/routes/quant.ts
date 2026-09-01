@@ -14,6 +14,10 @@ import {
   type NewsSignal,
 } from '../quant/newsSignal.js';
 import { computePriceVolumeFactors, type PriceVolumeFactor } from '../quant/priceVolumeFactors.js';
+import {
+  evaluatePriceVolumeFactorPredictability,
+  type FactorPredictability,
+} from '../quant/factorPredictability.js';
 import { evaluateFactor, judgeFactor, type FactorObservation } from '../quant/factorEvaluation.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
 import { runBacktest } from '../quant/backtestEngine.js';
@@ -94,13 +98,27 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
 
     // 3.5 量价因子：A 股方向已按本土实证校正（短期反转而非动量），随报告透出。
     //     数据不足的因子 value 序列化为 null（available=false），调用方据此剔除，
-    //     而不是当成 0 参与加权——那等价于给「无法计算」的标的安一个居中值
-    const priceVolumeFactors: (PriceVolumeFactor & { available: boolean })[] =
-      computePriceVolumeFactors({ bars: ohlcvData }).map((f) => ({
-        ...f,
-        value: f.value,
-        available: Number.isFinite(f.value),
-      }));
+    //     而不是当成 0 参与加权——那等价于给「无法计算」的标的安一个居中值。
+    //     同时计算每只因子对「这只股票自身」远期收益的时间序列预测力（IC / t / p /
+    //     是否显著）：截面 IC 需多股票横截面，单股场景下时间序列 IC 才是可证伪口径。
+    const priceVolumeFactorsSnapshot = computePriceVolumeFactors({ bars: ohlcvData });
+    let factorPredictability: FactorPredictability[] = [];
+    try {
+      factorPredictability = evaluatePriceVolumeFactorPredictability({ bars: ohlcvData });
+    } catch (e) {
+      // 预测力计算失败不应拖垮整份报告；降级为「无预测力数据」
+      logger.warn('因子时间序列预测力计算跳过', { err: e });
+    }
+    const predictabilityByName = new Map(factorPredictability.map((p) => [p.name, p]));
+    const priceVolumeFactors: (PriceVolumeFactor & {
+      available: boolean;
+      predictability?: FactorPredictability;
+    })[] = priceVolumeFactorsSnapshot.map((f) => ({
+      ...f,
+      value: f.value,
+      available: Number.isFinite(f.value),
+      predictability: predictabilityByName.get(f.name),
+    }));
 
     // 4. 编排子Agent：数据质量、审计、优化
     const { dataQuality, audit, optimization } = await orchestrate(
