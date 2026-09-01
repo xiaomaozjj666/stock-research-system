@@ -255,7 +255,10 @@ export default function QuantPage() {
             <AuditPanel data={report.audit} />
             <OptimizationPanel data={report.optimization} />
             {report.priceVolumeFactors && report.priceVolumeFactors.length > 0 && (
-              <FactorPanel data={report.priceVolumeFactors} />
+              <FactorPanel
+                data={report.priceVolumeFactors}
+                compositeAlpha={report.compositeAlpha}
+              />
             )}
           </>
         )}

@@ -18,6 +18,7 @@ import {
   evaluatePriceVolumeFactorPredictability,
   type FactorPredictability,
 } from '../quant/factorPredictability.js';
+import { computeCompositeAlpha, type CompositeAlpha } from '../quant/compositeAlpha.js';
 import { evaluateFactor, judgeFactor, type FactorObservation } from '../quant/factorEvaluation.js';
 import {
   fetchOHLCVData,
@@ -148,6 +149,17 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
       predictability: predictabilityByName.get(f.name),
     }));
 
+    // 3.7 多因子加权组合 alpha：把上述单因子时间序列预测力（仅显著因子、按 |t| 置信度
+    //     加权方向校正 IC）合成一个方向性信号。计算失败降级为空（不拖垮报告）。
+    let compositeAlpha: CompositeAlpha | undefined;
+    if (factorPredictability.length > 0) {
+      try {
+        compositeAlpha = computeCompositeAlpha(factorPredictability);
+      } catch (e) {
+        logger.warn('组合 alpha 计算跳过', { err: e });
+      }
+    }
+
     // 4. 编排子Agent：数据质量、审计、优化
     const { dataQuality, audit, optimization } = await orchestrate(
       strategyConfig,
@@ -199,6 +211,7 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
       backtestBaseline: newsSignal?.hasNews ? backtestBaseline : undefined,
       newsSentiment: newsSignal?.hasNews ? newsSignal : undefined,
       priceVolumeFactors,
+      compositeAlpha,
       audit,
       optimization,
       summary,

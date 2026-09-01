@@ -3,6 +3,8 @@ import type {
   PriceVolumeFactorName,
   FactorCategory,
   FactorPredictabilityHorizon,
+  CompositeAlpha,
+  CompositeDirection,
 } from './types';
 
 /** 因子中文显示名（提升可读性，原始 key 为英文） */
@@ -57,7 +59,62 @@ function HorizonCell({ h }: { h: FactorPredictabilityHorizon | null }) {
   );
 }
 
-export default function FactorPanel({ data }: { data: PriceVolumeFactor[] }) {
+const DIRECTION_LABEL: Record<CompositeDirection, string> = {
+  up: '看多',
+  down: '看空',
+  neutral: '中性',
+};
+
+/** 多因子加权组合 alpha 汇总条：综合方向 + 各持有期 α + 显著因子数 + 方向一致率 */
+function CompositeSummary({ alpha }: { alpha: CompositeAlpha }) {
+  const dirCls =
+    alpha.overallDirection === 'up'
+      ? 'sig-valid'
+      : alpha.overallDirection === 'down'
+        ? 'sig-inverted'
+        : 'sig-none';
+  return (
+    <div className="composite-summary">
+      <div className={`composite-overall ${dirCls}`}>
+        <span className="composite-overall-label">组合信号</span>
+        <span className="composite-overall-dir">{DIRECTION_LABEL[alpha.overallDirection]}</span>
+      </div>
+      <div className="composite-horizons">
+        {alpha.horizons.map((h) => (
+          <div className="composite-horizon" key={h.period}>
+            <span className="composite-horizon-period">
+              {h.period === 21 ? '1月' : h.period === 63 ? '3月' : `${h.period}日`}
+            </span>
+            <span
+              className={`composite-alpha ${h.direction === 'up' ? 'sig-valid' : h.direction === 'down' ? 'sig-inverted' : 'sig-none'}`}
+            >
+              α {h.alpha >= 0 ? '+' : ''}
+              {h.alpha.toFixed(3)}
+            </span>
+            <span className="composite-meta">
+              显著 {h.significantCount}/{h.evaluableCount}
+              {h.significantCount > 0 ? ` · 一致率 ${(h.agreement * 100).toFixed(0)}%` : ''}
+            </span>
+          </div>
+        ))}
+      </div>
+      {alpha.hasSignal && (
+        <div className="composite-foot">
+          仅纳入统计显著（p&lt;0.05）因子，按 |t| 置信度加权方向校正 IC；多因子同向且置信越高 → |α|
+          越大。
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function FactorPanel({
+  data,
+  compositeAlpha,
+}: {
+  data: PriceVolumeFactor[];
+  compositeAlpha?: CompositeAlpha;
+}) {
   if (!data || data.length === 0) return null;
   return (
     <div className="card quant-panel factor-panel">
@@ -67,6 +124,7 @@ export default function FactorPanel({ data }: { data: PriceVolumeFactor[] }) {
           当前快照值 + 对这只股票自身远期收益的时间序列 IC（21/63 交易日，Spearman + Student t）
         </span>
       </h3>
+      {compositeAlpha && <CompositeSummary alpha={compositeAlpha} />}
       <div className="factor-table-wrap">
         <table className="factor-table">
           <thead>
