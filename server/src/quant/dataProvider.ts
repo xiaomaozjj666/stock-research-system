@@ -74,15 +74,18 @@ export function filterOHLCVByRange(
 }
 
 /**
- * 获取 K 线数据（含 look-ahead 防御：返回前按 [startDate, endDate] 二次过滤）。
+ * 按 secid 获取 K 线（fetchOHLCVData 与指数基准共用内核）。
+ * 含缓存、look-ahead 防御与模拟数据降级；cacheToken 仅用于缓存文件名（已白名单清洗）。
  */
-export async function fetchOHLCVData(
-  stockCode: string,
+async function fetchKlineBySecid(
+  secid: string,
   startDate: string,
   endDate: string,
+  cacheToken: string,
+  timeoutMs = 15000,
 ): Promise<OHLCVData[]> {
-  // 1. 检查缓存（缓存文件名对代码做白名单清洗：未校验的 stockCode 含 `../` 时防路径穿越）
-  const cacheKey = `${sanitizeCacheToken(stockCode)}_${sanitizeCacheToken(startDate)}_${sanitizeCacheToken(endDate)}`;
+  // 1. 检查缓存（缓存文件名对 token 做白名单清洗：防路径穿越）
+  const cacheKey = `${sanitizeCacheToken(cacheToken)}_${sanitizeCacheToken(startDate)}_${sanitizeCacheToken(endDate)}`;
   const cacheDir = getCacheDir();
   if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
   const cacheFile = path.join(cacheDir, `${cacheKey}.json`);
@@ -93,19 +96,13 @@ export async function fetchOHLCVData(
       // 12小时缓存；仍做范围过滤（防御历史脏缓存混入未来行）
       const { data, trimmed } = filterOHLCVByRange(cached.data, startDate, endDate);
       if (trimmed > 0) {
-        logger.warn('缓存K线存在越界行，已剔除', {
-          stockCode,
-          startDate,
-          endDate,
-          trimmed,
-        });
+        logger.warn('缓存K线存在越界行，已剔除', { secid, startDate, endDate, trimmed });
       }
       return data;
     }
   }
 
   // 2. 从东方财富获取日K线
-  const secid = resolveSecid(stockCode);
   const beg = startDate.replace(/-/g, '');
   const end = endDate.replace(/-/g, '');
 
@@ -119,7 +116,7 @@ export async function fetchOHLCVData(
   const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57&klt=101&fqt=1&beg=${beg}&end=${end}&lmt=${lmt}`;
 
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
     const json = await response.json();
 
     if (json?.data?.klines) {
@@ -139,7 +136,7 @@ export async function fetchOHLCVData(
       const { data: filtered, trimmed } = filterOHLCVByRange(data, startDate, endDate);
       if (trimmed > 0) {
         logger.warn('K线返回越界行，已剔除（look-ahead 防御）', {
-          stockCode,
+          secid,
           startDate,
           endDate,
           trimmed,
@@ -151,13 +148,70 @@ export async function fetchOHLCVData(
       return filtered;
     }
   } catch (error) {
-    logger.warn('获取K线数据失败', { stockCode, startDate, endDate, err: error });
+    logger.warn('获取K线数据失败', { secid, startDate, endDate, err: error });
   }
 
   // 3. 降级：生成模拟数据（用于演示）
   // F1.6: 模拟数据标记 isSimulated=true，下游策略引擎应检查此标志
-  const simulated = generateSimulatedData(stockCode, startDate, endDate);
+  const simulated = generateSimulatedData(cacheToken, startDate, endDate);
   return simulated.map((d) => ({ ...d, isSimulated: true }));
+}
+
+/**
+ * 获取 K 线数据（含 look-ahead 防御：返回前按 [startDate, endDate] 二次过滤）。
+ */
+export async function fetchOHLCVData(
+  stockCode: string,
+  startDate: string,
+  endDate: string,
+): Promise<OHLCVData[]> {
+  return fetchKlineBySecid(resolveSecid(stockCode), startDate, endDate, stockCode);
+}
+
+/**
+ * A 股宽基基准（默认沪深300，东方财富 secid `1.000300`）。
+ * 量价因子的 Beta / 特异波动率 / 残差动量需要「市场收益」才能计算；个股自身买入持有
+ * 曲线（getBenchmarkCurve）不是市场代理（用它算 Beta 会恒为 1），必须拉真实宽基指数。
+ */
+export const A_SHARE_BENCHMARK_SECID = '1.000300';
+
+/**
+ * 拉取宽基指数日收益，按股票 bars 的日期对齐，供量价因子作市场基准。
+ *
+ * @param barDates 股票 K 线日期序列（升序），marketReturns 将与之等长对齐
+ * @param startDate/endDate 与股票相同的区间（缓存/请求用）
+ * @param indexSecid 指数 secid；默认 A 股沪深300。非 A 股（港股/美股）调用方应传对应指数或留空降级
+ * @returns 与 barDates 等长的日收益数组（缺失处为 NaN）；对齐率 < 50% 或拉取失败返回 null（降级）
+ */
+export async function fetchBenchmarkReturns(
+  barDates: string[],
+  startDate: string,
+  endDate: string,
+  indexSecid: string = A_SHARE_BENCHMARK_SECID,
+): Promise<number[] | null> {
+  if (barDates.length < 2) return null;
+  try {
+    const idx = await fetchKlineBySecid(indexSecid, startDate, endDate, `idx_${indexSecid}`, 10000);
+    if (!idx || idx.length < 2) return null;
+    // 指数拉取失败会降级为模拟数据（F1.6）；模拟指数与真实股票收益无关，
+    // 用于回归会污染 Beta，故视为「无市场收益」返回 null
+    if (idx.some((b) => b.isSimulated)) return null;
+    // 指数每日收益（realized on date i）：close[i]/close[i-1] − 1
+    const idxRet = new Map<string, number>();
+    for (let i = 1; i < idx.length; i++) {
+      const base = idx[i - 1].close;
+      const ahead = idx[i].close;
+      idxRet.set(idx[i].date, base > 0 && ahead > 0 ? ahead / base - 1 : NaN);
+    }
+    // 按股票 bars 日期对齐（指数与 A 股同交易历；缺失处 NaN，不向前填充以免错位）
+    const out = barDates.map((d) => idxRet.get(d) ?? NaN);
+    const finite = out.filter((v) => Number.isFinite(v)).length;
+    // 对齐率过低说明指数与股票交易历严重错配（如跨市场），放弃以免污染 Beta
+    if (finite < Math.ceil(barDates.length * 0.5)) return null;
+    return out;
+  } catch {
+    return null;
+  }
 }
 
 /** 缓存文件名 token 清洗：只保留字母/数字/下划线/连字符，防 `../` 等路径穿越 */
