@@ -216,27 +216,93 @@ function mean(xs: number[]): number {
  * 否则等价于给「无法计算」的标的安了一个居中的因子值。
  */
 export function computePriceVolumeFactors(ctx: PriceVolumeFactorContext): PriceVolumeFactor[] {
-  const { bars, marketReturns, floatShares } = ctx;
-  const closes = bars.map((b) => b.close);
+  const closes = ctx.bars.map((b) => b.close);
   const rets = dailyReturns(closes);
+  const turnovers = buildTurnovers(ctx.bars, ctx.floatShares);
+  const amihud = buildAmihud(ctx.bars, rets);
+  const raw = rawFactorValuesAt(
+    closes,
+    rets,
+    turnovers,
+    amihud,
+    ctx.marketReturns,
+    ctx.floatShares,
+    ctx.bars.length - 1,
+  );
+  return (Object.keys(A_SHARE_FACTOR_EVIDENCE) as PriceVolumeFactorName[]).map((name) => {
+    const meta = A_SHARE_FACTOR_EVIDENCE[name];
+    return {
+      name,
+      value: raw[name],
+      direction: meta.direction,
+      category: meta.category,
+      evidence: meta.evidence,
+      aShareAdjusted: meta.aShareAdjusted,
+    };
+  });
+}
 
-  // 换手率序列：有流通股本时用真实换手率，否则用成交量（手）作代理。
-  // 20/120 比值对整体缩放不敏感，两种口径下的相对强度结论一致。
-  const turnovers = bars.map((b) => {
+/**
+ * 逐日因子序列所需的最小回看长度（交易日）。
+ * momentum_12_1 需要 252 根收盘价（closes.length > 252），故序列从索引 252 起算，
+ * 此前因子值恒为 NaN（由 rawFactorValuesAt 按各自窗口自然返回）。
+ */
+const MIN_FACTOR_LOOKBACK = DAYS_12M + 1;
+
+/** 换手率序列：有流通股本用真实换手率，否则退化为成交量（手）代理 */
+function buildTurnovers(bars: OHLCVData[], floatShares?: number): number[] {
+  return bars.map((b) => {
     const shares = b.volume * 100;
     if (floatShares && floatShares > 0) return shares / floatShares;
     return b.volume;
   });
+}
+
+/** Amihud 非流动性：mean(|r| / 成交额)，×1e6 放大到可读量级 */
+function buildAmihud(bars: OHLCVData[], rets: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 1; i < bars.length; i++) {
+    const amount = bars[i].volume * 100 * bars[i].close;
+    if (amount > 0) out.push((Math.abs(rets[i - 1]) / amount) * 1e6);
+  }
+  return out;
+}
+
+/**
+ * 在「截至 endIdx（含）的截面前缀」上计算全部原始因子值。
+ *
+ * 所有公式与原 computePriceVolumeFactors 完全一致，区别仅在于切片范围限定在
+ * 前缀 [0, endIdx]：当 endIdx = bars.length − 1 时结果逐字等价于旧版。
+ * 回看窗口不足时对应因子自然返回 NaN（如 endIdx < 252 时 momentum_12_1 为 NaN），
+ * 调用方据此逐日过滤，无需额外标记。
+ *
+ * 这是「逐日因子序列」与「时间序列 IC」的共享内核：把同一个函数作用在每个历史
+ * 日期前缀上，即可得到因子随时间的演化，进而判定其对该股票自身远期收益的预测力。
+ */
+export function rawFactorValuesAt(
+  closes: number[],
+  rets: number[],
+  turnovers: number[],
+  amihud: number[],
+  marketReturns: number[] | undefined,
+  floatShares: number | undefined,
+  endIdx: number,
+): Record<PriceVolumeFactorName, number> {
+  const pc = closes.slice(0, endIdx + 1);
+  const pr = rets.slice(0, endIdx);
+  const pt = turnovers.slice(0, endIdx + 1);
+  const pa = amihud.slice(0, endIdx);
+  const pm = marketReturns ? marketReturns.slice(0, endIdx) : undefined;
 
   // 市场回归：Beta、特异波动率与残差动量共用同一条 OLS
   let beta = NaN;
   let idioVol = NaN;
   let residualMomentum = NaN;
-  if (marketReturns && marketReturns.length > 0) {
-    const window = Math.min(RESID_WINDOW, rets.length, marketReturns.length);
+  if (pm && pm.length > 0) {
+    const window = Math.min(RESID_WINDOW, pr.length, pm.length);
     if (window >= 20) {
-      const y = rets.slice(rets.length - window);
-      const x = marketReturns.slice(marketReturns.length - window);
+      const y = pr.slice(pr.length - window);
+      const x = pm.slice(pm.length - window);
       const { coefficients, residuals, fullRank } = olsRegression(y, [x]);
       if (fullRank) {
         beta = coefficients[1];
@@ -251,52 +317,103 @@ export function computePriceVolumeFactors(ctx: PriceVolumeFactorContext): PriceV
     }
   }
 
-  // Amihud 非流动性：mean(|r| / 成交额)，×1e6 放大到可读量级
-  const amihud: number[] = [];
-  for (let i = 1; i < bars.length; i++) {
-    const amount = bars[i].volume * 100 * bars[i].close;
-    if (amount > 0) amihud.push((Math.abs(rets[i - 1]) / amount) * 1e6);
-  }
-
   const raw: Record<PriceVolumeFactorName, number> = {
-    volatility_1m: annualizedVolPct(rets.slice(-DAYS_1M)),
-    volatility_3m: annualizedVolPct(rets.slice(-DAYS_3M)),
+    volatility_1m: annualizedVolPct(pr.slice(-DAYS_1M)),
+    volatility_3m: annualizedVolPct(pr.slice(-DAYS_3M)),
     idiosyncratic_vol: idioVol,
-    reversal_1m: cumulativeReturnPct(closes, DAYS_1M),
-    reversal_3m: cumulativeReturnPct(closes, DAYS_3M),
+    reversal_1m: cumulativeReturnPct(pc, DAYS_1M),
+    reversal_3m: cumulativeReturnPct(pc, DAYS_3M),
     residual_momentum_6m: residualMomentum,
     // 12−1 动量：t−252 到 t−21 的累计收益
     momentum_12_1: (() => {
-      if (closes.length <= DAYS_12M) return NaN;
-      const base = closes[closes.length - 1 - DAYS_12M];
-      const mid = closes[closes.length - 1 - DAYS_1M];
+      if (pc.length <= DAYS_12M) return NaN;
+      const base = pc[pc.length - 1 - DAYS_12M];
+      const mid = pc[pc.length - 1 - DAYS_1M];
       if (!(base > 0) || !(mid > 0)) return NaN;
       return (mid / base - 1) * 100;
     })(),
     turnover_ratio_reversal: (() => {
-      if (turnovers.length < 120) return NaN;
-      const short = mean(turnovers.slice(-20));
-      const long = mean(turnovers.slice(-120));
+      if (pt.length < 120) return NaN;
+      const short = mean(pt.slice(-20));
+      const long = mean(pt.slice(-120));
       if (!Number.isFinite(short) || !Number.isFinite(long) || long === 0) return NaN;
       return -(short / long);
     })(),
-    amihud_illiquidity: mean(amihud.slice(-DAYS_3M)),
+    amihud_illiquidity: mean(pa.slice(-DAYS_3M)),
     beta,
     max_daily_return_1m: (() => {
-      const recent = rets.slice(-DAYS_1M);
+      const recent = pr.slice(-DAYS_1M);
       return recent.length > 0 ? Math.max(...recent) * 100 : NaN;
     })(),
   };
+  return raw;
+}
 
-  return (Object.keys(A_SHARE_FACTOR_EVIDENCE) as PriceVolumeFactorName[]).map((name) => {
+export interface PriceVolumeFactorSeriesPoint {
+  /** YYYY-MM-DD */
+  date: string;
+  /** 当日因子值；回看不足时为 NaN */
+  value: number;
+}
+
+export interface PriceVolumeFactorSeries {
+  name: PriceVolumeFactorName;
+  direction: 1 | -1;
+  category: FactorCategory;
+  evidence: string;
+  aShareAdjusted: boolean;
+  /** 按日期升序的逐日因子值（从 MIN_FACTOR_LOOKBACK 起，此前为 NaN 已剔除） */
+  points: PriceVolumeFactorSeriesPoint[];
+}
+
+/**
+ * 计算每只量价因子的逐日序列。
+ *
+ * 因子值在每个历史日期 `i` 处用 [0, i] 前缀重算（即「截至当日」的因子），从而把
+ * 单点快照扩展成时间序列——这是判定「该因子对这只股票自身远期收益有无预测力」
+ * （时间序列 IC）的前置数据。序列从 MIN_FACTOR_LOOKBACK 起，此前窗口不足恒为 NaN。
+ *
+ * 纯函数、无副作用；与 computePriceVolumeFactors 共享 rawFactorValuesAt 内核，
+ * 故 endIdx = bars.length − 1 的截面值与 computePriceVolumeFactors 完全一致。
+ */
+export function computePriceVolumeFactorSeries(
+  ctx: PriceVolumeFactorContext,
+): PriceVolumeFactorSeries[] {
+  const closes = ctx.bars.map((b) => b.close);
+  const rets = dailyReturns(closes);
+  const turnovers = buildTurnovers(ctx.bars, ctx.floatShares);
+  const amihud = buildAmihud(ctx.bars, rets);
+  const dates = ctx.bars.map((b) => b.date);
+  const names = Object.keys(A_SHARE_FACTOR_EVIDENCE) as PriceVolumeFactorName[];
+
+  // 单次遍历：[0, i] 前缀上重算全部因子，把每个因子的值分发到各自序列，避免 11× 冗余
+  const buckets: Record<PriceVolumeFactorName, PriceVolumeFactorSeriesPoint[]> = {} as Record<
+    PriceVolumeFactorName,
+    PriceVolumeFactorSeriesPoint[]
+  >;
+  for (const n of names) buckets[n] = [];
+  for (let i = MIN_FACTOR_LOOKBACK; i < ctx.bars.length; i++) {
+    const raw = rawFactorValuesAt(
+      closes,
+      rets,
+      turnovers,
+      amihud,
+      ctx.marketReturns,
+      ctx.floatShares,
+      i,
+    );
+    for (const n of names) buckets[n].push({ date: dates[i], value: raw[n] });
+  }
+
+  return names.map((name) => {
     const meta = A_SHARE_FACTOR_EVIDENCE[name];
     return {
       name,
-      value: raw[name],
       direction: meta.direction,
       category: meta.category,
       evidence: meta.evidence,
       aShareAdjusted: meta.aShareAdjusted,
+      points: buckets[name],
     };
   });
 }
