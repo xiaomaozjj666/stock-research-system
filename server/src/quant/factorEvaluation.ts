@@ -23,6 +23,7 @@
  */
 import { spearmanRankIC, averageRanks } from './factorAnalytics.js';
 import {
+  neweyWestTStat,
   olsRegression,
   sampleExcessKurtosis,
   sampleSkewness,
@@ -369,7 +370,7 @@ export interface IcSignificance {
   std: number;
   /** 信息比率 IR = mean / std；std=0 时按符号给极大值（与 factorAnalytics 同口径） */
   ir: number;
-  /** t 统计量 = mean / (std / √n) */
+  /** t 统计量；启用 Newey-West 时为 HAC 修正值（见 nwMaxLag） */
   tStat: number;
   /**
    * 双侧 p 值（H₀: IC = 0）。
@@ -381,6 +382,8 @@ export interface IcSignificance {
   skew: number;
   /** IC 分布超额峰度（正态 = 0） */
   excessKurtosis: number;
+  /** Newey-West 修正使用的最大滞后阶（= period − 1，重叠持有期的自相关修正）；0/缺省 = iid */
+  nwMaxLag?: number;
 }
 
 /**
@@ -405,8 +408,12 @@ export function dailyIcSeries(rows: CleanedObservation[], period: number): numbe
  * IC 显著性检验。仅有 IR 无法判断因子是否真的有效——样本量小时 IR 极易被噪声撑高，
  * 必须配合 t 统计量与 p 值（qlib 给出 IC/ICIR，alphalens 给出 t-stat/p-value，
  * 本函数把两者合并）。
+ *
+ * Newey-West 修正（opts.maxLag > 0 时启用）：period 日远期收益在相邻交易日的
+ * IC 序列存在自相关（相邻窗口共享 period−1 天数据），iid 假设会低估标准误、
+ * 高估 t 统计量。maxLag 取 period − 1，用 Bartlett 核 HAC 修正长期方差。
  */
-export function icSignificance(icSeries: number[]): IcSignificance {
+export function icSignificance(icSeries: number[], opts: { maxLag?: number } = {}): IcSignificance {
   const clean = icSeries.filter((v) => Number.isFinite(v));
   const n = clean.length;
   if (n === 0) {
@@ -421,9 +428,24 @@ export function icSignificance(icSeries: number[]): IcSignificance {
   // 绝不能退回 p = 1（那会把「每天 IC 都是 +1」误报为不显著）。
   const degenerate = std === 0 && n >= 2 && mean !== 0;
   const ir = std > 0 ? mean / std : degenerate ? Math.sign(mean) * 99 : 0;
-  const tStat =
+
+  const maxLag = opts.maxLag ?? 0;
+  const iidT =
     std > 0 && n >= 2 ? mean / (std / Math.sqrt(n)) : degenerate ? Math.sign(mean) * 99 : 0;
-  const pValue = std > 0 && n >= 2 ? studentTTwoSidedP(tStat, n - 1) : degenerate ? 0 : 1;
+  let tStat = iidT;
+  let pValue = std > 0 && n >= 2 ? studentTTwoSidedP(iidT, n - 1) : degenerate ? 0 : 1;
+  let nwMaxLag: number | undefined;
+  if (maxLag > 0 && n > maxLag + 2) {
+    // Newey-West HAC：自相关下 iid se 低估，改用 HAC 长期方差；
+    // NW 退化（se ≤ 0 / NaN）时回退 iid 结果，绝不因此把因子误判为不显著
+    const tNw = neweyWestTStat(clean, maxLag);
+    if (Number.isFinite(tNw)) {
+      tStat = tNw;
+      // 自由度取 n − 1（statsmodels HAC 对均值模型同口径）；仍用 Student t 分布
+      pValue = studentTTwoSidedP(tNw, n - 1);
+      nwMaxLag = maxLag;
+    }
+  }
   return {
     n,
     mean,
@@ -433,6 +455,7 @@ export function icSignificance(icSeries: number[]): IcSignificance {
     pValue,
     skew: sampleSkewness(clean),
     excessKurtosis: sampleExcessKurtosis(clean),
+    ...(nwMaxLag !== undefined ? { nwMaxLag } : {}),
   };
 }
 
@@ -705,7 +728,9 @@ export function evaluateFactor(
   const rows = cleaned.rows;
 
   const byPeriod: FactorPeriodReport[] = cleaned.periods.map((period) => {
-    const ic = icSignificance(dailyIcSeries(rows, period));
+    // Newey-West：period 日远期收益相邻重叠（共享 period−1 天），IC 序列自相关，
+    // iid 假设会低估标准误、高估 t。maxLag = period − 1 做 Bartlett 核 HAC 修正。
+    const ic = icSignificance(dailyIcSeries(rows, period), { maxLag: Math.max(0, period - 1) });
     const quantile = quantileReturns(rows, { period, quantiles, demeaned, groupAdjust });
     const turnover = factorTurnover(rows, { quantiles, lag });
     const points = factorReturns(rows, { period, demeaned: true, groupAdjust });
