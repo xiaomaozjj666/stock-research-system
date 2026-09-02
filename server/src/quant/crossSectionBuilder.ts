@@ -70,7 +70,6 @@ export function buildCrossSectionPanel(
   horizons: number[] = [21, 63],
   factorCtxOverride?: (bars: OHLCVData[]) => PriceVolumeFactorContext,
 ): CrossSectionPanel {
-  const maxPeriod = Math.max(...horizons);
   const priceVolume: Record<string, FactorObservation[]> = {};
   const fundamental: Record<FundamentalFactorName, FactorObservation[]> = {
     cs_roe: [],
