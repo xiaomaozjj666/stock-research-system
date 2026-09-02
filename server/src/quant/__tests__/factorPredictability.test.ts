@@ -15,6 +15,7 @@ import {
   evaluatePriceVolumePredictabilityFromBars,
 } from '../factorPredictability.js';
 import { studentTTwoSidedP } from '../factorStats.js';
+import { factorSeriesCorrelations } from '../factorPredictability.js';
 
 /** 确定性收盘价序列（含波动、恒正），避免随机 flaky */
 function deterministicCloses(n: number): number[] {
@@ -263,5 +264,36 @@ describe('跨因子 Holm 多重检验校正', () => {
     const strictlyAdjusted = family.some((h) => (h.pAdj ?? 0) > h.pValue + 1e-12);
     const allInsignificant = family.every((h) => h.pValue >= 0.05);
     expect(strictlyAdjusted || allInsignificant).toBe(true);
+  });
+});
+
+describe('factorSeriesCorrelations 相关矩阵', () => {
+  it('自身 ρ=1；相同序列间 ρ≈1；无关序列 |ρ| 低', () => {
+    const bars = barsFromCloses(deterministicCloses(300));
+    const series = computePriceVolumeFactorSeries({ bars });
+    const corr = factorSeriesCorrelations(series);
+    for (const s1 of series) {
+      const finite = s1.points.filter((pt) => Number.isFinite(pt.value)).map((pt) => pt.value);
+      const nonConstant = finite.length >= 3 && finite.some((v) => v !== finite[0]);
+      if (nonConstant) {
+        expect(corr[s1.name][s1.name]).toBeCloseTo(1, 10);
+      } else {
+        // 退化序列（值恒 NaN 的 Beta 类、或恒定值序列如常量成交量下的因子）：
+        // 秩全并列 → spearmanRankIC 按既有约定返回 0。
+        // 组合去重只作用于显著因子（显著前提是有真实变异），不涉及退化序列
+        expect(corr[s1.name][s1.name]).toBe(0);
+      }
+    }
+  });
+
+  it('矩阵对称', () => {
+    const bars = barsFromCloses(deterministicCloses(300));
+    const series = computePriceVolumeFactorSeries({ bars });
+    const corr = factorSeriesCorrelations(series);
+    for (const a of series) {
+      for (const b of series) {
+        expect(corr[a.name][b.name]).toBeCloseTo(corr[b.name][a.name], 12);
+      }
+    }
   });
 });

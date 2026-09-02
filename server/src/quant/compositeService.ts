@@ -20,8 +20,10 @@ import {
 } from './dataProvider.js';
 import {
   evaluatePriceVolumeFactorPredictability,
+  factorSeriesCorrelations,
   type FactorPredictability,
 } from './factorPredictability.js';
+import { computePriceVolumeFactorSeries } from './priceVolumeFactors.js';
 import { computeCompositeAlpha, type CompositeAlpha } from './compositeAlpha.js';
 import type { OHLCVData } from './types.js';
 
@@ -82,11 +84,17 @@ export async function computeCompositeAlphaForStrategy(
     marketReturns = undefined;
   }
 
+  const seriesCtx = { bars: ohlcv, marketReturns };
+  const seriesList = computePriceVolumeFactorSeries(seriesCtx);
+  const factorCorrelations = factorSeriesCorrelations(seriesList);
   const factorPredictability = evaluatePriceVolumeFactorPredictability(
-    { bars: ohlcv, marketReturns },
+    seriesCtx,
     horizons,
+    seriesList,
   );
-  const compositeAlpha = computeCompositeAlpha(factorPredictability, horizons);
+  const compositeAlpha = computeCompositeAlpha(factorPredictability, horizons, {
+    factorCorrelations,
+  });
 
   return {
     stockCode,

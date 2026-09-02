@@ -23,8 +23,10 @@
  */
 
 import type { OHLCVData, FactorOverlay } from './types.js';
+import { computePriceVolumeFactorSeries } from './priceVolumeFactors.js';
 import {
   evaluatePriceVolumeFactorPredictability,
+  factorSeriesCorrelations,
   type FactorPredictability,
   type FactorPredictabilityHorizon,
 } from './factorPredictability.js';
@@ -74,6 +76,20 @@ export interface CompositeAlpha {
 
 /** 方向判定门槛：|alpha| 大于该值才判 up/down，否则视为信号不足（neutral） */
 const DIRECTION_EPSILON = 0.02;
+/** 相关性去重门槛：显著因子与已入选因子 |ρ| 超过该值时视为同一信号，只保留 |t| 更大者 */
+const DEFAULT_MAX_ABS_CORR = 0.7;
+
+/** 组合 alpha 计算选项 */
+export interface CompositeAlphaOptions {
+  /**
+   * 因子值序列的两两 Spearman 相关矩阵（来自 factorSeriesCorrelations）。
+   * 提供时启用相关性去重：|ρ| > maxAbsCorr 的显著因子视为同一信号的回声，
+   * 仅保留 |t| 更大者——避免"多因子共识"实为单因子放大回声的重复计权。
+   */
+  factorCorrelations?: Record<string, Record<string, number>>;
+  /** 去重门槛，默认 0.7 */
+  maxAbsCorr?: number;
+}
 
 function directionOf(alpha: number): CompositeDirection {
   if (alpha > DIRECTION_EPSILON) return 'up';
@@ -91,7 +107,11 @@ function directionOf(alpha: number): CompositeDirection {
 export function computeCompositeAlpha(
   predictability: FactorPredictability[],
   horizons: number[] = [21, 63],
+  opts: CompositeAlphaOptions = {},
 ): CompositeAlpha {
+  const maxAbsCorr = opts.maxAbsCorr ?? DEFAULT_MAX_ABS_CORR;
+  const corrOf = (a: string, b: string): number | undefined => opts.factorCorrelations?.[a]?.[b];
+
   const horizonsOut: CompositeAlphaHorizon[] = horizons.map((period) => {
     const contributors: CompositeContributor[] = [];
     let weightSum = 0;
@@ -99,17 +119,35 @@ export function computeCompositeAlpha(
     let significantCount = 0;
     let evaluableCount = 0;
 
+    // 显著因子按 |t| 降序做贪心去重：与任一已入选因子 |ρ| 超阈值则视为回声跳过
+    const significant: { name: PriceVolumeFactorName; h: FactorPredictabilityHorizon }[] = [];
     for (const f of predictability) {
       const h: FactorPredictabilityHorizon | null | undefined = f.horizons[period];
       if (!h) continue; // 样本不足 → 无预测力，跳过
       evaluableCount += 1;
       if (!h.significant) continue; // 不显著 → 不纳入加权（避免噪声过拟合）
+      significant.push({ name: f.name, h });
+    }
+    significant.sort((a, b) => Math.abs(b.h.tStat) - Math.abs(a.h.tStat));
+    const accepted: string[] = [];
+    for (const cand of significant) {
+      const duplicated = accepted.some((name) => {
+        const r = corrOf(cand.name, name);
+        return r !== undefined && Math.abs(r) > maxAbsCorr;
+      });
+      if (duplicated) continue; // 相关性去重：跳过回声因子
+      accepted.push(cand.name);
       significantCount += 1;
-      const w = Math.abs(h.tStat);
-      const contribution = w * h.effectiveIc;
+      const w = Math.abs(cand.h.tStat);
+      const contribution = w * cand.h.effectiveIc;
       weightedEdge += contribution;
       weightSum += w;
-      contributors.push({ name: f.name, effectiveIc: h.effectiveIc, weight: w, contribution });
+      contributors.push({
+        name: cand.name,
+        effectiveIc: cand.h.effectiveIc,
+        weight: w,
+        contribution,
+      });
     }
 
     const alpha = weightSum > 0 ? weightedEdge / weightSum : 0;
@@ -169,12 +207,15 @@ export function factorOverlayFromCompositeAlpha(ca: CompositeAlpha): FactorOverl
   return { direction: ca.overallDirection, alpha, posture: clamp01(0.5 + 0.5 * alpha) };
 }
 
-/** 便捷入口：直接吃 bars + 可选市场收益，内部复用因子预测力评估 */
+/** 便捷入口：直接吃 bars + 可选市场收益，内部复用因子预测力评估（含相关性去重） */
 export function computeCompositeAlphaFromBars(
   bars: OHLCVData[],
   marketReturns?: number[],
   horizons: number[] = [21, 63],
 ): CompositeAlpha {
-  const pred = evaluatePriceVolumeFactorPredictability({ bars, marketReturns }, horizons);
-  return computeCompositeAlpha(pred, horizons);
+  const ctx = { bars, marketReturns };
+  const seriesList = computePriceVolumeFactorSeries(ctx);
+  const pred = evaluatePriceVolumeFactorPredictability(ctx, horizons, seriesList);
+  const factorCorrelations = factorSeriesCorrelations(seriesList);
+  return computeCompositeAlpha(pred, horizons, { factorCorrelations });
 }
