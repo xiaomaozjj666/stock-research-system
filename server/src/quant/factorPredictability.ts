@@ -26,6 +26,7 @@ import {
   type PriceVolumeFactorContext,
   type PriceVolumeFactorName,
   type FactorCategory,
+  type PriceVolumeFactorSeries,
 } from './priceVolumeFactors.js';
 import { spearmanRankIC } from './factorAnalytics.js';
 import { studentTTwoSidedP, holmAdjust } from './factorStats.js';
@@ -136,8 +137,9 @@ export function singleFactorPredictability(
 export function evaluatePriceVolumeFactorPredictability(
   ctx: PriceVolumeFactorContext,
   horizons: number[] = [21, 63],
+  precomputedSeries?: PriceVolumeFactorSeries[],
 ): FactorPredictability[] {
-  const seriesList = computePriceVolumeFactorSeries(ctx);
+  const seriesList = precomputedSeries ?? computePriceVolumeFactorSeries(ctx);
   // 逐日因子序列从 MIN_FACTOR_LOOKBACK 起，points[k] 对应 bars 索引 MIN_FACTOR_LOOKBACK + k
   const startIdx =
     seriesList.length > 0
@@ -188,4 +190,39 @@ export function evaluatePriceVolumePredictabilityFromBars(
   horizons: number[] = [21, 63],
 ): FactorPredictability[] {
   return evaluatePriceVolumeFactorPredictability({ bars }, horizons);
+}
+
+/**
+ * 因子值序列的两两 Spearman 相关矩阵（按日期对齐、双边均为有限值才参与）。
+ * ----------------------------------------------------------------------------
+ * 供组合 alpha 去重：高度相关的因子（|ρ| > 阈值）进组合会重复计权同一信号，
+ * 名义上"多因子共识"实为单因子的放大回声。相关矩阵与持有期无关（因子值口径），
+ * 一次计算可复用于全部持有期。
+ */
+export function factorSeriesCorrelations(
+  seriesList: PriceVolumeFactorSeries[],
+): Record<string, Record<string, number>> {
+  const corr: Record<string, Record<string, number>> = {};
+  for (const a of seriesList) corr[a.name] = {};
+  for (let i = 0; i < seriesList.length; i++) {
+    for (let j = i; j < seriesList.length; j++) {
+      const a = seriesList[i];
+      const b = seriesList[j];
+      // 按日期对齐、双边有限值才参与（与 IC 的"绝不把缺失洗成 0"同一纪律）
+      const bByDate = new Map(b.points.map((pt) => [pt.date, pt.value]));
+      const va: number[] = [];
+      const vb: number[] = [];
+      for (const pt of a.points) {
+        const bv = bByDate.get(pt.date);
+        if (bv !== undefined && Number.isFinite(pt.value) && Number.isFinite(bv)) {
+          va.push(pt.value);
+          vb.push(bv);
+        }
+      }
+      const r = va.length >= 3 ? spearmanRankIC(va, vb) : 0;
+      corr[a.name][b.name] = r;
+      corr[b.name][a.name] = r;
+    }
+  }
+  return corr;
 }

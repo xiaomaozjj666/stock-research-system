@@ -226,3 +226,45 @@ describe('computeCompositeAlphaFromBars — 端到端结构', () => {
     }
   });
 });
+
+// ============================================================
+// 相关性去重：|ρ| 超阈值的回声因子不重复计权
+// ============================================================
+
+describe('组合 alpha 相关性去重', () => {
+  // 两个显著因子：动量 |t|=4（高置信）、反转 |t|=2（低置信），同向有效 IC
+  const pred: FactorPredictability[] = [
+    mk('momentum_12_1', 1, 'momentum', sig(0.3, 0.3, 4, 0.001, 100), null),
+    mk('reversal_1m', 1, 'reversal', sig(0.25, 0.25, 2, 0.02, 100), null),
+  ];
+  const highCorr = {
+    momentum_12_1: { reversal_1m: 0.95, momentum_12_1: 1 },
+    reversal_1m: { momentum_12_1: 0.95, reversal_1m: 1 },
+  };
+
+  it('|ρ|=0.95 时回声因子被剔除，只保留 |t| 更大者', () => {
+    const c = computeCompositeAlpha(pred, [21], { factorCorrelations: highCorr });
+    const h = c.horizons[0];
+    expect(h.significantCount).toBe(1);
+    expect(h.topContributors[0].name).toBe('momentum_12_1'); // |t|=4 者存活
+  });
+
+  it('|ρ| 低于阈值（0.3）时两个因子都参与加权', () => {
+    const lowCorr = {
+      momentum_12_1: { reversal_1m: 0.3, momentum_12_1: 1 },
+      reversal_1m: { momentum_12_1: 0.3, reversal_1m: 1 },
+    };
+    const c = computeCompositeAlpha(pred, [21], { factorCorrelations: lowCorr });
+    expect(c.horizons[0].significantCount).toBe(2);
+  });
+
+  it('不提供相关矩阵时保持原行为（不去重）', () => {
+    const c = computeCompositeAlpha(pred, [21]);
+    expect(c.horizons[0].significantCount).toBe(2);
+  });
+
+  it('alpha 为 |t| 加权均值：去重后仅剩高 |t| 因子 → alpha = 其 effectiveIc', () => {
+    const c = computeCompositeAlpha(pred, [21], { factorCorrelations: highCorr });
+    expect(c.horizons[0].alpha).toBeCloseTo(0.3, 10);
+  });
+});
