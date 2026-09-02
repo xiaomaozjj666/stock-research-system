@@ -676,12 +676,70 @@ export function factorAlphaBeta(
 }
 
 /** 单个持有期的完整评估报告 */
+/** 因子样本外稳定性（walk-forward 简化口径） */
+export interface OosStability {
+  /** 样本内（前 isRatio 段）IC 均值 */
+  isMeanIc: number;
+  /** 样本外（后 1−isRatio 段）IC 均值 */
+  oosMeanIc: number;
+  /** 两段 IC 均值同号（方向在时间上稳定） */
+  signAgree: boolean;
+  /** 样本内显著（NW 修正口径，与主报告一致） */
+  isSignificant: boolean;
+  /** 样本外显著 */
+  oosSignificant: boolean;
+  /** 方向且显著双双成立 → 判定稳定 */
+  stable: boolean;
+  /** 样本内/外各自的 IC 天数 */
+  isN: number;
+  oosN: number;
+}
+
+/**
+ * 样本外稳定性复核：把逐日 IC 序列切成前 isRatio / 后 (1−isRatio) 两段，
+ * 分别做显著性检验（与主报告同口径的 Newey-West 修正），要求「方向同号且两段都显著」
+ * 才判定因子稳定——全样本显著可能只是样本内一段行情撑起来的，OOS 复核能戳破它。
+ *
+ * @param isRatio 样本内占比，默认 0.7（样本外保留最新 30%）
+ */
+export function oosStability(
+  icSeries: number[],
+  opts: { maxLag?: number; isRatio?: number } = {},
+): OosStability {
+  const clean = icSeries.filter((v) => Number.isFinite(v));
+  const ratio = opts.isRatio ?? 0.7;
+  const isLen = Math.max(3, Math.floor(clean.length * ratio));
+  const isSeg = clean.slice(0, isLen);
+  const oosSeg = clean.slice(isLen);
+  const isSig = icSignificance(isSeg, opts);
+  const oosSig = icSignificance(oosSeg, opts);
+  const signAgree =
+    isSeg.length >= 3 &&
+    oosSeg.length >= 3 &&
+    Math.sign(isSig.mean) !== 0 &&
+    Math.sign(isSig.mean) === Math.sign(oosSig.mean);
+  const isSignificant = isSig.pValue < 0.05;
+  const oosSignificant = oosSig.pValue < 0.05;
+  return {
+    isMeanIc: isSig.mean,
+    oosMeanIc: oosSig.mean,
+    signAgree,
+    isSignificant,
+    oosSignificant,
+    stable: signAgree && isSignificant && oosSignificant,
+    isN: isSeg.length,
+    oosN: oosSeg.length,
+  };
+}
+
 export interface FactorPeriodReport {
   period: number;
   /** 有效样本数 */
   sampleSize: number;
   /** IC 显著性 */
   ic: IcSignificance;
+  /** 样本外稳定性复核（前 70% vs 后 30% 的 IC 方向与显著性） */
+  oos: OosStability;
   /** 分层回测 */
   quantile: QuantileReturnTable;
   /** 换手率与自相关；缺 symbol 或不足两个截面时为 null */
@@ -730,7 +788,10 @@ export function evaluateFactor(
   const byPeriod: FactorPeriodReport[] = cleaned.periods.map((period) => {
     // Newey-West：period 日远期收益相邻重叠（共享 period−1 天），IC 序列自相关，
     // iid 假设会低估标准误、高估 t。maxLag = period − 1 做 Bartlett 核 HAC 修正。
-    const ic = icSignificance(dailyIcSeries(rows, period), { maxLag: Math.max(0, period - 1) });
+    const icSeries = dailyIcSeries(rows, period);
+    const maxLag = Math.max(0, period - 1);
+    const ic = icSignificance(icSeries, { maxLag });
+    const oos = oosStability(icSeries, { maxLag });
     const quantile = quantileReturns(rows, { period, quantiles, demeaned, groupAdjust });
     const turnover = factorTurnover(rows, { quantiles, lag });
     const points = factorReturns(rows, { period, demeaned: true, groupAdjust });
@@ -739,6 +800,7 @@ export function evaluateFactor(
       period,
       sampleSize: rows.length,
       ic,
+      oos,
       quantile,
       turnover,
       alphaBeta,

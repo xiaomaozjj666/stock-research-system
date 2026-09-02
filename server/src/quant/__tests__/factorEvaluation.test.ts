@@ -11,6 +11,7 @@ import {
   judgeFactor,
   quantileReturns,
   type FactorObservation,
+  oosStability,
 } from '../factorEvaluation.js';
 
 /**
@@ -466,5 +467,49 @@ describe('judgeFactor', () => {
     const verdict = judgeFactor(report.byPeriod[0]);
     expect(verdict.effective).toBe(false);
     expect(verdict.reasons.some((r) => r.includes('单调性') || r.includes('多空价差'))).toBe(true);
+  });
+});
+
+// ============================================================
+// oosStability 样本外稳定性（walk-forward 简化口径）
+// ============================================================
+
+describe('oosStability 样本外稳定性', () => {
+  it('方向稳定且两段显著 → stable=true', () => {
+    // 全正且波动小的 IC 序列：前后段均值同号、都显著
+    const series = Array.from({ length: 60 }, (_, i) => 0.1 + 0.01 * Math.sin(i / 3));
+    const r = oosStability(series, { maxLag: 0 });
+    expect(r.signAgree).toBe(true);
+    expect(r.isSignificant).toBe(true);
+    expect(r.oosSignificant).toBe(true);
+    expect(r.stable).toBe(true);
+  });
+
+  it('前正后负（方向翻转）→ signAgree=false、stable=false', () => {
+    const series = [
+      ...Array.from({ length: 42 }, () => 0.1),
+      ...Array.from({ length: 18 }, () => -0.1),
+    ];
+    const r = oosStability(series, { maxLag: 0 });
+    expect(r.signAgree).toBe(false);
+    expect(r.stable).toBe(false);
+  });
+
+  it('全样本显著但样本外噪声 → isSignificant=true、oosSignificant=false、stable=false', () => {
+    // 样本内 IC=0.1 恒定（极显著），样本外交替 ±0.5（均值≈0、高方差 → 不显著）
+    const series = [
+      ...Array.from({ length: 42 }, () => 0.1),
+      ...Array.from({ length: 18 }, (_, i) => (i % 2 === 0 ? 0.5 : -0.5)),
+    ];
+    const r = oosStability(series, { maxLag: 0 });
+    expect(r.isSignificant).toBe(true);
+    expect(r.oosSignificant).toBe(false);
+    expect(r.stable).toBe(false);
+  });
+
+  it('样本不足（<6 点）时保守判 false', () => {
+    const r = oosStability([0.1, 0.2, 0.3, 0.1], { maxLag: 0 });
+    expect(r.signAgree).toBe(false);
+    expect(r.stable).toBe(false);
   });
 });
