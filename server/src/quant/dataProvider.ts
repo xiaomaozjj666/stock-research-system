@@ -189,9 +189,28 @@ export const BENCHMARK_SECID_BY_MARKET: Record<Market, string> = {
   HK: '100.HSI',
 };
 
-/** 按市场取宽基基准 secid（未知市场回退沪深300） */
+/**
+ * 宽基基准 secid 的环境变量覆盖键。用于按部署切换基准（如美股改纳指100 `100.NDX`、
+ * A 股改中证500 `1.000905`），无需改代码。
+ */
+const BENCHMARK_SECID_ENV_KEY: Record<Market, string> = {
+  A: 'QUANT_BENCHMARK_SECID_A',
+  US: 'QUANT_BENCHMARK_SECID_US',
+  HK: 'QUANT_BENCHMARK_SECID_HK',
+};
+
+/**
+ * 按市场取宽基基准 secid。
+ * 环境变量覆盖优先（`QUANT_BENCHMARK_SECID_A/US/HK`），每次调用时读取——便于
+ * 配置热改动与测试 stub，避免模块加载期固化。覆盖值为空或纯空白时回落内置默认
+ * （沪深300 / 标普500 / 恒生）；未知市场回退沪深300。
+ */
 export function benchmarkSecidForMarket(market: Market): string {
-  return BENCHMARK_SECID_BY_MARKET[market] ?? A_SHARE_BENCHMARK_SECID;
+  const fallback = BENCHMARK_SECID_BY_MARKET[market] ?? A_SHARE_BENCHMARK_SECID;
+  const envKey = BENCHMARK_SECID_ENV_KEY[market];
+  if (!envKey) return fallback;
+  const override = (process.env[envKey] ?? '').trim();
+  return override || fallback;
 }
 
 /**

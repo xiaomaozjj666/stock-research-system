@@ -23,7 +23,10 @@ import {
   factorOverlayFromCompositeAlpha,
   type CompositeAlpha,
 } from '../quant/compositeAlpha.js';
-import { computeCompositeAlphaForStrategy } from '../quant/compositeService.js';
+import {
+  computeCompositeAlphaForStrategy,
+  computeCompositeAlphaBatch,
+} from '../quant/compositeService.js';
 import { evaluateFactor, judgeFactor, type FactorObservation } from '../quant/factorEvaluation.js';
 import {
   fetchOHLCVData,
@@ -366,6 +369,51 @@ router.post('/api/quant/factor/composite', quantLimiter, circuitBreakerGuard, as
     res.status(status).json({ error: '组合 alpha 计算失败', detail: message });
   }
 });
+
+// 批量组合 alpha：一次请求测算多只股票的方向性组合信号，供前端批量测算页使用。
+// 单只失败只标记该项 ok:false（如无 K 线/网络异常），不拖垮整批；结果按输入顺序返回。
+router.post(
+  '/api/quant/factor/composite/batch',
+  quantLimiter,
+  circuitBreakerGuard,
+  async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const raw = (body as { stockCodes?: unknown }).stockCodes;
+      if (!Array.isArray(raw) || raw.length === 0) {
+        return res.status(400).json({ error: '请提供股票代码数组 stockCodes' });
+      }
+      // 上限保护：每只都要拉 K 线 + 基准，防止超大批量拖垮事件循环/上游
+      if (raw.length > 20) {
+        return res.status(413).json({ error: `stockCodes 过多（${raw.length} > 20）` });
+      }
+      const codes = raw.map((c: unknown) => String(c ?? '').trim()).filter(Boolean);
+      if (codes.length === 0) {
+        return res.status(400).json({ error: 'stockCodes 至少需要一个非空股票代码' });
+      }
+      const startDate = String(
+        body.startDate ??
+          new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
+      );
+      const endDate = String(body.endDate ?? new Date().toISOString().split('T')[0]);
+      const horizons = Array.isArray(body.horizons)
+        ? body.horizons
+            .map((h: unknown) => Number(h))
+            .filter((h: number) => Number.isFinite(h) && h > 0)
+        : [21, 63];
+
+      const result = await computeCompositeAlphaBatch(codes, startDate, endDate, horizons);
+      res.json(result);
+    } catch (error) {
+      logger.error('Batch composite alpha error', {
+        route: '/api/quant/factor/composite/batch',
+        err: error,
+      });
+      const message = error instanceof Error ? error.message : '批量组合 alpha 计算失败';
+      res.status(500).json({ error: '批量组合 alpha 计算失败', detail: message });
+    }
+  },
+);
 
 // 受控回测评估：基线(无新闻叠加) vs 实验(带新闻情绪叠加)，量化 LLM 信号是否真增 alpha
 router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, async (req, res) => {

@@ -116,6 +116,23 @@ export async function runQuantAnalysis(payload: {
   }
 }
 
+export async function runBatchCompositeAlpha(payload: {
+  stockCodes: string[];
+  startDate?: string;
+  endDate?: string;
+  horizons?: number[];
+}) {
+  try {
+    const response = await api.post('/quant/factor/composite/batch', payload, {
+      // 批量测算：每只都要拉 K 线 + 基准，放宽超时（上限 20 只）
+      timeout: 180000,
+    });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '批量组合 alpha 测算失败');
+  }
+}
+
 export async function compareStocks(codes: string[]) {
   try {
     const response = await api.post(

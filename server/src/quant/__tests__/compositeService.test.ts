@@ -7,7 +7,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { computeCompositeAlphaForStrategy } from '../compositeService.js';
+import {
+  computeCompositeAlphaForStrategy,
+  computeCompositeAlphaBatch,
+} from '../compositeService.js';
 
 let CACHE_DIR = '';
 const origCacheDir = process.env.DATA_CACHE_DIR;
@@ -91,5 +94,89 @@ describe('computeCompositeAlphaForStrategy — 结构与降级', () => {
     await expect(
       computeCompositeAlphaForStrategy('600519', '2024-01-01', '2025-03-01'),
     ).rejects.toThrow(/无法获取/);
+  });
+});
+
+describe('computeCompositeAlphaBatch — 批量测算', () => {
+  /** 按 URL 区分代码：含 999999 的代码返回空 K 线（模拟该只拉不到数据） */
+  function mockPerCodeFetch() {
+    return vi.spyOn(global, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const empty = url.includes('999999');
+      return {
+        json: async () => ({ data: { klines: empty ? [] : genKlines(400) } }),
+        ok: true,
+      } as unknown as Response;
+    });
+  }
+
+  it('多只全部成功 → 计数正确、结果按输入顺序返回', async () => {
+    mockPerCodeFetch();
+    const r = await computeCompositeAlphaBatch(
+      ['600519', 'AAPL', '00700'],
+      '2024-01-01',
+      '2025-03-01',
+      [21, 63],
+    );
+    expect(r.requested).toBe(3);
+    expect(r.succeeded).toBe(3);
+    expect(r.failed).toBe(0);
+    expect(r.items.map((it) => it.stockCode)).toEqual(['600519', 'AAPL', '00700']);
+    for (const it of r.items) {
+      expect(it.ok).toBe(true);
+      if (it.ok) {
+        expect(it.result.compositeAlpha.horizons).toHaveLength(2);
+        expect(it.result.factorPredictability).toHaveLength(11);
+      }
+    }
+    // 公共参数回显
+    expect(r.startDate).toBe('2024-01-01');
+    expect(r.endDate).toBe('2025-03-01');
+    expect(r.horizons).toEqual([21, 63]);
+  });
+
+  it('重复代码去重（按首次出现顺序），不重复请求', async () => {
+    const spy = mockPerCodeFetch();
+    const r = await computeCompositeAlphaBatch(
+      ['600519', '00700', '600519'],
+      '2024-01-01',
+      '2025-03-01',
+    );
+    expect(r.requested).toBe(2);
+    expect(r.items.map((it) => it.stockCode)).toEqual(['600519', '00700']);
+    // 每只：K 线 + 基准 = 2 次请求；两只共 4 次（去重后不额外请求）
+    expect(spy.mock.calls.length).toBe(4);
+  });
+
+  it('单只失败只标记该项，不拖垮整批', async () => {
+    mockPerCodeFetch();
+    const r = await computeCompositeAlphaBatch(
+      ['600519', '999999', 'AAPL'],
+      '2024-01-01',
+      '2025-03-01',
+    );
+    expect(r.requested).toBe(3);
+    expect(r.succeeded).toBe(2);
+    expect(r.failed).toBe(1);
+    // 顺序仍按输入：失败项落在第 2 位
+    const [first, second, third] = r.items;
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.error).toMatch(/无法获取/);
+    expect(third.ok).toBe(true);
+  });
+
+  it('空代码数组 → 返回空结果，不抛错', async () => {
+    const r = await computeCompositeAlphaBatch([], '2024-01-01', '2025-03-01');
+    expect(r.requested).toBe(0);
+    expect(r.items).toEqual([]);
+    expect(r.succeeded).toBe(0);
+    expect(r.failed).toBe(0);
+  });
+
+  it('全部代码空白/无效 → requested=0（过滤后为空）', async () => {
+    const r = await computeCompositeAlphaBatch(['  ', ''], '2024-01-01', '2025-03-01');
+    expect(r.requested).toBe(0);
+    expect(r.items).toEqual([]);
   });
 });

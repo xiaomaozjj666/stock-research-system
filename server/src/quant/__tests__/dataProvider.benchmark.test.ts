@@ -2,7 +2,7 @@
  * fetchBenchmarkReturns 单元测试：验证「指数日收益按股票 bars 日期对齐」与降级路径。
  * 经由 DATA_CACHE_DIR 重定向到进程专属临时目录，避免写真实 quant/cache。
  */
-import { describe, it, expect, afterEach, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -93,5 +93,56 @@ describe('benchmarkSecidForMarket — 按市场选基准', () => {
     for (const m of markets) {
       expect(benchmarkSecidForMarket(m)).toBe(BENCHMARK_SECID_BY_MARKET[m]);
     }
+  });
+});
+
+describe('benchmarkSecidForMarket — 环境变量覆盖（可配置化）', () => {
+  const KEYS = ['QUANT_BENCHMARK_SECID_A', 'QUANT_BENCHMARK_SECID_US', 'QUANT_BENCHMARK_SECID_HK'];
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const k of KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('未设置 env → 使用内置默认（沪深300/标普500/恒生）', () => {
+    expect(benchmarkSecidForMarket('A')).toBe('1.000300');
+    expect(benchmarkSecidForMarket('US')).toBe('100.SPX');
+    expect(benchmarkSecidForMarket('HK')).toBe('100.HSI');
+  });
+
+  it('env 覆盖生效：A 股改中证500、美股改纳指100', () => {
+    process.env.QUANT_BENCHMARK_SECID_A = '1.000905';
+    process.env.QUANT_BENCHMARK_SECID_US = '100.NDX';
+    expect(benchmarkSecidForMarket('A')).toBe('1.000905');
+    expect(benchmarkSecidForMarket('US')).toBe('100.NDX');
+    // 未覆盖的市场仍走默认
+    expect(benchmarkSecidForMarket('HK')).toBe('100.HSI');
+  });
+
+  it('覆盖值为空/纯空白 → 回落内置默认', () => {
+    process.env.QUANT_BENCHMARK_SECID_A = '';
+    process.env.QUANT_BENCHMARK_SECID_HK = '   ';
+    expect(benchmarkSecidForMarket('A')).toBe('1.000300');
+    expect(benchmarkSecidForMarket('HK')).toBe('100.HSI');
+  });
+
+  it('覆盖值带首尾空白 → trim 后生效', () => {
+    process.env.QUANT_BENCHMARK_SECID_US = '  100.NDX  ';
+    expect(benchmarkSecidForMarket('US')).toBe('100.NDX');
+  });
+
+  it('每次调用时读取（配置可热改动），非模块加载期固化', () => {
+    expect(benchmarkSecidForMarket('US')).toBe('100.SPX');
+    process.env.QUANT_BENCHMARK_SECID_US = '100.DJIA';
+    expect(benchmarkSecidForMarket('US')).toBe('100.DJIA');
   });
 });
