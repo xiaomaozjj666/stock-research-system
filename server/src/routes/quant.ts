@@ -29,6 +29,13 @@ import {
 } from '../quant/compositeService.js';
 import { evaluateFactor, judgeFactor, type FactorObservation } from '../quant/factorEvaluation.js';
 import {
+  buildCrossSectionPanel,
+  type FundamentalFactorName,
+  type StockPanelInput,
+} from '../quant/crossSectionBuilder.js';
+import { fetchFinancialData } from '../services/dataFetcher.js';
+import { mapWithConcurrency } from '../utils/concurrency.js';
+import {
   fetchOHLCVData,
   fetchBenchmarkReturns,
   marketOf,
@@ -416,6 +423,80 @@ router.post(
 );
 
 // 受控回测评估：基线(无新闻叠加) vs 实验(带新闻情绪叠加)，量化 LLM 信号是否真增 alpha
+// 截面因子评估：给定 2-8 只股票，自动拉取行情/财务装配截面观测面板，
+// 走既有截面评估器（按日跨股票 Spearman + Newey-West + OOS 稳定性）。
+// 统计功效取决于横截面宽度：stocksSkipped 与各因子 sampleSize 如实披露，不做掩饰。
+router.post(
+  '/api/quant/factor/cross-section',
+  quantLimiter,
+  circuitBreakerGuard,
+  async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as {
+        codes?: unknown;
+        horizons?: unknown;
+        includeFundamental?: unknown;
+      };
+      const codes = Array.isArray(body.codes) ? body.codes.map(String) : [];
+      if (codes.length < 2 || codes.length > 8) {
+        return res.status(400).json({ error: '请提供 2-8 只股票代码（codes）' });
+      }
+      for (const c of codes) {
+        if (!/^\d{6}$/.test(c)) {
+          return res.status(400).json({ error: `无效的股票代码：${c}` });
+        }
+      }
+      const horizons =
+        Array.isArray(body.horizons) &&
+        body.horizons.every(
+          (h: unknown) => Number.isInteger(h) && (h as number) >= 1 && (h as number) <= 250,
+        )
+          ? (body.horizons as number[])
+          : [21, 63];
+      const includeFundamental = body.includeFundamental !== false;
+
+      const end = new Date().toISOString().slice(0, 10);
+      const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const inputs: StockPanelInput[] = await mapWithConcurrency(codes, 4, async (code: string) => {
+        const bars = await fetchOHLCVData(code, start, end).catch(() => []);
+        const financial = includeFundamental
+          ? await fetchFinancialData(code).catch(() => null)
+          : null;
+        return { code, bars, financial };
+      });
+
+      const panel = buildCrossSectionPanel(inputs, horizons);
+      const factors: { name: string; type: string; report: unknown }[] = [];
+      for (const [name, obs] of Object.entries(panel.priceVolume)) {
+        if (obs.length < 30) continue; // 样本不足的因子如实跳过（评估器也会拒收）
+        factors.push({ name, type: 'price_volume', report: evaluateFactor(obs) });
+      }
+      if (includeFundamental) {
+        for (const [name, obs] of Object.entries(panel.fundamental) as [
+          FundamentalFactorName,
+          FactorObservation[],
+        ][]) {
+          if (obs.length < 30) continue;
+          factors.push({ name, type: 'fundamental', report: evaluateFactor(obs) });
+        }
+      }
+
+      res.json({
+        stocksIncluded: panel.stocksIncluded,
+        stocksSkipped: panel.stocksSkipped,
+        horizons,
+        factors,
+      });
+    } catch (error) {
+      logger.error('Cross-section factor error', {
+        route: '/api/quant/factor/cross-section',
+        err: error,
+      });
+      res.status(500).json({ error: '截面因子评估失败' });
+    }
+  },
+);
+
 router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, async (req, res) => {
   try {
     const body = req.body ?? {};
