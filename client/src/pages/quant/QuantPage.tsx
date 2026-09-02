@@ -7,6 +7,7 @@ import AuditPanel from './AuditPanel';
 import OptimizationPanel from './OptimizationPanel';
 import ReportSummary from './ReportSummary';
 import FactorPanel from './FactorPanel';
+import CompositeBatchPanel from './CompositeBatchPanel';
 import NewsSentimentCard from '../../components/NewsSentimentCard';
 import { runQuantAnalysis } from '../../api/client';
 import type { StrategyConfig, QuantResearchReport, PipelineStage, NewsItem } from './types';
@@ -122,6 +123,8 @@ export default function QuantPage() {
   const [stageElapsed, setStageElapsed] = useState<Record<string, number>>({});
   const [useNews, setUseNews] = useState(false);
   const [newsText, setNewsText] = useState('');
+  /** 量化页模式：单股完整研究（回测+审计+优化）| 多股组合 alpha 批量测算 */
+  const [mode, setMode] = useState<'single' | 'batch'>('single');
   const stageStartRef = useRef<number>(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -207,95 +210,132 @@ export default function QuantPage() {
   return (
     <div className="quant-page">
       <aside className="quant-sidebar">
-        <h3 className="quant-sidebar-title">策略配置</h3>
-        <StrategyInput onSubmit={handleStart} loading={loading} />
-
-        <div className="quant-news-controls">
-          <h3 className="quant-sidebar-title">最新消息</h3>
-          <label className="quant-checkbox">
-            <input
-              type="checkbox"
-              checked={useNews}
-              disabled={loading}
-              onChange={(e) => setUseNews(e.target.checked)}
-            />
-            启用最新消息情绪叠加（实时抓取）
-          </label>
-          <p className="quant-news-hint">或粘贴最新消息（每行一条，自动情绪打分）：</p>
-          <textarea
-            className="quant-news-textarea"
-            placeholder={'例如：\n公司中标大单，金额超去年营收\n机构下调评级至中性\n新产品量价齐升'}
-            value={newsText}
-            disabled={loading}
-            onChange={(e) => setNewsText(e.target.value)}
-            rows={5}
-          />
+        <div className="quant-mode-switch" role="group" aria-label="量化模式">
+          <button
+            type="button"
+            className={`quant-mode ${mode === 'single' ? 'active' : ''}`}
+            onClick={() => setMode('single')}
+          >
+            单股研究
+          </button>
+          <button
+            type="button"
+            className={`quant-mode ${mode === 'batch' ? 'active' : ''}`}
+            onClick={() => setMode('batch')}
+          >
+            批量测算
+          </button>
         </div>
+
+        {mode === 'single' ? (
+          <>
+            <h3 className="quant-sidebar-title">策略配置</h3>
+            <StrategyInput onSubmit={handleStart} loading={loading} />
+
+            <div className="quant-news-controls">
+              <h3 className="quant-sidebar-title">最新消息</h3>
+              <label className="quant-checkbox">
+                <input
+                  type="checkbox"
+                  checked={useNews}
+                  disabled={loading}
+                  onChange={(e) => setUseNews(e.target.checked)}
+                />
+                启用最新消息情绪叠加（实时抓取）
+              </label>
+              <p className="quant-news-hint">或粘贴最新消息（每行一条，自动情绪打分）：</p>
+              <textarea
+                className="quant-news-textarea"
+                placeholder={
+                  '例如：\n公司中标大单，金额超去年营收\n机构下调评级至中性\n新产品量价齐升'
+                }
+                value={newsText}
+                disabled={loading}
+                onChange={(e) => setNewsText(e.target.value)}
+                rows={5}
+              />
+            </div>
+          </>
+        ) : (
+          <p className="quant-mode-hint">
+            在右侧输入多只股票代码，逐只计算方向性组合 alpha（时间序列 IC 口径，只算因子预测力与
+            方向信号，不跑回测 / 审计 / 优化）。
+          </p>
+        )}
       </aside>
 
       <div className="quant-main">
-        {error && <div className="error-banner">{error}</div>}
-
-        {loading && (
-          <div className="card quant-panel">
-            <h3 className="quant-panel-title">研究进度</h3>
-            <PipelineProgress
-              currentStage={currentStage}
-              completedStages={completedStages}
-              stageElapsed={stageElapsed}
-            />
-          </div>
-        )}
-
-        {report && !loading && (
+        {mode === 'batch' ? (
+          <CompositeBatchPanel />
+        ) : (
           <>
-            <ReportSummary data={report} />
-            {report.newsSentiment?.hasNews && (
+            {error && <div className="error-banner">{error}</div>}
+
+            {loading && (
+              <div className="card quant-panel">
+                <h3 className="quant-panel-title">研究进度</h3>
+                <PipelineProgress
+                  currentStage={currentStage}
+                  completedStages={completedStages}
+                  stageElapsed={stageElapsed}
+                />
+              </div>
+            )}
+
+            {report && !loading && (
               <>
-                <NewsSentimentCard data={report.newsSentiment} />
-                {report.backtestBaseline && (
-                  <NewsBacktestCompare aware={report.backtest} baseline={report.backtestBaseline} />
+                <ReportSummary data={report} />
+                {report.newsSentiment?.hasNews && (
+                  <>
+                    <NewsSentimentCard data={report.newsSentiment} />
+                    {report.backtestBaseline && (
+                      <NewsBacktestCompare
+                        aware={report.backtest}
+                        baseline={report.backtestBaseline}
+                      />
+                    )}
+                  </>
+                )}
+                <BacktestChart data={report.backtest} />
+                <DataQualityPanel data={report.dataQuality} />
+                <AuditPanel data={report.audit} />
+                <OptimizationPanel data={report.optimization} />
+                {report.priceVolumeFactors && report.priceVolumeFactors.length > 0 && (
+                  <FactorPanel
+                    data={report.priceVolumeFactors}
+                    compositeAlpha={report.compositeAlpha}
+                  />
                 )}
               </>
             )}
-            <BacktestChart data={report.backtest} />
-            <DataQualityPanel data={report.dataQuality} />
-            <AuditPanel data={report.audit} />
-            <OptimizationPanel data={report.optimization} />
-            {report.priceVolumeFactors && report.priceVolumeFactors.length > 0 && (
-              <FactorPanel
-                data={report.priceVolumeFactors}
-                compositeAlpha={report.compositeAlpha}
-              />
+
+            {!loading && !report && !error && (
+              <div className="quant-empty">
+                <svg
+                  className="quant-empty-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3 20h18" />
+                  <path d="M6 20v-7" />
+                  <path d="M11 20V6" />
+                  <path d="M16 20v-4" />
+                  <path d="M21 20V10" />
+                </svg>
+                <p className="quant-empty-text">
+                  配置左侧策略后点击「开始研究」，将依次完成数据获取、质量校验、回测与审计，输出完整量化报告
+                </p>
+                <p className="quant-empty-hint">
+                  支持均线交叉 / 动量 / 均值回归策略，可叠加最新消息情绪与 A 股真实交易费率
+                </p>
+              </div>
             )}
           </>
-        )}
-
-        {!loading && !report && !error && (
-          <div className="quant-empty">
-            <svg
-              className="quant-empty-icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3 20h18" />
-              <path d="M6 20v-7" />
-              <path d="M11 20V6" />
-              <path d="M16 20v-4" />
-              <path d="M21 20V10" />
-            </svg>
-            <p className="quant-empty-text">
-              配置左侧策略后点击「开始研究」，将依次完成数据获取、质量校验、回测与审计，输出完整量化报告
-            </p>
-            <p className="quant-empty-hint">
-              支持均线交叉 / 动量 / 均值回归策略，可叠加最新消息情绪与 A 股真实交易费率
-            </p>
-          </div>
         )}
       </div>
     </div>

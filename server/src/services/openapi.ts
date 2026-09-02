@@ -266,6 +266,48 @@ export function buildOpenApiDocument() {
           },
         },
       },
+      '/api/quant/factor/composite/batch': {
+        post: {
+          tags: ['quant'],
+          summary: '批量多因子加权组合 alpha（多只股票）',
+          description:
+            '一次请求测算多只股票的方向性组合 alpha，参数与单只端点一致（K 线 + 市场基准 → ' +
+            '时间序列 IC → 组合 alpha）。代码按首次出现顺序去重、并发度受限（默认 4、上限 8）；' +
+            '单只失败（无 K 线 / 网络异常）只标记该项 ok:false，其余照常返回，结果按输入顺序排列。' +
+            '市场基准可用环境变量覆盖：QUANT_BENCHMARK_SECID_A / _US / _HK（如美股改纳指100 ' +
+            '`100.NDX`、A 股改中证500 `1.000905`），留空则回落内置默认。',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              stockCodes: {
+                type: 'array',
+                items: { type: 'string' },
+                description: '股票代码数组（最多 20 个，自动去重）',
+              },
+              startDate: { type: 'string', format: 'date', description: '默认近两年' },
+              endDate: { type: 'string', format: 'date', description: '默认今天' },
+              horizons: {
+                type: 'array',
+                items: { type: 'number' },
+                description: '持有期（交易日），默认 [21, 63]',
+              },
+            },
+            required: ['stockCodes'],
+          }),
+          responses: {
+            200: {
+              description:
+                '批量结果（requested/succeeded/failed/items[按输入顺序，每项 ok:true 带 result，' +
+                'ok:false 带 error]/startDate/endDate/horizons）',
+            },
+            400: errorResponse('stockCodes 缺失或全部为空'),
+            413: errorResponse('stockCodes 数量超过上限（20）'),
+            429: errorResponse('触发限流（默认每分钟 5 次）'),
+            500: errorResponse('批量组合 alpha 计算失败'),
+            503: errorResponse('合规熔断触发'),
+          },
+        },
+      },
       '/api/backtest/evaluate': {
         post: {
           tags: ['quant'],

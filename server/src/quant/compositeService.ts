@@ -100,3 +100,87 @@ export async function computeCompositeAlphaForStrategy(
     benchmarkAvailable,
   };
 }
+
+/** 批量结果项：单只股票成功或失败——失败只影响该项，不拖垮整批 */
+export type CompositeAlphaBatchItem =
+  | { stockCode: string; ok: true; result: CompositeAlphaResult }
+  | { stockCode: string; ok: false; error: string };
+
+/** 批量组合 alpha 结果 */
+export interface CompositeAlphaBatchResult {
+  /** 去重后的请求代码数 */
+  requested: number;
+  /** 成功数 */
+  succeeded: number;
+  /** 失败数 */
+  failed: number;
+  /** 按输入顺序（去重后）排列的结果项 */
+  items: CompositeAlphaBatchItem[];
+  /** 批次公共参数回显，便于前端核对与复现 */
+  startDate: string;
+  endDate: string;
+  horizons: number[];
+}
+
+/** 默认并发度：受限于上游行情接口的稳定性，不做无节制并发 */
+const DEFAULT_BATCH_CONCURRENCY = 4;
+/** 并发度硬上限，防止调用方传超大值打满上游 */
+const MAX_BATCH_CONCURRENCY = 8;
+
+/**
+ * 批量计算多只股票的组合 alpha。
+ *
+ * - 代码按「首次出现顺序」去重，重复代码不重复请求；
+ * - 并发度受限（默认 4，上限 8）：既避免 N 只串行过慢，也不无节制冲击上游；
+ * - 单只失败（无 K 线 / 网络异常）只标记该项 `ok:false`，其余照常返回——
+ *   批量场景下「一只拉不到就整批失败」是最差的失败模式；
+ * - 结果严格按输入顺序返回，便于前端逐行对齐。
+ */
+export async function computeCompositeAlphaBatch(
+  stockCodes: string[],
+  startDate: string,
+  endDate: string,
+  horizons: number[] = [21, 63],
+  concurrency: number = DEFAULT_BATCH_CONCURRENCY,
+): Promise<CompositeAlphaBatchResult> {
+  const codes = [...new Set(stockCodes.map((c) => String(c ?? '').trim()).filter(Boolean))];
+  const limit = Math.max(
+    1,
+    Math.min(MAX_BATCH_CONCURRENCY, Math.floor(concurrency) || DEFAULT_BATCH_CONCURRENCY),
+  );
+
+  const slots: (CompositeAlphaBatchItem | undefined)[] = new Array(codes.length);
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= codes.length) return;
+      const code = codes[i];
+      try {
+        const result = await computeCompositeAlphaForStrategy(code, startDate, endDate, horizons);
+        slots[i] = { stockCode: code, ok: true, result };
+      } catch (e) {
+        slots[i] = {
+          stockCode: code,
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+    }
+  };
+
+  const workers = Array.from({ length: Math.min(limit, codes.length) }, () => worker());
+  await Promise.all(workers);
+
+  const items = slots.filter((x): x is CompositeAlphaBatchItem => x !== undefined);
+  const succeeded = items.filter((it) => it.ok).length;
+  return {
+    requested: codes.length,
+    succeeded,
+    failed: items.length - succeeded,
+    items,
+    startDate,
+    endDate,
+    horizons,
+  };
+}

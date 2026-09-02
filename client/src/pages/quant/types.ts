@@ -209,6 +209,43 @@ export interface CompositeAlpha {
   hasSignal: boolean;
   /** 综合方向（跨持有期多数表决） */
   overallDirection: CompositeDirection;
+  /** 综合 alpha 数值（各持有期 alpha 均值 ∈ [-1,1]），回测姿态缩放的卷积度 */
+  overallAlpha: number;
+}
+
+/** 批量组合 alpha：单只结果（成功）或失败原因 */
+export type CompositeAlphaBatchItem =
+  | { stockCode: string; ok: true; result: CompositeAlphaResult }
+  | { stockCode: string; ok: false; error: string };
+
+/** 单只股票组合 alpha 完整结果（批量端点返回结构） */
+export interface CompositeAlphaResult {
+  stockCode: string;
+  /** 识别出的市场（A / HK / US） */
+  market: 'A' | 'HK' | 'US';
+  /** 实际使用的基准指数 secid */
+  benchmarkSecid: string;
+  horizons: number[];
+  compositeAlpha: CompositeAlpha;
+  factorPredictability: FactorPredictability[];
+  /** K 线条数 */
+  bars: number;
+  dataRange: { start: string; end: string };
+  /** 市场基准收益是否成功获取（false 时 Beta 类因子未参与加权） */
+  benchmarkAvailable: boolean;
+}
+
+/** 批量组合 alpha 结果 */
+export interface CompositeAlphaBatchResult {
+  /** 去重后的请求代码数 */
+  requested: number;
+  succeeded: number;
+  failed: number;
+  /** 按输入顺序（去重后）排列 */
+  items: CompositeAlphaBatchItem[];
+  startDate: string;
+  endDate: string;
+  horizons: number[];
 }
 
 // 完整报告
