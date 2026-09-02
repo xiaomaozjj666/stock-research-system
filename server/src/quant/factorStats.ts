@@ -168,6 +168,14 @@ export function sampleExcessKurtosis(xs: number[]): number {
   return ((n - 1) / ((n - 2) * (n - 3))) * ((n + 1) * g2 + 6);
 }
 
+/** 中位数（偶数长度取两中间值均值，与 scipy/聚宽口径一致） */
+function median(sortedAsc: number[]): number {
+  const n = sortedAsc.length;
+  if (n === 0) return NaN;
+  const mid = Math.floor(n / 2);
+  return n % 2 === 1 ? sortedAsc[mid] : (sortedAsc[mid - 1] + sortedAsc[mid]) / 2;
+}
+
 /**
  * 中位数绝对偏差去极值（聚宽 winsorize_med 同口径）。
  * 边界 = median ± scale × 1.4826 × MAD；落在界外的值替换为边界值（inclusive）
@@ -175,15 +183,15 @@ export function sampleExcessKurtosis(xs: number[]): number {
  */
 export function winsorizeMad(values: number[], scale = 3, inclusive = true): number[] {
   const finite = values.filter((v) => Number.isFinite(v));
-  if (finite.length < 3) return values.map((v) => (Number.isFinite(v) ? v : v));
+  if (finite.length < 3) return [...values];
   const sorted = [...finite].sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)];
-  const deviations = sorted.map((v) => Math.abs(v - median)).sort((a, b) => a - b);
-  const mad = deviations[Math.floor(deviations.length / 2)];
-  if (!(mad > 0)) return values.map((v) => v);
+  const med = median(sorted);
+  const deviations = sorted.map((v) => Math.abs(v - med)).sort((a, b) => a - b);
+  const mad = median(deviations);
+  if (!(mad > 0)) return [...values];
   const span = scale * 1.4826 * mad;
-  const lo = median - span;
-  const hi = median + span;
+  const lo = med - span;
+  const hi = med + span;
   return values.map((v) => {
     if (!Number.isFinite(v)) return v;
     if (v < lo) return inclusive ? lo : NaN;
