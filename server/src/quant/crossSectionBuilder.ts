@@ -80,9 +80,6 @@ export function buildCrossSectionPanel(
   const stocksIncluded: string[] = [];
   const stocksSkipped: { code: string; reason: string }[] = [];
 
-  // 每股基本面快照（常数），供所有日期的截面共用
-  const fundValue = new Map<string, Partial<Record<FundamentalFactorName, number>>>();
-
   for (const input of inputs) {
     const { code, bars } = input;
     if (!bars || bars.length < Math.max(...horizons) + 5) {
