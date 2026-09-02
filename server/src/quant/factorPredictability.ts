@@ -28,7 +28,7 @@ import {
   type FactorCategory,
 } from './priceVolumeFactors.js';
 import { spearmanRankIC } from './factorAnalytics.js';
-import { studentTTwoSidedP } from './factorStats.js';
+import { studentTTwoSidedP, holmAdjust } from './factorStats.js';
 
 /** 单因子、单持有期的预测力 */
 export interface FactorPredictabilityHorizon {
@@ -36,14 +36,27 @@ export interface FactorPredictabilityHorizon {
   ic: number;
   /** 经济方向 IC = ic × direction；>0 表示因子预期方向与真实收益一致 */
   effectiveIc: number;
-  /** t 统计量：ic × √((n−2)/(1−ic²)) */
+  /** t 统计量：按重叠修正后的有效样本量 nEff 计算（见 nEff 说明） */
   tStat: number;
-  /** Student t 双侧 p 值：P(|T| ≥ |t|)，自由度 n−2 */
+  /** Student t 双侧 p 值（自由度 nEff − 2） */
   pValue: number;
-  /** p < 0.05 视为统计显著（真实信号，非运气） */
+  /**
+   * 跨因子 Holm 校正后的 p 值（家族 = 同一持有期下参与检验的全部因子）。
+   * 同一份数据检验 N 个因子时，raw p < 0.05 的家族假阳性率远超 5%；
+   * significant 判据使用校正后 p，未做校正前为 undefined。
+   */
+  pAdj?: number;
+  /** pAdj < 0.05 视为统计显著（真实信号，非运气；已经 Holm 多重检验校正） */
   significant: boolean;
   /** 有效样本数（已剔除因子值或收益非有限、或 base/ahead 收盘价非正的截面） */
   n: number;
+  /**
+   * 重叠修正后的有效样本量 ≈ ceil(n / period)。
+   * period 日远期收益在相邻交易日共享 period−1 天数据，n 个观测并非独立——
+   * 重叠均值的行为近似 n/period 个独立区块，iid 假设会把 t 统计量高估 √period 倍。
+   * period = 1（无重叠）时 nEff = n。
+   */
+  nEff: number;
 }
 
 export interface FactorPredictability {
@@ -89,22 +102,33 @@ export function singleFactorPredictability(
   if (m < 3) return null;
 
   const ic = spearmanRankIC(fv, fr);
+  // 重叠修正：period 日远期收益相邻重叠，有效独立样本 ≈ m/period。
+  // 不修正会把 t 统计量高估约 √period 倍（period=21 时约 4.6 倍），p 值严重乐观。
+  const nEff = Math.max(3, Math.ceil(m / period));
   const denom = 1 - ic * ic;
   // |ic| ≈ 1（完全单调）时 t → ∞；落地为有限大值，p 经 Student t 仍趋于 0
-  const tStat = denom > 1e-12 ? ic * Math.sqrt((m - 2) / denom) : ic > 0 ? 1e6 : -1e6;
-  const pValue = studentTTwoSidedP(tStat, m - 2);
+  const tStat = denom > 1e-12 ? ic * Math.sqrt((nEff - 2) / denom) : ic > 0 ? 1e6 : -1e6;
+  const pValue = studentTTwoSidedP(tStat, nEff - 2);
   return {
     ic,
     effectiveIc: ic * direction,
     tStat,
     pValue,
-    significant: Number.isFinite(pValue) && pValue < 0.05,
+    significant: Number.isFinite(pValue) && pValue < 0.05, // raw 判据； Holm 校正后由 evaluate 覆写
     n: m,
+    nEff,
   };
 }
 
 /**
  * 评估全部量价因子对这只股票自身远期收益的时间序列预测力。
+ *
+ * 统计严谨性：
+ *  - 重叠修正：每个持有期的 t/p 按有效样本量 nEff = ceil(n/period) 计算（见
+ *    singleFactorPredictability）；period = 1 时与 iid 完全一致。
+ *  - 多重检验校正：同一持有期下全部因子构成一个检验族，p 值经 Holm-Bonferroni
+ *    校正（pAdj），significant = pAdj < 0.05——控制在家族错误率 ≤ 5%，
+ *    避免「测 11 个因子总能撞出几个假显著」的过拟合。
  *
  * @param ctx      量价因子上下文（bars 必填；marketReturns/floatShares 缺失时 Beta 类等因子值恒 NaN，预测力相应为 null）
  * @param horizons 持有期（交易日）；默认 [21, 63] = 1 个月 / 3 个月
@@ -121,7 +145,7 @@ export function evaluatePriceVolumeFactorPredictability(
       : -1;
   const closes = ctx.bars.map((b) => b.close);
 
-  return seriesList.map((s) => {
+  const results: FactorPredictability[] = seriesList.map((s) => {
     const values = new Array<number>(closes.length).fill(NaN);
     s.points.forEach((pt, k) => {
       const idx = startIdx >= 0 ? startIdx + k : k;
@@ -140,6 +164,22 @@ export function evaluatePriceVolumeFactorPredictability(
       hasSignal,
     };
   });
+
+  // 跨因子 Holm 校正（每个持有期一个检验族）：significant 从 raw p 升级为校正后 pAdj
+  for (const p of horizons) {
+    const family = results.map((r) => r.horizons[p]).filter((h): h is NonNullable<typeof h> => !!h);
+    const adjusted = holmAdjust(family.map((h) => h.pValue));
+    family.forEach((h, i) => {
+      h.pAdj = adjusted[i];
+      h.significant = Number.isFinite(h.pAdj) && (h.pAdj as number) < 0.05;
+    });
+  }
+  // hasSignal 以校正后的 significant 重新计算
+  for (const r of results) {
+    r.hasSignal = Object.values(r.horizons).some((h) => h && h.significant);
+  }
+
+  return results;
 }
 
 /** 便捷入口：直接吃 bars（无市场收益/流通股本） */

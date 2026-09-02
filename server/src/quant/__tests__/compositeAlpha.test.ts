@@ -21,7 +21,16 @@ function sig(
   pValue: number,
   n: number,
 ): FactorPredictabilityHorizon {
-  return { ic, effectiveIc, tStat, pValue, significant: pValue < 0.05, n };
+  return {
+    ic,
+    effectiveIc,
+    tStat,
+    pValue,
+    pAdj: pValue,
+    significant: pValue < 0.05,
+    n,
+    nEff: n,
+  };
 }
 
 function mk(

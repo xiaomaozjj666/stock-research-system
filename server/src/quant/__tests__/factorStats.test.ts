@@ -9,6 +9,8 @@ import {
   sampleExcessKurtosis,
   winsorizeMad,
   olsRegression,
+  holmAdjust,
+  neweyWestTStat,
 } from '../factorStats.js';
 
 describe('erf', () => {
@@ -221,5 +223,66 @@ describe('olsRegression', () => {
   it('空输入不抛错', () => {
     const result = olsRegression([], [[]]);
     expect(result.residuals).toEqual([]);
+  });
+});
+
+describe('holmAdjust Holm-Bonferroni 族错误率校正', () => {
+  it('标准例子：p=[0.01,0.04,0.03,0.005] → [0.03,0.06,0.06,0.02]', () => {
+    const adj = holmAdjust([0.01, 0.04, 0.03, 0.005]);
+    expect(adj[3]).toBeCloseTo(0.02, 12); // 最小 p × 4
+    expect(adj[0]).toBeCloseTo(0.03, 12); // 次小 p × 3
+    expect(adj[2]).toBeCloseTo(0.06, 12); // 第三 × 2
+    expect(adj[1]).toBeCloseTo(0.06, 12); // 最大 × 1，但被 step-down 单调性抬到 0.06
+  });
+
+  it('原始下标对齐：返回数组与输入一一对应', () => {
+    const adj = holmAdjust([0.5, 0.001]);
+    expect(adj[1]).toBeCloseTo(0.002, 12); // 0.001 × 2
+    expect(adj[0]).toBeCloseTo(0.5, 12); // 0.5 × 1 = 0.5
+  });
+
+  it('校正后 p 单调不减于排序序、恒 ≥ raw p、clip 到 1', () => {
+    const ps = [0.2, 0.6, 0.9, 0.3];
+    const adj = holmAdjust(ps);
+    adj.forEach((a, i) => {
+      expect(a).toBeGreaterThanOrEqual(ps[i] - 1e-12);
+      expect(a).toBeLessThanOrEqual(1);
+    });
+  });
+
+  it('空数组安全', () => {
+    expect(holmAdjust([])).toEqual([]);
+  });
+});
+
+describe('neweyWestTStat Newey-West HAC 修正', () => {
+  it('maxLag=0 等价 iid t；正自相关时 NW |t| 更保守', () => {
+    const s = [1, 2, 3, 4, 5];
+    // 手算：mean=3, γ0=2 → t0 = 3/√(2/5) = 4.7434…
+    const t0 = neweyWestTStat(s, 0);
+    expect(t0).toBeCloseTo(3 / Math.sqrt(2 / 5), 10);
+    // γ1 = 0.8 → lrVar = 2 + 2×0.5×0.8 = 2.8 → |t1| = 3/√(2.8/5) < |t0|
+    const t1 = neweyWestTStat(s, 1);
+    expect(t1).toBeCloseTo(3 / Math.sqrt(2.8 / 5), 10);
+    expect(Math.abs(t1)).toBeLessThan(Math.abs(t0));
+  });
+
+  it('强正自相关序列：NW se 大于 iid se → |t| 显著缩小', () => {
+    // 缓慢单调序列：相邻观测高度正相关
+    const slow = Array.from({ length: 60 }, (_, i) => Math.sin(i / 10));
+    const mean = slow.reduce((a, b) => a + b, 0) / slow.length;
+    const std = Math.sqrt(slow.reduce((s, v) => s + (v - mean) ** 2, 0) / (slow.length - 1));
+    const iidT = mean / (std / Math.sqrt(slow.length));
+    const tNw = neweyWestTStat(slow, 20);
+    expect(Number.isFinite(tNw)).toBe(true);
+    expect(Math.abs(tNw)).toBeLessThan(Math.abs(iidT));
+  });
+
+  it('退化序列（全常数）返回 NaN，由调用方按约定降级', () => {
+    expect(Number.isNaN(neweyWestTStat([3, 3, 3, 3], 2))).toBe(true);
+  });
+
+  it('样本 < 2 返回 NaN', () => {
+    expect(Number.isNaN(neweyWestTStat([1], 1))).toBe(true);
   });
 });

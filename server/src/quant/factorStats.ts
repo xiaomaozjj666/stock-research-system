@@ -125,6 +125,70 @@ export function studentTTwoSidedP(t: number, df: number): number {
 }
 
 /**
+ * Newey-West（Bartlett 核）HAC 长期方差下 t 统计量：均值 / (se_NW)。
+ * ----------------------------------------------------------------------------
+ * 序列存在自相关时（典型：重叠持有期的远期收益——period 日收益在相邻交易日共享
+ * period−1 天数据），iid 假设下的 se = std/√n 会低估真实标准误、t 统计量虚高、
+ * p 值过于乐观。Newey-West 用 Bartlett 核 w_l = 1 − l/(L+1) 修正自协方差：
+ *
+ *   lrVar = γ₀ + 2·Σ_{l=1..L} w_l·γ_l ,  γ_l = (1/n)·Σ_{t=l+1..n} u_t·u_{t−l}
+ *   se_NW = √(lrVar / n) ,  t = mean / se_NW
+ *
+ * @param series 已剔除非有限值的序列（调用方负责清洗）
+ * @param maxLag 最大滞后阶数（重叠持有期场景取 period − 1）；0 等价于 iid t
+ * @returns t 统计量；样本 < 2 或长期方差 ≤ 0（退化）时返回 NaN，由调用方按既有约定降级
+ */
+export function neweyWestTStat(series: number[], maxLag: number): number {
+  const n = series.length;
+  if (n < 2) return NaN;
+  const mean = series.reduce((s, v) => s + v, 0) / n;
+  const u = series.map((v) => v - mean);
+  const gamma0 = u.reduce((s, v) => s + v * v, 0) / n;
+  let lrVar = gamma0;
+  if (maxLag > 0) {
+    for (let l = 1; l <= Math.min(maxLag, n - 1); l++) {
+      let cross = 0;
+      for (let t = l; t < n; t++) cross += u[t] * u[t - l];
+      const gammaL = cross / n;
+      const w = 1 - l / (maxLag + 1); // Bartlett 核
+      lrVar += 2 * w * gammaL;
+    }
+  }
+  if (!(lrVar > 0)) return NaN; // 退化（全常数序列等），调用方按约定降级
+  const se = Math.sqrt(lrVar / n);
+  const t = mean / se;
+  return Number.isFinite(t) ? t : NaN;
+}
+
+/**
+ * Holm-Bonferroni 逐步下降族错误率（FWER）校正。
+ * ----------------------------------------------------------------------------
+ * 同一份数据上检验 N 个因子时，raw p < 0.05 的家族假阳性率远超 5%
+ * （N=10 时期望 ~0.4 个假显著）。Holm 把每个 p 乘以递减系数并强制单调：
+ *
+ *   按 p 升序排列，adjᵢ = max_{j≤i} (m − j)·pⱼ （clip 到 1）
+ *
+ * 比 Bonferroni（一律 ×m）更有功效，且严格控制 FWER ≤ α。
+ * @returns 与输入等长、按原下标对齐的校正后 p 值数组
+ */
+export function holmAdjust(pValues: number[]): number[] {
+  const m = pValues.length;
+  const adj = new Array<number>(m).fill(1);
+  if (m === 0) return adj;
+  const order = pValues
+    .map((p, i) => ({ p, i }))
+    .filter((e) => Number.isFinite(e.p))
+    .sort((a, b) => a.p - b.p);
+  let runningMax = 0;
+  for (let rank = 0; rank < order.length; rank++) {
+    const { p, i } = order[rank];
+    runningMax = Math.max(runningMax, (order.length - rank) * p);
+    adj[i] = Math.min(1, runningMax);
+  }
+  return adj;
+}
+
+/**
  * 样本偏度（调整 Fisher-Pearson 标准化矩，与 scipy.stats.skew(bias=False) 一致）。
  * 完美对称分布为 0；样本数 < 3 或方差为 0 时返回 0。
  */

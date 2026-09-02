@@ -14,6 +14,7 @@ import {
   evaluatePriceVolumeFactorPredictability,
   evaluatePriceVolumePredictabilityFromBars,
 } from '../factorPredictability.js';
+import { studentTTwoSidedP } from '../factorStats.js';
 
 /** 确定性收盘价序列（含波动、恒正），避免随机 flaky */
 function deterministicCloses(n: number): number[] {
@@ -178,5 +179,89 @@ describe('marketReturns 数据通路（注入合成市场收益，验证 β 类�
     const betaPred = pred.find((f) => f.name === 'beta')!;
     expect(betaPred.horizons[21]).not.toBeNull();
     expect(betaPred.horizons[63]).not.toBeNull();
+  });
+});
+
+// ============================================================
+// 统计严谨性：重叠修正（nEff）+ 跨因子 Holm 多重检验校正
+// ============================================================
+
+describe('重叠修正（nEff）', () => {
+  const closes = deterministicCloses(300);
+  const bars = barsFromCloses(closes);
+  const series = computePriceVolumeFactorSeries({ bars });
+  const factor = series.find((s) => !Number.isNaN(s.points[10]?.value));
+  if (!factor) throw new Error('无可用因子序列');
+  const f = factor; // 捕获非空引用（函数声明提升导致 TS 不收敛闭包内的 narrowing）
+
+  function valuesFor(): number[] {
+    const values = new Array<number>(closes.length).fill(NaN);
+    const start = bars.findIndex((b) => b.date === f.points[0].date);
+    f.points.forEach((pt, k) => {
+      const idx = start + k;
+      if (idx >= 0 && idx < values.length) values[idx] = pt.value;
+    });
+    return values;
+  }
+
+  it('period = 1（无重叠）时 nEff = n', () => {
+    const h = singleFactorPredictability(valuesFor(), closes, factor.direction, 1)!;
+    expect(h.nEff).toBe(h.n);
+  });
+
+  it('period > 1 时 nEff ≈ ceil(n / period)，且 t/p 按小样本口径收敛（更保守）', () => {
+    const period = 21;
+    const h = singleFactorPredictability(valuesFor(), closes, factor.direction, period)!;
+    // nEff 有下限 3：Student t 需 df = nEff − 2 ≥ 1
+    expect(h.nEff).toBe(Math.max(3, Math.ceil(h.n / period)));
+    expect(h.nEff).toBeLessThan(h.n);
+    // 重叠修正后 |t| 必须不大于未修正口径 ic·sqrt((n−2)/(1−ic²))
+    const iidT =
+      Math.abs(h.ic) > 0.999 ? Infinity : Math.abs(h.ic) * Math.sqrt((h.n - 2) / (1 - h.ic * h.ic));
+    expect(Math.abs(h.tStat)).toBeLessThanOrEqual(iidT + 1e-9);
+  });
+
+  it('pValue 自由度按 nEff − 2 计算（与未修正口径不同则 p 更保守）', () => {
+    const h21 = singleFactorPredictability(valuesFor(), closes, factor.direction, 21)!;
+    const pConservative = studentTTwoSidedPForTest(h21.ic, h21.nEff);
+    expect(h21.pValue).toBeCloseTo(pConservative, 12);
+  });
+});
+
+/** 测试专用：直接用 ic/nEff 复算 p（不依赖内部实现细节） */
+function studentTTwoSidedPForTest(ic: number, nEff: number): number {
+  const denom = 1 - ic * ic;
+  const t = denom > 1e-12 ? ic * Math.sqrt((nEff - 2) / denom) : ic > 0 ? 1e6 : -1e6;
+  return studentTTwoSidedP(t, nEff - 2);
+}
+
+describe('跨因子 Holm 多重检验校正', () => {
+  it('evaluate 输出每个 horizon 带 pAdj，且 pAdj ≥ raw p（校正只会更保守）', () => {
+    const bars = barsFromCloses(deterministicCloses(300));
+    const results = evaluatePriceVolumePredictabilityFromBars(bars, [21]);
+    for (const r of results) {
+      const h = r.horizons[21];
+      if (!h) continue;
+      expect(h.pAdj).toBeDefined();
+      expect(h.pAdj!).toBeGreaterThanOrEqual(h.pValue - 1e-12);
+      // significant 判据已切换到校正后 p
+      expect(h.significant).toBe(h.pAdj! < 0.05);
+    }
+  });
+
+  it('家族内 p 值相同的边缘显著因子会被 Holm 淘汰（p=0.04、族大小≥3 → pAdj≥0.08）', () => {
+    // 直接构造：两个因子 raw p 均 0.04（同族），Holm 最小秩系数 = 2 → pAdj = 0.08 > 0.05
+    // 通过 mock 因子序列实现不现实（依赖真实因子），故用 evaluate 的真实输出验证单调性后，
+    // 以 factorStats.holmAdjust 的单测覆盖精确数值（见 factorStats.test.ts）。
+    // 此处验证 evaluate 的族大小 ≥ 2 时存在 pAdj > pValue 的例子（或全部 p=1 的退化族）。
+    const bars = barsFromCloses(deterministicCloses(300));
+    const results = evaluatePriceVolumePredictabilityFromBars(bars, [21]);
+    const family = results
+      .map((r) => r.horizons[21])
+      .filter((h): h is NonNullable<typeof h> => !!h);
+    expect(family.length).toBeGreaterThanOrEqual(2);
+    const strictlyAdjusted = family.some((h) => (h.pAdj ?? 0) > h.pValue + 1e-12);
+    const allInsignificant = family.every((h) => h.pValue >= 0.05);
+    expect(strictlyAdjusted || allInsignificant).toBe(true);
   });
 });
