@@ -9,8 +9,27 @@ echo [1/2] 启动后端服务 (端口 3001)...
 cd /d "%~dp0server"
 start "Stock-Backend" cmd /k "npx tsx watch src/index.ts"
 
-timeout /t 3 /nobreak >nul
+echo.
+echo 等待后端服务就绪（首次冷启动需加载股票库并探测行情源，最长等待 90 秒）...
+set /a BACKEND_WAIT=0
+:wait_backend
+timeout /t 1 /nobreak >nul
+set /a BACKEND_WAIT+=1
+curl -sf -o nul http://localhost:3001/api/health 2>nul
+if not errorlevel 1 goto backend_ready
+if %BACKEND_WAIT% GEQ 90 (
+  echo.
+  echo [警告] 等待 90 秒后端仍未就绪，请检查上方 Stock-Backend 窗口中的报错信息。
+  echo        后端未就绪时前端页面会提示“无法连接后端服务”，就绪后刷新页面即可。
+  echo.
+  goto backend_timeout
+)
+goto wait_backend
+:backend_ready
+echo 后端服务已就绪。
+:backend_timeout
 
+echo.
 echo [2/2] 启动前端服务 (端口 5173)...
 cd /d "%~dp0client"
 start "Stock-Frontend" cmd /k "npx vite --host"
