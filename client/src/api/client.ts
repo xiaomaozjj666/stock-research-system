@@ -153,6 +153,8 @@ export async function runCrossSectionEvaluation(payload: {
   topN?: number;
   horizons?: number[];
   includeFundamental?: boolean;
+  /** 事件族（分红/回购/解禁 + PEAD），默认 true */
+  includeEvents?: boolean;
 }) {
   try {
     const response = await api.post('/quant/factor/cross-section', payload, {

@@ -25,6 +25,7 @@ import {
 } from './priceVolumeFactors.js';
 import { quarterlySnapshotValue, type QuarterlyFactorName } from './fundamentalDepth.js';
 import type { FactorObservation } from './factorEvaluation.js';
+import type { StockEventBundle } from './eventProvider.js';
 
 /** 基本面截面因子名 → 取值函数（每股恒定，取最新一期） */
 export type FundamentalFactorName =
@@ -51,6 +52,8 @@ export interface StockPanelInput {
   financial?: FinancialData | null;
   /** 季度财报序列（可选）；缺省时季度因子（cs_np_yoy_q/cs_roe_slope）跳过该股 */
   quarterly?: QuarterlySeries | null;
+  /** 公司事件捆绑（分红/回购/解禁，可选）；缺省或 null 时事件族跳过该股 */
+  events?: StockEventBundle | null;
 }
 
 /** 基本面面板的全部因子键（年报快照 4 个 + 季度派生 2 个） */

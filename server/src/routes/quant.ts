@@ -48,6 +48,15 @@ import {
   fetchQuarterlyFinancialsCached,
 } from '../quant/fundamentalCache.js';
 import { buildEarningsSurpriseObservations } from '../quant/fundamentalDepth.js';
+import { fetchStockEvents } from '../quant/eventProvider.js';
+import {
+  buildEventObservations,
+  buybackSignalEvents,
+  dividendSignalEvents,
+  unlockSignalEvents,
+  UNLOCK_START_OFFSET_DAYS,
+  UNLOCK_WINDOW_DAYS,
+} from '../quant/eventPanels.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import {
   fetchOHLCVData,
@@ -483,7 +492,8 @@ function crossSectionConcurrency(): number {
 //   - board：给行业板块代码（BKxxxx），按总市值取前 topN 只成分股——截面拉宽的
 //     主路径，让逐日截面 IC 有足够样本量。
 // 因子三族：量价（逐日变异）、基本面（年报快照 + 季度派生，每股常数）、
-// 事件（业绩超预期 PEAD，公告窗口内有效）。
+// 事件（PEAD 业绩超预期 + 分红股息率 + 回购力度 + 解禁压力，事件窗口内有效；
+// includeEvents=false 可整体关闭事件族）。
 // 统计功效取决于横截面宽度：stocksSkipped 与各因子 sampleSize 如实披露，不做掩饰。
 router.post(
   '/api/quant/factor/cross-section',
@@ -497,6 +507,7 @@ router.post(
         topN?: unknown;
         horizons?: unknown;
         includeFundamental?: unknown;
+        includeEvents?: unknown;
       };
       const horizons =
         Array.isArray(body.horizons) &&
@@ -506,6 +517,8 @@ router.post(
           ? (body.horizons as number[])
           : [21, 63];
       const includeFundamental = body.includeFundamental !== false;
+      // 事件族开关（分红/回购/解禁 + PEAD）：默认开启；关闭可跳过事件源的网络调用
+      const includeEvents = body.includeEvents !== false;
 
       // universe 解析：板块成分股（拉宽）优先于显式 codes
       const MAX_CODES = crossSectionMaxCodes();
@@ -575,7 +588,9 @@ router.post(
           const quarterly = includeFundamental
             ? await fetchQuarterlyFinancialsCached(code).catch(() => null)
             : null;
-          return { code, bars, financial, quarterly };
+          // 公司事件（分红/回购/解禁）：单类失败在 fetchStockEvents 内降级为空列表
+          const events = includeEvents ? await fetchStockEvents(code) : null;
+          return { code, bars, financial, quarterly, events };
         },
       );
 
@@ -602,13 +617,18 @@ router.post(
           if (obs.length < 30) continue;
           factors.push({ name, type: 'fundamental', report: evaluateWithVerdict(obs) });
         }
-        // 事件因子（PEAD）：业绩超预期，公告窗口内信号有效。样本不足（无公告日 /
-        // 超预期序列过短）时如实缺席，不强行出报告。
-        const eventObs: FactorObservation[] = [];
+      }
+
+      // 事件族（includeEvents 门控）：PEAD 依赖季度财报（includeFundamental 关闭时
+      // 自然缺席）；分红/回购/解禁走独立事件数据源。窗口外无观测，样本不足的
+      // 因子如实缺席，不强行出报告。
+      if (includeEvents) {
+        // 业绩超预期（PEAD）：公告窗口内信号有效
+        const peadObs: FactorObservation[] = [];
         for (const input of inputs) {
           if (!input.quarterly || input.quarterly.reports.length === 0) continue;
           if (!input.bars || input.bars.length === 0) continue;
-          eventObs.push(
+          peadObs.push(
             ...buildEarningsSurpriseObservations({
               code: input.code,
               reports: input.quarterly.reports,
@@ -617,12 +637,59 @@ router.post(
             }),
           );
         }
-        if (eventObs.length >= 30) {
+        if (peadObs.length >= 30) {
           factors.push({
             name: 'ev_earnings_surprise',
             type: 'event',
-            report: evaluateWithVerdict(eventObs),
+            report: evaluateWithVerdict(peadObs),
           });
+        }
+
+        // 分红（股息率，公告日后窗口）/ 回购（占总股本比例上限）/ 解禁（负的
+        // 占流通市值比，含事件前 20 日的抢跑窗口）。单类失败已在 fetchStockEvents
+        // 内降级为空列表——缺一类只是少一个因子，不拖垮其余。
+        const dividendObs: FactorObservation[] = [];
+        const buybackObs: FactorObservation[] = [];
+        const unlockObs: FactorObservation[] = [];
+        for (const input of inputs) {
+          if (!input.bars || input.bars.length === 0 || !input.events) continue;
+          const { code, bars, events } = input;
+          dividendObs.push(
+            ...buildEventObservations({
+              code,
+              events: dividendSignalEvents(events.dividend, bars),
+              bars,
+              horizons,
+            }),
+          );
+          buybackObs.push(
+            ...buildEventObservations({
+              code,
+              events: buybackSignalEvents(events.buyback),
+              bars,
+              horizons,
+            }),
+          );
+          unlockObs.push(
+            ...buildEventObservations({
+              code,
+              events: unlockSignalEvents(events.unlock),
+              bars,
+              horizons,
+              startOffsetDays: UNLOCK_START_OFFSET_DAYS,
+              windowDays: UNLOCK_WINDOW_DAYS,
+            }),
+          );
+        }
+        const eventFactors: { name: string; obs: FactorObservation[] }[] = [
+          { name: 'ev_dividend_yield', obs: dividendObs },
+          { name: 'ev_buyback_ratio', obs: buybackObs },
+          { name: 'ev_unlock_overhang', obs: unlockObs },
+        ];
+        for (const { name, obs } of eventFactors) {
+          if (obs.length >= 30) {
+            factors.push({ name, type: 'event', report: evaluateWithVerdict(obs) });
+          }
         }
       }
 

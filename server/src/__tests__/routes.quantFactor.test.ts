@@ -40,6 +40,9 @@ vi.mock('../quant/universeProvider.js', async (importOriginal) => {
 vi.mock('../services/quarterlyFinancials.js', () => ({
   fetchQuarterlyFinancials: vi.fn(),
 }));
+vi.mock('../quant/eventProvider.js', () => ({
+  fetchStockEvents: vi.fn(),
+}));
 
 import { app } from '../index.js';
 import {
@@ -51,6 +54,7 @@ import { fetchOHLCVData } from '../quant/dataProvider.js';
 import { fetchIndustryBoards, fetchBoardConstituents } from '../quant/universeProvider.js';
 import { fetchQuarterlyFinancials } from '../services/quarterlyFinancials.js';
 import type { QuarterlySeries } from '../services/quarterlyFinancials.js';
+import { fetchStockEvents } from '../quant/eventProvider.js';
 
 const mockedComposite = vi.mocked(computeCompositeAlphaForStrategy);
 const mockedBatch = vi.mocked(computeCompositeAlphaBatch);
@@ -59,6 +63,7 @@ const mockedBars = vi.mocked(fetchOHLCVData);
 const mockedBoards = vi.mocked(fetchIndustryBoards);
 const mockedConstituents = vi.mocked(fetchBoardConstituents);
 const mockedQuarterly = vi.mocked(fetchQuarterlyFinancials);
+const mockedEvents = vi.mocked(fetchStockEvents);
 
 beforeEach(() => {
   vi.mocked(computeCompositeAlphaForStrategy).mockReset();
@@ -68,6 +73,9 @@ beforeEach(() => {
   mockedBoards.mockReset();
   mockedConstituents.mockReset();
   mockedQuarterly.mockReset();
+  mockedEvents.mockReset();
+  // 默认空事件捆绑：不影响既有用例的事件族缺席语义
+  mockedEvents.mockResolvedValue({ dividend: [], buyback: [], unlock: [] });
 });
 
 /** n 根日频 K 线；按代码给不同漂移，保证截面有真实的横截面差异 */
@@ -410,5 +418,78 @@ describe('GET /api/quant/universe/boards', () => {
     mockedBoards.mockRejectedValue(new Error('上游不可用'));
     const res = await request(app).get('/api/quant/universe/boards');
     expect(res.status).toBe(502);
+  });
+});
+
+describe('POST /api/quant/factor/cross-section — 事件族（分红/回购/解禁）', () => {
+  beforeEach(() => {
+    mockedBoards.mockResolvedValue([{ code: 'BK0475', name: '白酒' }]);
+    mockedConstituents.mockResolvedValue(
+      ['600519', '000858', '603288'].map((code, i) => ({
+        code,
+        name: `股${i}`,
+        marketCap: 100 - i,
+      })),
+    );
+    mockedBars.mockImplementation((code: string) => Promise.resolve(genBars(code)));
+    mockedFinancial.mockImplementation((code: string) => Promise.resolve(makeFinancial(code)));
+    mockedQuarterly.mockImplementation((code: string) => Promise.resolve(makeQuarterly(code)));
+  });
+
+  it('事件源返回事件 → 三类新事件因子装配为 type=event', async () => {
+    mockedEvents.mockImplementation(async (code: string) =>
+      code === '600519'
+        ? {
+            dividend: [
+              { announceDate: '2024-03-01', exDate: null, per10Cash: 30, dividendYieldPct: 2.5 },
+            ],
+            buyback: [
+              {
+                announceDate: '2024-05-06',
+                startDate: null,
+                ratioHighPct: 2,
+                amountHighYuan: 4e8,
+                progress: '实施中',
+              },
+            ],
+            unlock: [
+              { freeDate: '2024-07-01', ratioOfFloatPct: 8, shares: 1e7, marketCapYuan: 9e8 },
+            ],
+          }
+        : { dividend: [], buyback: [], unlock: [] },
+    );
+    const res = await request(app)
+      .post('/api/quant/factor/cross-section')
+      .send({ board: 'BK0475', topN: 3, horizons: [21] });
+    expect(res.status).toBe(200);
+    const names = res.body.factors
+      .filter((f: { type: string }) => f.type === 'event')
+      .map((f: { name: string }) => f.name);
+    expect(names).toContain('ev_dividend_yield');
+    expect(names).toContain('ev_buyback_ratio');
+    expect(names).toContain('ev_unlock_overhang');
+    // PEAD 仍随季度财报装配
+    expect(names).toContain('ev_earnings_surprise');
+  });
+
+  it('事件源返回空捆绑 → 三类新因子缺席，量价族不受影响', async () => {
+    const res = await request(app)
+      .post('/api/quant/factor/cross-section')
+      .send({ board: 'BK0475', topN: 3, horizons: [21] });
+    expect(res.status).toBe(200);
+    const names = res.body.factors.map((f: { name: string }) => f.name);
+    expect(names).not.toContain('ev_dividend_yield');
+    expect(names).not.toContain('ev_buyback_ratio');
+    expect(names).not.toContain('ev_unlock_overhang');
+    expect(res.body.factors.some((f: { type: string }) => f.type === 'price_volume')).toBe(true);
+  });
+
+  it('includeEvents=false → 事件族整体缺席且不调用事件源', async () => {
+    const res = await request(app)
+      .post('/api/quant/factor/cross-section')
+      .send({ board: 'BK0475', topN: 3, horizons: [21], includeEvents: false });
+    expect(res.status).toBe(200);
+    expect(res.body.factors.some((f: { type: string }) => f.type === 'event')).toBe(false);
+    expect(mockedEvents).not.toHaveBeenCalled();
   });
 });

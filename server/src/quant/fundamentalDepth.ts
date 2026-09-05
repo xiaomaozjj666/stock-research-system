@@ -19,6 +19,7 @@
 import type { OHLCVData } from './types.js';
 import type { QuarterlyReport, QuarterlySeries } from '../services/quarterlyFinancials.js';
 import type { FactorObservation } from './factorEvaluation.js';
+import { buildEventObservations } from './eventPanels.js';
 
 /** 单季（差分后）盈利点 */
 export interface SingleQuarterPoint {
@@ -202,49 +203,22 @@ export interface EventObservationOptions {
  * 齐备才收行，与 buildCrossSectionPanel 同口径）；公告日对齐到「公告日（含）
  * 之后的第一个交易日」——公告当日收盘后才可知晓，用当日收盘作为基准价、
  * 次日才持仓的口径略保守但纪律干净（收益仍按 t 收盘计）。
+ *
+ * 窗口/观测装配委托通用事件内核 buildEventObservations（startOffset=0、
+ * windowDays=decayDays，与原实现逐行为同构）。
  */
 export function buildEarningsSurpriseObservations(
   opts: EventObservationOptions,
 ): FactorObservation[] {
   const { code, reports, bars, horizons } = opts;
-  const decayDays = opts.decayDays ?? 63;
-  const maxHorizon = Math.max(...horizons);
-  if (!(maxHorizon > 0) || bars.length <= maxHorizon) return [];
-
-  const surprises = earningsSurpriseSeries(deriveSingleQuarter(reports)).filter(
-    (s) => s.noticeDate !== null && Number.isFinite(s.surprise),
-  );
-  if (surprises.length === 0) return [];
-
-  // 公告日 → 信号（后写覆盖：按报告期升序遍历，越晚的公告覆盖越早的）
-  const signalByDate = new Map<string, number>();
-  for (const s of surprises) {
-    const t = bars.findIndex((b) => b.date >= (s.noticeDate as string));
-    if (t < 0) continue; // 公告日在 K 线区间之后：事件尚未开始，无观测
-    const end = Math.min(t + decayDays, bars.length - maxHorizon);
-    for (let i = t; i < end; i++) {
-      signalByDate.set(bars[i].date, s.surprise);
-    }
-  }
-
-  const obs: FactorObservation[] = [];
-  for (const [date, value] of signalByDate) {
-    const i = bars.findIndex((b) => b.date === date);
-    const base = bars[i].close;
-    if (!(base > 0)) continue;
-    const returns: Record<number, number> = {};
-    let complete = true;
-    for (const h of horizons) {
-      const ahead = bars[i + h].close;
-      if (!(ahead > 0)) {
-        complete = false;
-        break;
-      }
-      returns[h] = ahead / base - 1;
-    }
-    if (!complete) continue;
-    obs.push({ date, symbol: code, value, returns });
-  }
-  obs.sort((a, b) => a.date.localeCompare(b.date));
-  return obs;
+  const events = earningsSurpriseSeries(deriveSingleQuarter(reports))
+    .filter((s) => s.noticeDate !== null && Number.isFinite(s.surprise))
+    .map((s) => ({ eventDate: s.noticeDate as string, value: s.surprise }));
+  return buildEventObservations({
+    code,
+    events,
+    bars,
+    horizons,
+    windowDays: opts.decayDays ?? 63,
+  });
 }
