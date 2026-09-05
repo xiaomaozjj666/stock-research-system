@@ -858,6 +858,18 @@ tr:hover td {
   opacity: 0.85;
 }
 
+/* ===== 模拟盘首用提示 ===== */
+.paper-first-use-hint {
+  background: rgba(76, 110, 245, 0.08);
+  border: 1px dashed var(--border-default);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+
 /* ===== 批量测算部分跳过提示 ===== */
 .batch-notice {
   background: rgba(230, 162, 60, 0.08);

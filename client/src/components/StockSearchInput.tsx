@@ -188,6 +188,25 @@ export default function StockSearchInput({
       });
   }, [query, activeIndex, results, limit, allowDirectCode, commit]);
 
+  /**
+   * 失焦自动提交：用户输入完整 6 位代码（或查询仅一个命中）后直接去点表单按钮，
+   * 不应因「没回车/没点下拉」而丢掉显示中的选择——此前模拟盘下单会报
+   * 「股票代码需为 6 位数字」，即显示与状态脱节。
+   * 下拉选项用 onMouseDown 提交（先于 blur 触发），不会与本逻辑双触发；
+   * 多命中不臆测（维持「请在下拉中选择」），空输入不提交。
+   */
+  const handleBlur = () => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    if (results.length === 1) {
+      commit(results[0].code, results[0].name);
+      return;
+    }
+    if (CODE_RE.test(trimmed) && allowDirectCode) {
+      commit(trimmed, '');
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown' && results.length > 0) {
       e.preventDefault();
@@ -233,6 +252,7 @@ export default function StockSearchInput({
           if (query.trim() && results.length > 0) setShowDropdown(true);
         }}
         onKeyDown={handleKeyDown}
+        onBlur={handleBlur}
         role="combobox"
         aria-expanded={showList}
         aria-controls="stock-search-input-listbox"
