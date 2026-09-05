@@ -173,7 +173,11 @@ export default function WatchlistPage() {
                 <button
                   className="watchlist-remove"
                   onClick={() => handleRemove(code)}
-                  aria-label={`移除 ${names[code] || code} ${code}`}
+                  aria-label={
+                    names[code] && names[code] !== code
+                      ? `移除 ${names[code]}（${code}）`
+                      : `移除 ${code}`
+                  }
                 >
                   移除
                 </button>

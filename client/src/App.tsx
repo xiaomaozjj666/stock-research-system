@@ -226,6 +226,9 @@ function App() {
     cancelRef.current?.();
     lastCodeRef.current = stockCode;
     const gen = ++analyzeSeqRef.current;
+    // 顶部搜索在任意页可用：发起分析必须切回深度研究页，
+    // 否则加载屏（只渲染在 research tab）不可见，用户点了没反应
+    setActiveTab('research');
     setLoading(true);
     setError(null);
     setAnalysisStage(null);

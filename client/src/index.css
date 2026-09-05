@@ -2059,57 +2059,22 @@ tr:hover td {
   margin-top: 4px;
 }
 
-/* 进度条 */
-.quant-pipeline {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
+/* 研究进行中：真实耗时 */
+.quant-mode-pane[hidden] {
+  display: none;
 }
-.quant-pipeline-step {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-sm) var(--space-md);
-  border-radius: var(--radius-md);
-  transition: background var(--duration-fast);
-}
-.quant-pipeline-step.active {
-  background: var(--accent-dim);
-}
-.quant-pipeline-step.done {
-  opacity: 0.7;
-}
-.quant-pipeline-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--border-default);
-  flex-shrink: 0;
-  transition: background var(--duration-fast);
-}
-.quant-pipeline-step.active .quant-pipeline-dot {
-  background: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
-}
-.quant-pipeline-step.done .quant-pipeline-dot {
-  background: var(--color-success);
-}
-.quant-pipeline-label {
+.quant-elapsed {
   font-size: var(--text-body);
   color: var(--text-secondary);
-  flex: 1;
+  margin: var(--space-sm) 0;
 }
-.quant-pipeline-step.active .quant-pipeline-label {
+.quant-elapsed-time {
+  font-size: var(--text-title);
+  color: var(--text-primary);
+}
+.quant-elapsed-time b {
   color: var(--accent);
-  font-weight: 500;
-}
-.quant-pipeline-time {
-  font-size: var(--text-caption);
-  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-}
-.quant-pipeline-running {
-  color: var(--accent);
 }
 
 /* 面板通用 */
@@ -3479,6 +3444,24 @@ tr:hover td {
   color: var(--text-muted);
   font-weight: 400;
   opacity: 0.5;
+}
+/* 空占位是可点击按钮（聚焦搜索框）：还原 tag 外观并给可点反馈 */
+button.comparison-tag-add {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.75;
+  transition:
+    opacity var(--duration-fast) ease,
+    border-color var(--duration-fast) ease;
+}
+button.comparison-tag-add:hover:not(:disabled) {
+  opacity: 1;
+  border-color: var(--border-focus);
+  color: var(--accent);
+}
+button.comparison-tag-add:disabled {
+  cursor: default;
 }
 
 .tag-index {

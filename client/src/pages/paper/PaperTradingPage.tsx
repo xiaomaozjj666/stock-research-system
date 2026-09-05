@@ -32,12 +32,20 @@ function orderBadge(status: PaperOrder['status']): { text: string; cls: string }
   }
 }
 
-/** 审计风险等级 → 徽章样式 */
+/** 审计风险等级 → 中文徽章（等级原值保留用于过滤，展示一律中文） */
+const AUDIT_LEVEL_LABEL: Record<AuditRiskLevel, string> = {
+  info: '提示',
+  low: '低',
+  medium: '中',
+  high: '高',
+  critical: '严重',
+};
+
 function riskBadge(level: AuditRiskLevel): { text: string; cls: string } {
   if (level === 'critical' || level === 'high') {
-    return { text: level.toUpperCase(), cls: 'chip-negative' };
+    return { text: AUDIT_LEVEL_LABEL[level], cls: 'chip-negative' };
   }
-  return { text: level, cls: 'chip-neutral' };
+  return { text: AUDIT_LEVEL_LABEL[level] ?? level, cls: 'chip-neutral' };
 }
 
 const fmtMoney = (n: number) =>
@@ -462,6 +470,12 @@ export default function PaperTradingPage() {
       {/* 订单流水 */}
       <section className="paper-section">
         <h3 className="paper-card-title">订单流水（最近 {orders.length} 笔）</h3>
+        {orders.some((o) => o.status === 'pending') && (
+          <p className="paper-note" role="status">
+            有 {orders.filter((o) => o.status === 'pending').length} 笔挂单待成交——市价单将在
+            「日终结算」时按当日收盘价撮合，限价单需价格条件满足。
+          </p>
+        )}
         <div className="watchlist-table-wrap">
           <table className="watchlist-table">
             <thead>
@@ -590,11 +604,11 @@ export default function PaperTradingPage() {
               onChange={(e) => setAuditLevel(e.target.value as AuditRiskLevel | '')}
             >
               <option value="">全部</option>
-              <option value="info">info</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="critical">critical</option>
+              <option value="info">提示（info）</option>
+              <option value="low">低（low）</option>
+              <option value="medium">中（medium）</option>
+              <option value="high">高（high）</option>
+              <option value="critical">严重（critical）</option>
             </select>
           </div>
         </div>
