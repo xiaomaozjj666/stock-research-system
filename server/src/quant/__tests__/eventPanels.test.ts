@@ -154,40 +154,60 @@ describe('dividendSignalEvents — 股息率信号（正方向）', () => {
 });
 
 describe('buybackSignalEvents — 回购力度信号（正方向）', () => {
-  it('信号 = 占总股本比例上限；比例缺失/非正跳过', () => {
+  it('首选 金额上限/公告前一日总市值；回落 占比中值；皆缺跳过', () => {
     const obs = buybackSignalEvents([
       {
-        announceDate: '2024-03-01',
+        // 五粮液真实口径：100 亿 / 38170.80 亿
+        announceDate: '2026-04-30',
         startDate: null,
-        ratioHighPct: 2.5,
-        amountHighYuan: 5e8,
-        progress: '实施中',
+        planAmountHighYuan: 10000000000,
+        preAnnounceCapYuan: 381708026870.94,
+        planRatioMidPct: null,
+        progress: '004',
       },
       {
-        announceDate: '2024-05-01',
+        // 按数量规划的方案：金额缺失时回落 ZJSZBL（占比中值 %）
+        announceDate: '2025-06-21',
         startDate: null,
-        ratioHighPct: null,
-        amountHighYuan: 3e8,
-        progress: '完成实施',
+        planAmountHighYuan: null,
+        preAnnounceCapYuan: null,
+        planRatioMidPct: 0.222080173178,
+        progress: '006',
       },
       {
-        announceDate: '2024-06-01',
+        // 停止实施（007）：金额/占比皆缺 → 无信号
+        announceDate: '2026-04-29',
         startDate: null,
-        ratioHighPct: 0,
-        amountHighYuan: 1e8,
-        progress: '完成实施',
+        planAmountHighYuan: null,
+        preAnnounceCapYuan: null,
+        planRatioMidPct: null,
+        progress: '007',
       },
     ]);
-    expect(obs).toEqual([{ eventDate: '2024-03-01', value: 2.5 }]);
+    expect(obs).toHaveLength(2);
+    // 按事件日升序：2025-06-21（占比中值回落）在前，2026-04-30（金额/市值）在后
+    const expectedPct = Math.round((10000000000 / 381708026870.94) * 100 * 10000) / 10000;
+    expect(obs[0].value).toBe(0.222080173178);
+    expect(obs[1].value).toBe(expectedPct); // ≈ 2.6199%
   });
 });
 
 describe('unlockSignalEvents — 解禁压力信号（负方向）', () => {
   it('信号 = 负的占解禁前流通市值比例（%）：占比越大假设收益越差', () => {
     const obs = unlockSignalEvents([
-      { freeDate: '2024-08-10', ratioOfFloatPct: 100, shares: 1e8, marketCapYuan: 1.2e9 },
-      { freeDate: '2025-08-10', ratioOfFloatPct: 2.05, shares: 2e6, marketCapYuan: 3e7 },
-      { freeDate: null, ratioOfFloatPct: 5, shares: null, marketCapYuan: null },
+      {
+        freeDate: '2024-08-10',
+        ratioOfFloatPct: 100,
+        sharesWan: 110.3339,
+        marketCapWan: 8492.400283,
+      },
+      {
+        freeDate: '2025-08-10',
+        ratioOfFloatPct: 2.05,
+        sharesWan: 2425.3724,
+        marketCapWan: 123936.52964,
+      },
+      { freeDate: null, ratioOfFloatPct: 5, sharesWan: null, marketCapWan: null },
     ]);
     expect(obs).toEqual([
       { eventDate: '2024-08-10', value: -100 },

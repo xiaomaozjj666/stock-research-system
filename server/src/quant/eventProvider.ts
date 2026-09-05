@@ -6,14 +6,31 @@ import { withQuantCache } from './quantCache.js';
  *
  * 背景（2026-09-05）：事件因子此前只有业绩超预期（PEAD，由季度财报派生，
  * 不需要独立数据源）。分红/回购/解禁不在财报字段里，本模块接入东财三个
- * 免鉴权 datacenter 报表（与既有 push2his 同源体系、无新依赖）：
+ * 免鉴权 datacenter 报表（与既有 push2his 同源体系、无新依赖）。
  *
- *   - 分红送配：reportName=RPT_SHAREBONUS_DET（预案公告日/除权除息日/每10股股利/股息率）
- *   - 股票回购：reportName=RPT_REPURCHASE_PLAN（最新公告日/占总股本比例上限/金额上限/进度）
- *   - 限售解禁：reportName=RPT_LIFT_STAGE（解禁日/解禁数量/解禁市值/FREE_RATIO 占解禁前流通市值比例）
- *
- * 字段口径经 akshare 源码交叉核对；为抵抗字段改名与口径漂移，解析一律走
- * 候选字段列表 + 严格 null（缺数据如实缺，绝不洗成 0）。
+ * **字段口径已用真实 API 响应逐一验证（2026-09-06 ground truth）**：
+ *   - 分红送配：RPT_SHAREBONUS_DET，filter=(SECURITY_CODE="600519")。
+ *     PRETAX_BONUS_RMB=每10股股利（元）；**DIVIDENT_RATIO=股息率，0-1 小数**
+ *     （600519 十派280.2423 元 → 0.0231=2.31%；601088 十派9.8 → 0.0206=2.06%，
+ *     两个真实样本交叉印证），此处统一 ×100 转百分比。
+ *   - 股票回购：**RPTA_WEB_GETHGLIST_NEW**（此前猜的 RPT_REPURCHASE_PLAN
+ *     报表不存在——东财返回 code 9501「报表配置不存在」），
+ *     filter=(DIM_SCODE="600519")（该报表代码列是 DIM_SCODE，用 SECURITY_CODE
+ *     过滤会报「列不存在」）。DIM_DATE=方案公告日（REMARK 与之互证）；
+ *     REPURAMOUNTLIMIT/REPURAMOUNTLOWER=计划金额上下限（元）；
+ *     AGSZBHXS=公告前一日流通A股市值（元，与 DIM_TRADEDATE=公告前一交易日 配对；
+ *     实测三未信安 AGSZBHXS=11.97亿 vs ZSZ 总市值=53.70亿）——回购作用于
+ *     自由流通盘，作分母在经济上更贴切；
+ *     ZJSZBL=计划数量中值占总股本比例（%，按数量规划的方案才有，按金额的为 null）；
+ *     REPURPROGRESS=进度码（004 实施中 / 006 完成实施 / 007 停止实施——
+ *     007 的真实样本 REPURAMOUNT 全为 null，即公告后从未实施）。
+ *     **不按进度过滤**：方案公告本身就是事件，事后停止不改变公告日的新闻效应。
+ *   - 无数据的标准响应：success=false + code 9201 + message「返回数据为空」
+ *     （如 600519 无解禁记录）→ 合法空结果，不抛错。
+ *   - 限售解禁：RPT_LIFT_STAGE，filter=(SECURITY_CODE="688489")。
+ *     FREE_DATE=解禁日；**FREE_RATIO=占解禁前流通市值比例，0-1 小数**
+ *     （三未信安全流通解禁恰为 1.0），×100 转百分比；
+ *     CURRENT_FREE_SHARES 单位为**万股**、LIFT_MARKET_CAP 单位为**万元**。
  *
  * 缓存：事件为低频追加数据（历史不重写），按 code 缓存全量事件列表，
  * TTL 默认 24h（QUANT_EVENT_CACHE_TTL_HOURS，显式 0 = 关闭）。
@@ -22,6 +39,11 @@ import { withQuantCache } from './quantCache.js';
 
 const DATA_CENTER_URL = 'https://datacenter-web.eastmoney.com/api/data/v1/get';
 const PAGE_SIZE = 500; // 单票事件远不足 500 行；超出部分忽略（如实记录在代码口径）
+
+/** 比例字段统一换算：0-1 小数 → 百分比（保留 4 位小数，即 0.01% 精度） */
+function fractionToPct(raw: number): number {
+  return Math.round(raw * 100 * 10000) / 10000;
+}
 
 /** 事件缓存 TTL（毫秒）。env 显式 0/负值 = 关闭缓存（与 fundamentalCache 同语义）。 */
 function eventCacheTtlMs(): number {
@@ -85,12 +107,21 @@ async function fetchReportRows(
   const json = (await response.json()) as {
     success?: boolean;
     message?: string;
+    code?: number;
     result?: { data?: unknown } | null;
   };
   const rows = json?.result?.data;
   if (Array.isArray(rows)) return rows as Record<string, unknown>[];
-  // 东财对「无数据」可能返回 success=true + result=null
+  // 东财对「无数据」的标准响应（实测：600519 无解禁记录）：success=false + code 9201
+  // + message「返回数据为空」——这是合法空结果，不是异常（当作异常会把大量无解禁/
+  // 无回购的股票刷成误导性 warn）
   if (json?.success === true) return [];
+  if (
+    json?.code === 9201 ||
+    (typeof json?.message === 'string' && json.message.includes('返回数据为空'))
+  ) {
+    return [];
+  }
   throw new Error(`东财 ${reportName} 返回结构异常：${json?.message ?? 'unknown'}`);
 }
 
@@ -134,12 +165,15 @@ export async function fetchDividendEvents(code: string): Promise<DividendEventRo
       'PLAN_NOTICE_DATE',
       '-1',
     );
-    const parsed = rows.map((row) => ({
-      announceDate: normDate(row.PLAN_NOTICE_DATE) ?? normDate(row.NOTICE_DATE),
-      exDate: normDate(row.EX_DIVIDEND_DATE),
-      per10Cash: numOf(row, ['PRETAX_BONUS_RMB', 'BONUS_IT_RATIO', 'CASH_BONUS_RATIO']),
-      dividendYieldPct: numOf(row, ['DIVIDENT_RATIO', 'DIVIDEND_RATIO', 'DIVIDEND_YIELD']),
-    }));
+    const parsed = rows.map((row) => {
+      const rawYield = numOf(row, ['DIVIDENT_RATIO']); // 已验证：0-1 小数（非百分比）
+      return {
+        announceDate: normDate(row.PLAN_NOTICE_DATE) ?? normDate(row.NOTICE_DATE),
+        exDate: normDate(row.EX_DIVIDEND_DATE),
+        per10Cash: numOf(row, ['PRETAX_BONUS_RMB']),
+        dividendYieldPct: rawYield === null ? null : fractionToPct(rawYield),
+      };
+    });
     // 排除「不分配不转增」类空方案：无股利、无股息率的事件没有信号
     const withSignal = parsed.filter(
       (r) =>
@@ -159,41 +193,47 @@ export async function fetchDividendEvents(code: string): Promise<DividendEventRo
 // ---------------------------------------------------------------------------
 
 export interface BuybackEventRow {
-  /** 最新公告日 */
+  /** 方案公告日（DIM_DATE=首次公告，即新闻时刻；缺失回落最新公告日 NOTICEDATE） */
   announceDate: string | null;
-  /** 回购起始时间 */
+  /** 回购起始时间（REPURSTARTDATE） */
   startDate: string | null;
-  /** 占公告前一日总股本比例上限（%） */
-  ratioHighPct: number | null;
-  /** 计划回购金额上限（元） */
-  amountHighYuan: number | null;
-  /** 实施进度（含「停止实施」的方案不作为事件） */
+  /** 计划回购金额上限（元，REPURAMOUNTLIMIT） */
+  planAmountHighYuan: number | null;
+  /**
+   * 公告前一日流通A股市值（元，AGSZBHXS；缺失回落最新总市值 ZSZ）。
+   * 实测口径为**流通市值**而非总市值（三未信安 2023-12：AGSZBHXS=11.97亿 vs
+   * ZSZ=53.70亿）——回购作用于自由流通盘，作分母在经济上更贴切。
+   */
+  preAnnounceCapYuan: number | null;
+  /** 计划回购数量中值占总股本比例（%，ZJSZBL；按金额规划的方案常为 null） */
+  planRatioMidPct: number | null;
+  /**
+   * 实施进度码（东财原始码：004=实施中、006=完成实施、007=停止实施等）。
+   * **不按进度过滤**：方案公告本身就是事件，事后停止不改变公告日的新闻效应。
+   */
   progress: string | null;
 }
 
 export async function fetchBuybackEvents(code: string): Promise<BuybackEventRow[]> {
   return withQuantCache(`event_buyback_${code}`, eventCacheTtlMs(), async () => {
     const rows = await fetchReportRows(
-      'RPT_REPURCHASE_PLAN',
-      `(SECURITY_CODE="${code}")`,
-      'UPDATE_DATE',
-      '-1',
+      'RPTA_WEB_GETHGLIST_NEW',
+      `(DIM_SCODE="${code}")`,
+      'UPD,DIM_DATE,DIM_SCODE',
+      '-1,-1,-1',
     );
     const parsed = rows.map((row) => ({
-      announceDate:
-        normDate(row.UPDATE_DATE) ?? normDate(row.NOTICE_DATE) ?? normDate(row.PLAN_NOTICE_DATE),
-      startDate: normDate(row.START_DATE),
-      ratioHighPct: numOf(row, ['RATIO_HIGH', 'TOTAL_SHARE_RATIO', 'REPURCHASE_RATIO_HIGH']),
-      amountHighYuan: numOf(row, ['REPURCHASE_AMOUNT_HIGH', 'AMOUNT_HIGH']),
-      progress: strOf(row, ['PROGRESS', 'PROGRESS_TYPE', 'REPURCHASE_PROGRESS']),
+      announceDate: normDate(row.DIM_DATE) ?? normDate(row.NOTICEDATE) ?? normDate(row.UPDATEDATE),
+      startDate: normDate(row.REPURSTARTDATE),
+      planAmountHighYuan: numOf(row, ['REPURAMOUNTLIMIT', 'REPURAMOUNTLOWER']),
+      preAnnounceCapYuan: numOf(row, ['AGSZBHXS', 'ZSZ']),
+      planRatioMidPct: numOf(row, ['ZJSZBL']),
+      progress: strOf(row, ['REPURPROGRESS']),
     }));
-    const valid = parsed.filter(
-      (r) => r.announceDate !== null && r.progress !== null && !r.progress.includes('停止'),
-    );
     return dedupeByDateKeepMax(
-      valid,
+      parsed.filter((r) => r.announceDate !== null),
       (r) => r.announceDate,
-      (r) => r.ratioHighPct ?? r.amountHighYuan,
+      (r) => r.planAmountHighYuan ?? r.planRatioMidPct,
     );
   });
 }
@@ -208,10 +248,10 @@ export interface UnlockEventRow {
   /** 占解禁前流通市值比例（%）。东财 FREE_RATIO 为 0-1 小数（样本含恰好 1.0 的全流通
    * 解禁），此处统一 ×100 转为百分比；>1.5 视为已是百分比，按原值保留 */
   ratioOfFloatPct: number | null;
-  /** 解禁数量（股） */
-  shares: number | null;
-  /** 解禁市值（元） */
-  marketCapYuan: number | null;
+  /** 解禁数量（万股，CURRENT_FREE_SHARES 东财原始单位） */
+  sharesWan: number | null;
+  /** 解禁市值（万元，LIFT_MARKET_CAP 东财原始单位） */
+  marketCapWan: number | null;
 }
 
 export async function fetchUnlockEvents(code: string): Promise<UnlockEventRow[]> {
@@ -231,8 +271,8 @@ export async function fetchUnlockEvents(code: string): Promise<UnlockEventRow[]>
       return {
         freeDate: normDate(row.FREE_DATE),
         ratioOfFloatPct,
-        shares: numOf(row, ['CURRENT_FREE_SHARES', 'ABLE_FREE_SHARES']),
-        marketCapYuan: numOf(row, ['LIFT_MARKET_CAP']),
+        sharesWan: numOf(row, ['CURRENT_FREE_SHARES', 'ABLE_FREE_SHARES']),
+        marketCapWan: numOf(row, ['LIFT_MARKET_CAP']),
       };
     });
     return parsed.filter(
