@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { runBatchCompositeAlpha } from '../../api/client';
+import { runBatchCompositeAlpha, searchStocks } from '../../api/client';
 import type {
   CompositeAlphaBatchResult,
   CompositeAlphaBatchItem,
@@ -9,7 +9,7 @@ import type {
 
 /** 批量上限：与服务端 /api/quant/factor/composite/batch 的 20 只上限保持一致 */
 const MAX_CODES = 20;
-const PLACEHOLDER = '600519\n000858\nAAPL\n00700';
+const EXAMPLE_CODES = '600519\n000858\nAAPL\n00700';
 
 const DIRECTION_LABEL: Record<CompositeDirection, string> = {
   up: '看多',
@@ -109,31 +109,71 @@ function exportCsv(result: CompositeAlphaBatchResult) {
 }
 
 export default function CompositeBatchPanel() {
-  const [codesText, setCodesText] = useState('');
+  // 预填可运行的示例代码：占位符示例曾被误认为已填内容，点击即报「未输入」
+  const [codesText, setCodesText] = useState(EXAMPLE_CODES);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [horizonsText, setHorizonsText] = useState('21,63');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [result, setResult] = useState<CompositeAlphaBatchResult | null>(null);
   const [sortByAlpha, setSortByAlpha] = useState(true);
 
   const codes = useMemo(() => parseCodes(codesText), [codesText]);
   const tooMany = codes.length > MAX_CODES;
 
+  /** 纯字母数字（≤10 位）视为代码（A/HK/US 均适用）；其余按名称走搜索解析 */
+  const isCodeToken = (t: string) => /^[A-Za-z0-9]{1,10}$/.test(t);
+
   const handleRun = useCallback(async () => {
-    const list = parseCodes(codesText);
-    if (list.length === 0) {
-      setError('请至少输入一个股票代码');
-      return;
-    }
-    if (list.length > MAX_CODES) {
-      setError(`单次最多测算 ${MAX_CODES} 只，当前 ${list.length} 只`);
+    const tokens = parseCodes(codesText);
+    if (tokens.length === 0) {
+      setError('请至少输入一个股票代码或名称');
       return;
     }
     setLoading(true);
     setError(null);
+    setNotice(null);
     setResult(null);
+
+    // 名称 → 代码解析：唯一命中直用；零/多匹配列入提示，不阻断其余标的
+    const resolved: string[] = [];
+    const failed: string[] = [];
+    await Promise.all(
+      tokens.map(async (t) => {
+        if (isCodeToken(t)) {
+          resolved.push(t.toUpperCase());
+          return;
+        }
+        try {
+          const list = await searchStocks(t);
+          if (list.length === 1) {
+            resolved.push(list[0].code);
+          } else if (list.length === 0) {
+            failed.push(`${t}：无匹配`);
+          } else {
+            failed.push(`${t}：匹配到 ${list.length} 只，请改用代码`);
+          }
+        } catch {
+          failed.push(`${t}：查询失败`);
+        }
+      }),
+    );
+    const list = [...new Set(resolved)];
+    if (list.length === 0) {
+      setLoading(false);
+      setError(`未能识别任何标的（${failed.join('；')}）`);
+      return;
+    }
+    if (list.length > MAX_CODES) {
+      setLoading(false);
+      setError(`解析去重后共 ${list.length} 只，超出单次上限 ${MAX_CODES}`);
+      return;
+    }
+    if (failed.length > 0) {
+      setNotice(`已跳过无法识别的标的：${failed.join('；')}`);
+    }
     try {
       const data = await runBatchCompositeAlpha({
         stockCodes: list,
@@ -176,14 +216,16 @@ export default function CompositeBatchPanel() {
           <textarea
             className="batch-codes"
             rows={5}
-            placeholder={PLACEHOLDER}
             value={codesText}
             disabled={loading}
             onChange={(e) => setCodesText(e.target.value)}
           />
           <span className={`batch-hint ${tooMany ? 'batch-hint-error' : ''}`}>
-            已识别 {codes.length} 只{tooMany ? `（超出上限 ${MAX_CODES}）` : ''} ·
-            支持换行/逗号/空格分隔
+            已识别 {codes.filter((c) => /^[A-Za-z0-9]{1,10}$/.test(c)).length} 只代码
+            {codes.length > codes.filter((c) => /^[A-Za-z0-9]{1,10}$/.test(c)).length
+              ? ` · ${codes.length - codes.filter((c) => /^[A-Za-z0-9]{1,10}$/.test(c)).length} 个名称将在测算时解析`
+              : ''}
+            {tooMany ? `（超出上限 ${MAX_CODES}）` : ''} · 支持代码或名称，换行/逗号/空格分隔
           </span>
         </label>
 
@@ -247,6 +289,8 @@ export default function CompositeBatchPanel() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {!error && notice && <div className="batch-notice">⚠ {notice}</div>}
 
       {loading && <p className="batch-loading">正在逐只拉取 K 线与市场基准…</p>}
 

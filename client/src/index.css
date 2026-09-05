@@ -845,6 +845,84 @@ tr:hover td {
   font-variant-numeric: tabular-nums;
 }
 
+.accuracy-tag-accumulating {
+  display: inline-block;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+  border: 1px dashed var(--border-default);
+  opacity: 0.85;
+}
+
+/* ===== 批量测算部分跳过提示 ===== */
+.batch-notice {
+  background: rgba(230, 162, 60, 0.08);
+  border: 1px solid rgba(230, 162, 60, 0.35);
+  color: #e6a23c;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+/* ===== 深度研究空态引导 ===== */
+.research-empty {
+  display: flex;
+  justify-content: center;
+  padding: 48px var(--space-lg) 80px;
+}
+.research-empty-card {
+  max-width: 640px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md, 10px);
+  padding: 36px 40px;
+  text-align: center;
+}
+.research-empty-card h2 {
+  margin: 0 0 12px;
+  font-size: 20px;
+}
+.research-empty-desc {
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin: 0 0 20px;
+}
+.research-empty-steps {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.research-empty-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--primary, #4c6ef5);
+  color: #fff;
+  font-size: 12px;
+}
+.research-empty-hint {
+  color: var(--text-tertiary, #8a8f99);
+  font-size: 13px;
+  margin: 0;
+}
+
 /* ===== Core Summary V2 ===== */
 .core-summary-v2 {
   display: flex;

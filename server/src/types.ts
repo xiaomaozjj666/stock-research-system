@@ -100,6 +100,8 @@ export interface RatingAccuracy {
   accuracyPct: number | null;
   /** 平均区间收益（%） */
   avgReturnPct: number | null;
+  /** 已记录但未到期（<20 天）的样本数：供前端展示「统计积累中」 */
+  pendingCount?: number;
 }
 
 // 争议点
