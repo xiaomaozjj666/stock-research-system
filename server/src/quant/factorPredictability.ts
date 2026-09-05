@@ -31,6 +31,15 @@ import {
 import { spearmanRankIC } from './factorAnalytics.js';
 import { studentTTwoSidedP, holmAdjust } from './factorStats.js';
 
+/**
+ * IC 衰减视图的持有期网格（交易日）。
+ * 单股分析报告按该网格计算因子预测力，前端绘制「信号随持有期衰减」曲线：
+ * IC 在哪个持有期最长/衰减最快，直接给出该股因子的自然调仓频率——
+ * 衰减快（1~5 日见顶）的信号只适合短持有，慢衰减（21~63 日仍显著）才扛得住低频调仓。
+ * 组合 alpha 仍只用 [21, 63] 结算（语义不变），衰减网格只服务展示与诊断。
+ */
+export const IC_DECAY_HORIZONS = [1, 5, 10, 21, 63] as const;
+
 /** 单因子、单持有期的预测力 */
 export interface FactorPredictabilityHorizon {
   /** Spearman 秩相关 IC：factor(t) 与未来 period 日收益的秩相关 ∈ [-1, 1] */

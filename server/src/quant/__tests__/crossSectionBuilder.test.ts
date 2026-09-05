@@ -9,6 +9,7 @@ import { buildCrossSectionPanel, type StockPanelInput } from '../crossSectionBui
 import { evaluateFactor } from '../factorEvaluation.js';
 import type { OHLCVData } from '../types.js';
 import type { FinancialData } from '../../types.js';
+import type { QuarterlySeries } from '../../services/quarterlyFinancials.js';
 
 /** 生成 n 根确定性 K 线（各股不同漂移，保证截面差异） */
 function barsFor(code: string, n: number, drift: number): OHLCVData[] {
@@ -118,5 +119,74 @@ describe('buildCrossSectionPanel 面板装配', () => {
     expect(periodReport.ic.n).toBeGreaterThan(0);
     expect(periodReport.oos).toBeDefined();
     expect(periodReport.oos.isN + periodReport.oos.oosN).toBeGreaterThan(0);
+  });
+});
+
+describe('buildCrossSectionPanel — 季度派生因子（cs_np_yoy_q / cs_roe_slope）', () => {
+  /** 四年报告链。growth 为逐年复利因子：不同的 growth 给出不同的单季同比路径
+   *  （同比对整体缩放不变，必须改变「路径」而非「水平」才有截面差异）；
+   *  ROE 随季号线性变化，斜率随 growth 差异化。 */
+  function quarterlyFor(growth: number): QuarterlySeries {
+    const chain: [string, number][] = [
+      ['2021-03-31', 4],
+      ['2021-06-30', 9],
+      ['2021-09-30', 15],
+      ['2021-12-31', 22],
+      ['2022-03-31', 5],
+      ['2022-06-30', 11],
+      ['2022-09-30', 18],
+      ['2022-12-31', 26],
+      ['2023-03-31', 6],
+      ['2023-06-30', 13],
+      ['2023-09-30', 21],
+      ['2023-12-31', 30],
+      ['2024-03-31', 7],
+      ['2024-06-30', 15],
+      ['2024-09-30', 24],
+      ['2024-12-31', 34],
+    ];
+    const reports = chain.map(([reportDate, np], i) => {
+      const yearIdx = Math.floor(i / 4);
+      const v = np * growth ** yearIdx;
+      return {
+        reportDate,
+        noticeDate: `${reportDate.slice(0, 4)}-04-22`,
+        revenue: v * 10,
+        netProfit: v,
+        roe: 10 + i * 0.5 * growth,
+        grossMargin: 50,
+        debtRatio: 30,
+        revenueYoY: 10,
+        netProfitYoY: 10,
+      };
+    });
+    return { code: '600519', source: 'eastmoney_f10', reports };
+  }
+
+  it('带季度序列 → 季度因子面板非空、每股常数且随股票差异；无序列 → 如实为空', () => {
+    const withQ = buildCrossSectionPanel(
+      [
+        { code: '600519', bars: barsFor('600519', N_BARS, 0.2), quarterly: quarterlyFor(1.0) },
+        { code: '000858', bars: barsFor('000858', N_BARS, 0.0), quarterly: quarterlyFor(1.25) },
+      ],
+      HORIZONS,
+    );
+    for (const name of ['cs_np_yoy_q', 'cs_roe_slope'] as const) {
+      const obs = withQ.fundamental[name];
+      expect(obs.length).toBeGreaterThan(0);
+      // 每股常数：同一股票的全部观测同值
+      const v519 = obs.filter((o) => o.symbol === '600519').map((o) => o.value);
+      expect(new Set(v519).size).toBe(1);
+      // 两股取值不同（截面有区分度）
+      const v858 = obs.filter((o) => o.symbol === '000858').map((o) => o.value);
+      expect(v858[0]).not.toBe(v519[0]);
+    }
+
+    const withoutQ = buildCrossSectionPanel(
+      [{ code: '600519', bars: barsFor('600519', N_BARS, 0.2) }],
+      HORIZONS,
+    );
+    expect(withoutQ.fundamental.cs_np_yoy_q).toEqual([]);
+    expect(withoutQ.fundamental.cs_roe_slope).toEqual([]);
   });
 });

@@ -8,6 +8,7 @@ import OptimizationPanel from './OptimizationPanel';
 import ReportSummary from './ReportSummary';
 import FactorPanel from './FactorPanel';
 import CompositeBatchPanel from './CompositeBatchPanel';
+import CrossSectionPanel from './CrossSectionPanel';
 import NewsSentimentCard from '../../components/NewsSentimentCard';
 import { runQuantAnalysis } from '../../api/client';
 import type { StrategyConfig, QuantResearchReport, PipelineStage, NewsItem } from './types';
@@ -123,8 +124,8 @@ export default function QuantPage() {
   const [stageElapsed, setStageElapsed] = useState<Record<string, number>>({});
   const [useNews, setUseNews] = useState(false);
   const [newsText, setNewsText] = useState('');
-  /** 量化页模式：单股完整研究（回测+审计+优化）| 多股组合 alpha 批量测算 */
-  const [mode, setMode] = useState<'single' | 'batch'>('single');
+  /** 量化页模式：单股完整研究（回测+审计+优化）| 多股组合 alpha 批量测算 | 行业截面因子评估 */
+  const [mode, setMode] = useState<'single' | 'batch' | 'cross'>('single');
   const stageStartRef = useRef<number>(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -225,6 +226,13 @@ export default function QuantPage() {
           >
             批量测算
           </button>
+          <button
+            type="button"
+            className={`quant-mode ${mode === 'cross' ? 'active' : ''}`}
+            onClick={() => setMode('cross')}
+          >
+            截面因子
+          </button>
         </div>
 
         {mode === 'single' ? (
@@ -258,8 +266,9 @@ export default function QuantPage() {
           </>
         ) : (
           <p className="quant-mode-hint">
-            在右侧输入多只股票代码，逐只计算方向性组合 alpha（时间序列 IC 口径，只算因子预测力与
-            方向信号，不跑回测 / 审计 / 优化）。
+            {mode === 'batch'
+              ? '在右侧输入多只股票代码，逐只计算方向性组合 alpha（时间序列 IC 口径，只算因子预测力与方向信号，不跑回测 / 审计 / 优化）。'
+              : '选择行业板块（或手输多只代码）做横截面因子评估：逐日截面 IC + 分层收益 + 样本外复核，检验因子在行业内「谁高谁低」的选股区分力。'}
           </p>
         )}
       </aside>
@@ -267,6 +276,8 @@ export default function QuantPage() {
       <div className="quant-main">
         {mode === 'batch' ? (
           <CompositeBatchPanel />
+        ) : mode === 'cross' ? (
+          <CrossSectionPanel />
         ) : (
           <>
             {error && <div className="error-banner">{error}</div>}

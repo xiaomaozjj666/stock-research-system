@@ -138,6 +138,10 @@ export interface FactorPredictabilityHorizon {
   tStat: number;
   /** Student t 双侧 p 值 */
   pValue: number;
+  /** 跨因子 Holm 校正后的 p 值（significant 判据使用校正后值） */
+  pAdj?: number;
+  /** 重叠修正后的有效样本量 ≈ ceil(n / period) */
+  nEff?: number;
   /** p < 0.05 视为统计显著 */
   significant: boolean;
   /** 有效样本数 */
@@ -273,4 +277,73 @@ export interface PipelineState {
   stage: PipelineStage;
   status: 'waiting' | 'running' | 'done';
   elapsed?: number;
+}
+
+// ============ IC 衰减视图 ============
+
+/** IC 衰减网格（交易日），与服务端 IC_DECAY_HORIZONS 对齐 */
+export const IC_DECAY_HORIZONS: number[] = [1, 5, 10, 21, 63];
+
+// ============ 截面因子评估（行业 universe） ============
+
+/** 单因子、单持有期的截面评估摘要（tear sheet 的展示子集） */
+export interface CrossSectionPeriodReport {
+  period: number;
+  sampleSize: number;
+  ic: { n: number; mean: number; ir: number; tStat: number; pValue: number; nwMaxLag?: number };
+  oos: {
+    isMeanIc: number;
+    oosMeanIc: number;
+    signAgree: boolean;
+    isSignificant: boolean;
+    oosSignificant: boolean;
+    stable: boolean;
+    isN: number;
+    oosN: number;
+  };
+  quantile: {
+    period: number;
+    spread: number;
+    monotonicity: number;
+    rows: { quantile: number; count: number; meanReturn: number; stdReturn: number }[];
+  };
+  turnover: { byQuantile: Record<string, number>; rankAutocorrelation: number } | null;
+  alphaBeta: { alpha: number; beta: number; r2: number } | null;
+  longShortCumulative: number;
+  verdict: { effective: boolean; reasons: string[] };
+}
+
+/** 截面结果中的单因子条目 */
+export interface CrossSectionFactor {
+  name: string;
+  type: 'price_volume' | 'fundamental' | 'event';
+  report: {
+    periods: number[];
+    byPeriod: CrossSectionPeriodReport[];
+    sampleSize: number;
+    dropped: number;
+    dropRatio: number;
+    neutralized: boolean;
+  };
+}
+
+/** 截面因子评估响应 */
+export interface CrossSectionResult {
+  universe: {
+    source: 'codes' | 'board';
+    board?: string;
+    boardName?: string;
+    requested: number;
+    constituents?: { code: string; name: string }[];
+  };
+  stocksIncluded: string[];
+  stocksSkipped: { code: string; reason: string }[];
+  horizons: number[];
+  factors: CrossSectionFactor[];
+}
+
+/** 行业板块（universe 下拉用） */
+export interface IndustryBoard {
+  code: string;
+  name: string;
 }

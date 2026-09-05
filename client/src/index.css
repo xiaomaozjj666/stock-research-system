@@ -5544,3 +5544,141 @@ tr:hover td {
   line-height: 1.6;
   color: var(--text-muted);
 }
+
+/* ============ IC 衰减曲线 ============ */
+.ic-decay {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-default);
+}
+.ic-decay-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ic-decay-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.ic-decay-note {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.ic-decay-svg {
+  width: 100%;
+  height: auto;
+  margin-top: 6px;
+}
+.ic-decay-zero {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+}
+.ic-decay-gridline {
+  stroke: var(--border-default);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.ic-decay-ylabel,
+.ic-decay-xlabel {
+  font-size: 10px;
+  fill: var(--text-muted);
+  text-anchor: middle;
+}
+.ic-decay-ylabel {
+  text-anchor: end;
+}
+.ic-decay-line-muted {
+  stroke: var(--border-hover);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ic-decay-line-valid {
+  stroke: #2f9e6e;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ic-decay-line-inverted {
+  stroke: #d98b1f;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ic-decay-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ic-decay-legend-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.ic-decay-chip {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.ic-decay-chip.sig-valid {
+  color: #2f9e6e;
+  background: rgba(47, 158, 110, 0.15);
+}
+.ic-decay-chip.sig-inverted {
+  color: #d98b1f;
+  background: rgba(217, 139, 31, 0.15);
+}
+.ic-decay-empty {
+  margin-top: 12px;
+  padding: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+/* ============ 截面因子评估面板 ============ */
+.cs-source-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.cs-source-row .quant-mode {
+  font-size: 12px;
+  padding: 4px 12px;
+}
+.cs-fundamental-toggle {
+  align-self: end;
+  font-size: 12px;
+}
+.cs-table th,
+.cs-table td {
+  vertical-align: top;
+}
+.cs-ic-cell {
+  min-width: 96px;
+}
+.cs-ic-mean {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.cs-ic-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.cs-oos {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.cs-oos-ok {
+  color: #2f9e6e;
+}
+.cs-oos-no {
+  color: var(--text-muted);
+}

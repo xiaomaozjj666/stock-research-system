@@ -6,6 +6,7 @@ import type {
   CompositeAlpha,
   CompositeDirection,
 } from './types';
+import IcDecayChart from './IcDecayChart';
 
 /** 因子中文显示名（提升可读性，原始 key 为英文） */
 const FACTOR_LABELS: Record<PriceVolumeFactorName, string> = {
@@ -122,12 +123,17 @@ export default function FactorPanel({
   compositeAlpha?: CompositeAlpha;
 }) {
   if (!data || data.length === 0) return null;
+  // 衰减曲线吃全部因子的逐持有期预测力（含仅有 21/63 的旧数据：点数 <2 时组件内提示）
+  const decayData = data
+    .map((f) => f.predictability)
+    .filter((p): p is NonNullable<typeof p> => !!p);
   return (
     <div className="card quant-panel factor-panel">
       <h3 className="quant-panel-title">
         量价因子与预测力
         <span className="factor-subtitle">
-          当前快照值 + 对这只股票自身远期收益的时间序列 IC（21/63 交易日，Spearman + Student t）
+          当前快照值 + 对这只股票自身远期收益的时间序列 IC（1/5/10/21/63 交易日，Spearman + Student
+          t，含 Holm 多重检验校正）
         </span>
       </h3>
       {compositeAlpha && <CompositeSummary alpha={compositeAlpha} />}
@@ -183,8 +189,9 @@ export default function FactorPanel({
           </tbody>
         </table>
       </div>
+      {decayData.length > 0 && <IcDecayChart data={decayData} />}
       <p className="factor-footnote">
-        截面 IC 需多股票横截面（见「因子评估」端点）；此处为单股时间序列 IC，判定「该因子对
+        截面 IC 需多股票横截面（见「截面因子」页）；此处为单股时间序列 IC，判定「该因子对
         <b>本标的</b>自身远期收益有无可证伪的预测力」。有效样本 &lt; 3 或回看不足（如 253 日最小窗口
         + 63 日持有期需 ≥316 根 K 线）时显示「样本不足」。无市场收益时 Beta 类因子恒为「样本不足」。
       </p>

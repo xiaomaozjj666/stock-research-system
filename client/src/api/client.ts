@@ -133,6 +133,38 @@ export async function runBatchCompositeAlpha(payload: {
   }
 }
 
+/** 行业板块列表（截面因子 universe 下拉用） */
+export async function getUniverseBoards() {
+  try {
+    const response = await api.get<{ boards: { code: string; name: string }[] }>(
+      '/quant/universe/boards',
+      { timeout: 20000 },
+    );
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '行业板块列表获取失败');
+  }
+}
+
+/** 截面因子评估：显式 codes 或行业板块（board+topN）自动拉宽截面 */
+export async function runCrossSectionEvaluation(payload: {
+  codes?: string[];
+  board?: string;
+  topN?: number;
+  horizons?: number[];
+  includeFundamental?: boolean;
+}) {
+  try {
+    const response = await api.post('/quant/factor/cross-section', payload, {
+      // 每只都要拉行情 + 财务 + 季度财报，30 只时耗时可达数十秒
+      timeout: 240000,
+    });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '截面因子评估失败');
+  }
+}
+
 export async function compareStocks(codes: string[]) {
   try {
     const response = await api.post(
