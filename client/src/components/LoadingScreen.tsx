@@ -21,6 +21,17 @@ export default function LoadingScreen({ stage }: Props) {
   const targetProgress = currentIndex >= 0 ? STAGE_ORDER[currentIndex].progress : 5;
 
   const [progress, setProgress] = useState(0);
+  /** 已耗时（秒）：阶段进度来自 SSE 真实事件，耗时是真实计时，
+   *  两者一起让「1-3 分钟」的预期可校准 */
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  useEffect(() => {
+    const startAt = Date.now();
+    const t = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - startAt) / 1000));
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
 
   // 进度条平滑过渡到目标值
   useEffect(() => {
@@ -72,7 +83,13 @@ export default function LoadingScreen({ stage }: Props) {
         </div>
         <p className="loading-progress-text">{Math.round(displayProgress)}%</p>
 
-        <p className="loading-hint">深度分析预计需要 1-3 分钟，请耐心等待</p>
+        <p className="loading-hint">
+          深度分析预计需要 1-3 分钟，请耐心等待（已耗时{' '}
+          {elapsedSec >= 60
+            ? `${Math.floor(elapsedSec / 60)} 分 ${elapsedSec % 60} 秒`
+            : `${elapsedSec} 秒`}
+          ）
+        </p>
       </div>
     </div>
   );

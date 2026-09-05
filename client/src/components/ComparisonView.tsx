@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { compareStocks } from '../api/client';
 import StockSearchInput from '../components/StockSearchInput';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -191,6 +191,11 @@ export function ComparisonView() {
   const [results, setResults] = useState<StockData[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  /** 搜索框所在行：空占位点击时直接聚焦输入框 */
+  const searchRowRef = useRef<HTMLDivElement>(null);
+  const focusSearch = () => {
+    searchRowRef.current?.querySelector<HTMLInputElement>('input')?.focus();
+  };
 
   const addStock = (code: string, name?: string) => {
     const c = code.trim();
@@ -308,7 +313,7 @@ export function ComparisonView() {
         添加 2–3 只股票，一键生成财务、估值、趋势的多维度横向对比报告
       </p>
 
-      <div className="comparison-input-row">
+      <div className="comparison-input-row" ref={searchRowRef}>
         <StockSearchInput
           onSelect={(code, name) => addStock(code, name)}
           actionLabel="＋ 添加"
@@ -330,9 +335,15 @@ export function ComparisonView() {
           </span>
         ))}
         {Array.from({ length: 3 - stocks.length }).map((_, i) => (
-          <span key={`empty-${i}`} className="comparison-tag comparison-tag-empty">
+          <button
+            key={`empty-${i}`}
+            type="button"
+            className="comparison-tag comparison-tag-empty comparison-tag-add"
+            onClick={() => focusSearch()}
+            disabled={stocks.length >= 3}
+          >
             ＋ 添加第 {stocks.length + i + 1} 只
-          </span>
+          </button>
         ))}
       </div>
 

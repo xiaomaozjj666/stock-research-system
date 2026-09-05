@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import StrategyInput from './StrategyInput';
-import PipelineProgress from './PipelineProgress';
 import BacktestChart from './BacktestChart';
 import DataQualityPanel from './DataQualityPanel';
 import AuditPanel from './AuditPanel';
@@ -11,9 +10,8 @@ import CompositeBatchPanel from './CompositeBatchPanel';
 import CrossSectionPanel from './CrossSectionPanel';
 import NewsSentimentCard from '../../components/NewsSentimentCard';
 import { runQuantAnalysis } from '../../api/client';
-import type { StrategyConfig, QuantResearchReport, PipelineStage, NewsItem } from './types';
-
-const STAGE_ORDER: PipelineStage[] = ['fetch', 'quality', 'backtest', 'audit'];
+import { useToast } from '../../components/Toast';
+import type { StrategyConfig, QuantResearchReport, NewsItem } from './types';
 
 /** 含最新消息回测 vs 不含新闻基准回测 的对比 */
 function NewsBacktestCompare({
@@ -116,47 +114,39 @@ function NewsBacktestCompare({
 }
 
 export default function QuantPage() {
+  const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<QuantResearchReport | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [currentStage, setCurrentStage] = useState<PipelineStage | null>(null);
-  const [completedStages, setCompletedStages] = useState<PipelineStage[]>([]);
-  const [stageElapsed, setStageElapsed] = useState<Record<string, number>>({});
   const [useNews, setUseNews] = useState(false);
   const [newsText, setNewsText] = useState('');
   /** 量化页模式：单股完整研究（回测+审计+优化）| 多股组合 alpha 批量测算 | 行业截面因子评估 */
   const [mode, setMode] = useState<'single' | 'batch' | 'cross'>('single');
-  const stageStartRef = useRef<number>(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** 研究已耗时（秒）：真实计时，不伪造阶段进度 */
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const startAtRef = useRef<number>(0);
+  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
+  const stopTicker = useCallback(() => {
+    if (tickerRef.current) {
+      clearInterval(tickerRef.current);
+      tickerRef.current = null;
+    }
   }, []);
+
+  useEffect(() => stopTicker, [stopTicker]);
 
   const handleStart = useCallback(
     async (config: StrategyConfig) => {
       setLoading(true);
       setError(null);
       setReport(null);
-      setCurrentStage('fetch');
-      setCompletedStages([]);
-      setStageElapsed({});
-      stageStartRef.current = Date.now();
-
-      // 模拟进度推进（后端是同步返回，所以用轮询式模拟）
-      let stageIdx = 0;
-      intervalRef.current = setInterval(() => {
-        if (stageIdx < STAGE_ORDER.length - 1) {
-          const doneStage = STAGE_ORDER[stageIdx];
-          const elapsed = Date.now() - stageStartRef.current;
-          setCompletedStages((prev) => [...prev, doneStage]);
-          setStageElapsed((prev) => ({ ...prev, [doneStage]: elapsed - (prev[doneStage] ?? 0) }));
-          stageIdx++;
-          setCurrentStage(STAGE_ORDER[stageIdx]);
-        }
-      }, 800);
+      setElapsedSec(0);
+      startAtRef.current = Date.now();
+      stopTicker();
+      tickerRef.current = setInterval(() => {
+        setElapsedSec(Math.round((Date.now() - startAtRef.current) / 1000));
+      }, 1000);
 
       try {
         // 解析用户粘贴的最新消息（每行一条），优先于实时抓取
@@ -177,35 +167,18 @@ export default function QuantPage() {
           useNews: useNews || !newsItems,
           newsItems,
         });
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
-
-        // 标记所有阶段完成
-        const allElapsed: Record<string, number> = {};
-        const totalMs = Date.now() - stageStartRef.current;
-        STAGE_ORDER.forEach((s) => {
-          allElapsed[s] = Math.round((totalMs / STAGE_ORDER.length) * (0.8 + Math.random() * 0.4));
-        });
-        setCompletedStages([...STAGE_ORDER]);
-        setStageElapsed(allElapsed);
-        setCurrentStage(null);
         setReport(result);
+        showToast(`研究完成，总耗时 ${((Date.now() - startAtRef.current) / 1000).toFixed(0)} 秒`);
       } catch {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
         setError('量化研究失败，请检查后端服务是否启动');
-        setCurrentStage(null);
       } finally {
+        stopTicker();
         setLoading(false);
       }
       // 依赖 newsText/useNews：此前依赖数组为空，闭包永远捕获首次渲染值，
       // 用户粘贴的最新消息与"启用情绪叠加"开关被静默忽略
     },
-    [newsText, useNews],
+    [newsText, useNews, showToast, stopTicker],
   );
 
   return (
@@ -274,80 +247,83 @@ export default function QuantPage() {
       </aside>
 
       <div className="quant-main">
-        {mode === 'batch' ? (
+        {/* 三个模式常驻挂载（隐藏而非卸载）：批量测算/截面评估跑了数十秒的结果，
+            不该因切去别的模式看一眼而丢失 */}
+        <div className="quant-mode-pane" hidden={mode !== 'batch'}>
           <CompositeBatchPanel />
-        ) : mode === 'cross' ? (
-          <CrossSectionPanel />
-        ) : (
-          <>
-            {error && <div className="error-banner">{error}</div>}
+        </div>
+        <div className="quant-mode-pane" hidden={mode !== 'cross'}>
+          <CrossSectionPanel active={mode === 'cross'} />
+        </div>
+        <div className="quant-mode-pane" hidden={mode !== 'single'}>
+          {error && <div className="error-banner">{error}</div>}
 
-            {loading && (
-              <div className="card quant-panel">
-                <h3 className="quant-panel-title">研究进度</h3>
-                <PipelineProgress
-                  currentStage={currentStage}
-                  completedStages={completedStages}
-                  stageElapsed={stageElapsed}
+          {loading && (
+            <div className="card quant-panel">
+              <h3 className="quant-panel-title">研究进行中</h3>
+              <p className="quant-elapsed">
+                数据获取 → 质量检查 → 回测 → 审计 在一次请求内连续完成，完成后一次性出报告。
+              </p>
+              <p className="quant-elapsed quant-elapsed-time">
+                已耗时 <b>{elapsedSec}</b> 秒（通常 10–40 秒，叠加新闻抓取时更长）
+              </p>
+            </div>
+          )}
+
+          {report && !loading && (
+            <>
+              <ReportSummary data={report} />
+              {report.newsSentiment?.hasNews && (
+                <>
+                  <NewsSentimentCard data={report.newsSentiment} />
+                  {report.backtestBaseline && (
+                    <NewsBacktestCompare
+                      aware={report.backtest}
+                      baseline={report.backtestBaseline}
+                    />
+                  )}
+                </>
+              )}
+              <BacktestChart data={report.backtest} />
+              <DataQualityPanel data={report.dataQuality} />
+              <AuditPanel data={report.audit} />
+              <OptimizationPanel data={report.optimization} />
+              {report.priceVolumeFactors && report.priceVolumeFactors.length > 0 && (
+                <FactorPanel
+                  data={report.priceVolumeFactors}
+                  compositeAlpha={report.compositeAlpha}
                 />
-              </div>
-            )}
+              )}
+            </>
+          )}
 
-            {report && !loading && (
-              <>
-                <ReportSummary data={report} />
-                {report.newsSentiment?.hasNews && (
-                  <>
-                    <NewsSentimentCard data={report.newsSentiment} />
-                    {report.backtestBaseline && (
-                      <NewsBacktestCompare
-                        aware={report.backtest}
-                        baseline={report.backtestBaseline}
-                      />
-                    )}
-                  </>
-                )}
-                <BacktestChart data={report.backtest} />
-                <DataQualityPanel data={report.dataQuality} />
-                <AuditPanel data={report.audit} />
-                <OptimizationPanel data={report.optimization} />
-                {report.priceVolumeFactors && report.priceVolumeFactors.length > 0 && (
-                  <FactorPanel
-                    data={report.priceVolumeFactors}
-                    compositeAlpha={report.compositeAlpha}
-                  />
-                )}
-              </>
-            )}
-
-            {!loading && !report && !error && (
-              <div className="quant-empty">
-                <svg
-                  className="quant-empty-icon"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M3 20h18" />
-                  <path d="M6 20v-7" />
-                  <path d="M11 20V6" />
-                  <path d="M16 20v-4" />
-                  <path d="M21 20V10" />
-                </svg>
-                <p className="quant-empty-text">
-                  配置左侧策略后点击「开始研究」，将依次完成数据获取、质量校验、回测与审计，输出完整量化报告
-                </p>
-                <p className="quant-empty-hint">
-                  支持均线交叉 / 动量 / 均值回归策略，可叠加最新消息情绪与 A 股真实交易费率
-                </p>
-              </div>
-            )}
-          </>
-        )}
+          {!loading && !report && !error && (
+            <div className="quant-empty">
+              <svg
+                className="quant-empty-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M3 20h18" />
+                <path d="M6 20v-7" />
+                <path d="M11 20V6" />
+                <path d="M16 20v-4" />
+                <path d="M21 20V10" />
+              </svg>
+              <p className="quant-empty-text">
+                配置左侧策略后点击「开始研究」，将依次完成数据获取、质量校验、回测与审计，输出完整量化报告
+              </p>
+              <p className="quant-empty-hint">
+                支持均线交叉 / 动量 / 均值回归策略，可叠加最新消息情绪与 A 股真实交易费率
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

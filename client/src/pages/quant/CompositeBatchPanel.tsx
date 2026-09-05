@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { runBatchCompositeAlpha, searchStocks } from '../../api/client';
 import type {
   CompositeAlphaBatchResult,
@@ -119,6 +119,30 @@ export default function CompositeBatchPanel() {
   const [notice, setNotice] = useState<string | null>(null);
   const [result, setResult] = useState<CompositeAlphaBatchResult | null>(null);
   const [sortByAlpha, setSortByAlpha] = useState(true);
+  /** 已耗时（秒）：名称解析 + 逐只拉取可能要一两分钟，真实计时比纯文案更可等待 */
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!loading) {
+      if (tickerRef.current) {
+        clearInterval(tickerRef.current);
+        tickerRef.current = null;
+      }
+      return;
+    }
+    const startAt = Date.now();
+    setElapsedSec(0);
+    tickerRef.current = setInterval(() => {
+      setElapsedSec(Math.round((Date.now() - startAt) / 1000));
+    }, 1000);
+    return () => {
+      if (tickerRef.current) {
+        clearInterval(tickerRef.current);
+        tickerRef.current = null;
+      }
+    };
+  }, [loading]);
 
   const codes = useMemo(() => parseCodes(codesText), [codesText]);
   const tooMany = codes.length > MAX_CODES;
@@ -292,7 +316,11 @@ export default function CompositeBatchPanel() {
 
       {!error && notice && <div className="batch-notice">⚠ {notice}</div>}
 
-      {loading && <p className="batch-loading">正在逐只拉取 K 线与市场基准…</p>}
+      {loading && (
+        <p className="batch-loading">
+          正在逐只拉取 K 线与市场基准…（已耗时 {elapsedSec} 秒，批量越多久越久）
+        </p>
+      )}
 
       {result && !loading && (
         <>

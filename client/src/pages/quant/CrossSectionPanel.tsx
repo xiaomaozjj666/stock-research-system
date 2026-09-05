@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useEffect } from 'react';
+import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { getUniverseBoards, runCrossSectionEvaluation } from '../../api/client';
 import type {
   CrossSectionResult,
@@ -84,7 +84,7 @@ function IcCell({ p }: { p: CrossSectionPeriodReport }) {
   );
 }
 
-export default function CrossSectionPanel() {
+export default function CrossSectionPanel({ active = true }: { active?: boolean }) {
   const [source, setSource] = useState<'board' | 'codes'>('board');
   const [boards, setBoards] = useState<IndustryBoard[]>([]);
   const [boardsError, setBoardsError] = useState<string | null>(null);
@@ -98,9 +98,18 @@ export default function CrossSectionPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CrossSectionResult | null>(null);
+  /** 已耗时（秒）：真实计时 */
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const startAtRef = useRef(0);
+  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 首次挂载即拉板块列表（面板只在用户切到该模式时渲染，成本可控）
+  // 面板常驻挂载（模式切换不丢结果），板块列表延迟到首次激活才拉取
+  const [hasBeenActive, setHasBeenActive] = useState(active);
   useEffect(() => {
+    if (active) setHasBeenActive(true);
+  }, [active]);
+  useEffect(() => {
+    if (!hasBeenActive) return;
     let alive = true;
     getUniverseBoards()
       .then((d) => {
@@ -115,7 +124,29 @@ export default function CrossSectionPanel() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [hasBeenActive]);
+
+  // 评估期间真实计时
+  useEffect(() => {
+    if (!loading) {
+      if (tickerRef.current) {
+        clearInterval(tickerRef.current);
+        tickerRef.current = null;
+      }
+      return;
+    }
+    startAtRef.current = Date.now();
+    setElapsedSec(0);
+    tickerRef.current = setInterval(() => {
+      setElapsedSec(Math.round((Date.now() - startAtRef.current) / 1000));
+    }, 1000);
+    return () => {
+      if (tickerRef.current) {
+        clearInterval(tickerRef.current);
+        tickerRef.current = null;
+      }
+    };
+  }, [loading]);
 
   const codes = useMemo(() => parseCodes(codesText), [codesText]);
 
@@ -259,7 +290,11 @@ export default function CrossSectionPanel() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
-      {loading && <p className="batch-loading">正在逐只拉取行情与财务数据并装配截面面板…</p>}
+      {loading && (
+        <p className="batch-loading">
+          正在逐只拉取行情与财务数据并装配截面面板…（已耗时 {elapsedSec} 秒）
+        </p>
+      )}
 
       {result && !loading && (
         <>
