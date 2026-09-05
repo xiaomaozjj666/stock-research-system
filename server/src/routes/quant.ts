@@ -16,6 +16,7 @@ import {
 import { computePriceVolumeFactors, type PriceVolumeFactor } from '../quant/priceVolumeFactors.js';
 import {
   evaluatePriceVolumeFactorPredictability,
+  IC_DECAY_HORIZONS,
   type FactorPredictability,
 } from '../quant/factorPredictability.js';
 import {
@@ -33,6 +34,13 @@ import {
   type FundamentalFactorName,
   type StockPanelInput,
 } from '../quant/crossSectionBuilder.js';
+import {
+  fetchIndustryBoards,
+  fetchBoardConstituents,
+  isValidBoardCode,
+} from '../quant/universeProvider.js';
+import { fetchQuarterlyFinancials } from '../services/quarterlyFinancials.js';
+import { buildEarningsSurpriseObservations } from '../quant/fundamentalDepth.js';
 import { fetchFinancialData } from '../services/dataFetcher.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import {
@@ -124,10 +132,16 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
     });
     let factorPredictability: FactorPredictability[] = [];
     try {
-      factorPredictability = evaluatePriceVolumeFactorPredictability({
-        bars: ohlcvData,
-        marketReturns,
-      });
+      // IC 衰减网格 [1,5,10,21,63]：21/63 供组合 alpha 结算，1/5/10 供前端绘制
+      // 「信号随持有期衰减」曲线（自然调仓频率诊断）。计算成本同量级（逐持有期
+      // Spearman），样本不足的持有期由评估器返回 null，前端如实显示。
+      factorPredictability = evaluatePriceVolumeFactorPredictability(
+        {
+          bars: ohlcvData,
+          marketReturns,
+        },
+        [...IC_DECAY_HORIZONS],
+      );
     } catch (e) {
       // 预测力计算失败不应拖垮整份报告；降级为「无预测力数据」
       logger.warn('因子时间序列预测力计算跳过', { err: e });
@@ -148,7 +162,8 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
     let compositeAlpha: CompositeAlpha | undefined;
     if (factorPredictability.length > 0) {
       try {
-        compositeAlpha = computeCompositeAlpha(factorPredictability);
+        // 组合 alpha 语义不变：只在 21/63 结算（衰减网格仅服务展示与诊断）
+        compositeAlpha = computeCompositeAlpha(factorPredictability, [21, 63]);
       } catch (e) {
         logger.warn('组合 alpha 计算跳过', { err: e });
       }
@@ -422,9 +437,27 @@ router.post(
   },
 );
 
-// 受控回测评估：基线(无新闻叠加) vs 实验(带新闻情绪叠加)，量化 LLM 信号是否真增 alpha
-// 截面因子评估：给定 2-8 只股票，自动拉取行情/财务装配截面观测面板，
-// 走既有截面评估器（按日跨股票 Spearman + Newey-West + OOS 稳定性）。
+// 行业板块列表（东方财富 clist，m:90+t:2）：供前端下拉选择截面 universe。
+// 板块与成分股为低频数据（provider 内有 TTL 缓存），失败转 502 不编造列表。
+router.get('/api/quant/universe/boards', quantLimiter, circuitBreakerGuard, async (req, res) => {
+  try {
+    const boards = await fetchIndustryBoards();
+    res.json({ boards });
+  } catch (error) {
+    logger.error('Universe boards error', { route: '/api/quant/universe/boards', err: error });
+    const message = error instanceof Error ? error.message : '行业板块列表获取失败';
+    res.status(502).json({ error: '行业板块列表获取失败', detail: message });
+  }
+});
+
+// 截面因子评估：自动拉取行情/财务/季度财报装配截面观测面板，走既有截面评估器
+// （按日跨股票 Spearman + Newey-West + OOS 稳定性）。
+// universe 两种来源：
+//   - codes：显式给出 2-30 只股票；
+//   - board：给行业板块代码（BKxxxx），按总市值取前 topN 只成分股——截面拉宽的
+//     主路径，让逐日截面 IC 有足够样本量。
+// 因子三族：量价（逐日变异）、基本面（年报快照 + 季度派生，每股常数）、
+// 事件（业绩超预期 PEAD，公告窗口内有效）。
 // 统计功效取决于横截面宽度：stocksSkipped 与各因子 sampleSize 如实披露，不做掩饰。
 router.post(
   '/api/quant/factor/cross-section',
@@ -434,18 +467,11 @@ router.post(
     try {
       const body = (req.body ?? {}) as {
         codes?: unknown;
+        board?: unknown;
+        topN?: unknown;
         horizons?: unknown;
         includeFundamental?: unknown;
       };
-      const codes = Array.isArray(body.codes) ? body.codes.map(String) : [];
-      if (codes.length < 2 || codes.length > 8) {
-        return res.status(400).json({ error: '请提供 2-8 只股票代码（codes）' });
-      }
-      for (const c of codes) {
-        if (!/^\d{6}$/.test(c)) {
-          return res.status(400).json({ error: `无效的股票代码：${c}` });
-        }
-      }
       const horizons =
         Array.isArray(body.horizons) &&
         body.horizons.every(
@@ -455,6 +481,61 @@ router.post(
           : [21, 63];
       const includeFundamental = body.includeFundamental !== false;
 
+      // universe 解析：板块成分股（拉宽）优先于显式 codes
+      const MAX_CODES = 30;
+      let codes: string[];
+      let universe: Record<string, unknown>;
+      if (body.board !== undefined && body.board !== null && String(body.board).trim() !== '') {
+        const board = String(body.board).trim().toUpperCase();
+        if (!isValidBoardCode(board)) {
+          return res.status(400).json({ error: `无效的板块代码：${body.board}` });
+        }
+        const topNRaw = body.topN === undefined || body.topN === null ? 10 : Number(body.topN);
+        if (!Number.isInteger(topNRaw) || topNRaw < 3 || topNRaw > MAX_CODES) {
+          return res
+            .status(400)
+            .json({ error: `topN 需为 3-${MAX_CODES} 的整数（当前：${body.topN}）` });
+        }
+        let constituents;
+        try {
+          constituents = await fetchBoardConstituents(board, topNRaw);
+        } catch (error) {
+          logger.warn('板块成分股获取失败', { board, err: error });
+          const message = error instanceof Error ? error.message : '成分股获取失败';
+          return res.status(502).json({ error: `板块 ${board} 成分股获取失败`, detail: message });
+        }
+        if (constituents.length < 2) {
+          return res
+            .status(422)
+            .json({ error: `板块 ${board} 有效成分股仅 ${constituents.length} 只，无法构成截面` });
+        }
+        codes = constituents.map((c) => c.code);
+        const boardName = await fetchIndustryBoards()
+          .then((bs) => bs.find((b) => b.code === board)?.name)
+          .catch(() => undefined);
+        universe = {
+          source: 'board',
+          board,
+          ...(boardName ? { boardName } : {}),
+          requested: constituents.length,
+          constituents: constituents.map(({ code, name }) => ({ code, name })),
+        };
+      } else {
+        const rawCodes = Array.isArray(body.codes) ? body.codes.map(String) : [];
+        if (rawCodes.length < 2 || rawCodes.length > MAX_CODES) {
+          return res
+            .status(400)
+            .json({ error: `请提供 2-${MAX_CODES} 只股票代码（codes），或传 board 指定行业板块` });
+        }
+        for (const c of rawCodes) {
+          if (!/^\d{6}$/.test(c)) {
+            return res.status(400).json({ error: `无效的股票代码：${c}` });
+          }
+        }
+        codes = rawCodes;
+        universe = { source: 'codes', requested: codes.length };
+      }
+
       const end = new Date().toISOString().slice(0, 10);
       const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
       const inputs: StockPanelInput[] = await mapWithConcurrency(codes, 4, async (code: string) => {
@@ -462,14 +543,26 @@ router.post(
         const financial = includeFundamental
           ? await fetchFinancialData(code).catch(() => null)
           : null;
-        return { code, bars, financial };
+        const quarterly = includeFundamental
+          ? await fetchQuarterlyFinancials(code).catch(() => null)
+          : null;
+        return { code, bars, financial, quarterly };
       });
 
       const panel = buildCrossSectionPanel(inputs, horizons);
+      // 逐持有期附「是否采信」判定（IC 显著 + 分层单调 + 多空价差为正），与
+      // /factor/evaluate 路由同口径——前端截面表直接消费
+      const evaluateWithVerdict = (obs: FactorObservation[]) => {
+        const report = evaluateFactor(obs);
+        return {
+          ...report,
+          byPeriod: report.byPeriod.map((p) => ({ ...p, verdict: judgeFactor(p) })),
+        };
+      };
       const factors: { name: string; type: string; report: unknown }[] = [];
       for (const [name, obs] of Object.entries(panel.priceVolume)) {
         if (obs.length < 30) continue; // 样本不足的因子如实跳过（评估器也会拒收）
-        factors.push({ name, type: 'price_volume', report: evaluateFactor(obs) });
+        factors.push({ name, type: 'price_volume', report: evaluateWithVerdict(obs) });
       }
       if (includeFundamental) {
         for (const [name, obs] of Object.entries(panel.fundamental) as [
@@ -477,11 +570,34 @@ router.post(
           FactorObservation[],
         ][]) {
           if (obs.length < 30) continue;
-          factors.push({ name, type: 'fundamental', report: evaluateFactor(obs) });
+          factors.push({ name, type: 'fundamental', report: evaluateWithVerdict(obs) });
+        }
+        // 事件因子（PEAD）：业绩超预期，公告窗口内信号有效。样本不足（无公告日 /
+        // 超预期序列过短）时如实缺席，不强行出报告。
+        const eventObs: FactorObservation[] = [];
+        for (const input of inputs) {
+          if (!input.quarterly || input.quarterly.reports.length === 0) continue;
+          if (!input.bars || input.bars.length === 0) continue;
+          eventObs.push(
+            ...buildEarningsSurpriseObservations({
+              code: input.code,
+              reports: input.quarterly.reports,
+              bars: input.bars,
+              horizons,
+            }),
+          );
+        }
+        if (eventObs.length >= 30) {
+          factors.push({
+            name: 'ev_earnings_surprise',
+            type: 'event',
+            report: evaluateWithVerdict(eventObs),
+          });
         }
       }
 
       res.json({
+        universe,
         stocksIncluded: panel.stocksIncluded,
         stocksSkipped: panel.stocksSkipped,
         horizons,
@@ -497,6 +613,7 @@ router.post(
   },
 );
 
+// 受控回测评估：基线(无新闻叠加) vs 实验(带新闻情绪叠加)，量化 LLM 信号是否真增 alpha
 router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, async (req, res) => {
   try {
     const body = req.body ?? {};
