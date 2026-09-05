@@ -39,9 +39,15 @@ import {
   fetchBoardConstituents,
   isValidBoardCode,
 } from '../quant/universeProvider.js';
-import { fetchQuarterlyFinancials } from '../services/quarterlyFinancials.js';
+// 基本面数据走量化侧缓存（财报按季度更新，无需每次运行重拉）：
+// 把每只股票 3 次网络调用降到 1 次（仅剩 K 线的尾部增量补拉）。
+// 底层仍调用 services 的 fetchFinancialData / fetchQuarterlyFinancials，
+// 故既有的模块级 mock（按 services 路径）依旧生效。
+import {
+  fetchFinancialDataCached,
+  fetchQuarterlyFinancialsCached,
+} from '../quant/fundamentalCache.js';
 import { buildEarningsSurpriseObservations } from '../quant/fundamentalDepth.js';
-import { fetchFinancialData } from '../services/dataFetcher.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import {
   fetchOHLCVData,
@@ -450,10 +456,30 @@ router.get('/api/quant/universe/boards', quantLimiter, circuitBreakerGuard, asyn
   }
 });
 
+// === 截面 universe 宽度与并发上限（2026-09-05 放开） ===
+// 截面框架的统计功效随横截面宽度增长：板块内 30 只原本够用，但要上全市场多行业
+// 大面板（几百只）必须放宽。宽度与并发都走 env，便于按部署的算力与上游限流配额调整；
+// 另设硬上限兜底，防止误配极大值把服务拖死。
+// 注意：放宽上限只是「允许」，默认 topN 仍为 10，行为只在显式请求更宽时改变。
+const CROSS_SECTION_MAX_CODES_HARD_CAP = 2000;
+const CROSS_SECTION_CONCURRENCY_HARD_CAP = 16;
+
+function crossSectionMaxCodes(): number {
+  const raw = Number(process.env.QUANT_CROSS_SECTION_MAX_CODES);
+  if (!Number.isFinite(raw) || raw <= 0) return 300;
+  return Math.min(Math.floor(raw), CROSS_SECTION_MAX_CODES_HARD_CAP);
+}
+
+function crossSectionConcurrency(): number {
+  const raw = Number(process.env.QUANT_CROSS_SECTION_CONCURRENCY);
+  if (!Number.isFinite(raw) || raw <= 0) return 8;
+  return Math.min(Math.max(Math.floor(raw), 1), CROSS_SECTION_CONCURRENCY_HARD_CAP);
+}
+
 // 截面因子评估：自动拉取行情/财务/季度财报装配截面观测面板，走既有截面评估器
 // （按日跨股票 Spearman + Newey-West + OOS 稳定性）。
 // universe 两种来源：
-//   - codes：显式给出 2-30 只股票；
+//   - codes：显式给出 2 到上限只股票（上限见 crossSectionMaxCodes，默认 300）；
 //   - board：给行业板块代码（BKxxxx），按总市值取前 topN 只成分股——截面拉宽的
 //     主路径，让逐日截面 IC 有足够样本量。
 // 因子三族：量价（逐日变异）、基本面（年报快照 + 季度派生，每股常数）、
@@ -482,7 +508,7 @@ router.post(
       const includeFundamental = body.includeFundamental !== false;
 
       // universe 解析：板块成分股（拉宽）优先于显式 codes
-      const MAX_CODES = 30;
+      const MAX_CODES = crossSectionMaxCodes();
       let codes: string[];
       let universe: Record<string, unknown>;
       if (body.board !== undefined && body.board !== null && String(body.board).trim() !== '') {
@@ -538,16 +564,20 @@ router.post(
 
       const end = new Date().toISOString().slice(0, 10);
       const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
-      const inputs: StockPanelInput[] = await mapWithConcurrency(codes, 4, async (code: string) => {
-        const bars = await fetchOHLCVData(code, start, end).catch(() => []);
-        const financial = includeFundamental
-          ? await fetchFinancialData(code).catch(() => null)
-          : null;
-        const quarterly = includeFundamental
-          ? await fetchQuarterlyFinancials(code).catch(() => null)
-          : null;
-        return { code, bars, financial, quarterly };
-      });
+      const inputs: StockPanelInput[] = await mapWithConcurrency(
+        codes,
+        crossSectionConcurrency(),
+        async (code: string) => {
+          const bars = await fetchOHLCVData(code, start, end).catch(() => []);
+          const financial = includeFundamental
+            ? await fetchFinancialDataCached(code).catch(() => null)
+            : null;
+          const quarterly = includeFundamental
+            ? await fetchQuarterlyFinancialsCached(code).catch(() => null)
+            : null;
+          return { code, bars, financial, quarterly };
+        },
+      );
 
       const panel = buildCrossSectionPanel(inputs, horizons);
       // 逐持有期附「是否采信」判定（IC 显著 + 分层单调 + 多空价差为正），与

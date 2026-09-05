@@ -7,8 +7,8 @@ import type {
   IndustryBoard,
 } from './types';
 
-/** 与服务端 MAX_CODES 上限一致 */
-const MAX_CODES = 30;
+/** 与服务端 MAX_CODES 上限一致（QUANT_CROSS_SECTION_MAX_CODES，默认 300） */
+const MAX_CODES = 300;
 
 /** 因子中文显示名：量价（与 FactorPanel 一致）+ 基本面/事件 */
 const FACTOR_LABELS: Record<string, string> = {
@@ -241,7 +241,9 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                 disabled={loading}
                 onChange={(e) => setTopN(Number(e.target.value))}
               />
-              <span className="batch-hint">3-30；越大截面越宽，耗时越长</span>
+              <span className="batch-hint">
+                3-300；越大截面统计功效越强，数百只全市场面板冷启动可能耗时数分钟
+              </span>
             </label>
           </div>
         ) : (

@@ -156,8 +156,9 @@ export async function runCrossSectionEvaluation(payload: {
 }) {
   try {
     const response = await api.post('/quant/factor/cross-section', payload, {
-      // 每只都要拉行情 + 财务 + 季度财报，30 只时耗时可达数十秒
-      timeout: 240000,
+      // 每只都要拉行情 + 财务 + 季度财报。基本面已走缓存、K 线为增量补尾，
+      // 但数百只的全市场大面板冷启动仍可能耗时数分钟，故放宽到 10 分钟。
+      timeout: 600000,
     });
     return response.data;
   } catch (error: unknown) {

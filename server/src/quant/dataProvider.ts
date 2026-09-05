@@ -1,19 +1,6 @@
 import type { OHLCVData } from './types.js';
 import logger from '../utils/logger.js';
-import * as fs from 'fs';
-import * as path from 'path';
-
-const DEFAULT_CACHE_DIR = path.join(import.meta.dirname, 'cache');
-
-/**
- * 运行时解析缓存目录：支持 DATA_CACHE_DIR env 重定向（与 services/dataService 同模式）。
- * 惰性解析而非模块级常量，测试可在 beforeEach 中设置 env 后生效。
- */
-function getCacheDir(): string {
-  return process.env.DATA_CACHE_DIR && process.env.DATA_CACHE_DIR.length > 0
-    ? process.env.DATA_CACHE_DIR
-    : DEFAULT_CACHE_DIR;
-}
+import { isCacheFresh, readCacheEntry, writeCacheEntry } from './quantCache.js';
 
 function getSecId(code: string): string {
   return code.startsWith('6') ? `1.${code}` : `0.${code}`;
@@ -73,9 +60,49 @@ export function filterOHLCVByRange(
   return { data: kept, trimmed };
 }
 
+/** K 线缓存条目：按 token 存合并后的完整历史，而非按请求区间分片 */
+interface KlineCachePayload {
+  bars: OHLCVData[];
+}
+
+/**
+ * K 线缓存的有效期（供 prune 判断是否保留文件）。
+ * 历史 K 线一旦落定不再变化，故有效期远长于「新鲜度」窗口；真正的更新靠下面的
+ * 尾部补拉，而不是靠过期丢弃整段历史（那会导致每次全量重拉，正是要修的问题）。
+ */
+function klineCacheTtlMs(): number {
+  const raw = Number(process.env.QUANT_KLINE_CACHE_TTL_DAYS);
+  const days = Number.isFinite(raw) && raw > 0 ? raw : 30;
+  return days * 24 * 60 * 60 * 1000;
+}
+
+/**
+ * 「完全覆盖且新鲜」的判定窗口：同一区间在该窗口内重复请求零网络调用。
+ * 次日滚动窗口（end 前移）会越过此窗口，但只补拉尾部新增的几根。
+ */
+function klineFreshTtlMs(): number {
+  const raw = Number(process.env.QUANT_KLINE_FRESH_TTL_HOURS);
+  const hours = Number.isFinite(raw) && raw > 0 ? raw : 12;
+  return hours * 60 * 60 * 1000;
+}
+
+/** 合并两段 K 线：按日期去重（新值覆盖旧值以容纳当日修订），按日期升序返回 */
+function mergeBars(existing: OHLCVData[], incoming: OHLCVData[]): OHLCVData[] {
+  const byDate = new Map<string, OHLCVData>();
+  for (const bar of existing) if (bar?.date) byDate.set(bar.date, bar);
+  for (const bar of incoming) if (bar?.date) byDate.set(bar.date, bar);
+  return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
 /**
  * 按 secid 获取 K 线（fetchOHLCVData 与指数基准共用内核）。
- * 含缓存、look-ahead 防御与模拟数据降级；cacheToken 仅用于缓存文件名（已白名单清洗）。
+ *
+ * 缓存策略（2026-09-05 重构）：按 cacheToken 存**合并后的完整历史**，请求时本地切片，
+ * 只补拉未覆盖的缺口。此前按 `{token}_{start}_{end}` 分片缓存，而截面/回测用的是
+ * 滚动窗口（end = 今天），导致每天为每只股票生成全新缓存文件并重拉全量历史——
+ * 几百只全市场时这是主要瓶颈。现在：首次冷拉全量，之后每天只补拉尾部几根。
+ *
+ * 另含 look-ahead 防御与模拟数据降级；模拟数据绝不写入缓存（避免污染真实历史）。
  */
 async function fetchKlineBySecid(
   secid: string,
@@ -84,25 +111,74 @@ async function fetchKlineBySecid(
   cacheToken: string,
   timeoutMs = 15000,
 ): Promise<OHLCVData[]> {
-  // 1. 检查缓存（缓存文件名对 token 做白名单清洗：防路径穿越）
-  const cacheKey = `${sanitizeCacheToken(cacheToken)}_${sanitizeCacheToken(startDate)}_${sanitizeCacheToken(endDate)}`;
-  const cacheDir = getCacheDir();
-  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-  const cacheFile = path.join(cacheDir, `${cacheKey}.json`);
-  if (fs.existsSync(cacheFile)) {
-    const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
-    const age = Date.now() - cached.timestamp;
-    if (age < 12 * 60 * 60 * 1000) {
-      // 12小时缓存；仍做范围过滤（防御历史脏缓存混入未来行）
-      const { data, trimmed } = filterOHLCVByRange(cached.data, startDate, endDate);
-      if (trimmed > 0) {
-        logger.warn('缓存K线存在越界行，已剔除', { secid, startDate, endDate, trimmed });
-      }
-      return data;
+  const cacheKey = `kline_${cacheToken}`;
+
+  // 1. 读缓存：合并历史。不判断新鲜度——即使不新鲜也要读出来做增量补尾。
+  const cached = readCacheEntry<KlineCachePayload>(cacheKey);
+  const cachedBars =
+    cached?.data && Array.isArray(cached.data.bars)
+      ? cached.data.bars.filter((b) => b && typeof b.date === 'string')
+      : [];
+  const cStart = cachedBars.length > 0 ? cachedBars[0].date : null;
+  const cEnd = cachedBars.length > 0 ? cachedBars[cachedBars.length - 1].date : null;
+
+  // 完全覆盖且新鲜 → 零网络调用返回
+  const covered = cStart !== null && cEnd !== null && startDate >= cStart && endDate <= cEnd;
+  if (covered && cached && isCacheFresh(cached.timestamp, klineFreshTtlMs())) {
+    // 仍做范围过滤（防御历史脏缓存混入未来行）
+    const { data, trimmed } = filterOHLCVByRange(cachedBars, startDate, endDate);
+    if (trimmed > 0) {
+      logger.warn('缓存K线存在越界行，已剔除', { secid, startDate, endDate, trimmed });
     }
+    return data;
   }
 
-  // 2. 从东方财富获取日K线
+  // 2. 只补拉未覆盖的部分：
+  //    - 无缓存，或请求左边界在缓存之前 → 从 startDate 拉（冷启动 / 窗口拓宽）；
+  //    - 否则 → 从 cEnd 拉（尾部增量，即正常的每日更新路径）。
+  const fetchStart = cEnd !== null && cStart !== null && startDate >= cStart ? cEnd : startDate;
+  let merged = cachedBars;
+  if (fetchStart <= endDate) {
+    const fetched = await fetchKlineRange(secid, fetchStart, endDate, timeoutMs);
+    if (fetched !== null && fetched.length > 0) {
+      merged = mergeBars(cachedBars, fetched);
+      writeCacheEntry(cacheKey, { bars: merged }, klineCacheTtlMs());
+    } else if (fetched === null && cachedBars.length === 0) {
+      // 3. 真失败（网络/解析）且无历史 → 降级模拟数据（用于演示），绝不写入缓存
+      // F1.6: 模拟数据标记 isSimulated=true，下游策略引擎应检查此标志
+      const simulated = generateSimulatedData(cacheToken, startDate, endDate);
+      return simulated.map((d) => ({ ...d, isSimulated: true }));
+    } else if (fetched === null) {
+      // 拉取失败但已有历史：返回已缓存的部分区间（真实数据优于模拟噪声）
+      logger.warn('K线尾部补拉失败，返回已缓存的部分区间', {
+        secid,
+        fetchStart,
+        endDate,
+        cachedBars: cachedBars.length,
+      });
+    }
+    // fetched === []（API 可达但区间内确实无数据）→ 合法空结果：
+    // 不写缓存（避免瞬时异常被长 TTL 负缓存）、不降级，交由上层按「无数据」处理
+  }
+
+  // look-ahead 防御：剔除超出请求范围的行
+  const { data, trimmed } = filterOHLCVByRange(merged, startDate, endDate);
+  if (trimmed > 0) {
+    logger.warn('K线返回越界行，已剔除（look-ahead 防御）', { secid, startDate, endDate, trimmed });
+  }
+  return data;
+}
+
+/**
+ * 拉取指定区间的日 K 线（东方财富）。返回 null 表示失败（网络/解析），由调用方降级；
+ * 这样「拉取失败」与「区间内确实无数据」可区分，不会把空区间误判为需模拟降级。
+ */
+async function fetchKlineRange(
+  secid: string,
+  startDate: string,
+  endDate: string,
+  timeoutMs: number,
+): Promise<OHLCVData[] | null> {
   const beg = startDate.replace(/-/g, '');
   const end = endDate.replace(/-/g, '');
 
@@ -142,19 +218,12 @@ async function fetchKlineBySecid(
           trimmed,
         });
       }
-
-      // 写入缓存
-      fs.writeFileSync(cacheFile, JSON.stringify({ data: filtered, timestamp: Date.now() }));
       return filtered;
     }
   } catch (error) {
     logger.warn('获取K线数据失败', { secid, startDate, endDate, err: error });
   }
-
-  // 3. 降级：生成模拟数据（用于演示）
-  // F1.6: 模拟数据标记 isSimulated=true，下游策略引擎应检查此标志
-  const simulated = generateSimulatedData(cacheToken, startDate, endDate);
-  return simulated.map((d) => ({ ...d, isSimulated: true }));
+  return null;
 }
 
 /**
@@ -253,10 +322,6 @@ export async function fetchBenchmarkReturns(
 }
 
 /** 缓存文件名 token 清洗：只保留字母/数字/下划线/连字符，防 `../` 等路径穿越 */
-function sanitizeCacheToken(token: string): string {
-  return token.replace(/[^A-Za-z0-9_-]/g, '_');
-}
-
 /**
  * 生成模拟K线数据（当API不可用时降级使用）
  */
