@@ -30,6 +30,9 @@ const FACTOR_LABELS: Record<string, string> = {
   cs_np_yoy_q: '单季净利同比（季度）',
   cs_roe_slope: 'ROE逐季斜率（季度）',
   ev_earnings_surprise: '业绩超预期（PEAD事件）',
+  ev_dividend_yield: '分红股息率（事件）',
+  ev_buyback_ratio: '回购力度（事件）',
+  ev_unlock_overhang: '解禁压力（事件）',
 };
 
 const TYPE_LABELS: Record<CrossSectionFactor['type'], string> = {
@@ -95,6 +98,8 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
   const [codesText, setCodesText] = useState('');
   const [horizonsText, setHorizonsText] = useState('21,63');
   const [includeFundamental, setIncludeFundamental] = useState(true);
+  // 事件族（分红/回购/解禁 + PEAD）：默认开启；关闭可省去事件源网络调用
+  const [includeEvents, setIncludeEvents] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CrossSectionResult | null>(null);
@@ -158,11 +163,12 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
       const horizons = parseHorizons(horizonsText);
       const data = await runCrossSectionEvaluation(
         source === 'board'
-          ? { board, topN, horizons, includeFundamental }
+          ? { board, topN, horizons, includeFundamental, includeEvents }
           : {
               codes: codes.slice(0, MAX_CODES),
               horizons,
               includeFundamental,
+              includeEvents,
             },
       );
       setResult(data);
@@ -171,7 +177,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
     } finally {
       setLoading(false);
     }
-  }, [source, board, topN, codesText, codes, horizonsText, includeFundamental]);
+  }, [source, board, topN, codesText, codes, horizonsText, includeFundamental, includeEvents]);
 
   const canRun = source === 'board' ? !!board : codes.length >= 2;
 
@@ -280,7 +286,16 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
               disabled={loading}
               onChange={(e) => setIncludeFundamental(e.target.checked)}
             />
-            包含基本面与事件因子（拉取财务 + 季度财报，耗时增加）
+            包含基本面因子（拉取财务 + 季度财报，耗时增加）
+          </label>
+          <label className="batch-checkbox cs-fundamental-toggle">
+            <input
+              type="checkbox"
+              checked={includeEvents}
+              disabled={loading}
+              onChange={(e) => setIncludeEvents(e.target.checked)}
+            />
+            包含事件因子（分红/回购/解禁走事件数据源；PEAD 依赖财报）
           </label>
         </div>
 
