@@ -337,6 +337,32 @@ function App() {
               </div>
             </>
           )}
+          {!loading && !error && !stockData && (
+            <div className="research-empty">
+              <div className="research-empty-card">
+                <h2>多专家深度研究</h2>
+                <p className="research-empty-desc">
+                  输入 6 位股票代码或点击上方快捷标签，8 位独立研判专家（基本面 / 估值 / 行业 / 风险
+                  / 资金 / 政策 / 题材 / 解禁）将并行分析并辩论仲裁，输出带评分、情景推演与
+                  量化策略的完整研究报告。全程约 1-3 分钟。
+                </p>
+                <div className="research-empty-steps">
+                  <div className="research-empty-step">
+                    <span className="step-num">1</span>输入代码或点快捷标签
+                  </div>
+                  <div className="research-empty-step">
+                    <span className="step-num">2</span>点击「开始分析」
+                  </div>
+                  <div className="research-empty-step">
+                    <span className="step-num">3</span>阅读完整研究报告
+                  </div>
+                </div>
+                <p className="research-empty-hint">
+                  结果会自动存入「历史」，可随时回看与对比；也可以切到「研究助手」用自然语言提问。
+                </p>
+              </div>
+            </div>
+          )}
           {error && !loading && (
             <div className="error-banner" role="alert">
               <div className="error-banner-body">

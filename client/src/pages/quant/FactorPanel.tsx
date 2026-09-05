@@ -98,10 +98,16 @@ function CompositeSummary({ alpha }: { alpha: CompositeAlpha }) {
           </div>
         ))}
       </div>
-      {alpha.hasSignal && (
+      {alpha.hasSignal ? (
         <div className="composite-foot">
           仅纳入统计显著（p&lt;0.05）因子，按 |t| 置信度加权方向校正 IC；多因子同向且置信越高 → |α|
           越大。
+        </div>
+      ) : (
+        <div className="composite-foot composite-foot-empty">
+          本轮无因子通过显著门槛（p&lt;0.05，已做重叠修正与 Holm
+          多重检验校正）——这是如实结果而非异常：
+          单股样本下因子显著性本就稀缺。可尝试拉长回测区间积累样本后重试。
         </div>
       )}
     </div>

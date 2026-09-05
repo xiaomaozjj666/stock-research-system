@@ -5,6 +5,8 @@ interface RatingAccuracyStat {
   hitCount: number;
   accuracyPct: number | null;
   avgReturnPct: number | null;
+  /** 已记录但未到期（<20 天）的样本数：展示「统计积累中」 */
+  pendingCount?: number;
 }
 
 interface StockData {
@@ -97,19 +99,35 @@ function DegradedTag({ names }: { names: string[] }) {
   );
 }
 
-/** 历史评级命中率（决策-结果闭环展示；样本不足时 accuracyPct 为 null，不显示） */
+/**
+ * 历史评级命中率（决策-结果闭环展示）。
+ * 命中率可用 → 显示命中率；样本尚未到期（<20 天）→ 显示「统计积累中」，
+ * 让用户知道闭环在运转而不是功能缺失。
+ */
 function AccuracyTag({ stat }: { stat: RatingAccuracyStat }) {
-  if (stat.accuracyPct === null) return null;
-  return (
-    <div
-      className="accuracy-tag"
-      title={`近 ${stat.judgedCount} 次方向判断命中 ${stat.hitCount} 次${
-        stat.avgReturnPct !== null ? `，评级后平均区间收益 ${stat.avgReturnPct}%` : ''
-      }`}
-    >
-      历史命中率 {stat.accuracyPct}%（{stat.hitCount}/{stat.judgedCount}）
-    </div>
-  );
+  if (stat.accuracyPct !== null) {
+    return (
+      <div
+        className="accuracy-tag"
+        title={`近 ${stat.judgedCount} 次方向判断命中 ${stat.hitCount} 次${
+          stat.avgReturnPct !== null ? `，评级后平均区间收益 ${stat.avgReturnPct}%` : ''
+        }`}
+      >
+        历史命中率 {stat.accuracyPct}%（{stat.hitCount}/{stat.judgedCount}）
+      </div>
+    );
+  }
+  if ((stat.pendingCount ?? 0) > 0) {
+    return (
+      <div
+        className="accuracy-tag accuracy-tag-accumulating"
+        title="评级已记入台账，持有满 20 个交易日后回填实际收益并统计命中率"
+      >
+        命中率统计积累中（{stat.pendingCount} 条评级待到期）
+      </div>
+    );
+  }
+  return null;
 }
 
 export default function ReportHeader({ data, research_confidence, onExport }: ReportHeaderProps) {

@@ -214,10 +214,17 @@ export function getRatingAccuracy(stockCode: string): {
   stock: RatingAccuracy;
   overall: RatingAccuracy;
 } {
-  const items = readStore().items.filter((it) => it.evaluatedAt);
+  const items = readStore().items;
+  const evaluated = items.filter((it) => it.evaluatedAt);
+  const attachPending = (acc: RatingAccuracy, pending: number): RatingAccuracy =>
+    pending > 0 ? { ...acc, pendingCount: pending } : acc;
+  const stockPending = items.filter((it) => it.stockCode === stockCode && !it.evaluatedAt).length;
   return {
-    stock: summarize(items.filter((it) => it.stockCode === stockCode)),
-    overall: summarize(items),
+    stock: attachPending(
+      summarize(evaluated.filter((it) => it.stockCode === stockCode)),
+      stockPending,
+    ),
+    overall: attachPending(summarize(evaluated), items.filter((it) => !it.evaluatedAt).length),
   };
 }
 
