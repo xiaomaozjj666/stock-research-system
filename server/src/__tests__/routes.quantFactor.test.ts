@@ -447,13 +447,14 @@ describe('POST /api/quant/factor/cross-section — 事件族（分红/回购/解
               {
                 announceDate: '2024-05-06',
                 startDate: null,
-                ratioHighPct: 2,
-                amountHighYuan: 4e8,
-                progress: '实施中',
+                planAmountHighYuan: 4e8,
+                preAnnounceCapYuan: 2e10,
+                planRatioMidPct: null,
+                progress: '004',
               },
             ],
             unlock: [
-              { freeDate: '2024-07-01', ratioOfFloatPct: 8, shares: 1e7, marketCapYuan: 9e8 },
+              { freeDate: '2024-07-01', ratioOfFloatPct: 8, sharesWan: 1e3, marketCapWan: 9e4 },
             ],
           }
         : { dividend: [], buyback: [], unlock: [] },

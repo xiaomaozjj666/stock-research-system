@@ -123,14 +123,30 @@ export function dividendSignalEvents(rows: DividendEventRow[], bars: OHLCVData[]
 }
 
 /**
- * 回购事件：信号 = 计划回购数量占公告前一日总股本比例上限（%，provider 已取正）。
- * 比例缺失时无信号（金额无法跨规模可比，不做半吊子折算）。
+ * 回购事件：信号 = 计划回购规模相对公司体量（%），方向为正（回购传递低估/信心信号）。
+ * 首选「计划回购金额上限 / 公告前一日总市值」——金额口径对所有规划方式（按金额/按
+ * 数量）都可用且跨规模可比；缺失时回落「计划数量中值占总股本比例」（%，东财
+ * ZJSZBL，仅按数量规划的方案有值）。两者皆缺 → 无信号。
  */
 export function buybackSignalEvents(rows: BuybackEventRow[]): StockEvent[] {
-  return rows
-    .filter((r) => r.announceDate !== null && r.ratioHighPct !== null && r.ratioHighPct > 0)
-    .map((r) => ({ eventDate: r.announceDate as string, value: r.ratioHighPct as number }))
-    .sort((a, b) => a.eventDate.localeCompare(b.eventDate));
+  const out: StockEvent[] = [];
+  for (const r of rows) {
+    if (!r.announceDate) continue;
+    if (
+      r.planAmountHighYuan !== null &&
+      r.planAmountHighYuan > 0 &&
+      r.preAnnounceCapYuan !== null &&
+      r.preAnnounceCapYuan > 0
+    ) {
+      const pct = Math.round((r.planAmountHighYuan / r.preAnnounceCapYuan) * 100 * 10000) / 10000;
+      out.push({ eventDate: r.announceDate, value: pct });
+      continue;
+    }
+    if (r.planRatioMidPct !== null && r.planRatioMidPct > 0) {
+      out.push({ eventDate: r.announceDate, value: r.planRatioMidPct });
+    }
+  }
+  return out.sort((a, b) => a.eventDate.localeCompare(b.eventDate));
 }
 
 /**
