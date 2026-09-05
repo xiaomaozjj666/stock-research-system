@@ -166,7 +166,9 @@ export default function WatchlistPage() {
           <ul className="watchlist-items">
             {codes.map((code) => (
               <li key={code} className="watchlist-item">
-                <span className="watchlist-name">{names[code] || code}</span>
+                <span className="watchlist-name">
+                  {!names[code] || names[code] === code ? '' : names[code]}
+                </span>
                 <span className="watchlist-code">{code}</span>
                 <button
                   className="watchlist-remove"

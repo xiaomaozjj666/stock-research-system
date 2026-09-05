@@ -281,6 +281,11 @@ export default function PaperTradingPage() {
         {/* 下单表单 */}
         <section className="card">
           <h3 className="paper-card-title">模拟下单</h3>
+          {!portfolio?.currentDate && (
+            <div className="paper-first-use-hint">
+              首次使用：请先在右侧「日终结算」选定一个交易日完成结算——设定交易日之后才能下单。
+            </div>
+          )}
           <div className="paper-form-row">
             <div className="paper-field">
               <label>代码{orderName && <span className="paper-code-name">{orderName}</span>}</label>
