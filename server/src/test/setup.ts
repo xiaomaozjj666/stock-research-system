@@ -22,6 +22,11 @@ process.env.CHAT_HISTORY_FILE = join(testDataDir, 'chatHistory.json');
 process.env.WATCHLIST_FILE = join(testDataDir, 'watchlist.json');
 process.env.PAPER_TRADING_FILE = join(testDataDir, 'paperTrading.json');
 process.env.DATA_CACHE_DIR = join(testDataDir, 'cache');
+// 基本面（年报/季度财报）缓存默认关闭：路由级集成测试逐用例 mock 其返回值，
+// 缓存会让后序用例读到前序用例的数据（与 beforeEach 的 mockReset 语义冲突）。
+// 需要验证缓存行为的测试在用例内显式把 TTL 设为正数即可。
+process.env.QUANT_FINANCIAL_CACHE_TTL_HOURS = '0';
+process.env.QUANT_QUARTERLY_CACHE_TTL_HOURS = '0';
 
 // 静音结构化日志（路由级测试 import 真实 app 会产生大量 HTTP request / warn 噪音）。
 // 依赖日志输出的测试（env.test.ts / telemetry.test.ts）会在用例内显式 setLogLevel 恢复。

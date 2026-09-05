@@ -237,16 +237,49 @@ describe('POST /api/quant/factor/composite/batch', () => {
 });
 
 describe('POST /api/quant/factor/cross-section — 参数校验', () => {
-  it('codes 少于 2 只 / 多于 30 只 → 400', async () => {
+  it('codes 少于 2 只 / 超过默认上限（300）→ 400', async () => {
     const one = await request(app)
       .post('/api/quant/factor/cross-section')
       .send({ codes: ['600519'] });
     expect(one.status).toBe(400);
-    expect(one.body.error).toContain('2-30');
+    expect(one.body.error).toContain('2-300');
+    // 上限已从 30 放开到 300（QUANT_CROSS_SECTION_MAX_CODES 可配）：超过上限才拒绝
     const many = await request(app)
       .post('/api/quant/factor/cross-section')
-      .send({ codes: Array.from({ length: 31 }, (_, i) => `6005${String(i).padStart(2, '0')}`) });
+      .send({
+        codes: Array.from({ length: 301 }, (_, i) => `6005${String(i % 100).padStart(2, '0')}`),
+      });
     expect(many.status).toBe(400);
+    expect(many.body.error).toContain('2-300');
+  });
+
+  it('31 只（旧上限 30 之外）现已被接受 → 200', async () => {
+    mockedBars.mockImplementation((code: string) => Promise.resolve(genBars(code)));
+    mockedFinancial.mockImplementation((code: string) => Promise.resolve(makeFinancial(code)));
+    mockedQuarterly.mockImplementation((code: string) => Promise.resolve(makeQuarterly(code)));
+
+    const codes = Array.from({ length: 31 }, (_, i) => `6005${String(i % 100).padStart(2, '0')}`);
+    const res = await request(app)
+      .post('/api/quant/factor/cross-section')
+      .send({ codes, horizons: [21] });
+    expect(res.status).toBe(200);
+    expect(res.body.universe.source).toBe('codes');
+    expect(res.body.universe.requested).toBe(31);
+  });
+
+  it('QUANT_CROSS_SECTION_MAX_CODES 覆盖宽度上限', async () => {
+    const orig = process.env.QUANT_CROSS_SECTION_MAX_CODES;
+    process.env.QUANT_CROSS_SECTION_MAX_CODES = '5';
+    try {
+      const six = await request(app)
+        .post('/api/quant/factor/cross-section')
+        .send({ codes: ['600519', '000858', '603288', '600809', '000568', '600702'] });
+      expect(six.status).toBe(400);
+      expect(six.body.error).toContain('2-5');
+    } finally {
+      if (orig === undefined) delete process.env.QUANT_CROSS_SECTION_MAX_CODES;
+      else process.env.QUANT_CROSS_SECTION_MAX_CODES = orig;
+    }
   });
 
   it('codes 含非 6 位代码 → 400 且指明代码', async () => {

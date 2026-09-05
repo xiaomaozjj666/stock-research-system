@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { loadStockMaster } from './services/stockMaster.js';
 import { startOutcomeRefresher, stopOutcomeRefresher } from './services/outcomeTracker.js';
+import { startQuantCachePruner } from './quant/quantCache.js';
 import { configureTracer, expressTracerMiddleware } from './services/telemetry.js';
 import { httpMetricsMiddleware } from './services/metrics.js';
 import logger from './utils/logger.js';
@@ -262,6 +263,8 @@ if (process.env.NODE_ENV !== 'test') {
     );
     // 评级结果定时回填：无人分析时台账也能按期评估，命中率统计不失真
     startOutcomeRefresher();
+    // 量化缓存（K线合并历史 + 基本面）定期清理：此前该目录无清理机制，磁盘无界增长
+    startQuantCachePruner();
   });
 
   // === Graceful Shutdown ===
