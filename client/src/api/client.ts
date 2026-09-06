@@ -121,19 +121,25 @@ export async function runQuantAnalysis(
   }
 }
 
-export async function runBatchCompositeAlpha(payload: {
-  stockCodes: string[];
-  startDate?: string;
-  endDate?: string;
-  horizons?: number[];
-}) {
+export async function runBatchCompositeAlpha(
+  payload: {
+    stockCodes: string[];
+    startDate?: string;
+    endDate?: string;
+    horizons?: number[];
+  },
+  signal?: AbortSignal,
+) {
   try {
     const response = await api.post('/quant/factor/composite/batch', payload, {
       // 批量测算：每只都要拉 K 线 + 基准，放宽超时（上限 20 只）
       timeout: 180000,
+      signal,
     });
     return response.data;
   } catch (error: unknown) {
+    // 用户主动取消：以专用类型上抛，调用方据此静默收尾而非当失败渲染
+    if (axios.isCancel(error)) throw new AnalysisCancelledError('批量测算已取消');
     throw normalizeApiError(error, '批量组合 alpha 测算失败');
   }
 }
@@ -152,23 +158,29 @@ export async function getUniverseBoards() {
 }
 
 /** 截面因子评估：显式 codes 或行业板块（board+topN）自动拉宽截面 */
-export async function runCrossSectionEvaluation(payload: {
-  codes?: string[];
-  board?: string;
-  topN?: number;
-  horizons?: number[];
-  includeFundamental?: boolean;
-  /** 事件族（分红/回购/解禁 + PEAD），默认 true */
-  includeEvents?: boolean;
-}) {
+export async function runCrossSectionEvaluation(
+  payload: {
+    codes?: string[];
+    board?: string;
+    topN?: number;
+    horizons?: number[];
+    includeFundamental?: boolean;
+    /** 事件族（分红/回购/解禁 + PEAD），默认 true */
+    includeEvents?: boolean;
+  },
+  signal?: AbortSignal,
+) {
   try {
     const response = await api.post('/quant/factor/cross-section', payload, {
       // 每只都要拉行情 + 财务 + 季度财报。基本面已走缓存、K 线为增量补尾，
       // 但数百只的全市场大面板冷启动仍可能耗时数分钟，故放宽到 10 分钟。
       timeout: 600000,
+      signal,
     });
     return response.data;
   } catch (error: unknown) {
+    // 用户主动取消：以专用类型上抛，调用方据此静默收尾而非当失败渲染
+    if (axios.isCancel(error)) throw new AnalysisCancelledError('截面评估已取消');
     throw normalizeApiError(error, '截面因子评估失败');
   }
 }
