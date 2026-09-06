@@ -57,6 +57,18 @@ export function readCacheEntry<T>(key: string): { data: T; timestamp: number } |
   }
 }
 
+/**
+ * 删除缓存条目（供测试隔离 / 显式失效）。不存在或 IO 失败静默降级。
+ */
+export function deleteCacheEntry(key: string): void {
+  try {
+    const file = cacheFilePath(key);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  } catch {
+    // 静默降级
+  }
+}
+
 /** 判断某条记录在其 TTL 内是否仍新鲜 */
 export function isCacheFresh(timestamp: number, ttlMs: number): boolean {
   return Number.isFinite(timestamp) && Date.now() - timestamp < ttlMs;

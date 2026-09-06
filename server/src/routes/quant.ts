@@ -36,7 +36,10 @@ import {
 } from '../quant/crossSectionBuilder.js';
 import {
   fetchIndustryBoards,
-  fetchBoardConstituents,
+  fetchIndustryBoardsWithMeta,
+  fetchBoardConstituentsWithMeta,
+  type WithStaleness,
+  type IndustryBoard,
   isValidBoardCode,
 } from '../quant/universeProvider.js';
 // 基本面数据走量化侧缓存（财报按季度更新，无需每次运行重拉）：
@@ -456,8 +459,12 @@ router.post(
 // 板块与成分股为低频数据（provider 内有 TTL 缓存），失败转 502 不编造列表。
 router.get('/api/quant/universe/boards', quantLimiter, circuitBreakerGuard, async (req, res) => {
   try {
-    const boards = await fetchIndustryBoards();
-    res.json({ boards });
+    const meta: WithStaleness<IndustryBoard[]> = await fetchIndustryBoardsWithMeta();
+    res.json({
+      boards: meta.value,
+      // 上游失败但磁盘有历史快照时，如实披露「本次返回的是陈旧快照」
+      ...(meta.stale ? { stale: true, staleAgeMs: meta.staleAgeMs } : {}),
+    });
   } catch (error) {
     logger.error('Universe boards error', { route: '/api/quant/universe/boards', err: error });
     const message = error instanceof Error ? error.message : '行业板块列表获取失败';
@@ -536,8 +543,13 @@ router.post(
             .json({ error: `topN 需为 3-${MAX_CODES} 的整数（当前：${body.topN}）` });
         }
         let constituents;
+        let constituentsStale = false;
+        let constituentsStaleAgeMs: number | undefined;
         try {
-          constituents = await fetchBoardConstituents(board, topNRaw);
+          const cons = await fetchBoardConstituentsWithMeta(board, topNRaw);
+          constituents = cons.value;
+          constituentsStale = cons.stale;
+          constituentsStaleAgeMs = cons.staleAgeMs;
         } catch (error) {
           logger.warn('板块成分股获取失败', { board, err: error });
           const message = error instanceof Error ? error.message : '成分股获取失败';
@@ -558,6 +570,8 @@ router.post(
           ...(boardName ? { boardName } : {}),
           requested: constituents.length,
           constituents: constituents.map(({ code, name }) => ({ code, name })),
+          // 上游抖动但有历史快照时，披露「本次截面用的是陈旧成分股列表」
+          ...(constituentsStale ? { stale: true, staleAgeMs: constituentsStaleAgeMs } : {}),
         };
       } else {
         const rawCodes = Array.isArray(body.codes) ? body.codes.map(String) : [];

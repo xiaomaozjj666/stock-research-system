@@ -1,14 +1,42 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { fetchJson } from '../../utils/http.js';
 import {
   fetchIndustryBoards,
+  fetchIndustryBoardsWithMeta,
   fetchBoardConstituents,
+  fetchBoardConstituentsWithMeta,
   isValidBoardCode,
   clearUniverseCache,
 } from '../universeProvider.js';
+import { sanitizeCacheKey } from '../quantCache.js';
 
 vi.mock('../../utils/http.js', () => ({ fetchJson: vi.fn() }));
 const mockedFetchJson = vi.mocked(fetchJson);
+
+// 磁盘持久化测试隔离到临时目录，避免污染项目真实 quant/cache
+const TEST_CACHE_DIR = path.join(os.tmpdir(), `universe-cache-test-${process.pid}`);
+process.env.DATA_CACHE_DIR = TEST_CACHE_DIR;
+const seededFiles: string[] = [];
+
+/** 手写一个「已过期」的磁盘快照（模拟上游已挂、但磁盘上还有历史数据） */
+function seedStaleDisk(key: string, data: unknown): void {
+  fs.mkdirSync(TEST_CACHE_DIR, { recursive: true });
+  const file = path.join(TEST_CACHE_DIR, `${sanitizeCacheKey(key)}.json`);
+  // timestamp 故意早于 TTL，使 isCacheFresh 判为陈旧
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ data, timestamp: Date.now() - 7 * 24 * 3600 * 1000, ttlMs: 6 * 3600 * 1000 }),
+  );
+  seededFiles.push(file);
+}
+
+afterEach(() => {
+  for (const f of seededFiles) fs.rmSync(f, { force: true });
+  seededFiles.length = 0;
+});
 
 const BOARDS_RESPONSE = {
   data: {
@@ -110,5 +138,55 @@ describe('fetchBoardConstituents', () => {
   it('成分股全被剔除 → 抛错', async () => {
     mockedFetchJson.mockResolvedValue({ data: { diff: [{ f12: 'X1', f14: 'x', f20: 1 }] } });
     await expect(fetchBoardConstituents('BK0475', 5)).rejects.toThrow('无有效 A 股成分股');
+  });
+});
+
+describe('fetchBoardConstituentsWithMeta — 四层回退（2026-09-06 加固）', () => {
+  it('成功拉取 → stale:false 且落盘到 DATA_CACHE_DIR', async () => {
+    mockedFetchJson.mockResolvedValue(CONSTITUENTS_RESPONSE);
+    const meta = await fetchBoardConstituentsWithMeta('BK0475', 10);
+    expect(meta.stale).toBe(false);
+    expect(meta.value.map((s) => s.code)).toEqual(['600519', '000858', '603288', '600809']);
+    const file = path.join(TEST_CACHE_DIR, 'universe_cons_BK0475_10.json');
+    expect(fs.existsSync(file)).toBe(true);
+  });
+
+  it('远端失败但磁盘有陈旧快照 → 回落 stale:true（不 502）', async () => {
+    seedStaleDisk('universe_cons_BK0475_10', [
+      { code: '600519', name: '贵州茅台' },
+      { code: '000858', name: '五粮液' },
+    ]);
+    clearUniverseCache(); // 清内存缓存，但保留手写的磁盘陈旧快照
+    mockedFetchJson.mockRejectedValue(new Error('上游超时'));
+    const meta = await fetchBoardConstituentsWithMeta('BK0475', 10);
+    expect(meta.stale).toBe(true);
+    expect(meta.staleAgeMs).toBeGreaterThan(0);
+    expect(meta.value).toHaveLength(2);
+  });
+
+  it('远端失败且无任何磁盘快照 → 抛错（绝不编造成分股）', async () => {
+    clearUniverseCache();
+    mockedFetchJson.mockRejectedValue(new Error('上游超时'));
+    await expect(fetchBoardConstituentsWithMeta('BK0475', 10)).rejects.toThrow('上游超时');
+  });
+});
+
+describe('fetchIndustryBoardsWithMeta — 四层回退（2026-09-06 加固）', () => {
+  it('成功拉取 → stale:false 且落盘到 DATA_CACHE_DIR', async () => {
+    mockedFetchJson.mockResolvedValue(BOARDS_RESPONSE);
+    const meta = await fetchIndustryBoardsWithMeta();
+    expect(meta.stale).toBe(false);
+    expect(meta.value.map((b) => b.code)).toEqual(['BK0475', 'BK0428']);
+    expect(fs.existsSync(path.join(TEST_CACHE_DIR, 'universe_boards_all.json'))).toBe(true);
+  });
+
+  it('远端失败但磁盘有陈旧快照 → 回落 stale:true', async () => {
+    seedStaleDisk('universe_boards_all', [{ code: 'BK0475', name: '白酒' }]);
+    clearUniverseCache();
+    mockedFetchJson.mockRejectedValue(new Error('上游不可用'));
+    const meta = await fetchIndustryBoardsWithMeta();
+    expect(meta.stale).toBe(true);
+    expect(meta.staleAgeMs).toBeGreaterThan(0);
+    expect(meta.value).toHaveLength(1);
   });
 });

@@ -35,7 +35,12 @@ vi.mock('../quant/dataProvider.js', async (importOriginal) => {
 });
 vi.mock('../quant/universeProvider.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../quant/universeProvider.js')>();
-  return { ...actual, fetchIndustryBoards: vi.fn(), fetchBoardConstituents: vi.fn() };
+  return {
+    ...actual,
+    fetchIndustryBoards: vi.fn(),
+    fetchIndustryBoardsWithMeta: vi.fn(),
+    fetchBoardConstituentsWithMeta: vi.fn(),
+  };
 });
 vi.mock('../services/quarterlyFinancials.js', () => ({
   fetchQuarterlyFinancials: vi.fn(),
@@ -51,7 +56,11 @@ import {
 } from '../quant/compositeService.js';
 import { fetchFinancialData } from '../services/dataFetcher.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
-import { fetchIndustryBoards, fetchBoardConstituents } from '../quant/universeProvider.js';
+import {
+  fetchIndustryBoards,
+  fetchIndustryBoardsWithMeta,
+  fetchBoardConstituentsWithMeta,
+} from '../quant/universeProvider.js';
 import { fetchQuarterlyFinancials } from '../services/quarterlyFinancials.js';
 import type { QuarterlySeries } from '../services/quarterlyFinancials.js';
 import { fetchStockEvents } from '../quant/eventProvider.js';
@@ -61,7 +70,8 @@ const mockedBatch = vi.mocked(computeCompositeAlphaBatch);
 const mockedFinancial = vi.mocked(fetchFinancialData);
 const mockedBars = vi.mocked(fetchOHLCVData);
 const mockedBoards = vi.mocked(fetchIndustryBoards);
-const mockedConstituents = vi.mocked(fetchBoardConstituents);
+const mockedBoardsMeta = vi.mocked(fetchIndustryBoardsWithMeta);
+const mockedConstituentsMeta = vi.mocked(fetchBoardConstituentsWithMeta);
 const mockedQuarterly = vi.mocked(fetchQuarterlyFinancials);
 const mockedEvents = vi.mocked(fetchStockEvents);
 
@@ -71,7 +81,8 @@ beforeEach(() => {
   mockedFinancial.mockReset();
   mockedBars.mockReset();
   mockedBoards.mockReset();
-  mockedConstituents.mockReset();
+  mockedBoardsMeta.mockReset();
+  mockedConstituentsMeta.mockReset();
   mockedQuarterly.mockReset();
   mockedEvents.mockReset();
   // 默认空事件捆绑：不影响既有用例的事件族缺席语义
@@ -322,8 +333,8 @@ describe('POST /api/quant/factor/cross-section — board universe 拉宽', () =>
   );
 
   beforeEach(() => {
-    mockedBoards.mockResolvedValue(BOARDS);
-    mockedConstituents.mockResolvedValue(CONSTITUENTS);
+    mockedBoards.mockResolvedValue(BOARDS); // 板块名 best-effort 查询（fetchIndustryBoards）
+    mockedConstituentsMeta.mockResolvedValue({ value: CONSTITUENTS, stale: false });
     mockedBars.mockImplementation((code: string) => Promise.resolve(genBars(code)));
     mockedFinancial.mockImplementation((code: string) => Promise.resolve(makeFinancial(code)));
     mockedQuarterly.mockImplementation((code: string) => Promise.resolve(makeQuarterly(code)));
@@ -362,7 +373,7 @@ describe('POST /api/quant/factor/cross-section — board universe 拉宽', () =>
   });
 
   it('成分股获取失败 → 502（不编造 universe）', async () => {
-    mockedConstituents.mockRejectedValue(new Error('上游超时'));
+    mockedConstituentsMeta.mockRejectedValue(new Error('上游超时'));
     const res = await request(app)
       .post('/api/quant/factor/cross-section')
       .send({ board: 'BK0475' });
@@ -370,8 +381,27 @@ describe('POST /api/quant/factor/cross-section — board universe 拉宽', () =>
     expect(res.body.detail).toContain('上游超时');
   });
 
+  it('上游失败但有磁盘快照 → 回落陈旧成分股、200 且如实披露 stale', async () => {
+    // 模拟「远端失败，但 provider 内部回落磁盘陈旧快照」的语义：route 收到的
+    // 是 stale=true 的包裹，不应再 502，且 universe.stale 透传给前端
+    mockedConstituentsMeta.mockResolvedValue({
+      value: CONSTITUENTS,
+      stale: true,
+      staleAgeMs: 3 * 60 * 60 * 1000,
+    });
+    const res = await request(app)
+      .post('/api/quant/factor/cross-section')
+      .send({ board: 'BK0475', topN: 6 });
+    expect(res.status).toBe(200);
+    expect(res.body.universe.stale).toBe(true);
+    expect(res.body.universe.staleAgeMs).toBeGreaterThan(0);
+  });
+
   it('有效成分股不足 2 只 → 422', async () => {
-    mockedConstituents.mockResolvedValue([{ code: '600519', name: '独苗', marketCap: 1 }]);
+    mockedConstituentsMeta.mockResolvedValue({
+      value: [{ code: '600519', name: '独苗', marketCap: 1 }],
+      stale: false,
+    });
     const res = await request(app)
       .post('/api/quant/factor/cross-section')
       .send({ board: 'BK0475' });
@@ -408,29 +438,45 @@ describe('POST /api/quant/factor/cross-section — codes 路径与降级披露',
 
 describe('GET /api/quant/universe/boards', () => {
   it('返回板块列表', async () => {
-    mockedBoards.mockResolvedValue([{ code: 'BK0475', name: '白酒' }]);
+    mockedBoardsMeta.mockResolvedValue({
+      value: [{ code: 'BK0475', name: '白酒' }],
+      stale: false,
+    });
     const res = await request(app).get('/api/quant/universe/boards');
     expect(res.status).toBe(200);
     expect(res.body.boards).toEqual([{ code: 'BK0475', name: '白酒' }]);
   });
 
   it('上游失败 → 502', async () => {
-    mockedBoards.mockRejectedValue(new Error('上游不可用'));
+    mockedBoardsMeta.mockRejectedValue(new Error('上游不可用'));
     const res = await request(app).get('/api/quant/universe/boards');
     expect(res.status).toBe(502);
+  });
+
+  it('上游失败但磁盘有快照 → 200 且披露 stale', async () => {
+    mockedBoardsMeta.mockResolvedValue({
+      value: [{ code: 'BK0475', name: '白酒' }],
+      stale: true,
+      staleAgeMs: 90 * 60 * 1000,
+    });
+    const res = await request(app).get('/api/quant/universe/boards');
+    expect(res.status).toBe(200);
+    expect(res.body.stale).toBe(true);
+    expect(res.body.staleAgeMs).toBeGreaterThan(0);
   });
 });
 
 describe('POST /api/quant/factor/cross-section — 事件族（分红/回购/解禁）', () => {
   beforeEach(() => {
     mockedBoards.mockResolvedValue([{ code: 'BK0475', name: '白酒' }]);
-    mockedConstituents.mockResolvedValue(
-      ['600519', '000858', '603288'].map((code, i) => ({
+    mockedConstituentsMeta.mockResolvedValue({
+      value: ['600519', '000858', '603288'].map((code, i) => ({
         code,
         name: `股${i}`,
         marketCap: 100 - i,
       })),
-    );
+      stale: false,
+    });
     mockedBars.mockImplementation((code: string) => Promise.resolve(genBars(code)));
     mockedFinancial.mockImplementation((code: string) => Promise.resolve(makeFinancial(code)));
     mockedQuarterly.mockImplementation((code: string) => Promise.resolve(makeQuarterly(code)));
