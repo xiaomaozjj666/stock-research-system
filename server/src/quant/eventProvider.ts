@@ -90,6 +90,7 @@ async function fetchReportRows(
   filter: string,
   sortColumns: string,
   sortTypes: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>[]> {
   const params = new URLSearchParams({
     reportName,
@@ -103,7 +104,11 @@ async function fetchReportRows(
     client: 'WEB',
   });
   const url = `${DATA_CENTER_URL}?${params.toString()}`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  const response = await fetch(url, {
+    signal: signal
+      ? AbortSignal.any([AbortSignal.timeout(15000), signal])
+      : AbortSignal.timeout(15000),
+  });
   const json = (await response.json()) as {
     success?: boolean;
     message?: string;
@@ -157,13 +162,17 @@ export interface DividendEventRow {
   dividendYieldPct: number | null;
 }
 
-export async function fetchDividendEvents(code: string): Promise<DividendEventRow[]> {
+export async function fetchDividendEvents(
+  code: string,
+  signal?: AbortSignal,
+): Promise<DividendEventRow[]> {
   return withQuantCache(`event_div_${code}`, eventCacheTtlMs(), async () => {
     const rows = await fetchReportRows(
       'RPT_SHAREBONUS_DET',
       `(SECURITY_CODE="${code}")`,
       'PLAN_NOTICE_DATE',
       '-1',
+      signal,
     );
     const parsed = rows.map((row) => {
       const rawYield = numOf(row, ['DIVIDENT_RATIO']); // 已验证：0-1 小数（非百分比）
@@ -214,13 +223,17 @@ export interface BuybackEventRow {
   progress: string | null;
 }
 
-export async function fetchBuybackEvents(code: string): Promise<BuybackEventRow[]> {
+export async function fetchBuybackEvents(
+  code: string,
+  signal?: AbortSignal,
+): Promise<BuybackEventRow[]> {
   return withQuantCache(`event_buyback_${code}`, eventCacheTtlMs(), async () => {
     const rows = await fetchReportRows(
       'RPTA_WEB_GETHGLIST_NEW',
       `(DIM_SCODE="${code}")`,
       'UPD,DIM_DATE,DIM_SCODE',
       '-1,-1,-1',
+      signal,
     );
     const parsed = rows.map((row) => ({
       announceDate: normDate(row.DIM_DATE) ?? normDate(row.NOTICEDATE) ?? normDate(row.UPDATEDATE),
@@ -254,13 +267,17 @@ export interface UnlockEventRow {
   marketCapWan: number | null;
 }
 
-export async function fetchUnlockEvents(code: string): Promise<UnlockEventRow[]> {
+export async function fetchUnlockEvents(
+  code: string,
+  signal?: AbortSignal,
+): Promise<UnlockEventRow[]> {
   return withQuantCache(`event_unlock_${code}`, eventCacheTtlMs(), async () => {
     const rows = await fetchReportRows(
       'RPT_LIFT_STAGE',
       `(SECURITY_CODE="${code}")`,
       'FREE_DATE',
       '1',
+      signal,
     );
     const parsed = rows.map((row) => {
       const rawRatio = numOf(row, ['FREE_RATIO']);
@@ -295,17 +312,20 @@ export interface StockEventBundle {
  * 拉取单只股票的全部三类事件。任一类失败只降级该类为 []（不拖垮其余两类、
  * 不抛错）——事件族样本是否足够由截面评估如实披露，缺一类只是少一个因子。
  */
-export async function fetchStockEvents(code: string): Promise<StockEventBundle> {
+export async function fetchStockEvents(
+  code: string,
+  signal?: AbortSignal,
+): Promise<StockEventBundle> {
   const [dividend, buyback, unlock] = await Promise.all([
-    fetchDividendEvents(code).catch((err) => {
+    fetchDividendEvents(code, signal).catch((err) => {
       logger.warn('分红事件拉取失败，该股降级为无分红事件', { code, err });
       return [] as DividendEventRow[];
     }),
-    fetchBuybackEvents(code).catch((err) => {
+    fetchBuybackEvents(code, signal).catch((err) => {
       logger.warn('回购事件拉取失败，该股降级为无回购事件', { code, err });
       return [] as BuybackEventRow[];
     }),
-    fetchUnlockEvents(code).catch((err) => {
+    fetchUnlockEvents(code, signal).catch((err) => {
       logger.warn('解禁事件拉取失败，该股降级为无解禁事件', { code, err });
       return [] as UnlockEventRow[];
     }),

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
 import {
+  AnalysisCancelledError,
   chatWithAgent,
   chatWithAgentStream,
   type ChatAgentResponse,
@@ -59,6 +60,13 @@ export default function ChatPanel() {
   // 卸载时取消在途流式连接
   useEffect(() => () => streamCancelRef.current?.(), []);
 
+  /** 停止生成：流式路径走 SSE cancel；非流式回退路径走 AbortSignal */
+  const abortRef = useRef<AbortController | null>(null);
+  function handleStop() {
+    streamCancelRef.current?.();
+    abortRef.current?.abort();
+  }
+
   async function copyMessage(content: string, idx: number) {
     try {
       await navigator.clipboard.writeText(content);
@@ -78,6 +86,10 @@ export default function ChatPanel() {
     setInput('');
     setLoading(true);
     setStage('连接中…');
+
+    /** 追加一条助手侧提示（取消/失败收尾），不改写已有消息 */
+    const appendNote = (msg: string) =>
+      setMessages((prev) => [...prev, { role: 'assistant', content: msg }]);
 
     // 优先走 SSE 流式接口：逐阶段推送真实执行进度（检索→工具→辩论→校验）
     let streamSettled = false;
@@ -106,17 +118,33 @@ export default function ChatPanel() {
         streamCancelRef.current = () => {
           cancelled = true;
           handle.cancel();
+          // 此前 cancel 后 Promise 永不 settle，loading 会永久卡住——必须显式收尾
+          reject(new AnalysisCancelledError('已取消本次回答'));
         };
       });
-    } catch {
-      // 流式失败（连接中断/服务不可达）→ 回退非流式接口（携带完整历史，更稳健）
-      if (!streamSettled) {
+    } catch (e) {
+      if (e instanceof AnalysisCancelledError) {
+        // 用户主动取消：不回退非流式（回退会违背取消意图），直接收尾
+        appendNote('已取消本次回答');
+      } else if (!streamSettled) {
+        // 流式失败（连接中断/服务不可达）→ 回退非流式接口（携带完整历史，更稳健）
+        const controller = new AbortController();
+        abortRef.current = controller;
         try {
-          const res = await chatWithAgent({ message: content, history: messages, sessionId });
+          const res = await chatWithAgent(
+            { message: content, history: messages, sessionId },
+            controller.signal,
+          );
           setMessages([...next, { role: 'assistant', content: res.answer, meta: res }]);
         } catch (err) {
-          const msg = err instanceof Error ? err.message : '对话请求失败';
-          setMessages([...next, { role: 'assistant', content: `⚠️ ${msg}` }]);
+          if (err instanceof AnalysisCancelledError) {
+            appendNote('已取消本次回答');
+          } else {
+            const msg = err instanceof Error ? err.message : '对话请求失败';
+            appendNote(`⚠️ ${msg}`);
+          }
+        } finally {
+          abortRef.current = null;
         }
       }
     } finally {
@@ -340,6 +368,16 @@ export default function ChatPanel() {
         >
           {loading ? '分析中…' : '发送'}
         </button>
+        {loading && (
+          <button
+            type="button"
+            className="btn-ghost chat-stop"
+            onClick={handleStop}
+            aria-label="停止生成"
+          >
+            停止
+          </button>
+        )}
       </div>
     </div>
   );

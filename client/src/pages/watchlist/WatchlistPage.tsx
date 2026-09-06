@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
+  AnalysisCancelledError,
   getWatchlist,
   addToWatchlist,
   removeFromWatchlist,
@@ -35,6 +36,15 @@ export default function WatchlistPage() {
   const [report, setReport] = useState<WatchlistNewsBacktestReport | null>(null);
   const [alerts, setAlerts] = useState<WatchlistAlert[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 在途批量回测/监控请求的中止器：两者都是分钟级，用户应能中途撤回 */
+  const abortRef = useRef<AbortController | null>(null);
+
+  // 卸载时中止在途请求，避免向已卸载组件 setState
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const loadList = useCallback(async () => {
     setLoadingList(true);
@@ -82,15 +92,22 @@ export default function WatchlistPage() {
     }
     setRunning(true);
     setError(null);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      const res = await runWatchlistNewsBacktest(codes);
+      const res = await runWatchlistNewsBacktest(codes, controller.signal);
       setReport(res);
     } catch (err) {
-      setError(normalizeApiError(err, '批量回测失败').message);
+      if (err instanceof AnalysisCancelledError) {
+        showToast('已取消本次回测');
+      } else {
+        setError(normalizeApiError(err, '批量回测失败').message);
+      }
     } finally {
+      abortRef.current = null;
       setRunning(false);
     }
-  }, [codes]);
+  }, [codes, showToast]);
 
   /** 监控异动：重跑批量新闻回测并检出预警（复用后端 detectAlerts） */
   const handleMonitor = useCallback(async () => {
@@ -100,16 +117,23 @@ export default function WatchlistPage() {
     }
     setMonitoring(true);
     setError(null);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      const res = await monitorWatchlist();
+      const res = await monitorWatchlist(controller.signal);
       setAlerts(res.alerts);
       showToast(
         res.alerts.length > 0 ? `发现 ${res.alerts.length} 条异动预警` : '本轮无异动预警',
         res.alerts.length > 0 ? 'info' : 'success',
       );
     } catch (err) {
-      setError(normalizeApiError(err, '自选股监控失败').message);
+      if (err instanceof AnalysisCancelledError) {
+        showToast('已取消本次监控');
+      } else {
+        setError(normalizeApiError(err, '自选股监控失败').message);
+      }
     } finally {
+      abortRef.current = null;
       setMonitoring(false);
     }
   }, [codes, showToast]);
@@ -146,6 +170,11 @@ export default function WatchlistPage() {
         >
           {monitoring ? '监控中…' : '监控异动'}
         </button>
+        {(running || monitoring) && (
+          <button className="btn-ghost watchlist-cancel" onClick={handleCancel}>
+            {running ? '取消回测' : '取消监控'}
+          </button>
+        )}
       </div>
 
       {error && (

@@ -284,7 +284,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
               </select>
               <span className="batch-hint">
                 {boardsError
-                  ? `板块列表加载失败：${boardsError}，可直接使用板块代码`
+                  ? `板块列表加载失败：${boardsError}，可切换「手输代码」模式评估个股组合`
                   : `${boards.length} 个行业板块 · 成分股取总市值前 N 只`}
               </span>
             </label>

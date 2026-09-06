@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { compareStocks } from '../api/client';
+import { useEffect, useRef, useState } from 'react';
+import { AnalysisCancelledError, compareStocks } from '../api/client';
 import StockSearchInput from '../components/StockSearchInput';
 import { ErrorBoundary } from './ErrorBoundary';
 
@@ -190,6 +190,9 @@ export function ComparisonView() {
   const [stockNames, setStockNames] = useState<Record<string, string>>({});
   const [results, setResults] = useState<StockData[] | null>(null);
   const [loading, setLoading] = useState(false);
+  /** 在途对比请求的中止器：三只股的完整分析约 1-3 分钟，用户应能中途撤回 */
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => abortRef.current?.abort(), []);
   const [error, setError] = useState('');
   /** 搜索框所在行：空占位点击时直接聚焦输入框 */
   const searchRowRef = useRef<HTMLDivElement>(null);
@@ -218,13 +221,24 @@ export function ComparisonView() {
     if (stocks.length < 2) return;
     setLoading(true);
     setError('');
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      const data = await compareStocks(stocks);
+      const data = await compareStocks(stocks, controller.signal);
       setResults(data.stocks);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '对比分析失败');
+      // 取消属用户主动行为：静默收尾（spinner 消失即反馈），不当失败渲染
+      if (!(e instanceof AnalysisCancelledError)) {
+        setError(e instanceof Error ? e.message : '对比分析失败');
+      }
+    } finally {
+      abortRef.current = null;
+      setLoading(false);
     }
-    setLoading(false);
+  };
+
+  const cancelCompare = () => {
+    abortRef.current?.abort();
   };
 
   const reset = () => {
@@ -365,6 +379,11 @@ export function ComparisonView() {
           `开始对比分析（${stocks.length}/3）`
         )}
       </button>
+      {loading && (
+        <button type="button" className="btn-ghost" onClick={cancelCompare}>
+          取消对比
+        </button>
+      )}
     </div>
   );
 }

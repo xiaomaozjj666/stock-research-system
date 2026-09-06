@@ -185,17 +185,19 @@ export async function runCrossSectionEvaluation(
   }
 }
 
-export async function compareStocks(codes: string[]) {
+export async function compareStocks(codes: string[], signal?: AbortSignal) {
   try {
     const response = await api.post(
       '/compare',
       { stockCodes: codes },
       {
         timeout: 180000, // 3 min timeout for multi-stock analysis
+        signal,
       },
     );
     return response.data;
   } catch (error: unknown) {
+    if (axios.isCancel(error)) throw new AnalysisCancelledError('对比分析已取消');
     throw normalizeApiError(error, '对比分析失败');
   }
 }
@@ -231,15 +233,17 @@ export async function removeFromWatchlist(code: string): Promise<{ codes: string
 /** 对自选股（或指定 codes）批量运行"含最新消息回测" */
 export async function runWatchlistNewsBacktest(
   codes?: string[],
+  signal?: AbortSignal,
 ): Promise<import('../types').WatchlistNewsBacktestReport> {
   try {
     const response = await api.post(
       '/watchlist/news-backtest',
       { codes: codes ?? [] },
-      { timeout: 180000 },
+      { timeout: 180000, signal },
     );
     return response.data;
   } catch (error: unknown) {
+    if (axios.isCancel(error)) throw new AnalysisCancelledError('批量回测已取消');
     throw normalizeApiError(error, '自选股批量回测失败');
   }
 }
@@ -305,16 +309,20 @@ export interface ChatTurn {
   content: string;
 }
 
-export async function chatWithAgent(payload: {
-  message: string;
-  history?: ChatTurn[];
-  stockCode?: string;
-  sessionId?: string;
-}): Promise<ChatAgentResponse> {
+export async function chatWithAgent(
+  payload: {
+    message: string;
+    history?: ChatTurn[];
+    stockCode?: string;
+    sessionId?: string;
+  },
+  signal?: AbortSignal,
+): Promise<ChatAgentResponse> {
   try {
-    const response = await api.post('/chat', payload, { timeout: 120000 });
+    const response = await api.post('/chat', payload, { timeout: 120000, signal });
     return response.data;
   } catch (error: unknown) {
+    if (axios.isCancel(error)) throw new AnalysisCancelledError('已取消本次回答');
     throw normalizeApiError(error, '对话请求失败');
   }
 }
@@ -769,11 +777,12 @@ export async function deleteHistoryItem(id: string): Promise<void> {
 }
 
 // === 自选股异动监控：重跑批量新闻回测并检出预警 ===
-export async function monitorWatchlist(): Promise<WatchlistMonitorResult> {
+export async function monitorWatchlist(signal?: AbortSignal): Promise<WatchlistMonitorResult> {
   try {
-    const response = await api.post('/watchlist/monitor', {}, { timeout: 120000 });
+    const response = await api.post('/watchlist/monitor', {}, { timeout: 120000, signal });
     return response.data;
   } catch (error: unknown) {
+    if (axios.isCancel(error)) throw new AnalysisCancelledError('监控已取消');
     throw normalizeApiError(error, '自选股监控失败');
   }
 }
