@@ -37,7 +37,6 @@ vi.mock('../quant/universeProvider.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../quant/universeProvider.js')>();
   return {
     ...actual,
-    fetchIndustryBoards: vi.fn(),
     fetchIndustryBoardsWithMeta: vi.fn(),
     fetchBoardConstituentsWithMeta: vi.fn(),
   };
@@ -57,7 +56,6 @@ import {
 import { fetchFinancialData } from '../services/dataFetcher.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
 import {
-  fetchIndustryBoards,
   fetchIndustryBoardsWithMeta,
   fetchBoardConstituentsWithMeta,
 } from '../quant/universeProvider.js';
@@ -69,7 +67,6 @@ const mockedComposite = vi.mocked(computeCompositeAlphaForStrategy);
 const mockedBatch = vi.mocked(computeCompositeAlphaBatch);
 const mockedFinancial = vi.mocked(fetchFinancialData);
 const mockedBars = vi.mocked(fetchOHLCVData);
-const mockedBoards = vi.mocked(fetchIndustryBoards);
 const mockedBoardsMeta = vi.mocked(fetchIndustryBoardsWithMeta);
 const mockedConstituentsMeta = vi.mocked(fetchBoardConstituentsWithMeta);
 const mockedQuarterly = vi.mocked(fetchQuarterlyFinancials);
@@ -80,7 +77,6 @@ beforeEach(() => {
   vi.mocked(computeCompositeAlphaBatch).mockReset();
   mockedFinancial.mockReset();
   mockedBars.mockReset();
-  mockedBoards.mockReset();
   mockedBoardsMeta.mockReset();
   mockedConstituentsMeta.mockReset();
   mockedQuarterly.mockReset();
@@ -324,16 +320,11 @@ describe('POST /api/quant/factor/cross-section — 参数校验', () => {
 });
 
 describe('POST /api/quant/factor/cross-section — board universe 拉宽', () => {
-  const BOARDS = [
-    { code: 'BK0475', name: '白酒' },
-    { code: 'BK0428', name: '电力行业' },
-  ];
   const CONSTITUENTS = ['600519', '000858', '603288', '600809', '000568', '600702'].map(
     (code, i) => ({ code, name: `股票${i}`, marketCap: 1000 - i }),
   );
 
   beforeEach(() => {
-    mockedBoards.mockResolvedValue(BOARDS); // 板块名 best-effort 查询（fetchIndustryBoards）
     mockedConstituentsMeta.mockResolvedValue({ value: CONSTITUENTS, stale: false });
     mockedBars.mockImplementation((code: string) => Promise.resolve(genBars(code)));
     mockedFinancial.mockImplementation((code: string) => Promise.resolve(makeFinancial(code)));
@@ -347,7 +338,6 @@ describe('POST /api/quant/factor/cross-section — board universe 拉宽', () =>
     expect(res.status).toBe(200);
     expect(res.body.universe.source).toBe('board');
     expect(res.body.universe.board).toBe('BK0475'); // 大小写归一
-    expect(res.body.universe.boardName).toBe('白酒');
     expect(res.body.universe.constituents).toHaveLength(6);
     expect(res.body.stocksIncluded).toHaveLength(6);
     expect(res.body.stocksSkipped).toEqual([]);
@@ -447,6 +437,26 @@ describe('GET /api/quant/universe/boards', () => {
     expect(res.body.boards).toEqual([{ code: 'BK0475', name: '白酒' }]);
   });
 
+  it('过滤旧体系子级板块（名称后缀 Ⅱ/Ⅲ），只保留现行一级板块', async () => {
+    mockedBoardsMeta.mockResolvedValue({
+      value: [
+        { code: 'BK0428', name: '电力行业' },
+        { code: 'BK0475', name: '白酒' },
+        { code: 'BK0480', name: '银行' },
+        { code: 'BK0481', name: '银行Ⅱ' },
+        { code: 'BK0482', name: '国有大型银行Ⅲ' },
+      ],
+      stale: false,
+    });
+    const res = await request(app).get('/api/quant/universe/boards');
+    expect(res.status).toBe(200);
+    expect(res.body.boards.map((b: { name: string }) => b.name)).toEqual([
+      '电力行业',
+      '白酒',
+      '银行',
+    ]);
+  });
+
   it('上游失败 → 502', async () => {
     mockedBoardsMeta.mockRejectedValue(new Error('上游不可用'));
     const res = await request(app).get('/api/quant/universe/boards');
@@ -468,7 +478,6 @@ describe('GET /api/quant/universe/boards', () => {
 
 describe('POST /api/quant/factor/cross-section — 事件族（分红/回购/解禁）', () => {
   beforeEach(() => {
-    mockedBoards.mockResolvedValue([{ code: 'BK0475', name: '白酒' }]);
     mockedConstituentsMeta.mockResolvedValue({
       value: ['600519', '000858', '603288'].map((code, i) => ({
         code,

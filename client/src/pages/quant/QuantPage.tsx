@@ -9,7 +9,7 @@ import FactorPanel from './FactorPanel';
 import CompositeBatchPanel from './CompositeBatchPanel';
 import CrossSectionPanel from './CrossSectionPanel';
 import NewsSentimentCard from '../../components/NewsSentimentCard';
-import { runQuantAnalysis } from '../../api/client';
+import { AnalysisCancelledError, runQuantAnalysis } from '../../api/client';
 import { useToast } from '../../components/Toast';
 import type { StrategyConfig, QuantResearchReport, NewsItem } from './types';
 
@@ -126,6 +126,8 @@ export default function QuantPage() {
   const [elapsedSec, setElapsedSec] = useState(0);
   const startAtRef = useRef<number>(0);
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** 在途研究请求的中止器：单股研究是一次 10-40s 的 POST，用户应能中途撤回 */
+  const quantAbortRef = useRef<AbortController | null>(null);
 
   const stopTicker = useCallback(() => {
     if (tickerRef.current) {
@@ -134,7 +136,18 @@ export default function QuantPage() {
     }
   }, []);
 
-  useEffect(() => stopTicker, [stopTicker]);
+  // 卸载时停表并中止在途请求，避免向已卸载组件 setState
+  useEffect(
+    () => () => {
+      stopTicker();
+      quantAbortRef.current?.abort();
+    },
+    [stopTicker],
+  );
+
+  const handleCancel = useCallback(() => {
+    quantAbortRef.current?.abort();
+  }, []);
 
   const handleStart = useCallback(
     async (config: StrategyConfig) => {
@@ -162,16 +175,27 @@ export default function QuantPage() {
               .filter((n) => n.title.length > 0)
           : undefined;
 
-        const result = await runQuantAnalysis({
-          strategy: config,
-          useNews: useNews || !newsItems,
-          newsItems,
-        });
+        const controller = new AbortController();
+        quantAbortRef.current = controller;
+        const result = await runQuantAnalysis(
+          {
+            strategy: config,
+            useNews: useNews || !newsItems,
+            newsItems,
+          },
+          controller.signal,
+        );
         setReport(result);
         showToast(`研究完成，总耗时 ${((Date.now() - startAtRef.current) / 1000).toFixed(0)} 秒`);
-      } catch {
-        setError('量化研究失败，请检查后端服务是否启动');
+      } catch (e) {
+        if (e instanceof AnalysisCancelledError) {
+          showToast('已取消本次研究');
+        } else {
+          // 透出具体原因（超时 / 网络 / 后端 5xx），而非一句通用失败
+          setError(e instanceof Error ? e.message : '量化研究失败，请检查后端服务是否启动');
+        }
       } finally {
+        quantAbortRef.current = null;
         stopTicker();
         setLoading(false);
       }
@@ -267,6 +291,9 @@ export default function QuantPage() {
               <p className="quant-elapsed quant-elapsed-time">
                 已耗时 <b>{elapsedSec}</b> 秒（通常 10–40 秒，叠加新闻抓取时更长）
               </p>
+              <button type="button" className="btn-ghost" onClick={handleCancel}>
+                取消研究
+              </button>
             </div>
           )}
 

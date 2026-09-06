@@ -97,21 +97,26 @@ export async function searchStocks(keyword: string, signal?: AbortSignal) {
   }
 }
 
-export async function runQuantAnalysis(payload: {
-  strategy: unknown;
-  useNews?: boolean;
-  newsItems?: {
-    id: string;
-    title: string;
-    summary?: string;
-    publishedAt: string;
-    polarity?: number;
-  }[];
-}) {
+export async function runQuantAnalysis(
+  payload: {
+    strategy: unknown;
+    useNews?: boolean;
+    newsItems?: {
+      id: string;
+      title: string;
+      summary?: string;
+      publishedAt: string;
+      polarity?: number;
+    }[];
+  },
+  signal?: AbortSignal,
+) {
   try {
-    const response = await api.post('/quant/analyze', payload);
+    const response = await api.post('/quant/analyze', payload, { signal });
     return response.data;
   } catch (error: unknown) {
+    // 用户主动取消：以专用类型上抛，调用方据此静默收尾而非当失败渲染
+    if (axios.isCancel(error)) throw new AnalysisCancelledError('研究已取消');
     throw normalizeApiError(error, '量化分析失败');
   }
 }

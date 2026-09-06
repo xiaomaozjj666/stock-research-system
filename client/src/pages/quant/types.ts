@@ -332,7 +332,6 @@ export interface CrossSectionResult {
   universe: {
     source: 'codes' | 'board';
     board?: string;
-    boardName?: string;
     requested: number;
     constituents?: { code: string; name: string }[];
   };

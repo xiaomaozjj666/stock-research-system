@@ -35,7 +35,6 @@ import {
   type StockPanelInput,
 } from '../quant/crossSectionBuilder.js';
 import {
-  fetchIndustryBoards,
   fetchIndustryBoardsWithMeta,
   fetchBoardConstituentsWithMeta,
   type WithStaleness,
@@ -460,8 +459,12 @@ router.post(
 router.get('/api/quant/universe/boards', quantLimiter, circuitBreakerGuard, async (req, res) => {
   try {
     const meta: WithStaleness<IndustryBoard[]> = await fetchIndustryBoardsWithMeta();
+    // 东财新旧两套行业体系并存（银行 / 银行Ⅱ / 国有大型银行Ⅲ）：名称后缀 Ⅱ/Ⅲ
+    // 是旧体系子级，下拉只保留现行一级板块（约 60 个）。纯降噪：板块代码本身
+    // 仍全部合法、可直接请求，只是不再在下拉里铺开旧体系层级。
+    const boards = meta.value.filter((b) => !/[ⅡⅢ]$/.test(b.name));
     res.json({
-      boards: meta.value,
+      boards,
       // 上游失败但磁盘有历史快照时，如实披露「本次返回的是陈旧快照」
       ...(meta.stale ? { stale: true, staleAgeMs: meta.staleAgeMs } : {}),
     });
@@ -561,13 +564,11 @@ router.post(
             .json({ error: `板块 ${board} 有效成分股仅 ${constituents.length} 只，无法构成截面` });
         }
         codes = constituents.map((c) => c.code);
-        const boardName = await fetchIndustryBoards()
-          .then((bs) => bs.find((b) => b.code === board)?.name)
-          .catch(() => undefined);
+        // 板块中文名由前端从其已加载的板块列表解析（下拉是板块唯一入口，必有名称），
+        // 服务端不再为取一次名字多发一次板块列表请求
         universe = {
           source: 'board',
           board,
-          ...(boardName ? { boardName } : {}),
           requested: constituents.length,
           constituents: constituents.map(({ code, name }) => ({ code, name })),
           // 上游抖动但有历史快照时，披露「本次截面用的是陈旧成分股列表」
