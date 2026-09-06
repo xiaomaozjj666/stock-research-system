@@ -10,6 +10,11 @@ import type {
 /** 与服务端 MAX_CODES 上限一致（QUANT_CROSS_SECTION_MAX_CODES，默认 300） */
 const MAX_CODES = 300;
 
+/** 默认首跑板块按名称优先级挑选：白酒/银行成分股同质性强、体量适中；
+ * 东财板块列表按总市值降序，第一项「电子」大而杂，不适合做首次运行默认。
+ * 按名称而非 BK 码匹配——板块代码会随数据源体系漂移（BK0475 曾是白酒、后为银行） */
+const PREFERRED_DEFAULT_BOARDS = ['白酒', '银行'];
+
 /** 因子中文显示名：量价（与 FactorPanel 一致）+ 基本面/事件 */
 const FACTOR_LABELS: Record<string, string> = {
   volatility_1m: '1月波动率',
@@ -120,8 +125,14 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
       .then((d) => {
         if (!alive) return;
         setBoards(d.boards ?? []);
-        // 未选择过板块时默认取第一个，保证「加载完即可运行」
-        setBoard((prev) => prev || d.boards?.[0]?.code || '');
+        // 未选择过板块时按名称优先级取默认，保证「加载完即可运行」
+        setBoard(
+          (prev) =>
+            prev ||
+            d.boards?.find((b) => PREFERRED_DEFAULT_BOARDS.includes(b.name))?.code ||
+            d.boards?.[0]?.code ||
+            '',
+        );
       })
       .catch((e: Error) => {
         if (alive) setBoardsError(e.message);
@@ -180,6 +191,14 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
   }, [source, board, topN, codesText, codes, horizonsText, includeFundamental, includeEvents]);
 
   const canRun = source === 'board' ? !!board : codes.length >= 2;
+
+  // 板块中文名从本面板已加载的板块列表解析（下拉是板块唯一入口，必有名称）；
+  // 服务端不再为取名字多发一次板块列表请求
+  const boardLabel = useMemo(() => {
+    if (!result || result.universe.source !== 'board') return '';
+    const name = boards.find((b) => b.code === result.universe.board)?.name;
+    return name ? `${name}（${result.universe.board}）` : `${result.universe.board}`;
+  }, [result, boards]);
 
   return (
     <div className="card quant-panel cs-panel">
@@ -316,11 +335,8 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
       {result && !loading && (
         <>
           <p className="batch-summary">
-            {result.universe.source === 'board'
-              ? `板块 ${result.universe.boardName ?? ''}（${result.universe.board}）`
-              : '手输代码'}{' '}
-            · 请求 {result.universe.requested} 只 · 入组 <b>{result.stocksIncluded.length}</b> ·
-            跳过{' '}
+            {result.universe.source === 'board' ? `板块 ${boardLabel}` : '手输代码'} · 请求{' '}
+            {result.universe.requested} 只 · 入组 <b>{result.stocksIncluded.length}</b> · 跳过{' '}
             <b className={result.stocksSkipped.length > 0 ? 'negative' : ''}>
               {result.stocksSkipped.length}
             </b>{' '}
