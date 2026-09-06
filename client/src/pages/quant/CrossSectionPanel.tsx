@@ -1,5 +1,10 @@
 import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
-import { getUniverseBoards, runCrossSectionEvaluation } from '../../api/client';
+import {
+  AnalysisCancelledError,
+  getUniverseBoards,
+  runCrossSectionEvaluation,
+} from '../../api/client';
+import { useToast } from '../../components/Toast';
 import type {
   CrossSectionResult,
   CrossSectionFactor,
@@ -93,6 +98,7 @@ function IcCell({ p }: { p: CrossSectionPeriodReport }) {
 }
 
 export default function CrossSectionPanel({ active = true }: { active?: boolean }) {
+  const { showToast } = useToast();
   const [source, setSource] = useState<'board' | 'codes'>('board');
   const [boards, setBoards] = useState<IndustryBoard[]>([]);
   const [boardsError, setBoardsError] = useState<string | null>(null);
@@ -112,6 +118,15 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
   const [elapsedSec, setElapsedSec] = useState(0);
   const startAtRef = useRef(0);
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** 在途评估请求的中止器：数百只大面板冷启动可达数分钟，用户应能中途撤回 */
+  const abortRef = useRef<AbortController | null>(null);
+
+  // 卸载时中止在途请求，避免向已卸载组件 setState
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   // 面板常驻挂载（模式切换不丢结果），板块列表延迟到首次激活才拉取
   const [hasBeenActive, setHasBeenActive] = useState(active);
@@ -170,6 +185,8 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
     setLoading(true);
     setError(null);
     setResult(null);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       const horizons = parseHorizons(horizonsText);
       const data = await runCrossSectionEvaluation(
@@ -181,14 +198,30 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
               includeFundamental,
               includeEvents,
             },
+        controller.signal,
       );
       setResult(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '截面因子评估失败');
+      if (e instanceof AnalysisCancelledError) {
+        showToast('已取消本次评估');
+      } else {
+        setError(e instanceof Error ? e.message : '截面因子评估失败');
+      }
     } finally {
+      abortRef.current = null;
       setLoading(false);
     }
-  }, [source, board, topN, codesText, codes, horizonsText, includeFundamental, includeEvents]);
+  }, [
+    source,
+    board,
+    topN,
+    codesText,
+    codes,
+    horizonsText,
+    includeFundamental,
+    includeEvents,
+    showToast,
+  ]);
 
   const canRun = source === 'board' ? !!board : codes.length >= 2;
 
@@ -330,6 +363,11 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
         <p className="batch-loading">
           正在逐只拉取行情与财务数据并装配截面面板…（已耗时 {elapsedSec} 秒）
         </p>
+      )}
+      {loading && (
+        <button type="button" className="btn-ghost" onClick={handleCancel}>
+          取消评估
+        </button>
       )}
 
       {result && !loading && (

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { runBatchCompositeAlpha, searchStocks } from '../../api/client';
+import { AnalysisCancelledError, runBatchCompositeAlpha, searchStocks } from '../../api/client';
+import { useToast } from '../../components/Toast';
 import type {
   CompositeAlphaBatchResult,
   CompositeAlphaBatchItem,
@@ -109,6 +110,7 @@ function exportCsv(result: CompositeAlphaBatchResult) {
 }
 
 export default function CompositeBatchPanel() {
+  const { showToast } = useToast();
   // 预填可运行的示例代码：占位符示例曾被误认为已填内容，点击即报「未输入」
   const [codesText, setCodesText] = useState(EXAMPLE_CODES);
   const [startDate, setStartDate] = useState('');
@@ -122,6 +124,15 @@ export default function CompositeBatchPanel() {
   /** 已耗时（秒）：名称解析 + 逐只拉取可能要一两分钟，真实计时比纯文案更可等待 */
   const [elapsedSec, setElapsedSec] = useState(0);
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** 在途测算请求的中止器：逐只拉取分钟级，用户应能中途撤回 */
+  const abortRef = useRef<AbortController | null>(null);
+
+  // 卸载时中止在途请求，避免向已卸载组件 setState
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     if (!loading) {
@@ -160,6 +171,8 @@ export default function CompositeBatchPanel() {
     setError(null);
     setNotice(null);
     setResult(null);
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     // 名称 → 代码解析：唯一命中直用；零/多匹配列入提示，不阻断其余标的
     const resolved: string[] = [];
@@ -199,20 +212,28 @@ export default function CompositeBatchPanel() {
       setNotice(`已跳过无法识别的标的：${failed.join('；')}`);
     }
     try {
-      const data = await runBatchCompositeAlpha({
-        stockCodes: list,
-        // 留空则由服务端取默认区间（近两年 / 今天）
-        ...(startDate ? { startDate } : {}),
-        ...(endDate ? { endDate } : {}),
-        horizons: parseHorizons(horizonsText),
-      });
+      const data = await runBatchCompositeAlpha(
+        {
+          stockCodes: list,
+          // 留空则由服务端取默认区间（近两年 / 今天）
+          ...(startDate ? { startDate } : {}),
+          ...(endDate ? { endDate } : {}),
+          horizons: parseHorizons(horizonsText),
+        },
+        controller.signal,
+      );
       setResult(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '批量测算失败');
+      if (e instanceof AnalysisCancelledError) {
+        showToast('已取消本次测算');
+      } else {
+        setError(e instanceof Error ? e.message : '批量测算失败');
+      }
     } finally {
+      abortRef.current = null;
       setLoading(false);
     }
-  }, [codesText, startDate, endDate, horizonsText]);
+  }, [codesText, startDate, endDate, horizonsText, showToast]);
 
   /** 排序：默认按综合 α 降序（看多在前），关闭则保持服务端返回的输入顺序 */
   const items: CompositeAlphaBatchItem[] = useMemo(() => {
@@ -320,6 +341,11 @@ export default function CompositeBatchPanel() {
         <p className="batch-loading">
           正在逐只拉取 K 线与市场基准…（已耗时 {elapsedSec} 秒，批量越多久越久）
         </p>
+      )}
+      {loading && (
+        <button type="button" className="btn-ghost" onClick={handleCancel}>
+          取消测算
+        </button>
       )}
 
       {result && !loading && (
