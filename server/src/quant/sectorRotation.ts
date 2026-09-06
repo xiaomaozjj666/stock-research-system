@@ -260,7 +260,7 @@ export function calculateSectorRotation(sectors: SectorData[]): SectorRotationRe
       trend: round2(trend[i]),
       crowding: round2(crowding[i]),
       compositeScore: round2(compositeScore),
-      rank: 0, // 占位，待排名
+      rank: 0,
       recommendation: 'neutral' as const,
     };
   });
