@@ -5,10 +5,17 @@
  * （行情接口 / 新闻抓取 / 策略回测）瞬时打满。结果按输入顺序返回，
  * 便于调用方按代码对齐。worker 内部抛错会向上传递，由调用方捕获。
  */
+export interface MapWithConcurrencyOptions {
+  /** 中止信号：置位后不再派发新任务并以 abort 原因整体拒绝；
+   * 在途任务由其自身响应信号（如 fetch 抛 AbortError）后收尾 */
+  signal?: AbortSignal;
+}
+
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   limit: number,
   worker: (item: T, index: number) => Promise<R>,
+  options: MapWithConcurrencyOptions = {},
 ): Promise<R[]> {
   const n = items.length;
   if (n === 0) return [];
@@ -21,6 +28,7 @@ export async function mapWithConcurrency<T, R>(
 
   async function runNext(): Promise<void> {
     while (cursor < n) {
+      if (options.signal?.aborted) throw options.signal.reason ?? new Error('已中止');
       const i = cursor++;
       results[i] = await worker(items[i], i);
     }

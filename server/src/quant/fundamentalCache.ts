@@ -34,7 +34,9 @@ function ttlFromEnv(key: string, defaultHours: number): number {
  * 注：fetchFinancialData 也被主分析流水线调用，此处只缓存量化链路，
  * 流水线的实时性语义不受影响。
  */
-export async function fetchFinancialDataCached(code: string) {
+export async function fetchFinancialDataCached(code: string, signal?: AbortSignal) {
+  // 已中止就不必再发起（在途的冷拉由其自身超时收尾，不再级联进 services 层）
+  if (signal?.aborted) throw signal.reason ?? new Error('财务数据拉取已中止');
   return withQuantCache(
     `financial_${code}`,
     ttlFromEnv('QUANT_FINANCIAL_CACHE_TTL_HOURS', 24),
@@ -46,7 +48,12 @@ export async function fetchFinancialDataCached(code: string) {
  * 季度财报序列缓存。默认 7 天（168h）——财报按季度更新，无需更频繁。
  * limit 参与缓存 key，不同长度请求各自缓存。
  */
-export async function fetchQuarterlyFinancialsCached(code: string, limit = 16) {
+export async function fetchQuarterlyFinancialsCached(
+  code: string,
+  limit = 16,
+  signal?: AbortSignal,
+) {
+  if (signal?.aborted) throw signal.reason ?? new Error('季度财报拉取已中止');
   return withQuantCache(
     `quarterly_${code}_${limit}`,
     ttlFromEnv('QUANT_QUARTERLY_CACHE_TTL_HOURS', 168),

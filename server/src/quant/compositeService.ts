@@ -58,8 +58,9 @@ export async function computeCompositeAlphaForStrategy(
   startDate: string,
   endDate: string,
   horizons: number[] = [21, 63],
+  signal?: AbortSignal,
 ): Promise<CompositeAlphaResult> {
-  const ohlcv = await fetchOHLCVData(stockCode, startDate, endDate);
+  const ohlcv = await fetchOHLCVData(stockCode, startDate, endDate, signal);
   if (!ohlcv || ohlcv.length === 0) {
     throw new Error(`无法获取股票 ${stockCode} 的K线数据`);
   }
@@ -150,6 +151,7 @@ export async function computeCompositeAlphaBatch(
   endDate: string,
   horizons: number[] = [21, 63],
   concurrency: number = DEFAULT_BATCH_CONCURRENCY,
+  signal?: AbortSignal,
 ): Promise<CompositeAlphaBatchResult> {
   const codes = [...new Set(stockCodes.map((c) => String(c ?? '').trim()).filter(Boolean))];
   const limit = Math.max(
@@ -161,11 +163,19 @@ export async function computeCompositeAlphaBatch(
   let cursor = 0;
   const worker = async (): Promise<void> => {
     for (;;) {
+      // 中止即停派发：已完成个股的缓存照常留存，未开始的直接放弃
+      if (signal?.aborted) return;
       const i = cursor++;
       if (i >= codes.length) return;
       const code = codes[i];
       try {
-        const result = await computeCompositeAlphaForStrategy(code, startDate, endDate, horizons);
+        const result = await computeCompositeAlphaForStrategy(
+          code,
+          startDate,
+          endDate,
+          horizons,
+          signal,
+        );
         slots[i] = { stockCode: code, ok: true, result };
       } catch (e) {
         slots[i] = {

@@ -2,7 +2,7 @@
  * 量化研究：回测 + 数据质量 + 审计 + 优化 + 摘要；受控回测评估（基线 vs 新闻叠加）；
  * 量价因子（A 股方向校正）与单因子评估 tear sheet。
  */
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { quantLimiter, watchlistLimiter, circuitBreakerGuard } from '../middleware.js';
 import { parseStrategyInput, orchestrate, generateSummary } from '../quant/agents/orchestrator.js';
 import type { StrategyConfig, FactorOverlay } from '../quant/types.js';
@@ -441,7 +441,17 @@ router.post(
             .filter((h: number) => Number.isFinite(h) && h > 0)
         : [21, 63];
 
-      const result = await computeCompositeAlphaBatch(codes, startDate, endDate, horizons);
+      // 客户端提前断开（取消/关页）→ 级联中止在途取数
+      const abort = abortOnClientClose(res);
+      const result = await computeCompositeAlphaBatch(
+        codes,
+        startDate,
+        endDate,
+        horizons,
+        undefined,
+        abort.signal,
+      );
+      if (abort.signal.aborted) return; // 客户端已不在：静默终止，不写响应
       res.json(result);
     } catch (error) {
       logger.error('Batch composite alpha error', {
@@ -474,6 +484,19 @@ router.get('/api/quant/universe/boards', quantLimiter, circuitBreakerGuard, asyn
     res.status(502).json({ error: '行业板块列表获取失败', detail: message });
   }
 });
+
+/**
+ * 客户端提前断开时中止在途取数。
+ * 监听 res close（连接断开）且响应尚未写完 → abort。返回的 signal 由调用方
+ * 传入 mapWithConcurrency / 各取数函数，取消沿调用链级联到 socket 级。
+ */
+function abortOnClientClose(res: Response): AbortController {
+  const controller = new AbortController();
+  res.on('close', () => {
+    if (!res.writableFinished) controller.abort();
+  });
+  return controller;
+}
 
 // === 截面 universe 宽度与并发上限（2026-09-05 放开） ===
 // 截面框架的统计功效随横截面宽度增长：板块内 30 只原本够用，但要上全市场多行业
@@ -510,6 +533,7 @@ router.post(
   quantLimiter,
   circuitBreakerGuard,
   async (req, res) => {
+    let abort: AbortController | null = null;
     try {
       const body = (req.body ?? {}) as {
         codes?: unknown;
@@ -592,22 +616,28 @@ router.post(
 
       const end = new Date().toISOString().slice(0, 10);
       const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      // 客户端提前断开（取消/关页）→ 级联中止在途取数
+      abort = abortOnClientClose(res);
+      const { signal } = abort;
       const inputs: StockPanelInput[] = await mapWithConcurrency(
         codes,
         crossSectionConcurrency(),
         async (code: string) => {
-          const bars = await fetchOHLCVData(code, start, end).catch(() => []);
+          const bars = await fetchOHLCVData(code, start, end, signal).catch(() => []);
           const financial = includeFundamental
-            ? await fetchFinancialDataCached(code).catch(() => null)
+            ? await fetchFinancialDataCached(code, signal).catch(() => null)
             : null;
           const quarterly = includeFundamental
-            ? await fetchQuarterlyFinancialsCached(code).catch(() => null)
+            ? await fetchQuarterlyFinancialsCached(code, 16, signal).catch(() => null)
             : null;
           // 公司事件（分红/回购/解禁）：单类失败在 fetchStockEvents 内降级为空列表
-          const events = includeEvents ? await fetchStockEvents(code) : null;
+          const events = includeEvents ? await fetchStockEvents(code, signal) : null;
           return { code, bars, financial, quarterly, events };
         },
+        { signal },
       );
+      // 客户端已不在：跳过整段 CPU 评估，静默终止（socket 已关闭，无需写响应）
+      if (abort.signal.aborted) return;
 
       const panel = buildCrossSectionPanel(inputs, horizons);
       // 逐持有期附「是否采信」判定（IC 显著 + 分层单调 + 多空价差为正），与
@@ -716,6 +746,8 @@ router.post(
         factors,
       });
     } catch (error) {
+      // 客户端断开引发的 AbortError：socket 已关，写响应无意义，静默终止
+      if (abort?.signal.aborted) return;
       logger.error('Cross-section factor error', {
         route: '/api/quant/factor/cross-section',
         err: error,

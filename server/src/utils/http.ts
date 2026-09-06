@@ -10,6 +10,8 @@ export interface FetchJsonOptions {
   timeoutMs?: number;
   /** 失败重试次数（每次尝试内都会先 fetch 再 curl 回退），默认 2 */
   retries?: number;
+  /** 外部中止信号（如 HTTP 客户端提前断开）：fetch 与 curl 回退一并取消，且不再重试 */
+  signal?: AbortSignal;
 }
 
 /**
@@ -23,23 +25,30 @@ export interface FetchJsonOptions {
  */
 export async function fetchJson(url: string, opts: FetchJsonOptions = {}): Promise<unknown> {
   const { headers = {}, timeoutMs = 12000, retries = 2 } = opts;
+  const signal = opts.signal;
   let lastErr: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    // 1) Node 原生 fetch
+    if (signal?.aborted) throw signal.reason ?? new Error('fetchJson 已中止');
+
+    // 1) Node 原生 fetch（超时与外部中止取先到者）
     try {
       const resp = await fetch(url, {
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: signal
+          ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal])
+          : AbortSignal.timeout(timeoutMs),
         headers,
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
       const text = await resp.text();
       return JSON.parse(text);
     } catch (e) {
+      // 外部中止不属于「可重试失败」：直接上抛，不再走 curl 回退
+      if (signal?.aborted) throw e;
       lastErr = e;
     }
 
-    // 2) curl 回退（绕过沙箱 TLS 重置）
+    // 2) curl 回退（绕过沙箱 TLS 重置）；execFile 的 signal 选项会在中止时杀死子进程
     try {
       const args: string[] = ['-s', '-m', String(Math.ceil(timeoutMs / 1000) + 5)];
       for (const [k, v] of Object.entries(headers)) {
@@ -49,11 +58,13 @@ export async function fetchJson(url: string, opts: FetchJsonOptions = {}): Promi
       const { stdout } = await execFileP('curl', args, {
         timeout: timeoutMs + 8000,
         windowsHide: true,
+        signal,
       });
       const text = stdout.toString();
       if (!text.trim()) throw new Error('curl 返回空响应');
       return JSON.parse(text);
     } catch (e) {
+      if (signal?.aborted) throw e;
       lastErr = e;
     }
 

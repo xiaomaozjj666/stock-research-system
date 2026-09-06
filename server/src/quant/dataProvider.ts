@@ -110,8 +110,10 @@ async function fetchKlineBySecid(
   endDate: string,
   cacheToken: string,
   timeoutMs = 15000,
+  signal?: AbortSignal,
 ): Promise<OHLCVData[]> {
   const cacheKey = `kline_${cacheToken}`;
+  if (signal?.aborted) throw signal.reason ?? new Error('K线拉取已中止');
 
   // 1. 读缓存：合并历史。不判断新鲜度——即使不新鲜也要读出来做增量补尾。
   const cached = readCacheEntry<KlineCachePayload>(cacheKey);
@@ -139,7 +141,7 @@ async function fetchKlineBySecid(
   const fetchStart = cEnd !== null && cStart !== null && startDate >= cStart ? cEnd : startDate;
   let merged = cachedBars;
   if (fetchStart <= endDate) {
-    const fetched = await fetchKlineRange(secid, fetchStart, endDate, timeoutMs);
+    const fetched = await fetchKlineRange(secid, fetchStart, endDate, timeoutMs, signal);
     if (fetched !== null && fetched.length > 0) {
       merged = mergeBars(cachedBars, fetched);
       writeCacheEntry(cacheKey, { bars: merged }, klineCacheTtlMs());
@@ -178,6 +180,7 @@ async function fetchKlineRange(
   startDate: string,
   endDate: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<OHLCVData[] | null> {
   const beg = startDate.replace(/-/g, '');
   const end = endDate.replace(/-/g, '');
@@ -192,7 +195,11 @@ async function fetchKlineRange(
   const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57&klt=101&fqt=1&beg=${beg}&end=${end}&lmt=${lmt}`;
 
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    const response = await fetch(url, {
+      signal: signal
+        ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal])
+        : AbortSignal.timeout(timeoutMs),
+    });
     const json = await response.json();
 
     if (json?.data?.klines) {
@@ -221,6 +228,8 @@ async function fetchKlineRange(
       return filtered;
     }
   } catch (error) {
+    // 外部中止 ≠ 拉取失败：重抛给调用方，避免走到「降级模拟数据 / 写部分缓存」
+    if (signal?.aborted) throw signal.reason ?? error;
     logger.warn('获取K线数据失败', { secid, startDate, endDate, err: error });
   }
   return null;
@@ -233,8 +242,9 @@ export async function fetchOHLCVData(
   stockCode: string,
   startDate: string,
   endDate: string,
+  signal?: AbortSignal,
 ): Promise<OHLCVData[]> {
-  return fetchKlineBySecid(resolveSecid(stockCode), startDate, endDate, stockCode);
+  return fetchKlineBySecid(resolveSecid(stockCode), startDate, endDate, stockCode, 15000, signal);
 }
 
 /**

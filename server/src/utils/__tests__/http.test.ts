@@ -164,4 +164,37 @@ describe('fetchJson', () => {
     expect(hIdx).toBeGreaterThanOrEqual(0);
     expect(curlCall!.args[hIdx + 1]).toContain('test-agent');
   });
+
+  it('signal 预先置位：直接拒绝，不发起 fetch 也不回退 curl', async () => {
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      fetchJson('https://example.com/api', { signal: controller.signal }),
+    ).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(callLog.length).toBe(0);
+  });
+
+  it('fetch 挂起期间外部中止：立即上抛且不回退 curl', async () => {
+    const controller = new AbortController();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            // 复刻 fetch 对外部 signal 的行为：abort 即 reject
+            init?.signal?.addEventListener('abort', () =>
+              reject(new Error('This operation was aborted')),
+            );
+          }),
+      ),
+    );
+    mockCurl('{}');
+    const pending = fetchJson('https://example.com/api', { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toThrow(/aborted/);
+    expect(callLog.length).toBe(0);
+  });
 });

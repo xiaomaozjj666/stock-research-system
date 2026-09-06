@@ -74,4 +74,42 @@ describe('mapWithConcurrency', () => {
     });
     expect(maxActive).toBe(1);
   });
+
+  it('预置位的 signal：不派发任何任务并整体拒绝', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let started = 0;
+    await expect(
+      mapWithConcurrency(
+        [1, 2, 3],
+        2,
+        async () => {
+          started += 1;
+          return started;
+        },
+        { signal: controller.signal },
+      ),
+    ).rejects.toThrow();
+    expect(started).toBe(0);
+  });
+
+  it('在途中止：置位后不再派发新任务（limit=1 串行可精确计数）', async () => {
+    const controller = new AbortController();
+    let started = 0;
+    await expect(
+      mapWithConcurrency(
+        Array.from({ length: 20 }),
+        1,
+        async () => {
+          started += 1;
+          if (started === 2) controller.abort(); // 第 2 个任务开始时中止
+          await new Promise((r) => setTimeout(r, 2));
+          return started;
+        },
+        { signal: controller.signal },
+      ),
+    ).rejects.toThrow();
+    // 恰好派发了 2 个：第 3 个及以后不再启动
+    expect(started).toBe(2);
+  });
 });
