@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
+import * as os from 'os';
+import * as path from 'path';
 import type { OHLCVData } from '../quant/types.js';
 import type { FinancialData } from '../types.js';
+
+// 实验台账落盘重定向到临时文件（真实台账模块仍参与集成，避免污染项目 data/）
+process.env.FACTOR_LEDGER_FILE = path.join(
+  os.tmpdir(),
+  `factor-ledger-routes-test-${process.pid}.json`,
+);
 
 // ============================================================================
 // 量化因子路由集成测试：/api/quant/factor/composite、/composite/batch、
@@ -47,6 +55,20 @@ vi.mock('../services/quarterlyFinancials.js', () => ({
 vi.mock('../quant/eventProvider.js', () => ({
   fetchStockEvents: vi.fn(),
 }));
+// 预检会真的探测行情源：测试环境无外网，替换为直通结果（预检自身逻辑在
+// preflight.test.ts 单独覆盖）
+vi.mock('../quant/preflight.js', () => ({
+  runPreflight: vi.fn(async () => ({
+    ok: true,
+    checks: [
+      { key: 'upstream', ok: true, detail: 'ok' },
+      { key: 'llm', ok: true, detail: 'ok' },
+      { key: 'cache', ok: true, detail: 'ok' },
+    ],
+    degraded: [],
+    checkedAt: new Date().toISOString(),
+  })),
+}));
 
 import { app } from '../index.js';
 import {
@@ -71,6 +93,13 @@ const mockedBoardsMeta = vi.mocked(fetchIndustryBoardsWithMeta);
 const mockedConstituentsMeta = vi.mocked(fetchBoardConstituentsWithMeta);
 const mockedQuarterly = vi.mocked(fetchQuarterlyFinancials);
 const mockedEvents = vi.mocked(fetchStockEvents);
+
+/** 6 只成分股（截面 / 表达式用例共用） */
+const CONST_SIX = ['600519', '000858', '603288', '600809', '000568', '600702'].map((code, i) => ({
+  code,
+  name: `股票${i}`,
+  marketCap: 1000 - i,
+}));
 
 beforeEach(() => {
   vi.mocked(computeCompositeAlphaForStrategy).mockReset();
@@ -547,5 +576,101 @@ describe('POST /api/quant/factor/cross-section — 事件族（分红/回购/解
     expect(res.status).toBe(200);
     expect(res.body.factors.some((f: { type: string }) => f.type === 'event')).toBe(false);
     expect(mockedEvents).not.toHaveBeenCalled();
+  });
+});
+
+describe('预检 / 实验台账 / 自定义因子表达式', () => {
+  it('GET /api/quant/health → 返回预检三项', async () => {
+    const res = await request(app).get('/api/quant/health');
+    expect(res.status).toBe(200);
+    expect(res.body.checks.map((c: { key: string }) => c.key)).toEqual([
+      'upstream',
+      'llm',
+      'cache',
+    ]);
+  });
+
+  it('截面响应带可复现快照与预检结果', async () => {
+    mockedConstituentsMeta.mockResolvedValue({ value: CONST_SIX, stale: false });
+    mockedBars.mockImplementation((code: string) => Promise.resolve(genBars(code)));
+    mockedFinancial.mockImplementation((code: string) => Promise.resolve(makeFinancial(code)));
+    mockedQuarterly.mockImplementation((code: string) => Promise.resolve(makeQuarterly(code)));
+    const res = await request(app)
+      .post('/api/quant/factor/cross-section')
+      .send({ board: 'BK0475', topN: 6, horizons: [21] });
+    expect(res.status).toBe(200);
+    expect(res.body.run.kind).toBe('cross-section');
+    expect(res.body.run.horizons).toEqual([21]);
+    expect(res.body.run.start).toBeTruthy();
+    expect(res.body.preflight.checks).toHaveLength(3);
+    // 台账自动留痕：因子 × 持有期
+    expect(res.body.ledger.recorded).toBeGreaterThan(0);
+  });
+
+  it('POST /api/quant/factor/expression 非法表达式 → 400 且指明原因', async () => {
+    const res = await request(app)
+      .post('/api/quant/factor/expression')
+      .send({ expression: 'eval(1)' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('因子表达式非法');
+  });
+
+  it('POST /api/quant/factor/expression 缺表达式 → 400', async () => {
+    const res = await request(app).post('/api/quant/factor/expression').send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /api/quant/factor/expression 合法表达式 → 评估并入台账', async () => {
+    mockedConstituentsMeta.mockResolvedValue({ value: CONST_SIX, stale: false });
+    mockedBars.mockImplementation((code: string) => Promise.resolve(genBars(code)));
+    const res = await request(app)
+      .post('/api/quant/factor/expression')
+      .send({
+        expression: 'close / mean(close, 20) - 1',
+        board: 'BK0475',
+        topN: 6,
+        horizons: [21],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.factor.type).toBe('expression');
+    expect(res.body.factor.report.byPeriod).toHaveLength(1);
+    expect(res.body.factor.report.byPeriod[0].verdict).toHaveProperty('effective');
+    expect(res.body.ledger.recorded).toBeGreaterThan(0);
+    expect(res.body.run.expression).toBe('close / mean(close, 20) - 1');
+  });
+
+  it('GET /api/quant/factor/experiments → 列表与汇总', async () => {
+    const res = await request(app).get('/api/quant/factor/experiments?limit=5');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.items)).toBe(true);
+    expect(res.body.summary).toHaveProperty('total');
+  });
+
+  it('POST /api/quant/factor/experiments 补录 → 返回写入条数', async () => {
+    const res = await request(app)
+      .post('/api/quant/factor/experiments')
+      .send({
+        entries: [
+          {
+            source: 'expression',
+            name: 'x',
+            expression: 'close',
+            universe: { requested: 2, included: 2 },
+            horizon: 21,
+            sampleSize: 100,
+            icMean: 0.02,
+            pValue: 0.4,
+            oosStable: false,
+            kept: false,
+          },
+        ],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.recorded).toBe(1);
+  });
+
+  it('POST /api/quant/factor/experiments 空 entries → 400', async () => {
+    const res = await request(app).post('/api/quant/factor/experiments').send({ entries: [] });
+    expect(res.status).toBe(400);
   });
 });
