@@ -49,6 +49,19 @@ import {
   fetchFinancialDataCached,
   fetchQuarterlyFinancialsCached,
 } from '../quant/fundamentalCache.js';
+import { runPreflight } from '../quant/preflight.js';
+import {
+  recordFactorExperiments,
+  listFactorExperiments,
+  summarizeFactorExperiments,
+  type FactorExperimentInput,
+  type FactorExperimentSource,
+} from '../quant/factorLedger.js';
+import {
+  parseFactorExpression,
+  buildExpressionContext,
+  evaluateFactorSeries,
+} from '../quant/factorExpression.js';
 import { buildEarningsSurpriseObservations } from '../quant/fundamentalDepth.js';
 import { fetchStockEvents } from '../quant/eventProvider.js';
 import {
@@ -441,6 +454,17 @@ router.post(
             .filter((h: number) => Number.isFinite(h) && h > 0)
         : [21, 63];
 
+      // 预检：源不可达且无缓存兜底 → 立刻 503，不逐个股票等超时
+      const preflight = await runPreflight();
+      const upstreamOk = preflight.checks.find((c) => c.key === 'upstream')?.ok ?? false;
+      const cacheOk = preflight.checks.find((c) => c.key === 'cache')?.ok ?? false;
+      if (!upstreamOk && !cacheOk) {
+        return res.status(503).json({
+          error: '行情源不可用且本地缓存为空，无法批量测算',
+          detail: preflight.checks.find((c) => c.key === 'upstream')?.detail,
+          preflight,
+        });
+      }
       // 客户端提前断开（取消/关页）→ 级联中止在途取数
       const abort = abortOnClientClose(res);
       const result = await computeCompositeAlphaBatch(
@@ -452,7 +476,17 @@ router.post(
         abort.signal,
       );
       if (abort.signal.aborted) return; // 客户端已不在：静默终止，不写响应
-      res.json(result);
+      res.json({
+        ...result,
+        run: runSnapshot({
+          kind: 'composite-batch',
+          startDate,
+          endDate,
+          horizons,
+          requested: codes.length,
+        }),
+        preflight,
+      });
     } catch (error) {
       logger.error('Batch composite alpha error', {
         route: '/api/quant/factor/composite/batch',
@@ -496,6 +530,58 @@ function abortOnClientClose(res: Response): AbortController {
     if (!res.writableFinished) controller.abort();
   });
   return controller;
+}
+
+/**
+ * 量化运行快照（可复现留痕）：把「这次是用什么参数 / 数据区间 / 运行时跑出来的」
+ * 随结果返回并留档——研究报告事后要能复盘，光有结论没有参数是没法复现的。
+ */
+function runSnapshot(fields: Record<string, unknown>): Record<string, unknown> {
+  return { at: new Date().toISOString(), node: process.version, ...fields };
+}
+
+/** 评估结果的因子形态（台账只关心这几个字段，避免与评估器类型硬耦合） */
+interface LedgerFactorInput {
+  name: string;
+  report: {
+    sampleSize?: number;
+    byPeriod?: {
+      period: number;
+      ic?: { mean?: number; pValue?: number };
+      oos?: { stable?: boolean };
+      verdict?: { effective?: boolean };
+    }[];
+  };
+}
+
+/** 把评估结果摊平成台账条目：因子 × 持有期各一条 */
+function ledgerEntriesFromReport(
+  factors: LedgerFactorInput[],
+  meta: {
+    source: FactorExperimentSource;
+    universe: FactorExperimentInput['universe'];
+    name?: string;
+    expression?: string;
+  },
+): FactorExperimentInput[] {
+  const out: FactorExperimentInput[] = [];
+  for (const f of factors) {
+    for (const p of f.report?.byPeriod ?? []) {
+      out.push({
+        source: meta.source,
+        name: meta.name ?? f.name,
+        ...(meta.expression ? { expression: meta.expression } : {}),
+        universe: meta.universe,
+        horizon: p.period,
+        sampleSize: f.report?.sampleSize ?? 0,
+        icMean: p.ic?.mean ?? Number.NaN,
+        pValue: p.ic?.pValue ?? Number.NaN,
+        oosStable: Boolean(p.oos?.stable),
+        kept: Boolean(p.verdict?.effective),
+      });
+    }
+  }
+  return out;
 }
 
 // === 截面 universe 宽度与并发上限（2026-09-05 放开） ===
@@ -616,6 +702,17 @@ router.post(
 
       const end = new Date().toISOString().slice(0, 10);
       const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      // 预检先判「源通不通 + 有没有缓存兜底」，避免源挂了还逐个股票等超时
+      const preflight = await runPreflight();
+      const upstreamOk = preflight.checks.find((c) => c.key === 'upstream')?.ok ?? false;
+      const cacheOk = preflight.checks.find((c) => c.key === 'cache')?.ok ?? false;
+      if (!upstreamOk && !cacheOk) {
+        return res.status(503).json({
+          error: '行情源不可用且本地缓存为空，无法装配截面',
+          detail: preflight.checks.find((c) => c.key === 'upstream')?.detail,
+          preflight,
+        });
+      }
       // 客户端提前断开（取消/关页）→ 级联中止在途取数
       abort = abortOnClientClose(res);
       const { signal } = abort;
@@ -738,12 +835,37 @@ router.post(
         }
       }
 
+      // 实验台账留痕（因子 × 持有期）：写盘失败静默，台账是研究资产不是数据源
+      const ledgerInputs = ledgerEntriesFromReport(factors as LedgerFactorInput[], {
+        source: 'cross-section',
+        universe: {
+          requested: typeof universe.requested === 'number' ? universe.requested : codes.length,
+          included: panel.stocksIncluded.length,
+          ...(typeof universe.board === 'string' ? { board: universe.board } : {}),
+          ...(universe.source === 'codes' ? { codes } : {}),
+        },
+      });
+      const ledgerRecorded = recordFactorExperiments(ledgerInputs).length;
+
       res.json({
         universe,
         stocksIncluded: panel.stocksIncluded,
         stocksSkipped: panel.stocksSkipped,
         horizons,
         factors,
+        // 可复现快照：这次是用什么参数/数据区间/版本跑出来的
+        run: runSnapshot({
+          kind: 'cross-section',
+          start,
+          end,
+          horizons,
+          includeFundamental,
+          includeEvents,
+          concurrency: crossSectionConcurrency(),
+          maxCodes: crossSectionMaxCodes(),
+        }),
+        preflight,
+        ledger: { recorded: ledgerRecorded, total: summarizeFactorExperiments().total },
       });
     } catch (error) {
       // 客户端断开引发的 AbortError：socket 已关，写响应无意义，静默终止
@@ -756,6 +878,234 @@ router.post(
     }
   },
 );
+
+// 上游预检：动手前先判「行情源通不通 / LLM 配没配 / 缓存有没有」，
+// 避免用户干等超时后只拿到一句没有行动指引的 502
+router.get('/api/quant/health', quantLimiter, async (_req, res) => {
+  try {
+    res.json(await runPreflight());
+  } catch (error) {
+    logger.error('Quant health error', { route: '/api/quant/health', err: error });
+    res.status(500).json({ error: '上游预检失败' });
+  }
+});
+
+// 因子实验台账：列出/汇总（source、kept、limit 过滤）
+router.get('/api/quant/factor/experiments', quantLimiter, (req, res) => {
+  try {
+    const q = req.query ?? {};
+    const source = typeof q.source === 'string' ? q.source : undefined;
+    const kept = q.kept === undefined ? undefined : q.kept === 'true';
+    const limit = Number(q.limit ?? 100);
+    const items = listFactorExperiments({
+      ...(source ? { source: source as FactorExperimentSource } : {}),
+      ...(kept === undefined ? {} : { kept }),
+      limit,
+    });
+    res.json({ items, summary: summarizeFactorExperiments() });
+  } catch (error) {
+    logger.error('Factor experiments list error', {
+      route: '/api/quant/factor/experiments',
+      err: error,
+    });
+    res.status(500).json({ error: '实验台账读取失败' });
+  }
+});
+
+// 手动补录实验（外部脚本/离线评估的结论也能进台账）
+router.post('/api/quant/factor/experiments', quantLimiter, (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const raw = (body as { entries?: unknown }).entries;
+    const entries = Array.isArray(raw) ? (raw as FactorExperimentInput[]) : null;
+    if (!entries || entries.length === 0 || entries.length > 200) {
+      return res.status(400).json({ error: '请提供 entries 数组（1-200 条）' });
+    }
+    res.json({ recorded: recordFactorExperiments(entries).length });
+  } catch (error) {
+    logger.error('Factor experiments record error', {
+      route: '/api/quant/factor/experiments',
+      err: error,
+    });
+    res.status(500).json({ error: '实验台账写入失败' });
+  }
+});
+
+// 自定义因子表达式评估：LLM 提假设 → 受限 DSL 求值 → 既有截面评估器验证 → 台账留痕。
+// 关键点：**不执行模型生成的代码**（无沙箱逃逸面），只解析白名单语法的表达式。
+router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, async (req, res) => {
+  let abort: AbortController | null = null;
+  try {
+    const body = (req.body ?? {}) as {
+      expression?: unknown;
+      name?: unknown;
+      board?: unknown;
+      codes?: unknown;
+      topN?: unknown;
+      horizons?: unknown;
+      /** hypothesis = LLM 生成的假设；expression = 手输表达式 */
+      source?: unknown;
+    };
+    const expression = String(body.expression ?? '').trim();
+    if (!expression) return res.status(400).json({ error: '请提供因子表达式 expression' });
+    let ast;
+    try {
+      ast = parseFactorExpression(expression);
+    } catch (error) {
+      return res.status(400).json({
+        error: '因子表达式非法',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const horizons =
+      Array.isArray(body.horizons) &&
+      body.horizons.every(
+        (h: unknown) => Number.isInteger(h) && (h as number) >= 1 && (h as number) <= 250,
+      )
+        ? (body.horizons as number[])
+        : [21, 63];
+    const MAX = crossSectionMaxCodes();
+
+    // universe 解析（与 cross-section 同口径：板块优先于显式 codes）
+    let codes: string[];
+    let universe: Record<string, unknown>;
+    if (body.board !== undefined && body.board !== null && String(body.board).trim() !== '') {
+      const board = String(body.board).trim().toUpperCase();
+      if (!isValidBoardCode(board)) {
+        return res.status(400).json({ error: `无效的板块代码：${body.board}` });
+      }
+      const topNRaw = body.topN === undefined || body.topN === null ? 10 : Number(body.topN);
+      if (!Number.isInteger(topNRaw) || topNRaw < 3 || topNRaw > MAX) {
+        return res.status(400).json({ error: `topN 需为 3-${MAX} 的整数（当前：${body.topN}）` });
+      }
+      let constituents;
+      try {
+        constituents = await fetchBoardConstituentsWithMeta(board, topNRaw);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '成分股获取失败';
+        return res.status(502).json({ error: `板块 ${board} 成分股获取失败`, detail: message });
+      }
+      if (constituents.value.length < 2) {
+        return res.status(422).json({
+          error: `板块 ${board} 有效成分股仅 ${constituents.value.length} 只，无法构成截面`,
+        });
+      }
+      codes = constituents.value.map((c) => c.code);
+      universe = { source: 'board', board, requested: constituents.value.length };
+    } else {
+      const rawCodes = Array.isArray(body.codes) ? body.codes.map(String) : [];
+      if (rawCodes.length < 2 || rawCodes.length > MAX) {
+        return res
+          .status(400)
+          .json({ error: `请提供 2-${MAX} 只股票代码（codes），或传 board 指定行业板块` });
+      }
+      for (const c of rawCodes) {
+        if (!/^\d{6}$/.test(c)) return res.status(400).json({ error: `无效的股票代码：${c}` });
+      }
+      codes = rawCodes;
+      universe = { source: 'codes', requested: codes.length };
+    }
+
+    const end = new Date().toISOString().slice(0, 10);
+    const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    abort = abortOnClientClose(res);
+    const inputs = await mapWithConcurrency(
+      codes,
+      crossSectionConcurrency(),
+      async (code: string) => {
+        const bars = await fetchOHLCVData(code, start, end, abort!.signal).catch(() => []);
+        const financial = await fetchFinancialDataCached(code, abort!.signal).catch(() => null);
+        return { code, bars, financial };
+      },
+      { signal: abort.signal },
+    );
+    if (abort.signal.aborted) return;
+
+    // 装配观测：表达式逐日取值 + t→t+h 远期收益（与 crossSectionBuilder 同口径）
+    const obs: FactorObservation[] = [];
+    const included: string[] = [];
+    const skipped: { code: string; reason: string }[] = [];
+    for (const input of inputs) {
+      const { code, bars, financial } = input;
+      if (!bars || bars.length < Math.max(...horizons) + 5) {
+        skipped.push({ code, reason: `K线不足（${bars?.length ?? 0} 根）` });
+        continue;
+      }
+      const values = evaluateFactorSeries(ast, buildExpressionContext(bars, financial));
+      let used = 0;
+      for (let i = 0; i < bars.length; i++) {
+        const value = values[i];
+        if (!Number.isFinite(value)) continue;
+        const returns: Record<number, number> = {};
+        let complete = true;
+        for (const h of horizons) {
+          if (i + h >= bars.length) {
+            complete = false;
+            break;
+          }
+          const base = bars[i].close;
+          const ahead = bars[i + h].close;
+          if (!(base > 0) || !(ahead > 0)) {
+            complete = false;
+            break;
+          }
+          returns[h] = ahead / base - 1;
+        }
+        if (!complete || Object.keys(returns).length === 0) continue;
+        obs.push({ date: bars[i].date, symbol: code, value, returns });
+        used += 1;
+      }
+      if (used > 0) included.push(code);
+      else skipped.push({ code, reason: '表达式有效取值不足（窗口过界/除零导致全 NaN）' });
+    }
+    if (obs.length < 30) {
+      return res.status(422).json({
+        error: `有效观测仅 ${obs.length} 个（需 ≥30），无法评估`,
+        stocksSkipped: skipped,
+      });
+    }
+
+    const report = evaluateFactor(obs);
+    const factor = {
+      name: String(body.name ?? 'custom_expression'),
+      type: 'expression',
+      report: {
+        ...report,
+        byPeriod: report.byPeriod.map((p) => ({ ...p, verdict: judgeFactor(p) })),
+      },
+    };
+    const source: FactorExperimentSource =
+      body.source === 'hypothesis' ? 'hypothesis' : 'expression';
+    const recorded = recordFactorExperiments(
+      ledgerEntriesFromReport([factor], {
+        source,
+        name: factor.name,
+        expression,
+        universe: {
+          requested: typeof universe.requested === 'number' ? universe.requested : codes.length,
+          included: included.length,
+          ...(typeof universe.board === 'string' ? { board: universe.board } : { codes }),
+        },
+      }),
+    );
+    res.json({
+      universe,
+      stocksIncluded: included,
+      stocksSkipped: skipped,
+      horizons,
+      factor,
+      run: runSnapshot({ kind: 'factor-expression', expression, start, end, horizons }),
+      ledger: { recorded: recorded.length, total: summarizeFactorExperiments().total },
+    });
+  } catch (error) {
+    if (abort?.signal.aborted) return;
+    logger.error('Factor expression error', {
+      route: '/api/quant/factor/expression',
+      err: error,
+    });
+    res.status(500).json({ error: '自定义因子评估失败' });
+  }
+});
 
 // 受控回测评估：基线(无新闻叠加) vs 实验(带新闻情绪叠加)，量化 LLM 信号是否真增 alpha
 router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, async (req, res) => {
