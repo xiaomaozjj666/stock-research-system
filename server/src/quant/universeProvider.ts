@@ -184,6 +184,18 @@ export async function fetchIndustryBoards(): Promise<IndustryBoard[]> {
  *
  * @throws 板块代码非法（参数错误）/ 远端失败且无磁盘快照 / 无有效 A 股成分股
  */
+/**
+ * 该板块的成分股是否已有磁盘缓存（**含陈旧条目**）。
+ * 供路由预检：行情源不可达时，有缓存仍可陈旧兜底继续跑；无缓存则应直接
+ * 503 给可行指引，而不是让用户陪跑一轮注定失败的网络尝试。
+ */
+export function hasCachedConstituents(boardCode: string, limit = 30): boolean {
+  const code = boardCode.trim().toUpperCase();
+  if (!isValidBoardCode(code)) return false;
+  const capped = Math.max(1, Math.min(100, Math.floor(limit) || 30));
+  return readCacheEntry<UniverseStock[]>(constituentsDiskKey(code, capped)) !== null;
+}
+
 export async function fetchBoardConstituentsWithMeta(
   boardCode: string,
   limit = 30,
