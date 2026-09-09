@@ -4,7 +4,7 @@
  * 本项目的截面评估 / 因子框架一直是「深度研究台」——但只研究被点名的东西
  * （板块 topN / 手选 codes / 自选股），其余 98% 的 A 股从未看过一眼。本模块
  * 补上「雷达层」：按股票主表扫全市场（可设上限），形态触发 + RPS 分位初筛，
- * 结果落盘并可选推送到飞书；命中标的天然适合接入截面二次验证与研究队列。
+ * 结果落盘；命中标的天然适合接入截面二次验证与研究队列。
  *
  * 规模策略（诚实边界）：首扫需要为每只股票拉 K 线，全市场 5200+ 只的冷启动
  * 是分钟级长任务；默认上限 500 只（QUANT_SCREENER_MAX 可调），配合磁盘缓存
@@ -16,7 +16,6 @@ import { loadStockMaster } from '../services/stockMaster.js';
 import { fetchOHLCVData } from './dataProvider.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import { detectPatternEvents, PATTERN_NAMES } from './patternEvents.js';
-import { isNotifyConfigured, pushNotify } from '../services/notify.js';
 
 export interface ScreenerHit {
   code: string;
@@ -36,8 +35,6 @@ export interface ScreenerRunResult {
   failed: number;
   strategies: string[];
   hits: ScreenerHit[];
-  pushed: boolean;
-  pushReason?: string;
 }
 
 const DEFAULT_RESULT_FILE = path.join(import.meta.dirname, '..', 'data', 'screenerLatest.json');
@@ -84,22 +81,6 @@ function maxStocksLimit(explicit?: number): number {
   return Number.isFinite(env) && env > 0 ? Math.floor(env) : DEFAULT_MAX_STOCKS;
 }
 
-function renderNotifyText(result: ScreenerRunResult): string {
-  const lines: string[] = [
-    `【全市场初筛】扫描 ${result.scanned} / 有效 ${result.eligible}，命中 ${result.hits.length}（${result.at.slice(5, 16).replace('T', ' ')}）`,
-  ];
-  for (const s of result.strategies) {
-    const hits = result.hits.filter((h) => h.strategy === s).slice(0, 10);
-    if (hits.length === 0) continue;
-    lines.push(`▍${s}`);
-    for (const h of hits) {
-      lines.push(`${h.code} ${h.name ?? ''} ${h.detail}`);
-    }
-  }
-  if (result.hits.length === 0) lines.push('本轮无命中');
-  return lines.join('\n');
-}
-
 /**
  * 执行一次全市场（可设上限）初筛。
  * 每只股票：拉 K 线（磁盘缓存增量补尾）→ 形态事件检测（近 5 个交易日触发）
@@ -111,7 +92,6 @@ export async function runMarketScreener(
     startDate?: string;
     endDate?: string;
     signal?: AbortSignal;
-    notify?: boolean;
   } = {},
 ): Promise<ScreenerRunResult> {
   const end = opts.endDate ?? new Date().toISOString().slice(0, 10);
@@ -201,19 +181,7 @@ export async function runMarketScreener(
     failed,
     strategies: [...PATTERN_NAMES, 'rps_250'],
     hits,
-    pushed: false,
   };
-
-  if (opts.notify && !opts.signal?.aborted) {
-    // 要求推送但未配置 webhook：如实给出原因，而不是静默跳过
-    if (!isNotifyConfigured()) {
-      result.pushReason = '未配置 FEISHU_WEBHOOK_URL';
-    } else {
-      const push = await pushNotify(renderNotifyText(result));
-      result.pushed = push.sent;
-      result.pushReason = push.reason;
-    }
-  }
 
   if (!opts.signal?.aborted) saveLatestRun(result);
   return result;

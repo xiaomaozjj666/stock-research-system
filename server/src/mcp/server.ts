@@ -80,12 +80,11 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: 'quant_screener_run',
     description:
-      '全市场初筛：形态触发（海龟突破/均线上穿/涨停）+ RPS 分位扫全市场（可设上限），结果落盘并可选推飞书',
+      '全市场初筛：形态触发（海龟突破/均线上穿/涨停）+ RPS 分位扫全市场（可设上限），结果落盘',
     inputSchema: {
       type: 'object',
       properties: {
         maxStocks: { type: 'number', description: '扫描上限（默认 500，首扫为分钟级长任务）' },
-        notify: { type: 'boolean', description: '是否推送飞书（需配置 FEISHU_WEBHOOK_URL）' },
       },
     },
   },
@@ -164,7 +163,7 @@ export async function executeTool(
     }
     case 'quant_screener_run': {
       const body: Record<string, unknown> = {};
-      for (const k of ['maxStocks', 'notify']) {
+      for (const k of ['maxStocks']) {
         if (args[k] !== undefined) body[k] = args[k];
       }
       return callApi('/api/quant/screener/run', { method: 'POST', body });
