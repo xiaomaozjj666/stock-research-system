@@ -3,6 +3,18 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-09 — 新增时间序列计量模块（ADF / GARCH / 协整 / ARIMA / Kalman）
+
+- `server/src/quant/timeseries/`：五个独立模块，纯函数、零第三方依赖、确定性可复现。
+  - `adf.ts`：Augmented Dickey-Fuller 单位根检验，Schwert 滞后上限 + AIC/BIC 定阶，三种设定（n/c/ct），p 值为渐近临界值锚点插值（文档注明近似口径）。
+  - `garch.ts`：GARCH(1,1) 与 EGARCH(1,1) 高斯 QML，Nelder-Mead 多起点两阶段估计，含条件方差序列、一步前瞻预测与年化波动率；EGARCH 捕捉杠杆效应。
+  - `cointegration.ts`：Engle-Granger 两步法（残差 ADF 用 EG 双变量临界值 -3.90/-3.34/-3.04），OU 近似价差半衰期 + z-score 偏离度。
+  - `arima.ts`：ARIMA(p,d,0) 条件最小二乘，AIC/BIC 定阶，Ljung-Box 残差白噪声诊断（Wilson-Hilferty 近似）；不含 MA(q>0) 项（日频金融序列 AR 主干为主，见模块说明）。
+  - `kalman.ts`：局部水平信号提取 + 时变对冲比率（状态 [α,β] 随机游走），期末 β 与静态 OLS 对照、近期漂移度量。
+- 接线：`POST /api/quant/timeseries/analyze`（`test=adf/garch/coint/arima/kalman-beta`，默认拉近 3 年日频，上限 10 年）+ MCP `quant_timeseries_analyze`。
+- 测试：新增 34 个确定性合成数据用例（单位根判别、GARCH 参数恢复、协整识别与半衰期、AR 定阶与 Ljung-Box、滤波优于静态回归），全套 1399 通过。
+- 已知边界：p 值均为渐近近似（精确推断对照 MacKinnon 表）；MA(q>0) 与多步预测未覆盖。
+
 ## 2026-09-09 — 移除飞书 Webhook 推送（回归站内）
 
 - 移除 `services/notify.ts`（飞书 Webhook 推送）及其全部接线：自选股异动预警不再外推、全市场初筛 `run` 端点去掉 `notify` 选项与 `pushed`/`pushReason` 字段、MCP `quant_screener_run` 去掉 `notify` 入参、README/CHANGELOG 对应文案清理。
