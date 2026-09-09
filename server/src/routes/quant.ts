@@ -50,6 +50,9 @@ import {
   fetchQuarterlyFinancialsCached,
 } from '../quant/fundamentalCache.js';
 import { runPreflight } from '../quant/preflight.js';
+import { runEnsemble, recordModelOutcome, getModelWeights } from '../llm/ensemble.js';
+import { routeSkill, type SkillId } from '../llm/skillRouter.js';
+import { buildResearchMemory } from '../llm/researchMemory.js';
 import {
   recordFactorExperiments,
   listFactorExperiments,
@@ -878,6 +881,82 @@ router.post(
     }
   },
 );
+
+// === 多模型集成投票与置信度校准 ===
+// 默认 candidateModels 只取 1 个模型（等价关闭），须显式传 models 或设
+// LLM_ENSEMBLE_SIZE>1 才走投票——既有单模型链路零变更。
+router.post('/api/llm/ensemble', quantLimiter, circuitBreakerGuard, async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as {
+      messages?: unknown;
+      models?: unknown;
+      task?: unknown;
+      temperature?: unknown;
+      maxTokens?: unknown;
+    };
+    const messages = Array.isArray(body.messages) ? body.messages : null;
+    if (!messages || messages.length === 0) {
+      return res.status(400).json({ error: '请提供 messages 对话数组' });
+    }
+    const models = Array.isArray(body.models) ? (body.models as string[]) : undefined;
+    if (models && models.length > 5) {
+      return res.status(400).json({ error: 'models 最多 5 个' });
+    }
+    const result = await runEnsemble(messages as never, {
+      ...(models ? { models } : {}),
+      ...(typeof body.task === 'string' ? { task: body.task as never } : {}),
+      ...(typeof body.temperature === 'number' ? { temperature: body.temperature } : {}),
+      ...(typeof body.maxTokens === 'number' ? { maxTokens: body.maxTokens } : {}),
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error('LLM ensemble error', { route: '/api/llm/ensemble', err: error });
+    const message = error instanceof Error ? error.message : '集成调用失败';
+    res.status(502).json({ error: '多模型集成调用失败', detail: message });
+  }
+});
+
+/** 模型权重（校准结果） */
+router.get('/api/llm/calibration', quantLimiter, (_req, res) => {
+  res.json({ weights: getModelWeights() });
+});
+
+/** 记录一次模型判断的验证结果（correct = 事后被验证正确） */
+router.post('/api/llm/calibration', quantLimiter, (req, res) => {
+  try {
+    const body = (req.body ?? {}) as { model?: unknown; correct?: unknown };
+    const model = String(body.model ?? '').trim();
+    if (!model) return res.status(400).json({ error: '请提供 model' });
+    recordModelOutcome(model, body.correct === true);
+    res.json({ ok: true, weights: getModelWeights() });
+  } catch (error) {
+    logger.error('Calibration record error', { route: '/api/llm/calibration', err: error });
+    res.status(500).json({ error: '校准记录失败' });
+  }
+});
+
+/** 技能路由：给定一句话，判定该走哪个专用技能（规则表，确定性） */
+router.get('/api/llm/skills', quantLimiter, (req, res) => {
+  const message = String((req.query ?? {}).message ?? '');
+  res.json(routeSkill(message));
+});
+
+/** 研究记忆：同股票的历史结论 + 已验证因子，作为本次研究的先验 */
+router.get('/api/quant/research-memory/:code', quantLimiter, (req, res) => {
+  try {
+    const code = String(req.params.code ?? '').trim();
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({ error: '请提供 6 位股票代码' });
+    }
+    res.json(buildResearchMemory(code));
+  } catch (error) {
+    logger.error('Research memory error', {
+      route: '/api/quant/research-memory',
+      err: error,
+    });
+    res.status(500).json({ error: '研究记忆读取失败' });
+  }
+});
 
 // 上游预检：动手前先判「行情源通不通 / LLM 配没配 / 缓存有没有」，
 // 避免用户干等超时后只拿到一句没有行动指引的 502
