@@ -69,7 +69,10 @@ export async function fetchJson(url: string, opts: FetchJsonOptions = {}): Promi
     }
 
     if (attempt < retries) {
-      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      // 指数退避 + 随机抖动（借鉴 Sequoia-X「随机休眠 + 躺平重试」）：
+      // 避免同时失败的重试在同一毫秒齐发，对上游表现得像独立客户端
+      const base = Math.min(3000, 250 * 2 ** attempt);
+      await new Promise((r) => setTimeout(r, base * (0.5 + Math.random() * 0.5)));
     }
   }
 

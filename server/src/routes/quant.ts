@@ -51,6 +51,7 @@ import {
   fetchQuarterlyFinancialsCached,
 } from '../quant/fundamentalCache.js';
 import { runPreflight } from '../quant/preflight.js';
+import { runMarketScreener, readLatestScreenerRun } from '../quant/screener.js';
 import { runEnsemble, recordModelOutcome, getModelWeights } from '../llm/ensemble.js';
 import { routeSkill } from '../llm/skillRouter.js';
 import { buildResearchMemory } from '../llm/researchMemory.js';
@@ -76,6 +77,7 @@ import {
   UNLOCK_START_OFFSET_DAYS,
   UNLOCK_WINDOW_DAYS,
 } from '../quant/eventPanels.js';
+import { detectPatternEvents, PATTERN_NAMES } from '../quant/patternEvents.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import {
   fetchOHLCVData,
@@ -857,6 +859,26 @@ router.post(
             factors.push({ name, type: 'event', report: evaluateWithVerdict(obs) });
           }
         }
+
+        // 技术形态事件族（借鉴 Sequoia-X）：形态触发日=事件，零额外网络调用。
+        // 民间「胜率约 50%」的说法在此变成可测量的 IC / 分层 / OOS。
+        for (const pattern of PATTERN_NAMES) {
+          const obs: FactorObservation[] = [];
+          for (const input of inputs) {
+            if (!input.bars || input.bars.length === 0) continue;
+            obs.push(
+              ...buildEventObservations({
+                code: input.code,
+                events: detectPatternEvents(pattern, input.bars),
+                bars: input.bars,
+                horizons,
+              }),
+            );
+          }
+          if (obs.length >= 30) {
+            factors.push({ name: pattern, type: 'pattern', report: evaluateWithVerdict(obs) });
+          }
+        }
       }
 
       // 实验台账留痕（因子 × 持有期）：写盘失败静默，台账是研究资产不是数据源
@@ -960,6 +982,39 @@ router.post('/api/llm/calibration', quantLimiter, (req, res) => {
 router.get('/api/llm/skills', quantLimiter, (req, res) => {
   const message = String((req.query ?? {}).message ?? '');
   res.json(routeSkill(message));
+});
+
+// === 全市场初筛（借鉴 Sequoia-X「收盘后扫全市场」）===
+// 形态触发 + RPS 分位初筛全市场（可设上限），结果落盘并可选推飞书；
+// 命中标的天然适合接入截面二次验证（IC/分层/OOS）与研究队列。
+router.post('/api/quant/screener/run', quantLimiter, circuitBreakerGuard, async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as {
+      maxStocks?: unknown;
+      notify?: unknown;
+      startDate?: unknown;
+      endDate?: unknown;
+    };
+    const result = await runMarketScreener({
+      ...(body.maxStocks !== undefined && body.maxStocks !== null
+        ? { maxStocks: Number(body.maxStocks) }
+        : {}),
+      ...(typeof body.startDate === 'string' ? { startDate: body.startDate } : {}),
+      ...(typeof body.endDate === 'string' ? { endDate: body.endDate } : {}),
+      notify: body.notify === true,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error('Market screener error', { route: '/api/quant/screener/run', err: error });
+    res.status(500).json({ error: '全市场初筛失败' });
+  }
+});
+
+/** 最近一次初筛结果（无人值守运行后回看） */
+router.get('/api/quant/screener/latest', quantLimiter, (_req, res) => {
+  const result = readLatestScreenerRun();
+  if (!result) return res.status(404).json({ error: '还没有初筛记录：先 POST /run 跑一次' });
+  res.json(result);
 });
 
 /** 研究记忆：同股票的历史结论 + 已验证因子，作为本次研究的先验 */
