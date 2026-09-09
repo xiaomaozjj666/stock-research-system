@@ -3,6 +3,25 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-09 — Sequoia-X 借鉴：全市场初筛雷达 + 飞书推送 + 形态事件因子族
+
+### 选股雷达（feat）
+
+- **全市场初筛**（`quant/screener.ts`）：按股票主表扫全市场（默认上限 500 只，`QUANT_SCREENER_MAX` 可调，12 并发 + 磁盘缓存增量），形态触发（海龟突破 / 均线上穿放量 / 涨停，近 5 个交易日触发才算当期）+ RPS（250 日收益严格高于宇宙中 ≥87% 的股票，排名口径防并列退化）初筛，结果落盘 `screenerLatest.json`（env 可重定向）。端点 `POST /api/quant/screener/run`、`GET /api/quant/screener/latest`。
+- **技术形态事件族**（`quant/patternEvents.ts`）：形态触发日 = 事件日，走与分红/回购/解禁同一套 `buildEventObservations` → 截面 IC / 分层单调 / OOS 检验——民间"胜率约 50%"从此变成可测量的统计。截面评估在 `includeEvents` 下自动产出 `pat_*` 因子（type: `pattern`，零额外网络调用）。
+
+### 无人值守（feat）
+
+- **飞书 Webhook 推送**（`services/notify.ts`）：配置 `FEISHU_WEBHOOK_URL` 后，自选股异动预警（≥1 条时）与全市场初筛结果自动推送到飞书群；未配置时显式 no-op，推送失败只降级不影响主流程。监控响应新增 `pushed` 字段。
+
+### 健壮性（fix）
+
+- `fetchJson` 重试退避改为**指数退避 + 随机抖动**（借鉴 Sequoia-X"随机休眠 + 躺平重试"）：避免同时失败的重试齐发，对上游更像独立客户端。
+
+### 明确不做
+
+- baostock / SQLite 换源：TS 生态无官方客户端（需 Python sidecar），且本项目已有 4 层数据回退 + 磁盘缓存 + 陈旧兜底（真实故障演练中 codes 路径照常出结果）。东财彻底封禁或强制注册时再重启该议题。
+
 ## 2026-09-09 — 研究基础设施升级：因子实验台账 / 上游预检 / 受限 DSL 因子实验室 / MCP 暴露
 
 ### 因子研究闭环（feat）
