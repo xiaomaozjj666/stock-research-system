@@ -733,6 +733,101 @@ export async function getAuditLog(
   }
 }
 
+// === 因子研究：自定义表达式 / 实验台账 / 上游预检 ===
+
+/** 因子实验台账条目（因子 × 持有期） */
+export interface FactorExperiment {
+  id: string;
+  createdAt: string;
+  source: 'cross-section' | 'expression' | 'hypothesis';
+  name: string;
+  expression?: string;
+  universe: { board?: string; codes?: string[]; requested: number; included: number };
+  horizon: number;
+  sampleSize: number;
+  icMean: number;
+  pValue: number;
+  oosStable: boolean;
+  kept: boolean;
+  notes?: string;
+}
+
+export interface FactorExperimentSummary {
+  total: number;
+  kept: number;
+  bySource: Record<string, number>;
+  lastAt: string | null;
+}
+
+/** 查询实验台账 */
+export async function getFactorExperiments(params?: {
+  source?: string;
+  kept?: boolean;
+  limit?: number;
+}): Promise<{ items: FactorExperiment[]; summary: FactorExperimentSummary }> {
+  try {
+    const response = await api.get('/quant/factor/experiments', {
+      params: params ?? {},
+      timeout: 15000,
+    });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '实验台账读取失败');
+  }
+}
+
+/** 评估一条受限 DSL 因子表达式（不执行任意代码，越界由服务端拒绝） */
+export async function runFactorExpression(payload: {
+  expression: string;
+  board?: string;
+  codes?: string[];
+  topN?: number;
+  horizons?: number[];
+  name?: string;
+  source?: 'expression' | 'hypothesis';
+}): Promise<{
+  stocksIncluded: string[];
+  stocksSkipped: { code: string; reason: string }[];
+  factor: {
+    name: string;
+    report: {
+      sampleSize: number;
+      byPeriod: {
+        period: number;
+        ic: { mean: number; pValue: number; n: number };
+        oos: { stable: boolean };
+        verdict: { effective: boolean; reasons: string[] };
+      }[];
+    };
+  };
+  ledger: { recorded: number; total: number };
+}> {
+  try {
+    const response = await api.post('/quant/factor/expression', payload, {
+      // 数百只大面板冷启动可能数分钟，与截面评估同量级
+      timeout: 600000,
+    });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '因子表达式评估失败');
+  }
+}
+
+/** 上游预检：行情源 / LLM / 本地缓存 */
+export async function getQuantHealth(): Promise<{
+  ok: boolean;
+  checks: { key: string; ok: boolean; detail: string }[];
+  degraded: string[];
+  checkedAt: string;
+}> {
+  try {
+    const response = await api.get('/quant/health', { timeout: 20000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '上游预检失败');
+  }
+}
+
 // === 港美股财务估值（东财 datacenter RPT 网关） ===
 export async function getIntlFundamentals(
   code: string,

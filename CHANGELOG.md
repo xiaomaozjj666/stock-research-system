@@ -3,6 +3,32 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-09 — 研究基础设施升级：因子实验台账 / 上游预检 / 受限 DSL 因子实验室 / MCP 暴露
+
+### 因子研究闭环（feat）
+
+- **因子实验台账**（`quant/factorLedger.ts`）：因子 × 持有期留痕（来源 / IC / p / 样本外 / 是否采信），批量单次写盘，容量 500 淘汰，`FACTOR_LEDGER_FILE` 可重定向；截面评估自动留痕。端点 `GET/POST /api/quant/factor/experiments`。
+- **受限 DSL 因子表达式**（`quant/factorExpression.ts`）：标识符与函数白名单 + 长度/节点数/窗口三重上限，**不执行模型生成的代码**（无沙箱逃逸面）；端点 `POST /api/quant/factor/expression` 走「表达式 → 截面观测 → 既有评估器 → 台账」闭环。
+- **因子实验室面板**（前端 `FactorLabPanel`）：表达式假设验证结果（IC / p / OOS / 是否采信）与台账回看直接可在截面因子页使用。
+- **运行快照**：截面 / 批量 / 表达式响应携带 `run`（参数 + 数据区间 + 运行时版本），研究报告可复盘。
+
+### 可靠性（fix）
+
+- **上游预检**（`quant/preflight.ts`）：行情源 / LLM / 缓存三项检查（探针 60s 记忆），源不可达且无缓存时截面与批量测算**立刻 503 并说明原因**——此前是逐个股票等满超时才 502。端点 `GET /api/quant/health`。
+
+### Agent 能力（feat）
+
+- **多模型集成投票与校准**（`llm/ensemble.ts`）：并行多模型加权共识 + 一致度；校准权重为 Laplace 平滑命中率（下限 1/3），无标签不更新、不编造准确率。**默认单模型（关闭）**，`LLM_ENSEMBLE_SIZE>1` 或显式传 models 才启用；端点 `POST /api/llm/ensemble`、`GET/POST /api/llm/calibration`。
+- **技能路由**（`llm/skillRouter.ts`）：确定性规则表判定细分技能并附回归基准；`AgentPlan` 增加可选 `skill` 标签（不改变执行路径）。
+- **研究记忆**（`llm/researchMemory.ts`）：同股票历史结论 + 已验证因子作为研究先验；端点 `GET /api/quant/research-memory/:code`。
+- **MCP server**（`mcp/server.ts`，`npm run mcp:serve`）：stdio JSON-RPC 薄适配器，5 个工具暴露给 Cursor / Claude Code / Cline。
+
+### 长任务取消与健壮性（feat/fix，2026-09-06 起）
+
+- 客户端断开**级联取消服务端取数**：`fetchJson` / `mapWithConcurrency` / K 线与事件链路穿透 AbortSignal；K 线拉取区分「外部中止」与「真失败」（中止不再降级模拟数据）。
+- 量化页三个长任务（单股研究 / 批量测算 / 截面评估）与对比分析、自选股回测 / 监控、对话回退均可中途取消；修复对话流式取消后 Promise 不 settle 导致 loading 卡死。
+- 截面板块下拉过滤旧体系子级（名称后缀 Ⅱ/Ⅲ），默认板块按名称优先级选（白酒/银行）；板块中文名由前端解析，截面路由不再多发一次板块列表请求。
+
 ## 2026-08-21 — UI 文案统一口径 + README 全页面截图补全
 
 ### 用户可见文案清理（ux）
