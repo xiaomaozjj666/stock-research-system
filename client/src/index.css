@@ -5665,3 +5665,33 @@ button.comparison-tag-add:disabled {
 .cs-oos-no {
   color: var(--text-muted);
 }
+
+/* === 因子实验室：表达式假设验证 + 实验台账 === */
+.factor-lab {
+  margin-top: 16px;
+}
+
+.factor-lab-period {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-subtle, rgba(128, 128, 128, 0.08));
+  font-size: 12px;
+}
+
+.factor-ledger {
+  margin-top: 14px;
+}
+
+.factor-ledger-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.factor-ledger-head .quant-panel-title {
+  margin: 0;
+}

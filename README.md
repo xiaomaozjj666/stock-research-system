@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-977%20cases-brightgreen" alt="977 测试用例" />
+  <img src="https://img.shields.io/badge/tests-1351%20cases-brightgreen" alt="1351 测试用例" />
   <img src="https://img.shields.io/badge/CI-GitHub%20Actions-brightgreen" alt="CI" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -164,6 +164,11 @@ Windows 一键启动：双击 `启动系统.bat`（零依赖，自动安装并�
 |           | `GET /api/stocks`、`GET /api/stocks/search`                                                          | 股票列表 / 搜索                                                                             |
 | 历史      | `GET /api/history`、`GET /api/history/:id`、`DELETE /api/history/:id`                                | 研究历史列表 / 详情 / 删除（同代码去重，容量 100）                                          |
 | 量化      | `POST /api/quant/analyze`                                                                            | 量化研究（回测 + 数据质量 + 审计 + 优化 + 摘要）                                            |
+|           | `GET /api/quant/health`                                                                              | 上游预检：行情源 / LLM / 本地缓存（源不可达且无缓存时评估直接 503，不再干等到超时）         |
+|           | `POST /api/quant/factor/cross-section`                                                               | 截面因子评估：量价/基本面/事件因子逐日截面 IC + Newey-West + 分层收益 + OOS                 |
+|           | `POST /api/quant/factor/expression`                                                                  | 因子假设实验室：受限 DSL 表达式（白名单解析，**不执行模型生成的代码**）→ 评估 → 台账        |
+|           | `GET/POST /api/quant/factor/experiments`                                                             | 因子实验台账：试过什么、IC/显著性/样本外是否稳定、是否采信                                  |
+|           | `GET /api/quant/research-memory/:code`                                                               | 研究记忆：同股票历史结论 + 已验证因子作为先验                                               |
 |           | `POST /api/backtest/evaluate`                                                                        | 受控评估：新闻叠加 vs 基线（DSR / Bootstrap CI）                                            |
 | 模拟盘    | `GET /api/paper/portfolio`                                                                           | 账户：现金 / 持仓 / 订单 / 每日净值                                                         |
 |           | `POST /api/paper/order`                                                                              | 模拟下单（市价/限价，A 股规则撮合）                                                         |
@@ -176,14 +181,42 @@ Windows 一键启动：双击 `启动系统.bat`（零依赖，自动安装并�
 | 自治循环  | `POST /api/autonomous/start`、`/stop`、`GET /api/autonomous/status`                                  | 主动监控自治循环                                                                            |
 | 文档 RAG  | `POST /api/ingest`、`GET /api/documents`                                                             | 研报/财报/公告 PDF/文本入库 + 洞察抽取                                                      |
 | 模型/成本 | `GET /api/models`、`GET /api/cost`、`POST /api/cost/reset`                                           | 多模型路由 / 成本治理                                                                       |
+| 集成投票  | `POST /api/llm/ensemble`、`GET/POST /api/llm/calibration`                                            | 多模型加权投票（默认单模型=关闭，`LLM_ENSEMBLE_SIZE>1` 启用）/ 命中率校准                   |
+| 技能路由  | `GET /api/llm/skills?message=`                                                                       | 确定性规则表：判定该走哪个专用技能（因子/回测/对比/新闻/自选/通用）                         |
 | 其他      | `GET /api/health`                                                                                    | 健康检查（外部 API 可达性 + 缓存目录）                                                      |
 |           | `GET /api/metrics`                                                                                   | Prometheus 指标导出                                                                         |
 |           | `GET /api/openapi.json`                                                                              | OpenAPI 3.1 机器可读契约                                                                    |
 
+## MCP（供 Cursor / Claude Code / Cline）
+
+把量化研究能力暴露为 MCP 工具（薄适配器，转发本地 API，需先启动系统）：
+
+```bash
+npm run mcp:serve     # stdio JSON-RPC 2.0
+```
+
+客户端配置示例（以 Claude Code 为例）：
+
+```json
+{
+  "mcpServers": {
+    "stock-research": {
+      "command": "npx",
+      "args": ["tsx", "server/src/mcp/cli.ts"],
+      "env": { "MCP_API_BASE": "http://127.0.0.1:3001" }
+    }
+  }
+}
+```
+
+可用工具：`quant_health`（上游预检）、`quant_universe_boards`（板块列表）、
+`quant_cross_section`（截面因子评估）、`quant_factor_expression`（因子假设实验室）、
+`quant_factor_experiments`（实验台账查询）。
+
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（977 用例：服务 / 量化 / 前端组件）
+npm test              # Vitest 全量单测（1351 用例：服务 / 量化 / 前端组件）
 npm run test:e2e      # Playwright 端到端（9 用例，真实浏览器 + 隔离数据）
 npm run lint          # ESLint
 npm run format:check  # Prettier 格式检查
