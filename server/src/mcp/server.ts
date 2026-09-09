@@ -93,6 +93,30 @@ export const MCP_TOOLS: McpTool[] = [
     description: '最近一次全市场初筛结果回看',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'quant_timeseries_analyze',
+    description:
+      '时间序列计量分析：ADF 单位根检验 / GARCH+EGARCH 波动率拟合 / Engle-Granger 协整（配对价差半衰期）/ ARIMA 定阶 / Kalman 时变对冲比率',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        test: {
+          type: 'string',
+          description: "分析类型：'adf' | 'garch' | 'coint' | 'arima' | 'kalman-beta'",
+        },
+        code: { type: 'string', description: '股票代码（coint/kalman-beta 为因变量 y）' },
+        code2: { type: 'string', description: '第二条序列（coint/kalman-beta 为自变量 x，必填）' },
+        startDate: { type: 'string', description: '开始日期 YYYY-MM-DD（默认近 3 年）' },
+        endDate: { type: 'string', description: '结束日期 YYYY-MM-DD（默认今天）' },
+        options: {
+          type: 'object',
+          description:
+            "按 test 传：adf{on:'return'|'price', spec:'n'|'c'|'ct'}；arima{d, pMax}；kalman-beta{qRatio}",
+        },
+      },
+      required: ['test', 'code'],
+    },
+  },
 ];
 
 async function callApi(
@@ -170,6 +194,13 @@ export async function executeTool(
     }
     case 'quant_screener_latest':
       return callApi('/api/quant/screener/latest');
+    case 'quant_timeseries_analyze': {
+      const body: Record<string, unknown> = {};
+      for (const k of ['test', 'code', 'code2', 'startDate', 'endDate', 'options']) {
+        if (args[k] !== undefined) body[k] = args[k];
+      }
+      return callApi('/api/quant/timeseries/analyze', { method: 'POST', body });
+    }
     default:
       throw new Error(`未知工具：${name}`);
   }
