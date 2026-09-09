@@ -8,6 +8,7 @@ import {
   fetchIndustryBoardsWithMeta,
   fetchBoardConstituents,
   fetchBoardConstituentsWithMeta,
+  hasCachedConstituents,
   isValidBoardCode,
   clearUniverseCache,
 } from '../universeProvider.js';
@@ -168,6 +169,15 @@ describe('fetchBoardConstituentsWithMeta — 四层回退（2026-09-06 加固）
     clearUniverseCache();
     mockedFetchJson.mockRejectedValue(new Error('上游超时'));
     await expect(fetchBoardConstituentsWithMeta('BK0475', 10)).rejects.toThrow('上游超时');
+  });
+
+  it('hasCachedConstituents：磁盘有快照（含陈旧）→ true；键随 board/topN 归一变化', () => {
+    seedStaleDisk('universe_cons_BK0475_10', [{ code: '600519', name: '贵州茅台' }]);
+    expect(hasCachedConstituents('BK0475', 10)).toBe(true);
+    expect(hasCachedConstituents('bk0475', 10)).toBe(true); // 大小写归一
+    expect(hasCachedConstituents('BK0475', 77)).toBe(false); // topN 不同 → 缓存键不同
+    expect(hasCachedConstituents('BK9999', 10)).toBe(false); // 从未评估过的板块
+    expect(hasCachedConstituents('BAD!', 10)).toBe(false); // 非法代码
   });
 });
 
