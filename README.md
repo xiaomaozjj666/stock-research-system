@@ -169,7 +169,7 @@ Windows 一键启动：双击 `启动系统.bat`（零依赖，自动安装并�
 |           | `POST /api/quant/factor/expression`                                                                  | 因子假设实验室：受限 DSL 表达式（白名单解析，**不执行模型生成的代码**）→ 评估 → 台账        |
 |           | `GET/POST /api/quant/factor/experiments`                                                             | 因子实验台账：试过什么、IC/显著性/样本外是否稳定、是否采信                                  |
 |           | `GET /api/quant/research-memory/:code`                                                               | 研究记忆：同股票历史结论 + 已验证因子作为先验                                               |
-|           | `POST /api/quant/screener/run`、`GET /api/quant/screener/latest`                                     | 全市场初筛雷达：形态触发（海龟/均线上穿/涨停）+ RPS 分位扫全市场，结果落盘可推飞书          |
+|           | `POST /api/quant/screener/run`、`GET /api/quant/screener/latest`                                     | 全市场初筛雷达：形态触发（海龟/均线上穿/涨停）+ RPS 分位扫全市场，结果落盘                  |
 |           | `POST /api/backtest/evaluate`                                                                        | 受控评估：新闻叠加 vs 基线（DSR / Bootstrap CI）                                            |
 | 模拟盘    | `GET /api/paper/portfolio`                                                                           | 账户：现金 / 持仓 / 订单 / 每日净值                                                         |
 |           | `POST /api/paper/order`                                                                              | 模拟下单（市价/限价，A 股规则撮合）                                                         |
@@ -214,9 +214,6 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 `quant_cross_section`（截面因子评估）、`quant_factor_expression`（因子假设实验室）、
 `quant_factor_experiments`（实验台账查询）、`quant_screener_run` / `quant_screener_latest`
 （全市场初筛）。
-
-环境变量 `FEISHU_WEBHOOK_URL`（飞书群机器人 Webhook）配置后：自选股异动预警与
-全市场初筛结果自动推送到飞书群，实现无人值守（未配置时静默跳过，不影响功能）。
 
 ## 测试与质量
 

@@ -111,14 +111,6 @@ describe('runMarketScreener — 全市场初筛', () => {
     // 横盘股不应获得 RPS 命中（收益 0 低于 87 分位阈值——11 只里阈值为 0，仅严格高于者命中）
     expect(result.hits.filter((h) => h.strategy === 'rps_250')).toHaveLength(1);
   });
-
-  it('notify=false 或未配置时不推送', async () => {
-    delete process.env.FEISHU_WEBHOOK_URL;
-    mockedBars.mockImplementation(async () => breakoutBars());
-    const result = await runMarketScreener({ maxStocks: 1, notify: true });
-    expect(result.pushed).toBe(false);
-    expect(result.pushReason).toContain('未配置');
-  });
 });
 
 describe('readLatestScreenerRun — 边界', () => {

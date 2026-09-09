@@ -985,13 +985,12 @@ router.get('/api/llm/skills', quantLimiter, (req, res) => {
 });
 
 // === 全市场初筛（借鉴 Sequoia-X「收盘后扫全市场」）===
-// 形态触发 + RPS 分位初筛全市场（可设上限），结果落盘并可选推飞书；
+// 形态触发 + RPS 分位初筛全市场（可设上限），结果落盘；
 // 命中标的天然适合接入截面二次验证（IC/分层/OOS）与研究队列。
 router.post('/api/quant/screener/run', quantLimiter, circuitBreakerGuard, async (req, res) => {
   try {
     const body = (req.body ?? {}) as {
       maxStocks?: unknown;
-      notify?: unknown;
       startDate?: unknown;
       endDate?: unknown;
     };
@@ -1001,7 +1000,6 @@ router.post('/api/quant/screener/run', quantLimiter, circuitBreakerGuard, async 
         : {}),
       ...(typeof body.startDate === 'string' ? { startDate: body.startDate } : {}),
       ...(typeof body.endDate === 'string' ? { endDate: body.endDate } : {}),
-      notify: body.notify === true,
     });
     res.json(result);
   } catch (error) {

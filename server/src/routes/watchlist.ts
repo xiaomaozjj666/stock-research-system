@@ -6,7 +6,6 @@ import { watchlistLimiter, circuitBreakerGuard } from '../middleware.js';
 import { getWatchlist, addToWatchlist, removeFromWatchlist } from '../services/watchlistService.js';
 import { runWatchlistNewsBacktest } from '../services/watchlistBacktest.js';
 import { detectAlerts } from '../services/alerts.js';
-import { pushNotify, isNotifyConfigured } from '../services/notify.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -72,18 +71,7 @@ router.post('/api/watchlist/monitor', watchlistLimiter, circuitBreakerGuard, asy
     }
     const report = await runWatchlistNewsBacktest(codes);
     const alerts = detectAlerts(report.results);
-    // 异动预警推飞书（借鉴 Sequoia-X 无人值守推送）：未配置时静默跳过，
-    // 推送失败不影响监控结果本身
-    let pushed = false;
-    if (alerts.length > 0 && isNotifyConfigured()) {
-      const text = [
-        `【自选股异动】${report.generatedAt.slice(5, 16).replace('T', ' ')}`,
-        ...alerts.slice(0, 10).map((a) => `${a.code} ${a.name ?? ''} ${a.level}：${a.detail}`),
-      ].join('\n');
-      const push = await pushNotify(text);
-      pushed = push.sent;
-    }
-    res.json({ generatedAt: report.generatedAt, monitored: report.count, alerts, pushed });
+    res.json({ generatedAt: report.generatedAt, monitored: report.count, alerts });
   } catch (error) {
     logger.error('Watchlist monitor error', { route: '/api/watchlist/monitor', err: error });
     res.status(500).json({ error: '自选股监控失败', detail: (error as Error).message });
