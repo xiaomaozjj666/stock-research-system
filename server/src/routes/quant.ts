@@ -51,7 +51,7 @@ import {
 } from '../quant/fundamentalCache.js';
 import { runPreflight } from '../quant/preflight.js';
 import { runEnsemble, recordModelOutcome, getModelWeights } from '../llm/ensemble.js';
-import { routeSkill, type SkillId } from '../llm/skillRouter.js';
+import { routeSkill } from '../llm/skillRouter.js';
 import { buildResearchMemory } from '../llm/researchMemory.js';
 import {
   recordFactorExperiments,
