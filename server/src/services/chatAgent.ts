@@ -21,6 +21,7 @@ import {
 } from '../llm/index.js';
 import { retrieveEvidence, type EvidenceDoc, type Embedder } from '../llm/rag.js';
 import { TOOL_DEFINITIONS, executeToolCall, type ToolDeps } from '../llm/tools.js';
+import { routeSkill, type SkillId } from '../llm/skillRouter.js';
 import { loadHistory, appendTurn } from './chatMemory.js';
 
 export interface ChatTurn {
@@ -56,6 +57,8 @@ export interface AgentPlan {
   action: 'direct' | 'tools' | 'debate';
   /** 规划理由（供前端展示与可观测） */
   reason: string;
+  /** 细分技能标签（规则表判定，与 action 正交：先定路径，再定技能） */
+  skill?: SkillId;
 }
 
 /** 计算型错误（FinGround 研究：43% 的计算错误被通用检测器漏检） */
@@ -309,7 +312,17 @@ export function createChatAgent(deps: ChatAgentDeps) {
    * - debate：用户显式要求多空辩论。
    * chatJSON 不可用或解析失败时，安全降级为 tools（保留原行为）。
    */
+  /**
+   * 路由规划 + 技能标签：先判定执行路径（direct/tools/debate），再用确定性
+   * 规则表打上细分技能标签（quant_factor/backtest/news/compare/watchlist/chat）。
+   * 技能标签是附加信息，不改变执行路径本身。
+   */
   async function planIntent(message: string): Promise<AgentPlan> {
+    const plan = await planIntentCore(message);
+    return { ...plan, skill: routeSkill(message).skill };
+  }
+
+  async function planIntentCore(message: string): Promise<AgentPlan> {
     // 显式辩论关键词快速命中，省一次 LLM 调用
     if (/辩论|多空|看多还是看空|bull.*bear|bear.*bull|debat/i.test(message)) {
       return { action: 'debate', reason: '用户显式要求多空辩论' };

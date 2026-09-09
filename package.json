@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "mcp:serve": "npx tsx server/src/mcp/cli.ts",
     "format": "prettier --write \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"*.{json,md,mjs}\"",
     "format:check": "prettier --check \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"*.{json,md,mjs}\""
   },
