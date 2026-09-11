@@ -994,6 +994,8 @@ router.get('/api/llm/skills', quantLimiter, (req, res) => {
 // 形态触发 + RPS 分位初筛全市场（可设上限），结果落盘；
 // 命中标的天然适合接入截面二次验证（IC/分层/OOS）与研究队列。
 router.post('/api/quant/screener/run', quantLimiter, circuitBreakerGuard, async (req, res) => {
+  // 全市场扫描是长任务：客户端提前断开 → 级联中止在途取数，不写死响应
+  const abort = abortOnClientClose(res);
   try {
     const body = (req.body ?? {}) as {
       maxStocks?: unknown;
@@ -1006,9 +1008,13 @@ router.post('/api/quant/screener/run', quantLimiter, circuitBreakerGuard, async 
         : {}),
       ...(typeof body.startDate === 'string' ? { startDate: body.startDate } : {}),
       ...(typeof body.endDate === 'string' ? { endDate: body.endDate } : {}),
+      signal: abort.signal,
     });
+    // 客户端已不在：socket 已关，不写响应；结果落盘由 screener 内部的 aborted 守卫跳过
+    if (abort.signal.aborted) return;
     res.json(result);
   } catch (error) {
+    if (abort.signal.aborted) return;
     logger.error('Market screener error', { route: '/api/quant/screener/run', err: error });
     res.status(500).json({ error: '全市场初筛失败' });
   }

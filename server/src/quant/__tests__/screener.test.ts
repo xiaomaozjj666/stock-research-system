@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { loadStockMaster } from '../../services/stockMaster.js';
 import { fetchOHLCVData } from '../../quant/dataProvider.js';
-import { runMarketScreener, readLatestScreenerRun } from '../screener.js';
+import { runMarketScreener, readLatestScreenerRun, selectScreenerUniverse } from '../screener.js';
 import type { OHLCVData } from '../../quant/types.js';
 
 vi.mock('../../services/stockMaster.js', () => ({ loadStockMaster: vi.fn() }));
@@ -116,5 +116,61 @@ describe('runMarketScreener — 全市场初筛', () => {
 describe('readLatestScreenerRun — 边界', () => {
   it('从未跑过 → null', () => {
     expect(readLatestScreenerRun()).toBeNull();
+  });
+});
+
+describe('selectScreenerUniverse — 确定性跨市场采样', () => {
+  /** 主表乱序给出（clist 默认排序无代表性），断言按代码排序后等步长取样 */
+  const master = [
+    { code: '688001', name: '科创板' },
+    { code: '000001', name: '深主板' },
+    { code: '600519', name: '沪主板' },
+    { code: '300750', name: '创业板' },
+    { code: '002415', name: '中小板' },
+    { code: '603288', name: '沪主板B' },
+    { code: '301236', name: '创业板B' },
+    { code: '000858', name: '深主板B' },
+  ];
+
+  it('上限 < 全量 → 等步长取样覆盖各板块段（不再偏向单一市场）', () => {
+    const picked = selectScreenerUniverse(master as never, 4).map((m) => m.code);
+    // 排序后 [000001,000858,002415,300750,301236,600519,603288,688001]，step=2
+    expect(picked).toEqual(['000001', '002415', '301236', '603288']);
+    // 覆盖深主板 / 中小板 / 创业板 / 沪主板——科创板段在 limit=4 时未入选但
+    // 覆盖了 4 个不同代码段
+    expect(new Set(picked.map((c) => c.slice(0, 3))).size).toBeGreaterThanOrEqual(3);
+  });
+
+  it('确定性：同一上限永远同一批代码（增量缓存命中的前提）', () => {
+    expect(selectScreenerUniverse(master as never, 5)).toEqual(
+      selectScreenerUniverse(master as never, 5),
+    );
+  });
+
+  it('不设上限 / 上限 ≥ 全量 → 全量（默认全市场扫描）', () => {
+    expect(selectScreenerUniverse(master as never, undefined)).toHaveLength(8);
+    expect(selectScreenerUniverse(master as never, 100)).toHaveLength(8);
+  });
+});
+
+describe('runMarketScreener — 宇宙披露与默认上限', () => {
+  it('默认（不设 maxStocks）→ 扫描全部主表；结果披露 universe/coverage/durationMs', async () => {
+    mockedBars.mockImplementation(async () => flatBars());
+    const result = await runMarketScreener({});
+    expect(result.scanned).toBe(3);
+    expect(result.universe).toEqual({ total: 3, coverage: 1 });
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('QUANT_SCREENER_MAX 生效且走等步长采样', async () => {
+    process.env.QUANT_SCREENER_MAX = '2';
+    try {
+      mockedBars.mockImplementation(async () => flatBars());
+      const result = await runMarketScreener({});
+      expect(result.scanned).toBe(2);
+      expect(result.universe.coverage).toBeCloseTo(2 / 3, 2);
+    } finally {
+      delete process.env.QUANT_SCREENER_MAX;
+    }
   });
 });

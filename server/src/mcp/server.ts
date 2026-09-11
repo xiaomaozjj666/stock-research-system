@@ -80,11 +80,14 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: 'quant_screener_run',
     description:
-      '全市场初筛：形态触发（海龟突破/均线上穿/涨停）+ RPS 分位扫全市场（可设上限），结果落盘',
+      '全市场初筛：形态触发（海龟突破/均线上穿/涨停）+ RPS 分位扫全市场（默认全市场，可设上限做等步长跨市场采样），结果落盘。首扫为分钟级冷启动，之后走增量 K 线缓存',
     inputSchema: {
       type: 'object',
       properties: {
-        maxStocks: { type: 'number', description: '扫描上限（默认 500，首扫为分钟级长任务）' },
+        maxStocks: {
+          type: 'number',
+          description: '扫描上限（默认全市场；设上限时按代码排序等步长采样保持跨板块代表性）',
+        },
       },
     },
   },

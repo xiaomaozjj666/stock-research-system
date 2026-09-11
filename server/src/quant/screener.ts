@@ -6,13 +6,16 @@
  * 补上「雷达层」：按股票主表扫全市场（可设上限），形态触发 + RPS 分位初筛，
  * 结果落盘；命中标的天然适合接入截面二次验证与研究队列。
  *
- * 规模策略（诚实边界）：首扫需要为每只股票拉 K 线，全市场 5200+ 只的冷启动
- * 是分钟级长任务；默认上限 500 只（QUANT_SCREENER_MAX 可调），配合磁盘缓存
- * 逐日增量——扫得越多，缓存越热，日常运行越快。
+ * 规模策略：**默认扫全市场**。K 线走增量缓存（dataProvider 合并历史 + 尾部
+ * 补齐），首扫冷启动是分钟级长任务，之后每个交易日只拉增量尾巴——全量扫描
+ * 的边际成本与 500 只没有量级差别。设上限（显式 maxStocks / QUANT_SCREENER_MAX）
+ * 时按代码排序**等步长采样**：确定性（同一批代码，缓存始终命中）且跨板块
+ * 代表（沪主板/深主板/创业板/科创板都覆盖）——替代此前「取主表前 N 只」
+ * 实际退化为沪市主板偏置的取法，RPS 分位的参照宇宙不再失真。
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { loadStockMaster } from '../services/stockMaster.js';
+import { loadStockMaster, type SecurityMasterEntry } from '../services/stockMaster.js';
 import { fetchOHLCVData } from './dataProvider.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import { detectPatternEvents, PATTERN_NAMES } from './patternEvents.js';
@@ -35,10 +38,13 @@ export interface ScreenerRunResult {
   failed: number;
   strategies: string[];
   hits: ScreenerHit[];
+  /** 宇宙披露：全市场总数与本次覆盖率（RPS 分位的参照范围） */
+  universe: { total: number; coverage: number };
+  /** 本次扫描耗时（毫秒），冷启动/增量运行的量级差如实可见 */
+  durationMs: number;
 }
 
 const DEFAULT_RESULT_FILE = path.join(import.meta.dirname, '..', 'data', 'screenerLatest.json');
-const DEFAULT_MAX_STOCKS = 500;
 const RPS_THRESHOLD = 0.87;
 const CONCURRENCY = 12;
 /** 「最近触发」窗口：事件日落在最后 N 个交易日内才算当期命中 */
@@ -73,17 +79,33 @@ function saveLatestRun(result: ScreenerRunResult): void {
   }
 }
 
-function maxStocksLimit(explicit?: number): number {
-  if (Number.isFinite(explicit) && (explicit as number) > 0) {
-    return Math.floor(explicit as number);
-  }
+/** 扫描上限：显式参数 > env > 全市场（undefined = 不设上限） */
+function maxStocksLimit(explicit?: number): number | undefined {
+  if (Number.isFinite(explicit) && (explicit as number) > 0) return Math.floor(explicit as number);
   const env = Number(process.env.QUANT_SCREENER_MAX);
-  return Number.isFinite(env) && env > 0 ? Math.floor(env) : DEFAULT_MAX_STOCKS;
+  return Number.isFinite(env) && env > 0 ? Math.floor(env) : undefined;
+}
+
+/**
+ * 确定性跨市场采样：按代码升序排序后等步长取样。
+ * 固定 6 位数字代码的字典序 = 数值序，000/001/002/300/301/600/688 各板块段
+ * 都按比例入选；同一上限每天得到同一批代码——增量缓存永远命中。
+ */
+export function selectScreenerUniverse(
+  master: SecurityMasterEntry[],
+  limit?: number,
+): SecurityMasterEntry[] {
+  const sorted = [...master].sort((a, b) => a.code.localeCompare(b.code));
+  if (!limit || limit >= sorted.length) return sorted;
+  const step = sorted.length / limit;
+  const out: SecurityMasterEntry[] = [];
+  for (let i = 0; i < limit; i++) out.push(sorted[Math.floor(i * step)]);
+  return out;
 }
 
 /**
  * 执行一次全市场（可设上限）初筛。
- * 每只股票：拉 K 线（磁盘缓存增量补尾）→ 形态事件检测（近 5 个交易日触发）
+ * 每只股票：拉 K 线（增量缓存补尾）→ 形态事件检测（近 5 个交易日触发）
  * → 250 日收益在本次扫描宇宙中的分位（RPS ≥ 0.87 视为强势）。
  */
 export async function runMarketScreener(
@@ -94,14 +116,13 @@ export async function runMarketScreener(
     signal?: AbortSignal;
   } = {},
 ): Promise<ScreenerRunResult> {
+  const startedAt = Date.now();
   const end = opts.endDate ?? new Date().toISOString().slice(0, 10);
   const start =
     opts.startDate ?? new Date(Date.now() - 400 * 24 * 3600 * 1000).toISOString().slice(0, 10);
 
-  const master = await loadStockMaster();
-  const universe = master
-    .filter((m) => /^\d{6}$/.test(m.code))
-    .slice(0, maxStocksLimit(opts.maxStocks));
+  const master = (await loadStockMaster()).filter((m) => /^\d{6}$/.test(m.code));
+  const universe = selectScreenerUniverse(master, maxStocksLimit(opts.maxStocks));
 
   type Candidate = { code: string; name?: string; ret250: number; hits: ScreenerHit[] };
   const candidates: Candidate[] = [];
@@ -181,6 +202,11 @@ export async function runMarketScreener(
     failed,
     strategies: [...PATTERN_NAMES, 'rps_250'],
     hits,
+    universe: {
+      total: master.length,
+      coverage: master.length > 0 ? Math.round((universe.length / master.length) * 1000) / 1000 : 0,
+    },
+    durationMs: Date.now() - startedAt,
   };
 
   if (!opts.signal?.aborted) saveLatestRun(result);

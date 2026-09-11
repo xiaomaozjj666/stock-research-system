@@ -10,6 +10,7 @@ import {
   getModelWeights,
   modelWeight,
   resetCalibration,
+  answerSimilarity,
 } from '../ensemble.js';
 
 vi.mock('../client.js', () => ({ chat: vi.fn() }));
@@ -107,6 +108,67 @@ describe('runEnsemble — 加权投票', () => {
     await expect(
       runEnsemble([{ role: 'user', content: 'x' }], { models: ['model-a'] }),
     ).rejects.toThrow(/上游不可用/);
+  });
+});
+
+describe('runEnsemble — 语义聚类投票（自由文本）', () => {
+  it('同义改写聚为一组：agreement=1 而不是退化成权重占比', async () => {
+    // 旧实现按文本精确分组：两段同义长文各成一簇，agreement=0.5，失去语义
+    mockedChat.mockImplementation(async (_m, opts?: { model?: string }) =>
+      opts?.model === 'model-a'
+        ? '综合估值与资金面，我们建议 逢低看多，目标价 1500 元。'
+        : '建议逢低看多；目标价 1500 元（综合估值与资金面）。',
+    );
+    const r = await runEnsemble([{ role: 'user', content: 'x' }], {
+      models: ['model-a', 'model-b'],
+    });
+    expect(r.agreement).toBeCloseTo(1, 6);
+    expect(r.consensus).toContain('逢低看多');
+  });
+
+  it('观点相左分得开：agreement=0.5（各成一簇）', async () => {
+    mockedChat.mockImplementation(async (_m, opts?: { model?: string }) =>
+      opts?.model === 'model-a' ? '看多' : '看空',
+    );
+    const r = await runEnsemble([{ role: 'user', content: 'x' }], {
+      models: ['model-a', 'model-b'],
+    });
+    expect(r.agreement).toBeCloseTo(0.5, 6);
+  });
+
+  it('consensus 取胜出簇内权重最高成员的原文', async () => {
+    // model-b 权重 0.5（与 a 相同），但其答案与 model-c 同义 → 簇权重更高；
+    // 簇代表应是先入簇（权重最高）的 model-b 原文
+    for (let i = 0; i < 10; i++) recordModelOutcome('model-b', true);
+    mockedChat.mockImplementation(async (_m, opts?: { model?: string }) => {
+      if (opts?.model === 'model-a') return '完全不同的独立观点';
+      if (opts?.model === 'model-b') return '建议逢低看多，基本面支撑较强。';
+      return '建议逢低看多，基本面有支撑!';
+    });
+    const r = await runEnsemble([{ role: 'user', content: 'x' }], {
+      models: ['model-a', 'model-b', 'model-c'],
+    });
+    expect(r.consensus).toContain('逢低看多');
+    expect(r.agreement).toBeGreaterThan(0.5);
+  });
+
+  it('answerSimilarity：相同 → 1，同义改写高，无关低', () => {
+    expect(answerSimilarity('看多', '看多')).toBe(1);
+    expect(answerSimilarity('看多, 目标价上调', '看多目标价上调')).toBeGreaterThanOrEqual(0.8);
+    expect(answerSimilarity('看多', '看空')).toBe(0);
+    expect(answerSimilarity('基本面强劲利好', '技术面破位利空')).toBeLessThan(0.4);
+  });
+
+  it('similarityThreshold>1 退化为只认逐字相同', async () => {
+    mockedChat.mockImplementation(async (_m, opts?: { model?: string }) =>
+      opts?.model === 'model-a' ? '建议逢低看多' : '建议逢低看多。',
+    );
+    const r = await runEnsemble([{ role: 'user', content: 'x' }], {
+      models: ['model-a', 'model-b'],
+      similarityThreshold: 1.01,
+    });
+    // 只差一个句号也按不同簇处理
+    expect(r.agreement).toBeCloseTo(0.5, 6);
   });
 });
 
