@@ -165,12 +165,15 @@ export function roeSlope(reports: QuarterlyReport[], window = 6): number | null 
   return varx > 0 ? Math.round((cov / varx) * 100) / 100 : null;
 }
 
-/** 季度快照因子（进入截面基本面面板，每股常数） */
+/** 季度快照因子（进入截面基本面面板） */
 export type QuarterlyFactorName = 'cs_np_yoy_q' | 'cs_roe_slope';
 
 /**
  * 季度快照因子取值：最新单季净利同比（%）/ ROE 逐季斜率（每季百分点）。
  * 数据不足返回 NaN → 截面组装时如实剔除该股该因子。
+ *
+ * 注意：这是「取最新一期」的**非 PIT** 口径——截面组装已改用 buildPitSnapshots
+ * 的公告日门控版本，本函数保留给不需要时点纪律的场景（如表达式上下文的兜底）。
  */
 export function quarterlySnapshotValue(name: QuarterlyFactorName, series: QuarterlySeries): number {
   if (name === 'cs_np_yoy_q') {
@@ -182,6 +185,102 @@ export function quarterlySnapshotValue(name: QuarterlyFactorName, series: Quarte
     return NaN;
   }
   return roeSlope(series.reports) ?? NaN;
+}
+
+// ============ PIT（Point-In-Time）快照：公告日门控的 as-of 取值 ============
+
+/**
+ * PIT 快照：日期 t 的基本面取值 = **t 时点已公告**的最新报告口径。
+ * --------------------------------------------------------------------------
+ * 此前的截面基本面因子把「今天知道的年报值」投影回整个评估窗口——截面排序
+ * 近似不变所以勉强可用，但严格说是前视：2024-06 的截面"知道"了 2025 年报的
+ * ROE。季度报告自带 NOTICE_DATE（公告日），把「哪个时点知道什么」定义清楚，
+ * 因子在公告日跳变、其余日子保持——这才是可回测、可复现的口径。
+ *
+ * 诚实边界：
+ *  - 无公告日的报告不参与 PIT（缺"何时可知"时点，用了就是前视；东财实测
+ *    NOTICE_DATE 几乎恒有值，缺失属数据异常）；
+ *  - 历史成分股/退市股仍不在场（幸存者偏差需 PIT 成分股数据源，另行披露）。
+ */
+export interface PitSnapshot {
+  /** 该时点已公告的最新报告：累计 ROE（%） */
+  roe: number | null;
+  /** 毛利率（%） */
+  grossMargin: number | null;
+  /** 资产负债率（%） */
+  debtRatio: number | null;
+  /** 营收累计同比（%） */
+  revenueYoY: number | null;
+  /** 归母净利累计同比（%） */
+  netProfitYoY: number | null;
+  /** 最新已公告**年报**的净利同比（%，保持原 cs_net_profit_growth 的年报语义） */
+  netProfitGrowth: number | null;
+  /** 单季净利同比（%，as-of 最新已公告季度） */
+  npYoYQ: number | null;
+  /** as-of 最近 6 个已公告季度的 ROE 斜率（每季百分点） */
+  roeSlope: number | null;
+}
+
+export const EMPTY_PIT_SNAPSHOT: PitSnapshot = {
+  roe: null,
+  grossMargin: null,
+  debtRatio: null,
+  revenueYoY: null,
+  netProfitYoY: null,
+  netProfitGrowth: null,
+  npYoYQ: null,
+  roeSlope: null,
+};
+
+/** 从已知报告集合提取 as-of 快照（纯函数；仅在公告落入时重算） */
+function pitSnapshotOf(known: QuarterlyReport[]): PitSnapshot {
+  const latest = known[known.length - 1] ?? null;
+  const latestAnnual = [...known].reverse().find((r) => r.reportDate.slice(5, 7) === '12');
+  const points = deriveSingleQuarter(known);
+  let npYoYQ: number | null = null;
+  for (let i = points.length - 1; i >= 0; i--) {
+    if (points[i].netProfitYoY !== null) {
+      npYoYQ = points[i].netProfitYoY;
+      break;
+    }
+  }
+  return {
+    roe: latest?.roe ?? null,
+    grossMargin: latest?.grossMargin ?? null,
+    debtRatio: latest?.debtRatio ?? null,
+    revenueYoY: latest?.revenueYoY ?? null,
+    netProfitYoY: latest?.netProfitYoY ?? null,
+    netProfitGrowth: latestAnnual?.netProfitYoY ?? null,
+    npYoYQ,
+    roeSlope: roeSlope(known) ?? null,
+  };
+}
+
+/**
+ * 构建 barDates 逐日的 PIT 快照（barDates 升序；返回与之一一对应）。
+ *
+ * 报告按公告日排序，bar 日期推进时**只在新公告落入后重算一次**
+ * （O(bars + announcements × 派生成本)），首份公告落地前为全 null 快照——
+ * 调用方对 null 如实跳过该股该日的基本面观测，绝不回退到"未来值"。
+ */
+export function buildPitSnapshots(reports: QuarterlyReport[], barDates: string[]): PitSnapshot[] {
+  const timed = reports
+    .filter((r) => r.noticeDate !== null)
+    .sort((a, b) => (a.noticeDate as string).localeCompare(b.noticeDate as string));
+
+  const out: PitSnapshot[] = [];
+  let cursor = 0;
+  let snapshot = EMPTY_PIT_SNAPSHOT;
+  for (const date of barDates) {
+    let announced = false;
+    while (cursor < timed.length && (timed[cursor].noticeDate as string) <= date) {
+      cursor += 1;
+      announced = true;
+    }
+    if (announced) snapshot = pitSnapshotOf(timed.slice(0, cursor));
+    out.push(cursor > 0 ? snapshot : EMPTY_PIT_SNAPSHOT);
+  }
+  return out;
 }
 
 export interface EventObservationOptions {

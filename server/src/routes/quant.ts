@@ -50,7 +50,7 @@ import {
   fetchFinancialDataCached,
   fetchQuarterlyFinancialsCached,
 } from '../quant/fundamentalCache.js';
-import { runPreflight } from '../quant/preflight.js';
+import { runPreflight, type PreflightResult } from '../quant/preflight.js';
 import { runMarketScreener, readLatestScreenerRun } from '../quant/screener.js';
 import { runEnsemble, recordModelOutcome, getModelWeights } from '../llm/ensemble.js';
 import { routeSkill } from '../llm/skillRouter.js';
@@ -66,6 +66,7 @@ import {
   parseFactorExpression,
   buildExpressionContext,
   evaluateFactorSeries,
+  type ExprNode,
 } from '../quant/factorExpression.js';
 import { buildEarningsSurpriseObservations } from '../quant/fundamentalDepth.js';
 import { fetchStockEvents } from '../quant/eventProvider.js';
@@ -615,6 +616,181 @@ function crossSectionConcurrency(): number {
   return Math.min(Math.max(Math.floor(raw), 1), CROSS_SECTION_CONCURRENCY_HARD_CAP);
 }
 
+/** universe 解析的统一返回：ok=false 时 status/payload 由调用方直接回写 */
+type UniverseResolution =
+  | { ok: true; codes: string[]; universe: Record<string, unknown> }
+  | { ok: false; status: number; payload: Record<string, unknown> };
+
+/**
+ * universe 解析（cross-section / expression / batch 三路由共用）：
+ * board（板块成分股，截面拉宽主路径）优先于显式 codes；board 路径的门槛是
+ * 板块列表源（push2 clist，与 K 线源不同域名）。
+ */
+async function resolveUniverse(
+  body: { board?: unknown; codes?: unknown; topN?: unknown },
+  preflight: PreflightResult,
+): Promise<UniverseResolution> {
+  const upstreamListOk = preflight.checks.find((c) => c.key === 'upstream_list')?.ok ?? false;
+  const MAX_CODES = crossSectionMaxCodes();
+
+  if (body.board !== undefined && body.board !== null && String(body.board).trim() !== '') {
+    const board = String(body.board).trim().toUpperCase();
+    if (!isValidBoardCode(board)) {
+      return { ok: false, status: 400, payload: { error: `无效的板块代码：${body.board}` } };
+    }
+    const topNRaw = body.topN === undefined || body.topN === null ? 10 : Number(body.topN);
+    if (!Number.isInteger(topNRaw) || topNRaw < 3 || topNRaw > MAX_CODES) {
+      return {
+        ok: false,
+        status: 400,
+        payload: { error: `topN 需为 3-${MAX_CODES} 的整数（当前：${body.topN}）` },
+      };
+    }
+    // 精准预检：板块列表源不可达且该板块成分股无本地缓存 → 直接 503 给可行指引，
+    // 而不是陪跑一轮注定失败的网络尝试（有缓存时仍走陈旧兜底，不拦）
+    if (!upstreamListOk && !hasCachedConstituents(board, topNRaw)) {
+      return {
+        ok: false,
+        status: 503,
+        payload: {
+          error: `板块列表源不可用，且板块 ${board} 无本地缓存成分股`,
+          detail: preflight.checks.find((c) => c.key === 'upstream_list')?.detail,
+          hint: '稍后重试；或改用 codes 指定此前评估过的股票（均有本地缓存）',
+          preflight,
+        },
+      };
+    }
+    try {
+      const cons = await fetchBoardConstituentsWithMeta(board, topNRaw);
+      if (cons.value.length < 2) {
+        return {
+          ok: false,
+          status: 422,
+          payload: { error: `板块 ${board} 有效成分股仅 ${cons.value.length} 只，无法构成截面` },
+        };
+      }
+      return {
+        ok: true,
+        codes: cons.value.map((c) => c.code),
+        universe: {
+          source: 'board',
+          board,
+          requested: cons.value.length,
+          constituents: cons.value.map(({ code, name }) => ({ code, name })),
+          // 上游抖动但有历史快照时，披露「本次用的是陈旧成分股列表」
+          ...(cons.stale ? { stale: true, staleAgeMs: cons.staleAgeMs } : {}),
+        },
+      };
+    } catch (error) {
+      logger.warn('板块成分股获取失败', { board, err: error });
+      const message = error instanceof Error ? error.message : '成分股获取失败';
+      return {
+        ok: false,
+        status: 502,
+        payload: {
+          error: `板块 ${board} 成分股获取失败`,
+          detail: message,
+          ...(!upstreamListOk && !hasCachedConstituents(board, topNRaw)
+            ? { hint: '板块列表源当前不可用，可稍后重试，或改用 codes 指定已缓存过的股票' }
+            : {}),
+        },
+      };
+    }
+  }
+
+  const rawCodes = Array.isArray(body.codes) ? body.codes.map(String) : [];
+  if (rawCodes.length < 2 || rawCodes.length > MAX_CODES) {
+    return {
+      ok: false,
+      status: 400,
+      payload: {
+        error: `请提供 2-${MAX_CODES} 只股票代码（codes），或传 board 指定行业板块`,
+      },
+    };
+  }
+  for (const c of rawCodes) {
+    if (!/^\d{6}$/.test(c)) {
+      return { ok: false, status: 400, payload: { error: `无效的股票代码：${c}` } };
+    }
+  }
+  return { ok: true, codes: rawCodes, universe: { source: 'codes', requested: rawCodes.length } };
+}
+
+/** 面板取数（三路由共用）：行情 + 季度财报（PIT 基本面/PEAD 源）+ 可选年报快照与事件 */
+async function fetchPanelInputs(
+  codes: string[],
+  opts: {
+    start: string;
+    end: string;
+    signal: AbortSignal;
+    withFinancial?: boolean;
+    withQuarterly?: boolean;
+    withEvents?: boolean;
+  },
+): Promise<StockPanelInput[]> {
+  return mapWithConcurrency(
+    codes,
+    crossSectionConcurrency(),
+    async (code: string) => {
+      const bars = await fetchOHLCVData(code, opts.start, opts.end, opts.signal).catch(() => []);
+      const financial = opts.withFinancial
+        ? await fetchFinancialDataCached(code, opts.signal).catch(() => null)
+        : null;
+      const quarterly = opts.withQuarterly
+        ? await fetchQuarterlyFinancialsCached(code, 16, opts.signal).catch(() => null)
+        : null;
+      const events = opts.withEvents ? await fetchStockEvents(code, opts.signal) : null;
+      return { code, bars, financial, quarterly, events };
+    },
+    { signal: opts.signal },
+  );
+}
+
+/** 表达式截面观测装配（single / batch 表达式路由共用）：逐股求值 + t→t+h 远期收益 */
+function assembleExpressionObservations(
+  ast: ExprNode,
+  inputs: StockPanelInput[],
+  horizons: number[],
+): { obs: FactorObservation[]; included: string[]; skipped: { code: string; reason: string }[] } {
+  const obs: FactorObservation[] = [];
+  const included: string[] = [];
+  const skipped: { code: string; reason: string }[] = [];
+  for (const input of inputs) {
+    const { code, bars, financial, quarterly } = input;
+    if (!bars || bars.length < Math.max(...horizons) + 5) {
+      skipped.push({ code, reason: `K线不足（${bars?.length ?? 0} 根）` });
+      continue;
+    }
+    const values = evaluateFactorSeries(ast, buildExpressionContext(bars, financial, quarterly));
+    let used = 0;
+    for (let i = 0; i < bars.length; i++) {
+      const value = values[i];
+      if (!Number.isFinite(value)) continue;
+      const returns: Record<number, number> = {};
+      let complete = true;
+      for (const h of horizons) {
+        if (i + h >= bars.length) {
+          complete = false;
+          break;
+        }
+        const base = bars[i].close;
+        const ahead = bars[i + h].close;
+        if (!(base > 0) || !(ahead > 0)) {
+          complete = false;
+          break;
+        }
+        returns[h] = ahead / base - 1;
+      }
+      if (!complete || Object.keys(returns).length === 0) continue;
+      obs.push({ date: bars[i].date, symbol: code, value, returns });
+      used += 1;
+    }
+    if (used > 0) included.push(code);
+    else skipped.push({ code, reason: '表达式有效取值不足（窗口过界/除零导致全 NaN）' });
+  }
+  return { obs, included, skipped };
+}
+
 // 截面因子评估：自动拉取行情/财务/季度财报装配截面观测面板，走既有截面评估器
 // （按日跨股票 Spearman + Newey-West + OOS 稳定性）。
 // universe 两种来源：
@@ -652,10 +828,9 @@ router.post(
       const includeEvents = body.includeEvents !== false;
 
       // 预检（在 universe 解析前）：源不可达 + 无任何本地缓存 → 直接 503；
-      // 源不可达但有缓存 → 继续走陈旧兜底（板块级精准拦截在解析分支内）
+      // 源不可达但有缓存 → 继续走陈旧兜底（板块级精准拦截在 resolveUniverse 内）
       const preflight = await runPreflight();
       const upstreamOk = preflight.checks.find((c) => c.key === 'upstream')?.ok ?? false;
-      const upstreamListOk = preflight.checks.find((c) => c.key === 'upstream_list')?.ok ?? false;
       const cacheOk = preflight.checks.find((c) => c.key === 'cache')?.ok ?? false;
       if (!upstreamOk && !cacheOk) {
         return res.status(503).json({
@@ -665,106 +840,29 @@ router.post(
         });
       }
 
-      // universe 解析：板块成分股（拉宽）优先于显式 codes
-      const MAX_CODES = crossSectionMaxCodes();
-      let codes: string[];
-      let universe: Record<string, unknown>;
-      if (body.board !== undefined && body.board !== null && String(body.board).trim() !== '') {
-        const board = String(body.board).trim().toUpperCase();
-        if (!isValidBoardCode(board)) {
-          return res.status(400).json({ error: `无效的板块代码：${body.board}` });
-        }
-        const topNRaw = body.topN === undefined || body.topN === null ? 10 : Number(body.topN);
-        if (!Number.isInteger(topNRaw) || topNRaw < 3 || topNRaw > MAX_CODES) {
-          return res
-            .status(400)
-            .json({ error: `topN 需为 3-${MAX_CODES} 的整数（当前：${body.topN}）` });
-        }
-        let constituents;
-        let constituentsStale = false;
-        let constituentsStaleAgeMs: number | undefined;
-        // 精准预检：板块列表源不可达且该板块成分股无本地缓存 → 直接 503 给可行指引，
-        // 而不是陪跑一轮注定失败的网络尝试（有缓存时仍走陈旧兜底，不拦）
-        if (!upstreamListOk && !hasCachedConstituents(board, topNRaw)) {
-          return res.status(503).json({
-            error: `板块列表源不可用，且板块 ${board} 无本地缓存成分股`,
-            detail: preflight.checks.find((c) => c.key === 'upstream_list')?.detail,
-            hint: '稍后重试；或改用 codes 指定此前评估过的股票（均有本地缓存）',
-            preflight,
-          });
-        }
-        try {
-          const cons = await fetchBoardConstituentsWithMeta(board, topNRaw);
-          constituents = cons.value;
-          constituentsStale = cons.stale;
-          constituentsStaleAgeMs = cons.staleAgeMs;
-        } catch (error) {
-          logger.warn('板块成分股获取失败', { board, err: error });
-          const message = error instanceof Error ? error.message : '成分股获取失败';
-          const hint =
-            !upstreamListOk && !hasCachedConstituents(board, topNRaw)
-              ? '板块列表源当前不可用，可稍后重试，或改用 codes 指定已缓存过的股票'
-              : undefined;
-          return res.status(502).json({
-            error: `板块 ${board} 成分股获取失败`,
-            detail: message,
-            ...(hint ? { hint } : {}),
-          });
-        }
-        if (constituents.length < 2) {
-          return res
-            .status(422)
-            .json({ error: `板块 ${board} 有效成分股仅 ${constituents.length} 只，无法构成截面` });
-        }
-        codes = constituents.map((c) => c.code);
-        // 板块中文名由前端从其已加载的板块列表解析（下拉是板块唯一入口，必有名称），
-        // 服务端不再为取一次名字多发一次板块列表请求
-        universe = {
-          source: 'board',
-          board,
-          requested: constituents.length,
-          constituents: constituents.map(({ code, name }) => ({ code, name })),
-          // 上游抖动但有历史快照时，披露「本次截面用的是陈旧成分股列表」
-          ...(constituentsStale ? { stale: true, staleAgeMs: constituentsStaleAgeMs } : {}),
-        };
-      } else {
-        const rawCodes = Array.isArray(body.codes) ? body.codes.map(String) : [];
-        if (rawCodes.length < 2 || rawCodes.length > MAX_CODES) {
-          return res
-            .status(400)
-            .json({ error: `请提供 2-${MAX_CODES} 只股票代码（codes），或传 board 指定行业板块` });
-        }
-        for (const c of rawCodes) {
-          if (!/^\d{6}$/.test(c)) {
-            return res.status(400).json({ error: `无效的股票代码：${c}` });
-          }
-        }
-        codes = rawCodes;
-        universe = { source: 'codes', requested: codes.length };
-      }
+      // universe 解析：板块成分股（拉宽）优先于显式 codes（三路由共用助手）
+      const resolved = await resolveUniverse(body, preflight);
+      if (!resolved.ok) return res.status(resolved.status).json(resolved.payload);
+      const codes = resolved.codes;
+      const universe: Record<string, unknown> = {
+        ...resolved.universe,
+        // 幸存者偏差如实声明：主表是当前上市证券，退市股不在场——历史评估的
+        // universe 无退市股。修复需要 PIT 成分股数据源（免费接口不提供）。
+        survivorshipNote: '主表为当前上市证券，历史截面不含已退市股票（幸存者偏差）',
+      };
 
       const end = new Date().toISOString().slice(0, 10);
       const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
       // 客户端提前断开（取消/关页）→ 级联中止在途取数
       abort = abortOnClientClose(res);
       const { signal } = abort;
-      const inputs: StockPanelInput[] = await mapWithConcurrency(
-        codes,
-        crossSectionConcurrency(),
-        async (code: string) => {
-          const bars = await fetchOHLCVData(code, start, end, signal).catch(() => []);
-          const financial = includeFundamental
-            ? await fetchFinancialDataCached(code, signal).catch(() => null)
-            : null;
-          const quarterly = includeFundamental
-            ? await fetchQuarterlyFinancialsCached(code, 16, signal).catch(() => null)
-            : null;
-          // 公司事件（分红/回购/解禁）：单类失败在 fetchStockEvents 内降级为空列表
-          const events = includeEvents ? await fetchStockEvents(code, signal) : null;
-          return { code, bars, financial, quarterly, events };
-        },
-        { signal },
-      );
+      const inputs: StockPanelInput[] = await fetchPanelInputs(codes, {
+        start,
+        end,
+        signal,
+        withQuarterly: includeFundamental,
+        withEvents: includeEvents,
+      });
       // 客户端已不在：跳过整段 CPU 评估，静默终止（socket 已关闭，无需写响应）
       if (abort.signal.aborted) return;
 
@@ -1341,119 +1439,29 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
       )
         ? (body.horizons as number[])
         : [21, 63];
-    const MAX = crossSectionMaxCodes();
 
-    // 预检（与 cross-section 同策略）：源挂且目标 universe 无缓存就别陪跑。
-    // board 分支的门槛是板块列表源（push2 clist），与 K 线源是两个域名。
+    // 预检 + universe 解析（三路由共用助手；board 门槛 = 板块列表源）
     const preflight = await runPreflight();
-    const upstreamListOk = preflight.checks.find((c) => c.key === 'upstream_list')?.ok ?? false;
-
-    // universe 解析（与 cross-section 同口径：板块优先于显式 codes）
-    let codes: string[];
-    let universe: Record<string, unknown>;
-    if (body.board !== undefined && body.board !== null && String(body.board).trim() !== '') {
-      const board = String(body.board).trim().toUpperCase();
-      if (!isValidBoardCode(board)) {
-        return res.status(400).json({ error: `无效的板块代码：${body.board}` });
-      }
-      const topNRaw = body.topN === undefined || body.topN === null ? 10 : Number(body.topN);
-      if (!Number.isInteger(topNRaw) || topNRaw < 3 || topNRaw > MAX) {
-        return res.status(400).json({ error: `topN 需为 3-${MAX} 的整数（当前：${body.topN}）` });
-      }
-      if (!upstreamListOk && !hasCachedConstituents(board, topNRaw)) {
-        return res.status(503).json({
-          error: `板块列表源不可用，且板块 ${board} 无本地缓存成分股`,
-          detail: preflight.checks.find((c) => c.key === 'upstream_list')?.detail,
-          hint: '稍后重试；或改用 codes 指定此前评估过的股票（均有本地缓存）',
-          preflight,
-        });
-      }
-      let constituents;
-      try {
-        constituents = await fetchBoardConstituentsWithMeta(board, topNRaw);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '成分股获取失败';
-        return res.status(502).json({
-          error: `板块 ${board} 成分股获取失败`,
-          detail: message,
-          ...(!upstreamListOk && !hasCachedConstituents(board, topNRaw)
-            ? { hint: '板块列表源当前不可用，可稍后重试，或改用 codes 指定已缓存过的股票' }
-            : {}),
-        });
-      }
-      if (constituents.value.length < 2) {
-        return res.status(422).json({
-          error: `板块 ${board} 有效成分股仅 ${constituents.value.length} 只，无法构成截面`,
-        });
-      }
-      codes = constituents.value.map((c) => c.code);
-      universe = { source: 'board', board, requested: constituents.value.length };
-    } else {
-      const rawCodes = Array.isArray(body.codes) ? body.codes.map(String) : [];
-      if (rawCodes.length < 2 || rawCodes.length > MAX) {
-        return res
-          .status(400)
-          .json({ error: `请提供 2-${MAX} 只股票代码（codes），或传 board 指定行业板块` });
-      }
-      for (const c of rawCodes) {
-        if (!/^\d{6}$/.test(c)) return res.status(400).json({ error: `无效的股票代码：${c}` });
-      }
-      codes = rawCodes;
-      universe = { source: 'codes', requested: codes.length };
-    }
+    const resolved = await resolveUniverse(body, preflight);
+    if (!resolved.ok) return res.status(resolved.status).json(resolved.payload);
+    const codes = resolved.codes;
+    const universe = resolved.universe;
 
     const end = new Date().toISOString().slice(0, 10);
     const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
     abort = abortOnClientClose(res);
-    const inputs = await mapWithConcurrency(
-      codes,
-      crossSectionConcurrency(),
-      async (code: string) => {
-        const bars = await fetchOHLCVData(code, start, end, abort!.signal).catch(() => []);
-        const financial = await fetchFinancialDataCached(code, abort!.signal).catch(() => null);
-        return { code, bars, financial };
-      },
-      { signal: abort.signal },
-    );
+    const inputs = await fetchPanelInputs(codes, {
+      start,
+      end,
+      signal: abort.signal,
+      // 表达式标量：PIT 优先（季度公告日门控），无季度数据回落年报快照常数
+      withFinancial: true,
+      withQuarterly: true,
+    });
     if (abort.signal.aborted) return;
 
-    // 装配观测：表达式逐日取值 + t→t+h 远期收益（与 crossSectionBuilder 同口径）
-    const obs: FactorObservation[] = [];
-    const included: string[] = [];
-    const skipped: { code: string; reason: string }[] = [];
-    for (const input of inputs) {
-      const { code, bars, financial } = input;
-      if (!bars || bars.length < Math.max(...horizons) + 5) {
-        skipped.push({ code, reason: `K线不足（${bars?.length ?? 0} 根）` });
-        continue;
-      }
-      const values = evaluateFactorSeries(ast, buildExpressionContext(bars, financial));
-      let used = 0;
-      for (let i = 0; i < bars.length; i++) {
-        const value = values[i];
-        if (!Number.isFinite(value)) continue;
-        const returns: Record<number, number> = {};
-        let complete = true;
-        for (const h of horizons) {
-          if (i + h >= bars.length) {
-            complete = false;
-            break;
-          }
-          const base = bars[i].close;
-          const ahead = bars[i + h].close;
-          if (!(base > 0) || !(ahead > 0)) {
-            complete = false;
-            break;
-          }
-          returns[h] = ahead / base - 1;
-        }
-        if (!complete || Object.keys(returns).length === 0) continue;
-        obs.push({ date: bars[i].date, symbol: code, value, returns });
-        used += 1;
-      }
-      if (used > 0) included.push(code);
-      else skipped.push({ code, reason: '表达式有效取值不足（窗口过界/除零导致全 NaN）' });
-    }
+    // 装配观测：表达式逐日取值 + t→t+h 远期收益（single/batch 共用助手）
+    const { obs, included, skipped } = assembleExpressionObservations(ast, inputs, horizons);
     if (obs.length < 30) {
       return res.status(422).json({
         error: `有效观测仅 ${obs.length} 个（需 ≥30），无法评估`,
@@ -1503,6 +1511,161 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
     res.status(500).json({ error: '自定义因子评估失败' });
   }
 });
+
+// 批量因子假设验证（RD-Agent(Q) 式研究流水线的规模化出口）：
+// 一次请求验证一组受限 DSL 表达式假设——universe 解析与取数只做一次（面板共享），
+// 逐表达式求值 → 截面评估 → 台账留痕。单条非法/样本不足只标记该项，不拖垮整批。
+// 这是「LLM 提假设 → 自动验证 → 复利台账」从单发走向批量的关键一步。
+router.post(
+  '/api/quant/factor/expression/batch',
+  quantLimiter,
+  circuitBreakerGuard,
+  async (req, res) => {
+    let abort: AbortController | null = null;
+    try {
+      const body = (req.body ?? {}) as {
+        expressions?: unknown;
+        name?: unknown;
+        board?: unknown;
+        codes?: unknown;
+        topN?: unknown;
+        horizons?: unknown;
+        /** hypothesis = LLM 生成的假设；expression = 手输表达式 */
+        source?: unknown;
+      };
+      const raw = Array.isArray(body.expressions) ? body.expressions : [];
+      const expressions = raw
+        .map((e: unknown) => String(e ?? '').trim())
+        .filter((e: string) => e !== '');
+      if (expressions.length === 0) {
+        return res.status(400).json({ error: '请提供 expressions 数组（1-50 条表达式）' });
+      }
+      if (expressions.length > 50) {
+        return res.status(413).json({ error: `expressions 过多（${expressions.length} > 50）` });
+      }
+      const horizons =
+        Array.isArray(body.horizons) &&
+        body.horizons.every(
+          (h: unknown) => Number.isInteger(h) && (h as number) >= 1 && (h as number) <= 250,
+        )
+          ? (body.horizons as number[])
+          : [21, 63];
+
+      // 全部表达式先解析（纯 CPU，毫秒级）：非法项提前标记，不进入取数
+      const parsed = expressions.map((src) => {
+        try {
+          return { expression: src, ast: parseFactorExpression(src), error: null as string | null };
+        } catch (error) {
+          return {
+            expression: src,
+            ast: null,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      });
+      const validCount = parsed.filter((p) => p.ast !== null).length;
+      if (validCount === 0) {
+        return res.status(400).json({
+          error: '全部表达式非法',
+          details: parsed.map((p) => ({ expression: p.expression, error: p.error })),
+        });
+      }
+
+      // 预检 + universe 解析（与 single/cross-section 共用助手）
+      const preflight = await runPreflight();
+      const resolved = await resolveUniverse(body, preflight);
+      if (!resolved.ok) return res.status(resolved.status).json(resolved.payload);
+      const codes = resolved.codes;
+      const universe = resolved.universe;
+
+      const end = new Date().toISOString().slice(0, 10);
+      const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      abort = abortOnClientClose(res);
+      const inputs = await fetchPanelInputs(codes, {
+        start,
+        end,
+        signal: abort.signal,
+        withFinancial: true,
+        withQuarterly: true,
+      });
+      if (abort.signal.aborted) return;
+
+      // 逐表达式评估：面板（inputs）只取一次，这里是纯 CPU 循环
+      const source: FactorExperimentSource =
+        body.source === 'hypothesis' ? 'hypothesis' : 'expression';
+      const results: Record<string, unknown>[] = [];
+      for (const item of parsed) {
+        if (item.ast === null) {
+          results.push({ expression: item.expression, ok: false, error: item.error });
+          continue;
+        }
+        const { obs, included, skipped } = assembleExpressionObservations(
+          item.ast as ExprNode,
+          inputs,
+          horizons,
+        );
+        if (obs.length < 30) {
+          results.push({
+            expression: item.expression,
+            ok: false,
+            error: `有效观测仅 ${obs.length} 个（需 ≥30），无法评估`,
+            stocksSkipped: skipped,
+          });
+          continue;
+        }
+        const report = evaluateFactor(obs);
+        const factor = {
+          name: String(body.name ?? 'custom_expression'),
+          type: 'expression',
+          report: {
+            ...report,
+            byPeriod: report.byPeriod.map((p) => ({ ...p, verdict: judgeFactor(p) })),
+          },
+        };
+        const recorded = recordFactorExperiments(
+          ledgerEntriesFromReport([factor], {
+            source,
+            name: factor.name,
+            expression: item.expression,
+            universe: {
+              requested: typeof universe.requested === 'number' ? universe.requested : codes.length,
+              included: included.length,
+              ...(typeof universe.board === 'string' ? { board: universe.board } : { codes }),
+            },
+          }),
+        );
+        results.push({
+          expression: item.expression,
+          ok: true,
+          stocksIncluded: included,
+          stocksSkipped: skipped,
+          horizons,
+          factor,
+          ledger: { recorded: recorded.length },
+        });
+      }
+
+      const okCount = results.filter((r) => r.ok === true).length;
+      res.json({
+        universe,
+        horizons,
+        requested: expressions.length,
+        evaluated: okCount,
+        results,
+        run: runSnapshot({ kind: 'factor-expression-batch', start, end, horizons }),
+        preflight,
+        ledger: { total: summarizeFactorExperiments().total },
+      });
+    } catch (error) {
+      if (abort?.signal.aborted) return;
+      logger.error('Factor expression batch error', {
+        route: '/api/quant/factor/expression/batch',
+        err: error,
+      });
+      res.status(500).json({ error: '批量因子假设验证失败' });
+    }
+  },
+);
 
 // 受控回测评估：基线(无新闻叠加) vs 实验(带新闻情绪叠加)，量化 LLM 信号是否真增 alpha
 router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, async (req, res) => {
