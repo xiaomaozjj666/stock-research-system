@@ -43,7 +43,12 @@ export default function FactorLabPanel() {
   );
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<FactorExperiment[]>([]);
-  const [summary, setSummary] = useState<{ total: number; kept: number } | null>(null);
+  const [summary, setSummary] = useState<{
+    total: number;
+    kept: number;
+    keptExpectedFalse?: number;
+    keptOosShare?: number;
+  } | null>(null);
 
   const loadLedger = useCallback(async () => {
     try {
@@ -193,6 +198,14 @@ export default function FactorLabPanel() {
           {summary && (
             <span className="batch-hint">
               累计 {summary.total} 条 · 采信 {summary.kept} 条
+              {typeof summary.keptExpectedFalse === 'number' && summary.kept > 0 && (
+                <>
+                  {' '}
+                  · 期望假阳性 ≈{summary.keptExpectedFalse}（Σp，全历史试错的诚实折扣）
+                  {typeof summary.keptOosShare === 'number' &&
+                    ` · OOS 稳定 ${Math.round(summary.keptOosShare * 100)}%`}
+                </>
+              )}
             </span>
           )}
         </div>

@@ -11,6 +11,8 @@
  */
 import type { OHLCVData } from './types.js';
 import type { FinancialData } from '../types.js';
+import type { QuarterlySeries } from '../services/quarterlyFinancials.js';
+import { buildPitSnapshots, type PitSnapshot } from './fundamentalDepth.js';
 
 const SERIES_IDENTS = ['open', 'high', 'low', 'close', 'volume', 'ret'] as const;
 const SCALAR_IDENTS = ['roe', 'grossMargin', 'netProfitGrowth', 'debtRatio'] as const;
@@ -39,7 +41,13 @@ export type ExprNode =
   | { kind: 'binary'; op: '+' | '-' | '*' | '/' | '^'; left: ExprNode; right: ExprNode }
   | { kind: 'neg'; arg: ExprNode };
 
-/** 求值上下文：逐日序列 + 每股常数（基本面快照） */
+/**
+ * 标量因子取值：number = 常数（年报快照口径）；number[] = 逐日 PIT 序列
+ * （与 bars 等长对齐，未知时点为 NaN——公告前该股的基本面"还不知道"）。
+ */
+export type ScalarInput = number | number[];
+
+/** 求值上下文：逐日序列 + 标量因子（PIT 序列优先，快照常数为兜底） */
 export interface ExpressionContext {
   open: number[];
   high: number[];
@@ -48,10 +56,10 @@ export interface ExpressionContext {
   volume: number[];
   /** 日收益率序列（首日为 0，与窗口函数对齐用） */
   ret: number[];
-  roe?: number;
-  grossMargin?: number;
-  netProfitGrowth?: number;
-  debtRatio?: number;
+  roe?: ScalarInput;
+  grossMargin?: ScalarInput;
+  netProfitGrowth?: ScalarInput;
+  debtRatio?: ScalarInput;
 }
 
 export const MAX_EXPRESSION_CHARS = 240;
@@ -216,15 +224,41 @@ export function parseFactorExpression(src: string): ExprNode {
   return parse(tokens, { pos: 0, nodes: 0 });
 }
 
-/** 由真实 K 线 + 可选财务快照构造求值上下文 */
+/**
+ * 由真实 K 线构造求值上下文。
+ *
+ * 标量因子取值优先级：季度财报 PIT 序列（公告日门控，与截面基本面因子同口径）
+ * > 年报快照常数（含公告时点前视，仅作无季度数据时的兜底）。
+ */
 export function buildExpressionContext(
   bars: OHLCVData[],
   financial?: FinancialData | null,
+  quarterly?: QuarterlySeries | null,
 ): ExpressionContext {
   const close = bars.map((b) => b.close);
   const ret = close.map((c, i) => (i === 0 || !(close[i - 1] > 0) ? 0 : c / close[i - 1] - 1));
   const last = <T>(arr: T[] | undefined): T | undefined =>
     arr && arr.length > 0 ? arr[arr.length - 1] : undefined;
+
+  // PIT 标量：季度报告按公告日门控；公告前 NaN（上层如实跳过该日取值）
+  const snaps: PitSnapshot[] | null =
+    quarterly && quarterly.reports.length > 0
+      ? buildPitSnapshots(
+          quarterly.reports,
+          bars.map((b) => b.date),
+        )
+      : null;
+  const pit = (pick: (s: PitSnapshot) => number | null): number[] | undefined =>
+    snaps ? snaps.map((s) => pick(s) ?? NaN) : undefined;
+
+  const annualGrowth = financial
+    ? financial.netProfit.length >= 2 && financial.netProfit.at(-2)! > 0
+      ? ((financial.netProfit.at(-1)! - financial.netProfit.at(-2)!) /
+          financial.netProfit.at(-2)!) *
+        100
+      : undefined
+    : undefined;
+
   return {
     open: bars.map((b) => b.open),
     high: bars.map((b) => b.high),
@@ -232,19 +266,10 @@ export function buildExpressionContext(
     close,
     volume: bars.map((b) => b.volume),
     ret,
-    ...(financial
-      ? {
-          roe: last(financial.roe),
-          grossMargin: last(financial.grossMargin),
-          debtRatio: last(financial.debtRatio),
-          netProfitGrowth:
-            financial.netProfit.length >= 2 && financial.netProfit.at(-2)! > 0
-              ? ((financial.netProfit.at(-1)! - financial.netProfit.at(-2)!) /
-                  financial.netProfit.at(-2)!) *
-                100
-              : undefined,
-        }
-      : {}),
+    roe: pit((s) => s.roe) ?? last(financial?.roe),
+    grossMargin: pit((s) => s.grossMargin) ?? last(financial?.grossMargin),
+    debtRatio: pit((s) => s.debtRatio) ?? last(financial?.debtRatio),
+    netProfitGrowth: pit((s) => s.netProfitGrowth) ?? annualGrowth,
   };
 }
 
@@ -294,8 +319,14 @@ function seriesAt(node: ExprNode, ctx: ExpressionContext, i: number): number {
       return node.value;
     case 'series':
       return ctx[node.name][i] ?? NaN;
-    case 'scalar':
-      return ctx[node.name] ?? NaN;
+    case 'scalar': {
+      const v = ctx[node.name];
+      if (v === undefined) return NaN;
+      if (typeof v === 'number') return Number.isFinite(v) ? v : NaN;
+      // PIT 序列：按日期下标取值（未知时点 NaN → 上层如实跳过）
+      const val = v[i] ?? NaN;
+      return Number.isFinite(val) ? val : NaN;
+    }
     case 'neg': {
       const v = seriesAt(node.arg, ctx, i);
       return Number.isFinite(v) ? -v : NaN;

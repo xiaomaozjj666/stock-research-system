@@ -6,6 +6,8 @@ import {
   roeSlope,
   quarterlySnapshotValue,
   buildEarningsSurpriseObservations,
+  buildPitSnapshots,
+  EMPTY_PIT_SNAPSHOT,
 } from '../fundamentalDepth.js';
 import type { OHLCVData } from '../types.js';
 
@@ -130,6 +132,56 @@ describe('roeSlope — ROE 逐季趋势', () => {
 
   it('window < 3 → null（斜率守卫）', () => {
     expect(roeSlope(withRoe([10, 20]), 2)).toBeNull();
+  });
+});
+
+describe('buildPitSnapshots — 公告日门控的 as-of 快照', () => {
+  /** 三份报告：ROE 10（01-10 公告）/ ROE 12（04-20 公告）/ ROE 15（无公告日，不参与 PIT） */
+  function pitReports(): QuarterlyReport[] {
+    return [
+      report('2023-12-31', 20, 100),
+      { ...report('2024-03-31', 24, 110), roe: 12 },
+      { ...report('2024-06-30', 30, 120), roe: 15, noticeDate: null },
+    ].map((r, i) => (i === 0 ? { ...r, roe: 10, noticeDate: '2024-01-10' } : r));
+  }
+
+  const dates = [
+    '2024-01-05', // 首份公告前
+    '2024-01-15', // 第一份公告后
+    '2024-04-25', // 第二份公告后
+    '2024-08-01',
+  ];
+
+  it('公告前全 null；公告后取「已公告最新值」；无公告日的报告永不参与', () => {
+    const snaps = buildPitSnapshots(pitReports(), dates);
+    expect(snaps).toHaveLength(4);
+    expect(snaps[0]).toEqual(EMPTY_PIT_SNAPSHOT); // 2024-01-05：什么都还不知道
+    expect(snaps[1].roe).toBe(10); // 01-10 公告后
+    expect(snaps[2].roe).toBe(12); // 04-20 公告后跳变
+    expect(snaps[3].roe).toBe(12); // 无公告日的 ROE 15 永不出现
+  });
+
+  it('派生值 as-of：npYoYQ 在公告跳变处更新', () => {
+    // 单季同比链：fixture 的单季净利逐年翻倍 → 各期同比 100%
+    const chain: QuarterlyReport[] = [
+      report('2022-03-31', 4, null),
+      report('2022-06-30', 9, null),
+      report('2022-09-30', 15, null),
+      report('2022-12-31', 22, null),
+      report('2023-03-31', 8, null, '2023-04-20'),
+      report('2023-06-30', 17, null, '2023-07-20'),
+      report('2023-09-30', 28, null, '2023-10-20'),
+    ];
+    const snaps = buildPitSnapshots(chain, ['2023-05-10', '2023-11-10']);
+    // 2023-05-10：已知到 2023-03-31 报告（单季 4 → 8，同比 100%）
+    expect(snaps[0].npYoYQ).toBeCloseTo(100, 6);
+    // 2023-11-10：已知到 2023-09-30；单季 = 28−17=11，去年同期 15−9=6 → 83.33%
+    expect(snaps[1].npYoYQ).toBeCloseTo(83.33, 2);
+  });
+
+  it('barDates 早于全部公告 → 全 null 快照（不回退未来值）', () => {
+    const snaps = buildPitSnapshots(pitReports(), ['2023-01-01', '2023-06-01']);
+    expect(snaps).toEqual([EMPTY_PIT_SNAPSHOT, EMPTY_PIT_SNAPSHOT]);
   });
 });
 

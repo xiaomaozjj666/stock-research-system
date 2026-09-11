@@ -1,14 +1,13 @@
 /**
  * 截面因子编排器测试
  * ----------------------------------------------------------------------------
- * 重点验证装配正确性（观测结构 / 远期收益口径 / 基本面常数语义 / 降级披露），
+ * 重点验证装配正确性（观测结构 / 远期收益口径 / 基本面 PIT 语义 / 降级披露），
  * IC 数值本身的正确性由 factorEvaluation 评估器的既有测试覆盖。
  */
 import { describe, it, expect } from 'vitest';
 import { buildCrossSectionPanel, type StockPanelInput } from '../crossSectionBuilder.js';
 import { evaluateFactor } from '../factorEvaluation.js';
 import type { OHLCVData } from '../types.js';
-import type { FinancialData } from '../../types.js';
 import type { QuarterlySeries } from '../../services/quarterlyFinancials.js';
 
 /** 生成 n 根确定性 K 线（各股不同漂移，保证截面差异） */
@@ -25,35 +24,14 @@ function barsFor(code: string, n: number, drift: number): OHLCVData[] {
   return out;
 }
 
-function financialFor(roe: number, margin: number): FinancialData {
-  return {
-    years: ['2024', '2025'],
-    revenue: [100, 120],
-    netProfit: [10, 12],
-    grossMargin: [margin, margin + 1],
-    netMargin: [10, 12],
-    roe: [roe - 2, roe],
-    operatingCashFlow: [11, 13],
-    eps: [1, 1.2],
-    totalAssets: [500, 550],
-    totalLiabilities: [100, 110],
-    equity: [400, 440],
-    accountsReceivable: [5, 6],
-    inventory: [10, 12],
-    goodwill: [0, 0],
-    debtRatio: [20, 21],
-    dataQuality: { estimatedFields: [], missingFields: [] },
-  };
-}
-
 const HORIZONS = [21];
 const N_BARS = 300; // ≥ MIN_FACTOR_LOOKBACK(253) + 21，保证量价因子序列非空
 
 describe('buildCrossSectionPanel 面板装配', () => {
   const inputs: StockPanelInput[] = [
-    { code: '600519', bars: barsFor('600519', N_BARS, 0.3), financial: financialFor(30, 90) },
-    { code: '000858', bars: barsFor('000858', N_BARS, 0.0), financial: financialFor(15, 60) },
-    { code: '300750', bars: barsFor('300750', N_BARS, -0.2), financial: financialFor(5, 20) },
+    { code: '600519', bars: barsFor('600519', N_BARS, 0.3) },
+    { code: '000858', bars: barsFor('000858', N_BARS, 0.0) },
+    { code: '300750', bars: barsFor('300750', N_BARS, -0.2) },
   ];
   const panel = buildCrossSectionPanel(inputs, HORIZONS);
 
@@ -78,30 +56,10 @@ describe('buildCrossSectionPanel 面板装配', () => {
     expect(o.returns[21]).toBeCloseTo(bars[i + 21].close / bars[i].close - 1, 12);
   });
 
-  it('基本面观测每股恒定：同一股票的所有 cs_roe 观测值相同', () => {
-    const roe = panel.fundamental.cs_roe;
-    expect(roe.length).toBeGreaterThan(0);
-    const bySymbol = new Map<string, Set<number>>();
-    for (const o of roe) {
-      if (!o.symbol) continue;
-      let set = bySymbol.get(o.symbol);
-      if (!set) {
-        set = new Set<number>();
-        bySymbol.set(o.symbol, set);
-      }
-      set.add(o.value);
-    }
-    expect(bySymbol.get('600519')).toEqual(new Set([30]));
-    expect(bySymbol.get('300750')).toEqual(new Set([5]));
-    // 远期收益非常数（逐日变化），确认面板确实带时间维度的 returns
-    const m = roe.filter((o) => o.symbol === '600519');
-    expect(new Set(m.map((o) => o.returns[21])).size).toBeGreaterThan(1);
-  });
-
   it('K 线不足的股票被降级披露，不进入面板', () => {
     const short: StockPanelInput[] = [
       ...inputs,
-      { code: '000001', bars: barsFor('000001', 5, 0.1), financial: financialFor(8, 30) },
+      { code: '000001', bars: barsFor('000001', 5, 0.1) },
     ];
     const p = buildCrossSectionPanel(short, HORIZONS);
     expect(p.stocksSkipped).toEqual([{ code: '000001', reason: 'K线不足（5 根）' }]);
@@ -109,16 +67,87 @@ describe('buildCrossSectionPanel 面板装配', () => {
       expect(p.priceVolume[name].some((o) => o.symbol === '000001')).toBe(false);
     }
   });
+});
 
-  it('面板喂入截面评估器：periods 与持有期一致，IC 序列非空且带 OOS 复核', () => {
-    // 用「截面市值排序」语义的常数因子（cs_roe）走 evaluateFactor：
-    // 每日 3 只股票的截面 + 漂移差异较大的远期收益 → 截面 IC 可计算
-    const report = evaluateFactor(panel.fundamental.cs_roe);
+describe('buildCrossSectionPanel — 基本面因子 PIT 语义（公告日门控）', () => {
+  /** 两份报告：ROE 10 于 2024-01-10 公告、ROE 12 于 2024-04-20 公告 */
+  function pitQuarterly(roe2 = 12): QuarterlySeries {
+    return {
+      code: '600519',
+      source: 'eastmoney_f10',
+      reports: [
+        {
+          reportDate: '2023-12-31',
+          noticeDate: '2024-01-10',
+          revenue: 100,
+          netProfit: 20,
+          roe: 10,
+          grossMargin: 50,
+          debtRatio: 30,
+          revenueYoY: 10,
+          netProfitYoY: 10,
+        },
+        {
+          reportDate: '2024-03-31',
+          noticeDate: '2024-04-20',
+          revenue: 110,
+          netProfit: 24,
+          roe: roe2,
+          grossMargin: 51,
+          debtRatio: 29,
+          revenueYoY: 11,
+          netProfitYoY: 12,
+        },
+      ],
+    };
+  }
+
+  it('公告前无观测；公告后取「已公告最新值」；新公告日跳变', () => {
+    const p = buildCrossSectionPanel(
+      [{ code: '600519', bars: barsFor('600519', N_BARS, 0.1), quarterly: pitQuarterly() }],
+      HORIZONS,
+    );
+    const roe = p.fundamental.cs_roe;
+    expect(roe.length).toBeGreaterThan(0);
+    const byDate = new Map(roe.map((o) => [o.date, o.value]));
+    // 公告前（< 2024-01-10）：无观测——绝不回退到"未来值"
+    expect(byDate.has('2024-01-05')).toBe(false);
+    // 第一份公告后：ROE = 10
+    expect(byDate.get('2024-01-15')).toBe(10);
+    expect(byDate.get('2024-04-10')).toBe(10);
+    // 第二份公告（2024-04-20）后：跳变为 12
+    expect(byDate.get('2024-04-25')).toBe(12);
+    expect(byDate.get('2024-08-01')).toBe(12);
+    // 全窗口恰有两个相异值（两次公告间的阶梯）
+    expect(new Set(roe.map((o) => o.value))).toEqual(new Set([10, 12]));
+  });
+
+  it('不同股票报告值不同 → 截面有区分度，评估器可算 IC 与 OOS', () => {
+    const p = buildCrossSectionPanel(
+      [
+        { code: '600519', bars: barsFor('600519', N_BARS, 0.3), quarterly: pitQuarterly(30) },
+        { code: '000858', bars: barsFor('000858', N_BARS, 0.0), quarterly: pitQuarterly(15) },
+        { code: '300750', bars: barsFor('300750', N_BARS, -0.2), quarterly: pitQuarterly(5) },
+      ],
+      HORIZONS,
+    );
+    expect(p.fundamental.cs_roe.length).toBeGreaterThan(0);
+    const report = evaluateFactor(p.fundamental.cs_roe);
     expect(report.periods).toEqual([21]);
     const periodReport = report.byPeriod[0];
     expect(periodReport.ic.n).toBeGreaterThan(0);
     expect(periodReport.oos).toBeDefined();
     expect(periodReport.oos.isN + periodReport.oos.oosN).toBeGreaterThan(0);
+  });
+
+  it('无季度数据的股票不参与基本面因子（量价不受影响）', () => {
+    const p = buildCrossSectionPanel(
+      [{ code: '600519', bars: barsFor('600519', N_BARS, 0.2) }],
+      HORIZONS,
+    );
+    expect(p.fundamental.cs_roe).toEqual([]);
+    expect(p.fundamental.cs_np_yoy_q).toEqual([]);
+    expect(Object.keys(p.priceVolume).length).toBeGreaterThanOrEqual(5);
   });
 });
 
@@ -148,12 +177,15 @@ describe('buildCrossSectionPanel — 季度派生因子（cs_np_yoy_q / cs_roe_s
     const reports = chain.map(([reportDate, np], i) => {
       const yearIdx = Math.floor(i / 4);
       const v = np * growth ** yearIdx;
+      // ROE 在第 13 份报告（2024-03-31，窗口内公告）加水平跳变：严格线性序列的
+      // OLS 斜率不随窗口增减变化，PIT 前后无法区分——跳变使公告前后斜率不同
+      const roe = 10 + i * 0.5 * growth + (i >= 12 ? 2 : 0);
       return {
         reportDate,
         noticeDate: `${reportDate.slice(0, 4)}-04-22`,
         revenue: v * 10,
         netProfit: v,
-        roe: 10 + i * 0.5 * growth,
+        roe,
         grossMargin: 50,
         debtRatio: 30,
         revenueYoY: 10,
@@ -163,7 +195,7 @@ describe('buildCrossSectionPanel — 季度派生因子（cs_np_yoy_q / cs_roe_s
     return { code: '600519', source: 'eastmoney_f10', reports };
   }
 
-  it('带季度序列 → 季度因子面板非空、每股常数且随股票差异；无序列 → 如实为空', () => {
+  it('带季度序列 → 季度因子面板非空、PIT 阶梯且随股票差异；无序列 → 如实为空', () => {
     const withQ = buildCrossSectionPanel(
       [
         { code: '600519', bars: barsFor('600519', N_BARS, 0.2), quarterly: quarterlyFor(1.0) },
@@ -174,9 +206,9 @@ describe('buildCrossSectionPanel — 季度派生因子（cs_np_yoy_q / cs_roe_s
     for (const name of ['cs_np_yoy_q', 'cs_roe_slope'] as const) {
       const obs = withQ.fundamental[name];
       expect(obs.length).toBeGreaterThan(0);
-      // 每股常数：同一股票的全部观测同值
+      // PIT：窗口内 2024-04-22 公告（2024-03-31 报告）→ 该股恰有两个阶梯值
       const v519 = obs.filter((o) => o.symbol === '600519').map((o) => o.value);
-      expect(new Set(v519).size).toBe(1);
+      expect(new Set(v519).size).toBe(2);
       // 两股取值不同（截面有区分度）
       const v858 = obs.filter((o) => o.symbol === '000858').map((o) => o.value);
       expect(v858[0]).not.toBe(v519[0]);

@@ -441,7 +441,10 @@ describe('POST /api/quant/factor/cross-section — codes 路径与降级披露',
       .post('/api/quant/factor/cross-section')
       .send({ codes: ['600519', '300750', '000858'], includeFundamental: false });
     expect(res.status).toBe(200);
-    expect(res.body.universe).toEqual({ source: 'codes', requested: 3 });
+    expect(res.body.universe.source).toBe('codes');
+    expect(res.body.universe.requested).toBe(3);
+    // 幸存者偏差如实声明
+    expect(res.body.universe.survivorshipNote).toContain('幸存者偏差');
     expect(res.body.stocksIncluded).toEqual(['600519', '000858']);
     expect(res.body.stocksSkipped).toEqual([
       { code: '300750', reason: expect.stringContaining('K线不足') },
@@ -674,5 +677,71 @@ describe('预检 / 实验台账 / 自定义因子表达式', () => {
   it('POST /api/quant/factor/experiments 空 entries → 400', async () => {
     const res = await request(app).post('/api/quant/factor/experiments').send({ entries: [] });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /api/quant/factor/expression/batch — 批量假设验证', () => {
+  beforeEach(() => {
+    mockedConstituentsMeta.mockResolvedValue({ value: CONST_SIX, stale: false });
+    mockedBars.mockImplementation((code: string) => Promise.resolve(genBars(code)));
+    mockedFinancial.mockImplementation((code: string) => Promise.resolve(makeFinancial(code)));
+    mockedQuarterly.mockImplementation((code: string) => Promise.resolve(makeQuarterly(code)));
+  });
+
+  it('expressions 缺失 / 空 / 超 50 → 400 / 413', async () => {
+    const e0 = await request(app).post('/api/quant/factor/expression/batch').send({});
+    expect(e0.status).toBe(400);
+    const many = await request(app)
+      .post('/api/quant/factor/expression/batch')
+      .send({ expressions: Array.from({ length: 51 }, (_, i) => `close + ${i}`) });
+    expect(many.status).toBe(413);
+  });
+
+  it('全部非法 → 400 且逐条给原因', async () => {
+    const res = await request(app)
+      .post('/api/quant/factor/expression/batch')
+      .send({ expressions: ['close +', 'unknown_field * 2'] });
+    expect(res.status).toBe(400);
+    expect(res.body.details).toHaveLength(2);
+  });
+
+  it('happy path：合法与非法混合 → 数据取一次、逐条评估、非法项只标记', async () => {
+    const callsBefore = mockedBars.mock.calls.length;
+    const res = await request(app)
+      .post('/api/quant/factor/expression/batch')
+      .send({
+        expressions: [
+          'close / mean(close, 20) - 1', // 合法
+          'volume / mean(volume, 20)', // 合法
+          'bad_ident + 1', // 非法标识符
+        ],
+        board: 'BK0475',
+        topN: 6,
+        horizons: [21],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.requested).toBe(3);
+    expect(res.body.evaluated).toBe(2);
+    const okItems = res.body.results.filter((r: { ok: boolean }) => r.ok);
+    expect(okItems).toHaveLength(2);
+    for (const r of okItems) {
+      expect(r.factor.report.periods).toEqual([21]);
+      expect(r.factor.report.byPeriod[0].verdict).toHaveProperty('effective');
+      expect(r.ledger.recorded).toBeGreaterThan(0);
+    }
+    const bad = res.body.results.find((r: { ok: boolean }) => !r.ok);
+    expect(bad.error).toContain('未授权的标识符');
+    // 面板共享：3 条表达式只取一次数据（取数调用数 = 股票数，而非 ×3）
+    expect(mockedBars.mock.calls.length - callsBefore).toBe(CONST_SIX.length);
+  });
+
+  it('合法表达式但全 NaN（除零）→ 该项标记样本不足', async () => {
+    const res = await request(app)
+      .post('/api/quant/factor/expression/batch')
+      .send({ expressions: ['close / (close - close)'], codes: ['600519', '000858'] });
+    expect(res.status).toBe(200);
+    expect(res.body.evaluated).toBe(0);
+    expect(res.body.results[0].ok).toBe(false);
+    expect(res.body.results[0].error).toContain('有效观测');
   });
 });

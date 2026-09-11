@@ -66,6 +66,28 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: 'quant_factor_expression_batch',
+    description:
+      '批量因子假设验证：一组受限 DSL 表达式（≤50 条）在同一个 universe 面板上批量评估（数据只取一次），逐条返回 IC/显著性/OOS/判定并入实验台账',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        expressions: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            '因子表达式数组，如 ["close / mean(close, 20) - 1", "volume / mean(volume, 20)"]',
+        },
+        board: { type: 'string' },
+        codes: { type: 'array', items: { type: 'string' } },
+        topN: { type: 'number' },
+        horizons: { type: 'array', items: { type: 'number' } },
+        name: { type: 'string', description: '因子名（默认 custom_expression）' },
+      },
+      required: ['expressions'],
+    },
+  },
+  {
     name: 'quant_factor_experiments',
     description: '查询因子实验台账：试过哪些因子、IC/显著性/样本外是否稳定、是否采信',
     inputSchema: {
@@ -179,6 +201,17 @@ export async function executeTool(
         if (args[k] !== undefined) body[k] = args[k];
       }
       return callApi('/api/quant/factor/expression', { method: 'POST', body });
+    }
+    case 'quant_factor_expression_batch': {
+      const expressions = Array.isArray(args.expressions)
+        ? args.expressions.map((e) => String(e))
+        : [];
+      if (expressions.length === 0) throw new Error('需要 expressions 数组');
+      const body: Record<string, unknown> = { expressions };
+      for (const k of ['board', 'codes', 'topN', 'horizons', 'name']) {
+        if (args[k] !== undefined) body[k] = args[k];
+      }
+      return callApi('/api/quant/factor/expression/batch', { method: 'POST', body });
     }
     case 'quant_factor_experiments': {
       const qs = new URLSearchParams();

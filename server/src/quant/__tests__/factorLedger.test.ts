@@ -86,6 +86,19 @@ describe('因子实验台账', () => {
     expect(s.lastAt).toBeTruthy();
   });
 
+  it('FDR 视角：期望假阳性 = Σp（采信集），OOS 稳定占比', () => {
+    recordFactorExperiments([
+      entry({ name: 'a', kept: true, pValue: 0.03, oosStable: true }),
+      entry({ name: 'b', kept: true, pValue: 0.04, oosStable: false }),
+      entry({ name: 'c', kept: false, pValue: 0.4, oosStable: false }),
+    ]);
+    const s = summarizeFactorExperiments();
+    expect(s.kept).toBe(2);
+    // 期望假阳性只累计采信集：0.03 + 0.04 = 0.07（未采信的 0.4 不计入）
+    expect(s.keptExpectedFalse).toBeCloseTo(0.07, 6);
+    expect(s.keptOosShare).toBeCloseTo(0.5, 6);
+  });
+
   it('台账留痕不丢表达式原文（可复盘）', () => {
     recordFactorExperiments([entry({ expression: 'close / mean(close, 20) - 1' })]);
     expect(listFactorExperiments()[0].expression).toBe('close / mean(close, 20) - 1');
