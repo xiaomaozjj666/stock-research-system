@@ -192,6 +192,28 @@ linalg 部分主元消元 + 经典标准误公式；MCP server 为 stdio 薄转�
    相左分得开；结构化输出是相似度=1 的特例，行为不变；similarityThreshold
    可覆盖（>1 退化为逐字相同）
 
+### 科学有效性批次（2026-09-11 深夜，审查侧实施）
+
+针对「与顶尖平台的实质性差距」落地三项 + 一项诚实声明：
+
+1. **基本面因子 PIT 化（前视修正）**：cs_roe / cs_gross_margin / cs_net_profit_growth /
+   cs_debt_ratio / cs_np_yoy_q / cs_roe_slope 此前把「今天的年报值」投影回全窗口
+   （公告时点前视）。现按季度报告 NOTICE_DATE 门控（buildPitSnapshots）：日期 t
+   的取值 = t 时点已公告的最新报告，公告日跳变、其余日子保持；无公告日的报告
+   不参与 PIT。表达式 DSL 标量（roe 等）同步 PIT 化（快照常数降为兜底）。
+   截面路由不再抓取年报（每股少一次上游调用）。实测 8 只白酒面板 6 因子全出
+2. **批量假设验证 runner**：POST /api/quant/factor/expression/batch（≤50 条）——
+   universe 解析与取数只做一次（面板共享），逐表达式求值 → 评估 → 台账。
+   抽取 resolveUniverse / fetchPanelInputs / assembleExpressionObservations
+   三助手，cross-section / expression / batch 三路由去重。实测 2 表达式共享
+   面板，「roe」PIT 因子 IC +0.16 / p=0.027 判定有效；MCP 工具同步
+3. **台账 FDR 折扣**：summarize 增加 keptExpectedFalse（= Σp 采信集期望假阳性，
+   单次 Holm 之外的「全历史试错」维度）与 keptOosShare；因子实验室展示
+4. **幸存者偏差声明**：截面响应 universe.survivorshipNote 如实披露「主表为当前
+   上市证券，历史截面不含已退市股票」——修复需 PIT 成分股数据源（免费接口无）
+
+组合构建层（信号→头寸→再平衡）是独立子系统，需独立设计周期，本批不含。
+
 ### 收尾时门禁（2026-09-05 更新）
 
 - 1214 单测（107 文件）、lint（eslint+oxlint）/ prettier / 双端 tsc / build / CI 全绿
