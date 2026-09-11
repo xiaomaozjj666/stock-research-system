@@ -90,12 +90,14 @@ export function engleGranger(
     criterion: opts.adfCriterion ?? 'aic',
   });
 
-  // OU 近似半衰期：Δs_t = φ·s_{t-1} + u（无常数项）
+  // OU 近似半衰期：Δs_t = φ·s_{t-1} + u（无常数项）。
+  // φ ≤ −1（振荡发散，非平稳的「伪均值回复」）同样视为无有效均值回复口径 →
+  // Infinity，而不是让 ln(1+φ) 落到负数域算出 NaN。
   const sLag = spread.slice(0, -1);
   const dS = spread.slice(1).map((v, i) => v - sLag[i]);
   const ar1 = olsWithStats(dS, [sLag], false);
   const phi = ar1.coefficients[0];
-  const halfLife = phi < -1e-8 ? -Math.log(2) / Math.log(1 + phi) : Infinity;
+  const halfLife = phi < -1e-8 && phi > -1 ? -Math.log(2) / Math.log(1 + phi) : Infinity;
 
   // z-score（全样本口径）
   const m = spread.reduce((a, b) => a + b, 0) / spread.length;

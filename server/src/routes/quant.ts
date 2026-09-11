@@ -655,6 +655,7 @@ router.post(
       // 源不可达但有缓存 → 继续走陈旧兜底（板块级精准拦截在解析分支内）
       const preflight = await runPreflight();
       const upstreamOk = preflight.checks.find((c) => c.key === 'upstream')?.ok ?? false;
+      const upstreamListOk = preflight.checks.find((c) => c.key === 'upstream_list')?.ok ?? false;
       const cacheOk = preflight.checks.find((c) => c.key === 'cache')?.ok ?? false;
       if (!upstreamOk && !cacheOk) {
         return res.status(503).json({
@@ -682,12 +683,12 @@ router.post(
         let constituents;
         let constituentsStale = false;
         let constituentsStaleAgeMs: number | undefined;
-        // 精准预检：源不可达且该板块成分股无本地缓存 → 直接 503 给可行指引，
+        // 精准预检：板块列表源不可达且该板块成分股无本地缓存 → 直接 503 给可行指引，
         // 而不是陪跑一轮注定失败的网络尝试（有缓存时仍走陈旧兜底，不拦）
-        if (!upstreamOk && !hasCachedConstituents(board, topNRaw)) {
+        if (!upstreamListOk && !hasCachedConstituents(board, topNRaw)) {
           return res.status(503).json({
-            error: `行情源不可用，且板块 ${board} 无本地缓存成分股`,
-            detail: preflight.checks.find((c) => c.key === 'upstream')?.detail,
+            error: `板块列表源不可用，且板块 ${board} 无本地缓存成分股`,
+            detail: preflight.checks.find((c) => c.key === 'upstream_list')?.detail,
             hint: '稍后重试；或改用 codes 指定此前评估过的股票（均有本地缓存）',
             preflight,
           });
@@ -701,8 +702,8 @@ router.post(
           logger.warn('板块成分股获取失败', { board, err: error });
           const message = error instanceof Error ? error.message : '成分股获取失败';
           const hint =
-            !upstreamOk && !hasCachedConstituents(board, topNRaw)
-              ? '行情源当前不可用，可稍后重试，或改用 codes 指定已缓存过的股票'
+            !upstreamListOk && !hasCachedConstituents(board, topNRaw)
+              ? '板块列表源当前不可用，可稍后重试，或改用 codes 指定已缓存过的股票'
               : undefined;
           return res.status(502).json({
             error: `板块 ${board} 成分股获取失败`,
@@ -1336,9 +1337,10 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
         : [21, 63];
     const MAX = crossSectionMaxCodes();
 
-    // 预检（与 cross-section 同策略）：源挂且目标 universe 无缓存就别陪跑
+    // 预检（与 cross-section 同策略）：源挂且目标 universe 无缓存就别陪跑。
+    // board 分支的门槛是板块列表源（push2 clist），与 K 线源是两个域名。
     const preflight = await runPreflight();
-    const upstreamOk = preflight.checks.find((c) => c.key === 'upstream')?.ok ?? false;
+    const upstreamListOk = preflight.checks.find((c) => c.key === 'upstream_list')?.ok ?? false;
 
     // universe 解析（与 cross-section 同口径：板块优先于显式 codes）
     let codes: string[];
@@ -1352,10 +1354,10 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
       if (!Number.isInteger(topNRaw) || topNRaw < 3 || topNRaw > MAX) {
         return res.status(400).json({ error: `topN 需为 3-${MAX} 的整数（当前：${body.topN}）` });
       }
-      if (!upstreamOk && !hasCachedConstituents(board, topNRaw)) {
+      if (!upstreamListOk && !hasCachedConstituents(board, topNRaw)) {
         return res.status(503).json({
-          error: `行情源不可用，且板块 ${board} 无本地缓存成分股`,
-          detail: preflight.checks.find((c) => c.key === 'upstream')?.detail,
+          error: `板块列表源不可用，且板块 ${board} 无本地缓存成分股`,
+          detail: preflight.checks.find((c) => c.key === 'upstream_list')?.detail,
           hint: '稍后重试；或改用 codes 指定此前评估过的股票（均有本地缓存）',
           preflight,
         });
@@ -1368,8 +1370,8 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
         return res.status(502).json({
           error: `板块 ${board} 成分股获取失败`,
           detail: message,
-          ...(!upstreamOk && !hasCachedConstituents(board, topNRaw)
-            ? { hint: '行情源当前不可用，可稍后重试，或改用 codes 指定已缓存过的股票' }
+          ...(!upstreamListOk && !hasCachedConstituents(board, topNRaw)
+            ? { hint: '板块列表源当前不可用，可稍后重试，或改用 codes 指定已缓存过的股票' }
             : {}),
         });
       }

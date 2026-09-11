@@ -167,7 +167,9 @@ export function adfTest(
     // 重算 SSR 以取信息准则：直接从残差口径再跑一次太浪费，用 statistic 无法反推，
     // 这里复用 olsWithStats 的方式重算（nobs 小、开销可忽略）
     const ssr = adfSsr(y, spec, k);
-    const kParams = k + (spec === 'n' ? 1 : 2) + 1; // 滞后项 + 常数(趋势) + ρ
+    // 参数个数：ρ + k 个滞后项 + 常数项（'n' 无）+ 趋势项（仅 'ct'）。
+    // 常数项计数错误只会平移全部 score（选阶 argmin 不变），但诊断展示会失真。
+    const kParams = k + 1 + (spec === 'n' ? 0 : 1) + (spec === 'ct' ? 1 : 0);
     const aic = nobs * Math.log(ssr / nobs) + 2 * kParams;
     const bic = nobs * Math.log(ssr / nobs) + Math.log(nobs) * kParams;
     const score = criterion === 'bic' ? bic : aic;
