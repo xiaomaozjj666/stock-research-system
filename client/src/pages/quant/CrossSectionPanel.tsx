@@ -43,6 +43,9 @@ const FACTOR_LABELS: Record<string, string> = {
   ev_dividend_yield: '分红股息率（事件）',
   ev_buyback_ratio: '回购力度（事件）',
   ev_unlock_overhang: '解禁压力（事件）',
+  pat_turtle_breakout: '海龟突破（形态）',
+  pat_ma_volume_breakout: '均线上穿放量（形态）',
+  pat_limit_up: '涨停强度（形态）',
 };
 
 const TYPE_LABELS: Record<CrossSectionFactor['type'], string> = {

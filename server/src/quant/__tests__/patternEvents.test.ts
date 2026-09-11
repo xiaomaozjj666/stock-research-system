@@ -75,7 +75,7 @@ describe('maVolumeBreakoutEvents — 均线上穿放量', () => {
 });
 
 describe('limitUpEvents — 涨停', () => {
-  it('涨幅 ≥ 9.5% 记为事件（value=1）', () => {
+  it('涨幅 ≥ 9.5% 记为事件（value=实际涨幅，供截面变异）', () => {
     const bars = makeBars([
       { close: 10 },
       { close: 11 }, // +10%
@@ -85,7 +85,21 @@ describe('limitUpEvents — 涨停', () => {
     ]);
     const events = limitUpEvents(bars);
     expect(events).toHaveLength(2);
-    expect(events[0]).toMatchObject({ value: 1 });
+    // 信号是实际涨幅而非常数：常数会让同日截面秩全并列、Spearman 分母为 0，IC 恒 0
+    expect(events[0].value).toBeCloseTo(0.1, 4);
+    expect(events[1].value).toBeCloseTo(0.1, 4);
+  });
+
+  it('涨幅越大信号越强（10% vs 19% 截面可区分）', () => {
+    const bars = makeBars([
+      { close: 10 },
+      { close: 10.96 }, // +9.6%
+      { close: 10.96 },
+      { close: 13.04 }, // +19%
+    ]);
+    const events = limitUpEvents(bars);
+    expect(events).toHaveLength(2);
+    expect(events[1].value).toBeGreaterThan(events[0].value);
   });
 
   it('涨幅 5% 不算涨停', () => {

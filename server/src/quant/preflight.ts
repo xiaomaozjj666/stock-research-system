@@ -18,13 +18,13 @@ import { getQuantCacheDir } from './quantCache.js';
 
 /** 单项检查结果 */
 export interface PreflightCheck {
-  key: 'upstream' | 'llm' | 'cache';
+  key: 'upstream' | 'upstream_list' | 'llm' | 'cache';
   ok: boolean;
   detail: string;
 }
 
 export interface PreflightResult {
-  /** 三项全通过 */
+  /** 核心依赖全通过（行情源 + LLM + 缓存；板块列表源单独披露，见 upstream_list） */
   ok: boolean;
   checks: PreflightCheck[];
   /** 降级提示：可用的兜底手段（如磁盘缓存可支撑陈旧数据） */
@@ -34,26 +34,48 @@ export interface PreflightResult {
 
 const UPSTREAM_PROBE_URL =
   'https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=1.000300&fields1=f1&fields2=f51,f53&klt=101&fqt=1&beg=20240101&end=20240110&lmt=20';
+/**
+ * 板块列表源（push2 clist）独立探测：K 线 host（push2his）与列表 host（push2）
+ * 是两个域名，可用性互不绑定——实测出现过「K 线通、板块列表挂」的组合。
+ * 只探 K 线会把 board 路径误判为可用，陪跑整轮超时才 502。
+ */
+const UPSTREAM_LIST_PROBE_URL =
+  'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=1&po=1&np=1&fltt=2&fid=f20&fs=m%3A90%2Bt%3A2&fields=f12';
 const PROBE_TTL_MS = 60_000;
 
-let cached: { at: number; upstream: PreflightCheck } | null = null;
+const probeCache = new Map<string, { at: number; check: PreflightCheck }>();
 
-/** 探测行情源（60s 内复用结果）；只求「通不通」，不关心数据内容 */
-export async function probeUpstream(): Promise<PreflightCheck> {
-  if (cached && Date.now() - cached.at < PROBE_TTL_MS) return cached.upstream;
+/** 探测一个上游 host（60s 内复用结果）；只求「通不通」，不关心数据内容 */
+async function probeHost(
+  key: PreflightCheck['key'],
+  url: string,
+  label: string,
+): Promise<PreflightCheck> {
+  const memo = probeCache.get(key);
+  if (memo && Date.now() - memo.at < PROBE_TTL_MS) return memo.check;
   let check: PreflightCheck;
   try {
-    await fetchJson(UPSTREAM_PROBE_URL, { timeoutMs: 4000, retries: 0 });
-    check = { key: 'upstream', ok: true, detail: '行情源可达' };
+    await fetchJson(url, { timeoutMs: 4000, retries: 0 });
+    check = { key, ok: true, detail: `${label}可达` };
   } catch (error) {
     check = {
-      key: 'upstream',
+      key,
       ok: false,
-      detail: `行情源不可达：${error instanceof Error ? error.message : '未知错误'}`,
+      detail: `${label}不可达：${error instanceof Error ? error.message : '未知错误'}`,
     };
   }
-  cached = { at: Date.now(), upstream: check };
+  probeCache.set(key, { at: Date.now(), check });
   return check;
+}
+
+/** 探测行情 K 线源（push2his，门槛 bars/财务/指数类取数） */
+export async function probeUpstream(): Promise<PreflightCheck> {
+  return probeHost('upstream', UPSTREAM_PROBE_URL, '行情源');
+}
+
+/** 探测板块列表源（push2 clist，门槛 board universe 成分股取数） */
+export async function probeUpstreamList(): Promise<PreflightCheck> {
+  return probeHost('upstream_list', UPSTREAM_LIST_PROBE_URL, '板块列表源');
 }
 
 /** 本地量化缓存可用条目数（磁盘只读，无网络） */
@@ -70,6 +92,7 @@ export function cacheEntryCount(): number {
 /** 执行完整预检 */
 export async function runPreflight(): Promise<PreflightResult> {
   const upstream = await probeUpstream();
+  const upstreamList = await probeUpstreamList();
   const llm: PreflightCheck = {
     key: 'llm',
     ok: isLLMAvailable(),
@@ -84,10 +107,14 @@ export async function runPreflight(): Promise<PreflightResult> {
   const degraded: string[] = [];
   if (!upstream.ok && cache.ok) degraded.push('行情源不可用，将回落磁盘缓存的陈旧数据');
   if (!upstream.ok && !cache.ok) degraded.push('行情源与本地缓存均不可用，本次无法装配面板');
+  if (!upstreamList.ok) {
+    degraded.push('板块列表源不可达：board universe 将走本地缓存成分股，无缓存时该路径 503');
+  }
   if (!llm.ok) degraded.push('LLM 未配置，研究与对话走规则降级');
   return {
+    // 核心依赖 = 行情源 + LLM + 缓存；板块列表源按需披露（只影响 board 路径）
     ok: upstream.ok && llm.ok && cache.ok,
-    checks: [upstream, llm, cache],
+    checks: [upstream, upstreamList, llm, cache],
     degraded,
     checkedAt: new Date().toISOString(),
   };
@@ -95,5 +122,5 @@ export async function runPreflight(): Promise<PreflightResult> {
 
 /** 测试用：清空探针记忆 */
 export function resetPreflightCache(): void {
-  cached = null;
+  probeCache.clear();
 }

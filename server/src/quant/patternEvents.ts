@@ -25,7 +25,7 @@ export const PATTERN_NAMES: PatternName[] = [
 export const PATTERN_DESCRIPTIONS: Record<PatternName, string> = {
   pat_turtle_breakout: '海龟突破：收盘创 20 日新高 + 阳线 + 放量（1.5× 前 20 日均量）',
   pat_ma_volume_breakout: '均线上穿：收盘自下而上穿越 MA20 + 放量（1.5× 前 20 日均量）',
-  pat_limit_up: '涨停（收盘涨幅 ≥ 9.5% 的保守近似口径）',
+  pat_limit_up: '涨停（收盘涨幅 ≥ 9.5% 的保守近似；信号 = 涨停幅度）',
 };
 
 function mean(xs: number[]): number {
@@ -86,8 +86,10 @@ export function maVolumeBreakoutEvents(bars: OHLCVData[]): StockEvent[] {
 }
 
 /**
- * 涨停（收盘涨幅 ≥ 9.5% 的保守近似）。value = 1（事件存在，正方向假设为
- * 短期溢价；真实方向由 IC 判定——A 股涨停后中期反转的文献证据不少）。
+ * 涨停（收盘涨幅 ≥ 9.5% 的保守近似）。value = 实际涨幅（9.5%~20cm 板块的
+ * 10%~30%）——**不能用常数 1**：截面 IC 需要横截面变异，同日全部触发股票的
+ * 信号值恒为 1 时秩全并列，Spearman 分母为 0，IC 恒为 0，因子沦为噪声行。
+ * 涨停幅度恰好提供「涨停强度」的截面差异（10cm vs 20cm 品种、封板力度）。
  */
 export function limitUpEvents(bars: OHLCVData[]): StockEvent[] {
   const events: StockEvent[] = [];
@@ -95,7 +97,9 @@ export function limitUpEvents(bars: OHLCVData[]): StockEvent[] {
     const prev = bars[i - 1].close;
     if (!(prev > 0)) continue;
     const chg = bars[i].close / prev - 1;
-    if (chg >= 0.095) events.push({ eventDate: bars[i].date, value: 1 });
+    if (chg >= 0.095) {
+      events.push({ eventDate: bars[i].date, value: Math.round(chg * 10000) / 10000 });
+    }
   }
   return events;
 }

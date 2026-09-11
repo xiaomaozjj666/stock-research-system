@@ -62,6 +62,7 @@ vi.mock('../quant/preflight.js', () => ({
     ok: true,
     checks: [
       { key: 'upstream', ok: true, detail: 'ok' },
+      { key: 'upstream_list', ok: true, detail: 'ok' },
       { key: 'llm', ok: true, detail: 'ok' },
       { key: 'cache', ok: true, detail: 'ok' },
     ],
@@ -580,11 +581,12 @@ describe('POST /api/quant/factor/cross-section — 事件族（分红/回购/解
 });
 
 describe('预检 / 实验台账 / 自定义因子表达式', () => {
-  it('GET /api/quant/health → 返回预检三项', async () => {
+  it('GET /api/quant/health → 返回预检四项', async () => {
     const res = await request(app).get('/api/quant/health');
     expect(res.status).toBe(200);
     expect(res.body.checks.map((c: { key: string }) => c.key)).toEqual([
       'upstream',
+      'upstream_list',
       'llm',
       'cache',
     ]);
@@ -602,7 +604,7 @@ describe('预检 / 实验台账 / 自定义因子表达式', () => {
     expect(res.body.run.kind).toBe('cross-section');
     expect(res.body.run.horizons).toEqual([21]);
     expect(res.body.run.start).toBeTruthy();
-    expect(res.body.preflight.checks).toHaveLength(3);
+    expect(res.body.preflight.checks).toHaveLength(4);
     // 台账自动留痕：因子 × 持有期
     expect(res.body.ledger.recorded).toBeGreaterThan(0);
   });

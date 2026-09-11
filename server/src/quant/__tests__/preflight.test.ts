@@ -57,12 +57,30 @@ describe('cacheEntryCount', () => {
 });
 
 describe('runPreflight', () => {
-  it('返回三项检查（upstream / llm / cache）', async () => {
+  it('返回四项检查（upstream / upstream_list / llm / cache）', async () => {
     mockedFetchJson.mockResolvedValue({});
     const r = await runPreflight();
-    expect(r.checks.map((c) => c.key)).toEqual(['upstream', 'llm', 'cache']);
+    expect(r.checks.map((c) => c.key)).toEqual(['upstream', 'upstream_list', 'llm', 'cache']);
     expect(typeof r.ok).toBe('boolean');
     expect(r.checkedAt).toBeTruthy();
+  });
+
+  it('两个上游 host 独立探测：K 线源挂但列表源通 → 分别如实报告', async () => {
+    mockedFetchJson.mockImplementation((url: string) =>
+      String(url).includes('push2his')
+        ? Promise.reject(new Error('kline down'))
+        : Promise.resolve({}),
+    );
+    // 造缓存条目：K 线源挂 + 有缓存 → 走「回落陈旧数据」降级路径
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(path.join(CACHE_DIR, 'kline_x.json'), '{}');
+    const r = await runPreflight();
+    const kline = r.checks.find((c) => c.key === 'upstream');
+    const list = r.checks.find((c) => c.key === 'upstream_list');
+    expect(kline?.ok).toBe(false);
+    expect(list?.ok).toBe(true);
+    expect(r.degraded.some((d) => d.includes('陈旧数据'))).toBe(true);
+    expect(r.degraded.some((d) => d.includes('板块列表源不可达'))).toBe(false);
   });
 
   it('源不可达且无缓存 → 明确提示无法装配面板', async () => {
