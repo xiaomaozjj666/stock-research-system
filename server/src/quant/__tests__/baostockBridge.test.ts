@@ -93,9 +93,11 @@ describe('baostockBridge — spawn 协议与缓存纪律', () => {
     expect(a.count).toBe(2);
     expect(a.constituents[1]).toEqual({ code: '600005', name: '武钢股份' });
     expect(mockedSpawn).toHaveBeenCalledTimes(1);
-    // 请求体经 stdin：含 index 与 date
-    const child = mockedSpawn.mock.calls[0][1] ? undefined : undefined;
-    void child;
+    // 请求体经 stdin 传入（绕开 Windows argv 引号转义）
+    const child = mockedSpawn.mock.results[0].value as ReturnType<typeof fakeChild>;
+    expect(child.stdin.write).toHaveBeenCalledWith(
+      JSON.stringify({ index: 'hs300', date: '2024-06-28' }),
+    );
     const b = await fetchIndexConstituentsCached('hs300', '2024-06-28');
     expect(b).toEqual(a);
     expect(mockedSpawn).toHaveBeenCalledTimes(1); // 缓存命中
