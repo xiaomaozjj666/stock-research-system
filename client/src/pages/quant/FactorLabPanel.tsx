@@ -38,6 +38,10 @@ export default function FactorLabPanel() {
   const [topN, setTopN] = useState(10);
   const [expression, setExpression] = useState(DEFAULT_EXPRESSION);
   const [running, setRunning] = useState(false);
+  /** 组合回测（可选）：从 IC 到 PnL 的最后一问 */
+  const [portfolioOn, setPortfolioOn] = useState(false);
+  const [portfolioHoldDays, setPortfolioHoldDays] = useState(21);
+  const [portfolioTopN, setPortfolioTopN] = useState(5);
   const [result, setResult] = useState<Awaited<ReturnType<typeof runFactorExpression>> | null>(
     null,
   );
@@ -93,7 +97,13 @@ export default function FactorLabPanel() {
     setError(null);
     setResult(null);
     try {
-      const data = await runFactorExpression({ expression, board, topN, horizons: [21, 63] });
+      const data = await runFactorExpression({
+        expression,
+        board,
+        topN,
+        horizons: [21, 63],
+        ...(portfolioOn ? { portfolio: { holdDays: portfolioHoldDays, topN: portfolioTopN } } : {}),
+      });
       setResult(data);
       await loadLedger();
     } catch (e) {
@@ -160,6 +170,44 @@ export default function FactorLabPanel() {
           </span>
         </label>
 
+        <label className="batch-checkbox">
+          <input
+            type="checkbox"
+            checked={portfolioOn}
+            disabled={running}
+            onChange={(e) => setPortfolioOn(e.target.checked)}
+          />
+          同时跑组合回测（top-N 等权、周期调仓、A 股成本——从 IC 到 PnL 的最后一问）
+        </label>
+        {portfolioOn && (
+          <div className="batch-field-row">
+            <label className="batch-field">
+              <span className="batch-label">调仓周期（交易日）</span>
+              <input
+                type="number"
+                className="batch-input"
+                min={1}
+                max={250}
+                value={portfolioHoldDays}
+                disabled={running}
+                onChange={(e) => setPortfolioHoldDays(Number(e.target.value))}
+              />
+            </label>
+            <label className="batch-field">
+              <span className="batch-label">持仓只数</span>
+              <input
+                type="number"
+                className="batch-input"
+                min={1}
+                max={50}
+                value={portfolioTopN}
+                disabled={running}
+                onChange={(e) => setPortfolioTopN(Number(e.target.value))}
+              />
+            </label>
+          </div>
+        )}
+
         <div className="batch-actions">
           <button
             className="btn-primary"
@@ -189,6 +237,24 @@ export default function FactorLabPanel() {
               </b>
             </span>
           ))}
+        </div>
+      )}
+
+      {result?.portfolio && !running && (
+        <div className="batch-summary portfolio-summary">
+          <div className="factor-lab-period">
+            <b>组合回测</b>（{result.portfolio.periods} 期 · 平均换手{' '}
+            {(result.portfolio.avgTurnover * 100).toFixed(0)}%）：总收益{' '}
+            <b className={result.portfolio.totalReturn >= 0 ? 'sig-valid' : 'sig-inverted'}>
+              {result.portfolio.totalReturn >= 0 ? '+' : ''}
+              {result.portfolio.totalReturn.toFixed(1)}%
+            </b>{' '}
+            · 年化 {result.portfolio.annualizedReturn.toFixed(1)}% · 夏普{' '}
+            {result.portfolio.sharpe.toFixed(2)} · 最大回撤{' '}
+            {result.portfolio.maxDrawdown.toFixed(1)}% · 周期胜率{' '}
+            {result.portfolio.winRate.toFixed(0)}%（vs 候选宇宙等权；收盘价撮合、涨停不建模，
+            短周期口径偏乐观）
+          </div>
         </div>
       )}
 

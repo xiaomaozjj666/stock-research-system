@@ -735,6 +735,25 @@ describe('POST /api/quant/factor/expression/batch — 批量假设验证', () =>
     expect(mockedBars.mock.calls.length - callsBefore).toBe(CONST_SIX.length);
   });
 
+  it('portfolio 参数 → 逐条附组合回测（IC 之外的 PnL 视角）', async () => {
+    const res = await request(app)
+      .post('/api/quant/factor/expression/batch')
+      .send({
+        expressions: ['close / mean(close, 20) - 1'],
+        codes: ['600519', '000858', '603288', '600809', '000568', '600702'],
+        horizons: [21],
+        portfolio: { holdDays: 21, topN: 3, costBps: 30 },
+      });
+    expect(res.status).toBe(200);
+    const pf = res.body.results[0].portfolio;
+    expect(pf).not.toBeNull();
+    expect(pf.periods).toBeGreaterThan(0);
+    expect(typeof pf.totalReturn).toBe('number');
+    expect(pf.rebalances[0].holdings.length).toBeLessThanOrEqual(3);
+    expect(typeof pf.sharpe).toBe('number');
+    expect(typeof pf.maxDrawdown).toBe('number');
+  });
+
   it('合法表达式但全 NaN（除零）→ 该项标记样本不足', async () => {
     const res = await request(app)
       .post('/api/quant/factor/expression/batch')
