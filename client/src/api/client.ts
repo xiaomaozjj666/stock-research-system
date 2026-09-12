@@ -162,6 +162,8 @@ export async function runCrossSectionEvaluation(
   payload: {
     codes?: string[];
     board?: string;
+    /** 指数历史成分宇宙（Baostock sidecar；含其后退市证券） */
+    indexUniverse?: { index: 'hs300' | 'zz500' | 'sz50'; date?: string };
     topN?: number;
     horizons?: number[];
     includeFundamental?: boolean;

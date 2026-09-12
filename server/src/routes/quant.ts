@@ -52,6 +52,12 @@ import {
 } from '../quant/fundamentalCache.js';
 import { runPreflight, type PreflightResult } from '../quant/preflight.js';
 import { isTushareConfigured, fetchStockBasicCached } from '../quant/tushareAdapter.js';
+import {
+  fetchIndexConstituentsCached,
+  baostockHealth,
+  BAOSTOCK_INDEXES,
+  type BaostockIndex,
+} from '../quant/baostockBridge.js';
 import { runMarketScreener, readLatestScreenerRun } from '../quant/screener.js';
 import { runEnsemble, recordModelOutcome, getModelWeights } from '../llm/ensemble.js';
 import { routeSkill } from '../llm/skillRouter.js';
@@ -631,15 +637,86 @@ type UniverseResolution =
 
 /**
  * universe 解析（cross-section / expression / batch 三路由共用）：
- * board（板块成分股，截面拉宽主路径）优先于显式 codes；board 路径的门槛是
- * 板块列表源（push2 clist，与 K 线源不同域名）。
+ * indexUniverse（指数历史成分，Baostock sidecar）→ board（板块成分股，截面
+ * 拉宽主路径）→ 显式 codes；board 路径的门槛是板块列表源（push2 clist，
+ * 与 K 线源不同域名）。
  */
 async function resolveUniverse(
-  body: { board?: unknown; codes?: unknown; topN?: unknown },
+  body: { board?: unknown; codes?: unknown; topN?: unknown; indexUniverse?: unknown },
   preflight: PreflightResult,
 ): Promise<UniverseResolution> {
   const upstreamListOk = preflight.checks.find((c) => c.key === 'upstream_list')?.ok ?? false;
   const MAX_CODES = crossSectionMaxCodes();
+
+  // 指数历史成分宇宙（Baostock sidecar，可选源）：hs300/zz500/sz50 在指定日期的
+  // 成分快照，**含其后退市的证券**——幸存者偏差的正面修复。成分不可变 → 30 天
+  // 缓存；Python/baostock 缺失或上游失败时 502 给可执行指引。
+  if (
+    body.indexUniverse !== undefined &&
+    body.indexUniverse !== null &&
+    typeof body.indexUniverse === 'object'
+  ) {
+    const iu = body.indexUniverse as { index?: unknown; date?: unknown };
+    const index = String(iu.index ?? '')
+      .trim()
+      .toLowerCase();
+    if (!(BAOSTOCK_INDEXES as readonly string[]).includes(index)) {
+      return {
+        ok: false,
+        status: 400,
+        payload: {
+          error: `indexUniverse.index 需为 ${BAOSTOCK_INDEXES.join(' / ')} 之一（当前：${index || '空'}）`,
+        },
+      };
+    }
+    let date: string | null = null;
+    if (iu.date !== undefined && iu.date !== null && String(iu.date).trim() !== '') {
+      const raw = String(iu.date).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+        return {
+          ok: false,
+          status: 400,
+          payload: { error: `indexUniverse.date 需为 YYYY-MM-DD 格式（当前：${raw}）` },
+        };
+      }
+      date = raw;
+    }
+    try {
+      const r = await fetchIndexConstituentsCached(index as BaostockIndex, date);
+      if (r.constituents.length < 2) {
+        return {
+          ok: false,
+          status: 422,
+          payload: {
+            error: `指数 ${index} 在 ${r.updateDate ?? date ?? '最新'} 的有效成分仅 ${r.constituents.length} 只，无法构成截面`,
+          },
+        };
+      }
+      return {
+        ok: true,
+        codes: r.constituents.map((c) => c.code),
+        universe: {
+          source: 'index',
+          index,
+          requestedDate: date,
+          updateDate: r.updateDate,
+          requested: r.constituents.length,
+          constituents: r.constituents,
+        },
+      };
+    } catch (error) {
+      logger.warn('指数历史成分获取失败', { index, date, err: error });
+      return {
+        ok: false,
+        status: 502,
+        payload: {
+          error: `指数 ${index} 历史成分获取失败`,
+          detail: (error as Error).message,
+          hint: '本机需要 Python + baostock（pip install baostock，或 PYTHON_BIN 指定解释器）；或改用 board / codes 源',
+        },
+      };
+    }
+  }
 
   if (body.board !== undefined && body.board !== null && String(body.board).trim() !== '') {
     const board = String(body.board).trim().toUpperCase();
@@ -852,6 +929,8 @@ router.post(
       const body = (req.body ?? {}) as {
         codes?: unknown;
         board?: unknown;
+        /** 可选：指数历史成分宇宙（Baostock sidecar；{index, date?}） */
+        indexUniverse?: unknown;
         topN?: unknown;
         horizons?: unknown;
         includeFundamental?: unknown;
@@ -888,22 +967,31 @@ router.post(
         });
       }
 
-      // universe 解析：板块成分股（拉宽）优先于显式 codes（三路由共用助手）
+      // universe 解析：指数历史成分 / 板块成分股（拉宽）优先于显式 codes（三路由共用助手）
       const resolved = await resolveUniverse(body, preflight);
       if (!resolved.ok) return res.status(resolved.status).json(resolved.payload);
       const codes = resolved.codes;
-      // 幸存者偏差如实声明：主表是当前上市证券，退市股不在场——历史评估的
-      // universe 无退市股。Tushare 配置时附退市股名单规模（走 24h 缓存，不碰
-      // 上游频控；名单本身尚不参与面板装配，仅作核对披露）。
-      let survivorshipNote = '主表为当前上市证券，历史截面不含已退市股票（幸存者偏差）';
-      if (isTushareConfigured()) {
-        try {
-          const delisted = (await fetchStockBasicCached()).filter(
-            (r) => r.listStatus === 'D',
-          ).length;
-          survivorshipNote += `；已接入 Tushare 退市股名单（${delisted} 只，仅供核对）`;
-        } catch {
-          /* 名单不可用时保持基础声明 */
+      // 幸存者偏差如实声明，按宇宙来源区分口径：
+      //  - index 源：成分是历史快照，**本身含其后退市证券**（Baostock 的价值所在），
+      //    但行情主表可能已无这些退市股的 K 线——缺 K 线者会被面板如实跳过；
+      //  - board/codes 源：主表是当前上市证券，退市股不在场。Tushare 配置时附
+      //    退市股名单规模（走 24h 缓存，不碰上游频控；名单仅作核对披露）。
+      let survivorshipNote: string;
+      if (resolved.universe.source === 'index') {
+        survivorshipNote = `成分为指数历史快照（${String(
+          resolved.universe.updateDate ?? '最新',
+        )}），含其后退市证券；缺 K 线的退市股会被面板如实跳过`;
+      } else {
+        survivorshipNote = '主表为当前上市证券，历史截面不含已退市股票（幸存者偏差）';
+        if (isTushareConfigured()) {
+          try {
+            const delisted = (await fetchStockBasicCached()).filter(
+              (r) => r.listStatus === 'D',
+            ).length;
+            survivorshipNote += `；已接入 Tushare 退市股名单（${delisted} 只，仅供核对）`;
+          } catch {
+            /* 名单不可用时保持基础声明 */
+          }
         }
       }
       const universe: Record<string, unknown> = {
@@ -1485,10 +1573,11 @@ async function tushareHealthBlock(): Promise<Record<string, unknown>> {
 router.get('/api/quant/health', quantLimiter, async (_req, res) => {
   try {
     const preflight = await runPreflight();
-    // Tushare 增强通道状态（可选）：只走 24h 缓存包装——免费积分频控 1 次/小时，
-    // 健康检查绝不允许直连打上游。未配置 / 失败都如实降级披露，不影响 preflight.ok
-    const tushare = await tushareHealthBlock();
-    res.json({ ...preflight, tushare });
+    // 增强通道状态（可选）：Tushare（退市股名单/主表）与 Baostock（指数历史成分，
+    // Python sidecar）。都只走长缓存包装——频控/子进程开销绝不进请求热路径。
+    // 未配置 / 失败都如实降级披露，不影响 preflight.ok
+    const [tushare, baostock] = await Promise.all([tushareHealthBlock(), baostockHealth()]);
+    res.json({ ...preflight, tushare, baostock });
   } catch (error) {
     logger.error('Quant health error', { route: '/api/quant/health', err: error });
     res.status(500).json({ error: '上游预检失败' });

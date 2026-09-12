@@ -3,6 +3,15 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-12 — Baostock Python sidecar：指数历史成分宇宙接入（本批）
+
+- **幸存者偏差的正面修复落地**：Baostock `query_hs300/zz500/sz50_stocks(date)` 提供任意历史日期的指数成分快照，**含其后退市的证券**（实测 2015-06-30 沪深300 成分含 2016 年退市的武钢股份）——东财免费通道与 Tushare 免费积分（index_weight 无权限）都给不了的数据。
+- `server/scripts/baostock-sidecar.py`：一次性进程，stdin/stdout JSON 协议，第三方噪声全重定向 stderr；运行目录切到临时目录防日志污染；字段实测（updateDate/code/code_name，code 归一 6 位数字码）。
+- `quant/baostockBridge.ts`：spawn 桥接（60s 超时、ENOENT 友好指引 PYTHON_BIN）、**不可变快照 30 天缓存 / 最新快照 24h**（QUANT_BAOSTOCK_CACHE_TTL_HOURS 可覆盖）、上游失败回落陈旧缓存、同 key 并发去重。
+- 接线：`resolveUniverse` 新增 `indexUniverse` 源（{index, date?}）——截面/表达式/批量三路由与 MCP 工具同步支持；健康检查新增 baostock 块（hs300 端到端探针，含陈旧兜底）；截面幸存者声明按源区分口径（index 源声明「含其后退市证券，缺 K 线者如实跳过」）。
+- 客户端：截面页新增「指数历史成分」源（指数下拉 + 快照日期选填）。
+- 实测：hs300@2024-06-28 → 300 只（updateDate 2024-06-24）、zz500 最新 500 只；错误路径 JSON 化。
+
 ## 2026-09-12 — Tushare token 配置 + 适配器实机验证接线（本批）
 
 - token 注入 `server/.env`（gitignored，不入库），`.env.example` 补文档块。

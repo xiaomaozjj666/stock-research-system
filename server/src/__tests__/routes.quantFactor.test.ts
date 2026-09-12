@@ -59,6 +59,11 @@ vi.mock('../quant/marginProvider.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../quant/marginProvider.js')>()),
   fetchMarginSeries: vi.fn(),
 }));
+vi.mock('../quant/baostockBridge.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../quant/baostockBridge.js')>()),
+  fetchIndexConstituentsCached: vi.fn(),
+  baostockHealth: vi.fn(async () => ({ available: false, detail: 'mocked' })),
+}));
 // 预检会真的探测行情源：测试环境无外网，替换为直通结果（预检自身逻辑在
 // preflight.test.ts 单独覆盖）
 vi.mock('../quant/preflight.js', () => ({
@@ -90,6 +95,7 @@ import { fetchQuarterlyFinancials } from '../services/quarterlyFinancials.js';
 import type { QuarterlySeries } from '../services/quarterlyFinancials.js';
 import { fetchStockEvents } from '../quant/eventProvider.js';
 import { fetchMarginSeries } from '../quant/marginProvider.js';
+import { fetchIndexConstituentsCached } from '../quant/baostockBridge.js';
 
 const mockedComposite = vi.mocked(computeCompositeAlphaForStrategy);
 const mockedBatch = vi.mocked(computeCompositeAlphaBatch);
@@ -100,6 +106,7 @@ const mockedConstituentsMeta = vi.mocked(fetchBoardConstituentsWithMeta);
 const mockedQuarterly = vi.mocked(fetchQuarterlyFinancials);
 const mockedEvents = vi.mocked(fetchStockEvents);
 const mockedMargin = vi.mocked(fetchMarginSeries);
+const mockedIndexCons = vi.mocked(fetchIndexConstituentsCached);
 
 /** 6 只成分股（截面 / 表达式用例共用） */
 const CONST_SIX = ['600519', '000858', '603288', '600809', '000568', '600702'].map((code, i) => ({
@@ -122,6 +129,7 @@ beforeEach(() => {
   mockedMargin.mockReset();
   // 默认空两融序列：两融因子缺席，与既有用例口径一致
   mockedMargin.mockResolvedValue([]);
+  mockedIndexCons.mockReset();
 });
 
 /** n 根日频 K 线；按代码给不同漂移，保证截面有真实的横截面差异 */
@@ -698,6 +706,58 @@ describe('预检 / 实验台账 / 自定义因子表达式', () => {
   it('POST /api/quant/factor/experiments 空 entries → 400', async () => {
     const res = await request(app).post('/api/quant/factor/experiments').send({ entries: [] });
     expect(res.status).toBe(400);
+  });
+
+  it('cross-section indexUniverse：指数历史成分宇宙 → source=index + 历史快照声明', async () => {
+    mockedBars.mockImplementation((code: string) => Promise.resolve(genBars(code)));
+    mockedQuarterly.mockImplementation((code: string) => Promise.resolve(makeQuarterly(code)));
+    mockedIndexCons.mockResolvedValue({
+      index: 'hs300',
+      requestedDate: '2024-06-28',
+      updateDate: '2024-06-24',
+      count: 3,
+      constituents: [
+        { code: '600519', name: '贵州茅台' },
+        { code: '000858', name: '五粮液' },
+        { code: '600036', name: '招商银行' },
+      ],
+    });
+    const res = await request(app)
+      .post('/api/quant/factor/cross-section')
+      .send({ indexUniverse: { index: 'hs300', date: '2024-06-28' }, horizons: [21] });
+    expect(res.status).toBe(200);
+    expect(res.body.universe.source).toBe('index');
+    expect(res.body.universe.updateDate).toBe('2024-06-24');
+    expect(res.body.universe.requested).toBe(3);
+    expect(res.body.universe.survivorshipNote).toContain('历史快照');
+    expect(res.body.universe.survivorshipNote).toContain('后退市证券');
+    expect(res.body.factors.length).toBeGreaterThan(0);
+  });
+
+  it('cross-section indexUniverse：非法指数名 → 400（列出可选项）', async () => {
+    const res = await request(app)
+      .post('/api/quant/factor/cross-section')
+      .send({ indexUniverse: { index: 'csi1000' } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('hs300 / zz500 / sz50');
+  });
+
+  it('cross-section indexUniverse：非法日期格式 → 400', async () => {
+    const res = await request(app)
+      .post('/api/quant/factor/cross-section')
+      .send({ indexUniverse: { index: 'hs300', date: '2024/06/28' } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('YYYY-MM-DD');
+  });
+
+  it('cross-section indexUniverse：sidecar 失败 → 502 + 可执行指引', async () => {
+    mockedIndexCons.mockRejectedValue(new Error('未找到 Python 解释器（python）'));
+    const res = await request(app)
+      .post('/api/quant/factor/cross-section')
+      .send({ indexUniverse: { index: 'zz500' } });
+    expect(res.status).toBe(502);
+    expect(res.body.detail).toContain('Python');
+    expect(res.body.hint).toContain('pip install baostock');
   });
 });
 

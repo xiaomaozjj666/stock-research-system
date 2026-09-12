@@ -41,6 +41,11 @@ export const MCP_TOOLS: McpTool[] = [
       properties: {
         board: { type: 'string', description: '行业板块代码，如 BK0475' },
         codes: { type: 'array', items: { type: 'string' }, description: '显式股票代码列表' },
+        indexUniverse: {
+          type: 'object',
+          description:
+            '指数历史成分宇宙（Baostock，含其后退市证券）：{index: hs300|zz500|sz50, date?: YYYY-MM-DD}',
+        },
         topN: { type: 'number', description: '成分股数量（3-300，默认 10）' },
         horizons: { type: 'array', items: { type: 'number' }, description: '持有期，默认 [21,63]' },
         includeFundamental: { type: 'boolean' },
@@ -58,6 +63,10 @@ export const MCP_TOOLS: McpTool[] = [
         expression: { type: 'string', description: '因子表达式，如 close / mean(close, 20) - 1' },
         board: { type: 'string' },
         codes: { type: 'array', items: { type: 'string' } },
+        indexUniverse: {
+          type: 'object',
+          description: '{index: hs300|zz500|sz50, date?: YYYY-MM-DD}',
+        },
         topN: { type: 'number' },
         horizons: { type: 'array', items: { type: 'number' } },
         name: { type: 'string' },
@@ -85,6 +94,10 @@ export const MCP_TOOLS: McpTool[] = [
         },
         board: { type: 'string' },
         codes: { type: 'array', items: { type: 'string' } },
+        indexUniverse: {
+          type: 'object',
+          description: '{index: hs300|zz500|sz50, date?: YYYY-MM-DD}',
+        },
         topN: { type: 'number' },
         horizons: { type: 'array', items: { type: 'number' } },
         name: { type: 'string', description: '因子名（默认 custom_expression）' },
