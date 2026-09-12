@@ -14,13 +14,18 @@
  * Python 库，与 Tushare Pro 无关。
  *
  * 使用前提与诚实边界：
- *  - 需要注册 tushare.pro 获取 token，经 `TUSHARE_TOKEN` 环境变量注入；
- *    未配置时 isTushareConfigured() 为 false，所有调用抛错——调用方必须降级
- *    （免费接口是主通道，Tushare 是增强通道，绝不能反向依赖）；
- *  - 积分制：低积分（<2000）接口覆盖窄且频控严（约 50-200 次/分钟）；
- *    高校师生可申请免费积分；批量拉取务必走 quantCache 落盘缓存；
+ *  - 需要注册 tushare.pro 获取 token，经 `TUSHARE_TOKEN` 环境变量注入（server/.env，
+ *    已 gitignore）；未配置时 isTushareConfigured() 为 false，所有调用抛错——调用方
+ *    必须降级（免费接口是主通道，Tushare 是增强通道，绝不能反向依赖）；
+ *  - 积分制频控**实测**（2026-09-12，免费积分账户，错误码 40203）：stock_basic
+ *    仅 **1 次/小时**（上游报错文案会从 1 次/分钟随用量升级为 1 次/小时）。
+ *    因此任何请求路径**禁止直连**本模块的裸函数——一律走 *Cached 包装
+ *    （24h 磁盘缓存 + 上游失败回落陈旧缓存 + 并发去重），默认配置下每天最多
+ *    打一次上游；
  *  - 数据商协议限制再分发——拉取的数据只用于本机研究，不入库不外传。
  */
+
+import { withQuantCache, readCacheEntry } from './quantCache.js';
 
 const TUSHARE_API = 'https://api.tushare.pro';
 
@@ -130,4 +135,56 @@ export async function fetchIndexWeight(
     inDate: r.in_date ? String(r.in_date) : null,
     weight: typeof r.weight === 'number' ? r.weight : null,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// 请求路径专用缓存包装（见头注释：免费积分 stock_basic 实测 1 次/小时）
+// ---------------------------------------------------------------------------
+
+/** 缓存 TTL（毫秒）。env 显式 0/负值 = 关闭缓存（测试旁路与线上排障，同 quantCache 语义） */
+function tushareCacheTtlMs(): number {
+  const raw = process.env.QUANT_TUSHARE_CACHE_TTL_HOURS;
+  if (raw !== undefined && raw.trim() !== '') {
+    const hours = Number(raw);
+    if (Number.isFinite(hours)) return hours > 0 ? hours * 60 * 60 * 1000 : 0;
+  }
+  return 24 * 60 * 60 * 1000;
+}
+
+/** 长缓存 + 陈旧兜底：上游频控/网络失败时回落到任意已缓存数据（哪怕已过期） */
+async function withTushareStaleCache<T>(key: string, producer: () => Promise<T>): Promise<T> {
+  const ttl = tushareCacheTtlMs();
+  if (ttl <= 0) return producer();
+  try {
+    return await withQuantCache(key, ttl, producer);
+  } catch (err) {
+    const stale = readCacheEntry<T>(key);
+    if (stale) return stale.data;
+    throw err;
+  }
+}
+
+let stockBasicInflight: Promise<StockBasicRow[]> | null = null;
+
+/**
+ * 全状态证券主表（L/D/P 一次拉全量，按状态在调用侧分桶计数）。
+ * 冷启动时同进程并发调用只打一次上游（频控 1 次/小时，绝不双烧）。
+ */
+export async function fetchStockBasicCached(): Promise<StockBasicRow[]> {
+  stockBasicInflight ??= withTushareStaleCache('tushare_stock_basic_all', () =>
+    fetchStockBasic(),
+  ).finally(() => {
+    stockBasicInflight = null;
+  });
+  return stockBasicInflight;
+}
+
+/** 指数历史成分（按日期快照，key 含指数与日期）。同陈旧兜底纪律。 */
+export async function fetchIndexWeightCached(
+  indexCode: string,
+  tradeDate: string,
+): Promise<IndexWeightRow[]> {
+  return withTushareStaleCache(`tushare_index_weight_${indexCode}_${tradeDate}`, () =>
+    fetchIndexWeight(indexCode, tradeDate),
+  );
 }

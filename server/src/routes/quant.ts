@@ -51,6 +51,7 @@ import {
   fetchQuarterlyFinancialsCached,
 } from '../quant/fundamentalCache.js';
 import { runPreflight, type PreflightResult } from '../quant/preflight.js';
+import { isTushareConfigured, fetchStockBasicCached } from '../quant/tushareAdapter.js';
 import { runMarketScreener, readLatestScreenerRun } from '../quant/screener.js';
 import { runEnsemble, recordModelOutcome, getModelWeights } from '../llm/ensemble.js';
 import { routeSkill } from '../llm/skillRouter.js';
@@ -891,11 +892,23 @@ router.post(
       const resolved = await resolveUniverse(body, preflight);
       if (!resolved.ok) return res.status(resolved.status).json(resolved.payload);
       const codes = resolved.codes;
+      // 幸存者偏差如实声明：主表是当前上市证券，退市股不在场——历史评估的
+      // universe 无退市股。Tushare 配置时附退市股名单规模（走 24h 缓存，不碰
+      // 上游频控；名单本身尚不参与面板装配，仅作核对披露）。
+      let survivorshipNote = '主表为当前上市证券，历史截面不含已退市股票（幸存者偏差）';
+      if (isTushareConfigured()) {
+        try {
+          const delisted = (await fetchStockBasicCached()).filter(
+            (r) => r.listStatus === 'D',
+          ).length;
+          survivorshipNote += `；已接入 Tushare 退市股名单（${delisted} 只，仅供核对）`;
+        } catch {
+          /* 名单不可用时保持基础声明 */
+        }
+      }
       const universe: Record<string, unknown> = {
         ...resolved.universe,
-        // 幸存者偏差如实声明：主表是当前上市证券，退市股不在场——历史评估的
-        // universe 无退市股。修复需要 PIT 成分股数据源（免费接口不提供）。
-        survivorshipNote: '主表为当前上市证券，历史截面不含已退市股票（幸存者偏差）',
+        survivorshipNote,
       };
 
       const end = new Date().toISOString().slice(0, 10);
@@ -1445,11 +1458,37 @@ router.get('/api/quant/research-memory/:code', quantLimiter, (req, res) => {
   }
 });
 
+/**
+ * Tushare 增强通道状态块（健康检查用）。只走 fetchStockBasicCached 的 24h 缓存
+ * （免费积分 stock_basic 实测 1 次/小时）；失败降级为 degraded + 原始报错，
+ * 绝不让增强通道的状态影响 preflight.ok。
+ */
+async function tushareHealthBlock(): Promise<Record<string, unknown>> {
+  if (!isTushareConfigured()) return { configured: false };
+  try {
+    const rows = await fetchStockBasicCached();
+    const count = (s: string) => rows.filter((r) => r.listStatus === s).length;
+    return {
+      configured: true,
+      total: rows.length,
+      listed: count('L'),
+      delisted: count('D'),
+      suspended: count('P'),
+    };
+  } catch (error) {
+    return { configured: true, degraded: true, detail: (error as Error).message };
+  }
+}
+
 // 上游预检：动手前先判「行情源通不通 / LLM 配没配 / 缓存有没有」，
 // 避免用户干等超时后只拿到一句没有行动指引的 502
 router.get('/api/quant/health', quantLimiter, async (_req, res) => {
   try {
-    res.json(await runPreflight());
+    const preflight = await runPreflight();
+    // Tushare 增强通道状态（可选）：只走 24h 缓存包装——免费积分频控 1 次/小时，
+    // 健康检查绝不允许直连打上游。未配置 / 失败都如实降级披露，不影响 preflight.ok
+    const tushare = await tushareHealthBlock();
+    res.json({ ...preflight, tushare });
   } catch (error) {
     logger.error('Quant health error', { route: '/api/quant/health', err: error });
     res.status(500).json({ error: '上游预检失败' });
