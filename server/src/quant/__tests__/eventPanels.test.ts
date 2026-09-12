@@ -218,7 +218,7 @@ describe('unlockSignalEvents — 解禁压力信号（负方向）', () => {
 });
 
 describe('dragonTigerSignalEvents — 龙虎榜事件信号', () => {
-  it('信号 = 净买额/流通市值（%）；缺市值回落净买额占总成交比；双缺剔除', () => {
+  it('信号 = 净买额/流通市值（%）；缺市值/脏市值/缺日期一律剔除（不回落成交额口径）', () => {
     const rows = [
       {
         eventDate: '2024-04-10',
@@ -229,6 +229,8 @@ describe('dragonTigerSignalEvents — 龙虎榜事件信号', () => {
         reason: '涨幅偏离',
       },
       {
+        // 缺流通市值：旧实现回落净买额/成交额（-8%，与市值口径差一个数量级），
+        // 会污染截面排名——现在宁缺毋滥，直接剔除
         eventDate: '2024-05-06',
         changeRate: -5.5,
         netAmountYuan: -1e8,
@@ -254,8 +256,7 @@ describe('dragonTigerSignalEvents — 龙虎榜事件信号', () => {
       },
     ];
     const events = dragonTigerSignalEvents(rows as never);
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(1);
     expect(events[0]).toEqual({ eventDate: '2024-04-10', value: 1 }); // 2e8/2e10 = 1%
-    expect(events[1].value).toBe(-8); // 回落口径：净买额占总成交比
   });
 });

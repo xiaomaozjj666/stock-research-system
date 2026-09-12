@@ -31,6 +31,8 @@ afterEach(() => {
 /** 东财 datacenter v1/get 响应体 */
 function dcBody(rows: Record<string, unknown>[]) {
   return {
+    ok: true,
+    status: 200,
     json: async () => ({ success: true, result: { pages: 1, count: rows.length, data: rows } }),
   } as unknown as Response;
 }
@@ -104,6 +106,8 @@ describe('fetchConsensusSnapshot — 快照解析', () => {
 
   it('无研报覆盖 → null；北向失败只缺 north 字段', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
       json: async () => ({ success: false, code: 9201, message: '返回数据为空' }),
     } as unknown as Response);
     expect(await fetchConsensusSnapshot('600000')).toBeNull();

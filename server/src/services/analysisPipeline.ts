@@ -233,7 +233,8 @@ export async function runAnalysis(
   let consensus: ConsensusSnapshot | null = null;
   let consensusBrief: string | null = null;
   try {
-    consensus = await withTimeout(fetchConsensusSnapshot(stockCode), 6000).catch(() => null);
+    // 超时/失败在这里统一落日志（原来外层 .catch 吞掉异常后，下面的 catch 是死代码）
+    consensus = await withTimeout(fetchConsensusSnapshot(stockCode), 6000);
     consensusBrief = consensus ? formatConsensusBrief(consensus) : null;
   } catch (err) {
     logger.warn('机构一致预期获取失败，降级跳过', { stockCode, err: err as Error });

@@ -220,7 +220,7 @@ function App() {
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
-  }, [analysisResult]);
+  }, []);
 
   const handleAnalyze = useCallback(async (stockCode: string, opts?: { resume?: boolean }) => {
     // 有在途分析先取消，避免两条 SSE 竞争写同一份状态
@@ -468,7 +468,10 @@ function App() {
                 {/* 机构一致预期（若有；快照口径） */}
                 {stockData.consensus && (
                   <RevealSection>
-                    <ConsensusCard data={stockData.consensus} />
+                    {/* 缓存回放/历史快照可能缺 ratings/forecasts 字段，兜 ErrorBoundary 防整页白屏 */}
+                    <ErrorBoundary label="机构一致预期">
+                      <ConsensusCard data={stockData.consensus} />
+                    </ErrorBoundary>
                   </RevealSection>
                 )}
 
@@ -520,16 +523,20 @@ function App() {
                   </ErrorBoundary>
                 </RevealSection>
                 {/* 资金筹码分析 */}
-                {stockData.expert_opinions.find((e) => e.expert === '资金筹码分析师') && (
-                  <RevealSection id="capital">
-                    <ErrorBoundary label="资金筹码">
-                      
-                      <CapitalFlowSection
-                        data={stockData.expert_opinions.find((e) => e.expert === '资金筹码分析师')}
-                      />
-                    </ErrorBoundary>
-                  </RevealSection>
-                )}
+                {(() => {
+                  // 同一次 find 复用（条件渲染与传参各调一次，抽出来只扫一遍）
+                  const capitalFlow = stockData.expert_opinions.find(
+                    (e) => e.expert === '资金筹码分析师',
+                  );
+                  if (!capitalFlow) return null;
+                  return (
+                    <RevealSection id="capital">
+                      <ErrorBoundary label="资金筹码">
+                        <CapitalFlowSection data={capitalFlow} />
+                      </ErrorBoundary>
+                    </RevealSection>
+                  );
+                })()}
                 {/* 情景推演 */}
                 {stockData.scenarios && stockData.scenarios.length > 0 && (
                   <RevealSection id="scenario">

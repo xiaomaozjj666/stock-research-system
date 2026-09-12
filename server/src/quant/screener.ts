@@ -156,11 +156,12 @@ export async function runMarketScreener(
           });
         }
       }
-      // RPS：250 日收益（不足 250 根用可得区间，样本不足时为 NaN 不参与分位）
-      const win = Math.min(250, bars.length - 1);
+      // RPS：250 日收益。**上市不足 250 个交易日的次新股不参与**——拿 3 个月的
+      // 收益与全市场 250 日收益同池排名是口径混用（次新股波动天然大，会被
+      // 误判为强势），不足窗口时如实置 NaN，不进分位池
       const ret250 =
-        bars[bars.length - 1 - win].close > 0
-          ? bars[bars.length - 1].close / bars[bars.length - 1 - win].close - 1
+        bars.length >= 251 && bars[bars.length - 251].close > 0
+          ? bars[bars.length - 1].close / bars[bars.length - 251].close - 1
           : NaN;
       candidates.push({
         code: m.code,
@@ -174,6 +175,7 @@ export async function runMarketScreener(
 
   // RPS（欧奈尔相对强度）：250 日收益「严格高于宇宙中 ≥87% 的股票」视为强势。
   // 用排名而非阈值比较，并列值不会退化（横盘宇宙不会全体误报）。
+  // 排序后按秩二分定位，避免逐股 O(n²) 的全池过滤
   const rpsValues = candidates
     .map((c) => c.ret250)
     .filter((v) => Number.isFinite(v))
@@ -181,7 +183,19 @@ export async function runMarketScreener(
   if (rpsValues.length >= 10) {
     for (const c of candidates) {
       if (!Number.isFinite(c.ret250)) continue;
-      const below = rpsValues.filter((v) => v < c.ret250).length;
+      // 二分找严格小于 ret250 的个数（rpsValues 升序、可能含并列值）
+      let lo = 0;
+      let hi = rpsValues.length - 1;
+      let below = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (rpsValues[mid] < (c.ret250 as number)) {
+          below = mid + 1;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
       const percentile = below / rpsValues.length;
       if (percentile >= RPS_THRESHOLD && c.hits.every((h) => h.strategy !== 'rps_250')) {
         c.hits.push({

@@ -50,7 +50,7 @@ export interface ConsensusSnapshot {
   code: string;
   /** 覆盖机构数（无研报覆盖时整个快照为 null，不会返回空壳） */
   orgNum: number | null;
-  /** 评级分布（%，缺失为 null——不补 0，避免把「无评级」伪装成「中性」） */
+  /** 评级分布（**家数**，非百分比；缺失为 null——不补 0，避免把「无评级」伪装成「中性」） */
   ratings: {
     buy: number | null;
     add: number | null;
@@ -201,7 +201,9 @@ export function formatConsensusBrief(snap: ConsensusSnapshot): string {
         ? `，市值 ${(snap.north.holdMarketCap / 1e8).toFixed(1)} 亿`
         : '';
     const ratio =
-      snap.north.holdSharesRatio !== null ? `占流通股比 ${snap.north.holdSharesRatio}%` : '';
+      snap.north.holdSharesRatio !== null
+        ? `占流通股比 ${snap.north.holdSharesRatio.toFixed(2)}%`
+        : '';
     lines.push(
       `北向持股（${snap.north.date} 季度披露）：${[ratio, cap].filter(Boolean).join('')}。`,
     );

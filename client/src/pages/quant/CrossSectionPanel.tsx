@@ -20,6 +20,9 @@ const MAX_CODES = 300;
  * 按名称而非 BK 码匹配——板块代码会随数据源体系漂移（BK0475 曾是白酒、后为银行） */
 const PREFERRED_DEFAULT_BOARDS = ['白酒', '银行'];
 
+/** 组合回测默认参数：请求体与界面文案共用一处定义，改这里即可同步 */
+const PORTFOLIO_DEFAULTS = { holdDays: 21, topN: 5, costBps: 30 } as const;
+
 /** 因子中文显示名：量价（与 FactorPanel 一致）+ 基本面/事件 */
 const FACTOR_LABELS: Record<string, string> = {
   volatility_1m: '1月波动率',
@@ -39,6 +42,8 @@ const FACTOR_LABELS: Record<string, string> = {
   cs_debt_ratio: '资产负债率（年报）',
   cs_np_yoy_q: '单季净利同比（季度）',
   cs_roe_slope: 'ROE逐季斜率（季度）',
+  mg_balance_chg20: '两融余额20日变化（资金）',
+  mg_balance_pct: '两融余额占市值比（资金）',
   ev_earnings_surprise: '业绩超预期（PEAD事件）',
   ev_dividend_yield: '分红股息率（事件）',
   ev_buyback_ratio: '回购力度（事件）',
@@ -133,9 +138,17 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** 在途评估请求的中止器：数百只大面板冷启动可达数分钟，用户应能中途撤回 */
   const abortRef = useRef<AbortController | null>(null);
+  /** 卸载标记：卸载触发的 abort 不应弹「已取消」提示（ToastProvider 在组件树外，卸载后弹窗仍会显示） */
+  const unmountedRef = useRef(false);
 
   // 卸载时中止在途请求，避免向已卸载组件 setState
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(
+    () => () => {
+      unmountedRef.current = true;
+      abortRef.current?.abort();
+    },
+    [],
+  );
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
@@ -194,6 +207,15 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
 
   const codes = useMemo(() => parseCodes(codesText), [codesText]);
 
+  /** 因子名 → 持有期报告表：渲染前统一构建一次，避免每次重渲染逐因子重建 Map */
+  const byPeriodMaps = useMemo(() => {
+    const m = new Map<string, Map<number, CrossSectionPeriodReport>>();
+    for (const f of result?.factors ?? []) {
+      m.set(f.name, new Map(f.report.byPeriod.map((p) => [p.period, p])));
+    }
+    return m;
+  }, [result]);
+
   const handleRun = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -207,7 +229,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
         includeFundamental,
         includeEvents,
         includeMargin,
-        ...(portfolioOn ? { portfolio: { holdDays: 21, topN: 5, costBps: 30 } } : {}),
+        ...(portfolioOn ? { portfolio: { ...PORTFOLIO_DEFAULTS } } : {}),
       };
       const data = await runCrossSectionEvaluation(
         source === 'board'
@@ -225,6 +247,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
       );
       setResult(data);
     } catch (e) {
+      if (unmountedRef.current) return; // 卸载触发的中止：不弹提示、不再 setState
       if (e instanceof AnalysisCancelledError) {
         showToast('已取消本次评估');
       } else {
@@ -431,7 +454,8 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                 disabled={loading}
                 onChange={(e) => setPortfolioOn(e.target.checked)}
               />
-              因子组合回测（21 日调仓 top-5 等权）
+              因子组合回测（{PORTFOLIO_DEFAULTS.holdDays} 日调仓 top-{PORTFOLIO_DEFAULTS.topN}{' '}
+              等权）
             </label>
           </div>
         </div>
@@ -504,7 +528,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                 </thead>
                 <tbody>
                   {result.factors.map((f) => {
-                    const byPeriod = new Map(f.report.byPeriod.map((p) => [p.period, p]));
+                    const byPeriod = byPeriodMaps.get(f.name)!;
                     const lastPeriod = f.report.byPeriod[f.report.byPeriod.length - 1];
                     return (
                       <tr key={f.name}>
@@ -551,7 +575,10 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
               <table className="batch-table cs-table">
                 <thead>
                   <tr>
-                    <th>因子组合回测（21日调仓 · top-5 等权 · 30bps）</th>
+                    <th>
+                      因子组合回测（{PORTFOLIO_DEFAULTS.holdDays}日调仓 · top-
+                      {PORTFOLIO_DEFAULTS.topN} 等权 · {PORTFOLIO_DEFAULTS.costBps}bps）
+                    </th>
                     <th>期数</th>
                     <th>总收益</th>
                     <th>年化</th>

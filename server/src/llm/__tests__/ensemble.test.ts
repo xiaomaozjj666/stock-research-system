@@ -159,6 +159,17 @@ describe('runEnsemble — 语义聚类投票（自由文本）', () => {
     expect(answerSimilarity('基本面强劲利好', '技术面破位利空')).toBeLessThan(0.4);
   });
 
+  it('answerSimilarity：短答案被长答案包含不判同义（重叠系数的否定词缺陷已修）', () => {
+    // 旧重叠系数口径下 买入 ⊂ 不建议买入 → 相似度恒为 1，否定词直接丢失
+    expect(answerSimilarity('买入', '不建议买入')).toBeLessThanOrEqual(0.5);
+    expect(answerSimilarity('看多', '继续看多，维持买入评级')).toBeLessThan(0.62);
+  });
+
+  it('answerSimilarity：JSON 结构化输出只认逐字相同（骨架重叠不参与聚类）', () => {
+    expect(answerSimilarity('{"sentiment":"bullish"}', '{"sentiment":"bearish"}')).toBe(0);
+    expect(answerSimilarity('{"sentiment":"bullish"}', '{"sentiment":"bullish"}')).toBe(1);
+  });
+
   it('similarityThreshold>1 退化为只认逐字相同', async () => {
     mockedChat.mockImplementation(async (_m, opts?: { model?: string }) =>
       opts?.model === 'model-a' ? '建议逢低看多' : '建议逢低看多。',

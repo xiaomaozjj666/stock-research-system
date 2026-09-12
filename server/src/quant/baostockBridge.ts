@@ -70,6 +70,9 @@ function invokeSidecar(
     });
     let stdout = '';
     let stderr = '';
+    // Python 立即崩溃时 stdin.write 会触发 EPIPE：无监听的 'error' 事件会变成
+    // uncaught exception 打掉进程——这里吞掉，失败路径统一由 error/close 处理
+    child.stdin.on('error', () => {});
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error('Baostock sidecar 超时（60s）'));

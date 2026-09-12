@@ -126,10 +126,12 @@ export function summarizeFactorExperiments(): {
   bySource: Record<string, number>;
   lastAt: string | null;
   /**
-   * 采信集的期望假阳性数 ≈ Σ pValue（被采信实验的 p 值之和）。
-   * FDR 视角：每条被采信的实验仍有约 p 的概率是「纯运气的显著」——50 条 p≈0.03
-   * 的采信实验里期望混着 ~1.5 条假发现。单次评估的 Holm 校正只控制当次家族，
-   * 这里补上「全历史试错」维度的诚实折扣。
+   * 采信集的期望假阳性数**上界** = 采信数 × 0.05（采信判据的显著性水平，
+   * 与 judgeFactor 的 p<0.05 同口径）。最坏情形是「采信集全部为真原假设」，
+   * 此时按水平 0.05 逐条检验的期望假阳性恰为 kept × 0.05——这是频率学派
+   * 能给出的严格界；此前用 ΣpValue 当「期望假发现」是错的（p 值是
+   * P(数据这样极端 | H0)，不是 P(H0 | 被采信)，Σp 没有可解释含义）。
+   * 单次评估的 Holm 校正只控制当次家族，这里补上「全历史试错」维度的诚实折扣。
    */
   keptExpectedFalse: number;
   /** 采信集中 OOS 稳定的占比（方向与显著性双双跨段成立的口径） */
@@ -139,8 +141,8 @@ export function summarizeFactorExperiments(): {
   const bySource: Record<string, number> = {};
   for (const it of items) bySource[it.source] = (bySource[it.source] ?? 0) + 1;
   const kept = items.filter((i) => i.kept);
-  // 期望假阳性 = 各采信实验 p 值之和（p 越小的采信越"贵"，污染越少）
-  const expectedFalse = kept.reduce((s, i) => s + (Number.isFinite(i.pValue) ? i.pValue : 0), 0);
+  // 期望假阳性上界 = 采信数 × 0.05（最坏情形：采信集全部为真原假设）
+  const expectedFalse = kept.length * 0.05;
   return {
     total: items.length,
     kept: kept.length,

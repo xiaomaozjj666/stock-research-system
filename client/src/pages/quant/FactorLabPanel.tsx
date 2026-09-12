@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getUniverseBoards,
   getFactorExperiments,
@@ -103,16 +103,23 @@ export default function FactorLabPanel() {
   );
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<FactorExperiment[]>([]);
-  const [summary, setSummary] = useState<{
-    total: number;
-    kept: number;
-    keptExpectedFalse?: number;
-    keptOosShare?: number;
-  } | null>(null);
+  const [summary, setSummary] = useState<
+    Awaited<ReturnType<typeof getFactorExperiments>>['summary'] | null
+  >(null);
+
+  // 组件随 tab 卸载后不再 setState（评估请求 600s 超时，卸载后回包很常见）
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   const loadLedger = useCallback(async () => {
     try {
       const d = await getFactorExperiments({ limit: 20 });
+      if (!aliveRef.current) return;
       setItems(d.items ?? []);
       setSummary(d.summary ?? null);
     } catch {
@@ -160,12 +167,15 @@ export default function FactorLabPanel() {
         horizons: [21, 63],
         ...(portfolioOn ? { portfolio: { holdDays: portfolioHoldDays, topN: portfolioTopN } } : {}),
       });
+      if (!aliveRef.current) return;
       setResult(data);
       await loadLedger();
     } catch (e) {
-      setError(e instanceof Error ? e.message : '因子表达式评估失败');
+      if (aliveRef.current) {
+        setError(e instanceof Error ? e.message : '因子表达式评估失败');
+      }
     } finally {
-      setRunning(false);
+      if (aliveRef.current) setRunning(false);
     }
   }, [canRun, expression, board, topN, loadLedger, portfolioOn, portfolioHoldDays, portfolioTopN]);
 
@@ -335,7 +345,7 @@ export default function FactorLabPanel() {
               {typeof summary.keptExpectedFalse === 'number' && summary.kept > 0 && (
                 <>
                   {' '}
-                  · 期望假阳性 ≈{summary.keptExpectedFalse}（Σp，全历史试错的诚实折扣）
+                  · 期望假阳性上界 ≈{summary.keptExpectedFalse}（采信数 × 5%，全历史试错的诚实折扣）
                   {typeof summary.keptOosShare === 'number' &&
                     ` · OOS 稳定 ${Math.round(summary.keptOosShare * 100)}%`}
                 </>

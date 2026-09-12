@@ -178,8 +178,11 @@ export const UNLOCK_WINDOW_DAYS = 41;
  * 龙虎榜事件：信号 = 净买额占流通市值比（%，正 = 净买入）。
  * 假说：龙虎榜净买入（游资/机构席位真金白银）跟随者效应推动短期收益；
  * A 股文献同样有「上榜即见顶」的反向证据——方向由 IC 判定，这正是事件族的目的。
- * 分母优先流通市值（跨市值可比）；缺失时回落净买额占总成交比（%）。
- * 剔除量纲不可比的两类：净买额与分母同时缺失（无信号）、流通市值为 0/负（脏数据）。
+ * **只用流通市值单一分母**（跨市值可比）：此前「缺流通市值时回落净买额/成交额」
+ * 的口径混入的是另一个变量（占总成交比量级 ~8-12%，市值口径 ~0.1-2%，差一个
+ * 数量级），会把缺市值的股票信号系统性放大、污染整个截面排名——宁缺毋滥，
+ * 缺流通市值的上榜行不出信号。
+ * 剔除量纲不可比的两类：净买额缺失（无信号）、流通市值为 0/负（脏数据）。
  */
 export function dragonTigerSignalEvents(rows: DragonTigerEventRow[]): StockEvent[] {
   const out: StockEvent[] = [];
@@ -187,14 +190,9 @@ export function dragonTigerSignalEvents(rows: DragonTigerEventRow[]): StockEvent
     if (!r.eventDate) continue;
     const net = r.netAmountYuan;
     const cap = r.freeMarketCapYuan;
-    let value: number | null = null;
-    if (net !== null && cap !== null && cap > 0) {
-      value = Math.round((net / cap) * 100 * 10000) / 10000;
-    } else if (net !== null && r.netAmountRatioPct !== null) {
-      // 回落口径：净买额占总成交比（%），与市值口径同向（正 = 净买入）
-      value = r.netAmountRatioPct;
-    }
-    if (value === null || !Number.isFinite(value)) continue;
+    if (net === null || cap === null || cap <= 0) continue;
+    const value = Math.round((net / cap) * 100 * 10000) / 10000;
+    if (!Number.isFinite(value)) continue;
     out.push({ eventDate: r.eventDate, value });
   }
   return out.sort((a, b) => a.eventDate.localeCompare(b.eventDate));

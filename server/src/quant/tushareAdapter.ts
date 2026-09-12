@@ -61,6 +61,10 @@ export async function callTushare(
     }),
     signal: AbortSignal.timeout(30_000),
   });
+  // 非 2xx（网关 5xx / 限流）的响应体通常不是协议 JSON，先按状态如实报错
+  if (!resp.ok) {
+    throw new Error(`Tushare ${apiName} HTTP ${resp.status}（网关或频控错误）`);
+  }
   const json = (await resp.json()) as TsResponse;
   if (json.code !== 0 || !json.data) {
     throw new Error(`Tushare ${apiName} 失败：[${json.code}] ${json.msg ?? 'unknown'}`);
