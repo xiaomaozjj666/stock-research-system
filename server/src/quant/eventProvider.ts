@@ -252,6 +252,58 @@ export async function fetchBuybackEvents(
 }
 
 // ---------------------------------------------------------------------------
+// 龙虎榜（日榜明细）
+// ---------------------------------------------------------------------------
+
+export interface DragonTigerEventRow {
+  /** 上榜日 */
+  eventDate: string | null;
+  /** 当日涨跌幅（%） */
+  changeRate: number | null;
+  /** 龙虎榜净买额（元，机构+席位合计口径） */
+  netAmountYuan: number | null;
+  /** 净买额占总成交额比（%） */
+  netAmountRatioPct: number | null;
+  /** 流通市值（元，净买额比的更稳分母） */
+  freeMarketCapYuan: number | null;
+  /** 上榜原因（EXPLANATION） */
+  reason: string | null;
+}
+
+/**
+ * 龙虎榜上榜历史（RPT_DAILYBILLBOARD_DETAILS，字段口径实测验证 2026-09-12）。
+ * 同一上榜日可能因多个上榜原因出现多行（CHANGE_TYPE 不同）：席位金额存在重叠，
+ * 简单相加会重复计数——按日期去重保留 |净买额| 最大的一条（最显著上榜）。
+ */
+export async function fetchDragonTigerEvents(
+  code: string,
+  signal?: AbortSignal,
+): Promise<DragonTigerEventRow[]> {
+  return withQuantCache(`event_lhb_${code}`, eventCacheTtlMs(), async () => {
+    const rows = await fetchReportRows(
+      'RPT_DAILYBILLBOARD_DETAILS',
+      `(SECURITY_CODE="${code}")`,
+      'TRADE_DATE',
+      '-1',
+      signal,
+    );
+    const parsed = rows.map((row) => ({
+      eventDate: normDate(row.TRADE_DATE),
+      changeRate: numOf(row, ['CHANGE_RATE']),
+      netAmountYuan: numOf(row, ['BILLBOARD_NET_AMT']),
+      netAmountRatioPct: numOf(row, ['DEAL_NET_RATIO']),
+      freeMarketCapYuan: numOf(row, ['FREE_MARKET_CAP']),
+      reason: strOf(row, ['EXPLANATION']),
+    }));
+    return dedupeByDateKeepMax(
+      parsed.filter((r) => r.eventDate !== null),
+      (r) => r.eventDate,
+      (r) => r.netAmountYuan ?? r.netAmountRatioPct ?? 0,
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
 // 限售解禁
 // ---------------------------------------------------------------------------
 
@@ -306,6 +358,7 @@ export interface StockEventBundle {
   dividend: DividendEventRow[];
   buyback: BuybackEventRow[];
   unlock: UnlockEventRow[];
+  dragonTiger: DragonTigerEventRow[];
 }
 
 /**
@@ -316,7 +369,7 @@ export async function fetchStockEvents(
   code: string,
   signal?: AbortSignal,
 ): Promise<StockEventBundle> {
-  const [dividend, buyback, unlock] = await Promise.all([
+  const [dividend, buyback, unlock, dragonTiger] = await Promise.all([
     fetchDividendEvents(code, signal).catch((err) => {
       logger.warn('分红事件拉取失败，该股降级为无分红事件', { code, err });
       return [] as DividendEventRow[];
@@ -329,6 +382,10 @@ export async function fetchStockEvents(
       logger.warn('解禁事件拉取失败，该股降级为无解禁事件', { code, err });
       return [] as UnlockEventRow[];
     }),
+    fetchDragonTigerEvents(code, signal).catch((err) => {
+      logger.warn('龙虎榜拉取失败，该股降级为无龙虎榜事件', { code, err });
+      return [] as DragonTigerEventRow[];
+    }),
   ]);
-  return { dividend, buyback, unlock };
+  return { dividend, buyback, unlock, dragonTiger };
 }

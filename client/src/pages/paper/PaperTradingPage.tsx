@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   getPaperPortfolio,
   placePaperOrder,
@@ -9,6 +9,7 @@ import {
   normalizeApiError,
 } from '../../api/client';
 import StockSearchInput from '../../components/StockSearchInput';
+import EChart from '../../components/EChart';
 import type {
   PaperPortfolio,
   PaperStats,
@@ -30,6 +31,46 @@ function orderBadge(status: PaperOrder['status']): { text: string; cls: string }
     default:
       return { text: '挂单中', cls: 'chip-neutral' };
   }
+}
+
+/** 净值折线图：现金额+持仓市值（¥）；日收益用柱状副轴过重，保留表格看明细 */
+function PaperEquityChart({ equity }: { equity: { date: string; value: number }[] }) {
+  const option = useMemo(
+    () => ({
+      animation: false,
+      grid: { left: 72, right: 12, top: 16, bottom: 24 },
+      tooltip: { trigger: 'axis' },
+      xAxis: {
+        type: 'category',
+        data: equity.map((e) => e.date),
+        axisLabel: { color: '#657181', fontSize: 10 },
+        axisLine: { lineStyle: { color: '#333f4e' } },
+      },
+      yAxis: {
+        type: 'value',
+        scale: true,
+        axisLabel: {
+          color: '#657181',
+          fontSize: 10,
+          formatter: (v: number) => `¥${(v / 10000).toFixed(1)}万`,
+        },
+        splitLine: { lineStyle: { color: '#232b37' } },
+      },
+      series: [
+        {
+          name: '净值',
+          type: 'line',
+          showSymbol: equity.length <= 30,
+          data: equity.map((e) => e.value),
+          lineStyle: { width: 2, color: '#4c8dff' },
+          itemStyle: { color: '#4c8dff' },
+          areaStyle: { color: 'rgba(76, 141, 255, 0.08)' },
+        },
+      ],
+    }),
+    [equity],
+  );
+  return <EChart option={option} className="paper-equity-chart" />;
 }
 
 /** 审计风险等级 → 中文徽章（等级原值保留用于过滤，展示一律中文） */
@@ -424,9 +465,10 @@ export default function PaperTradingPage() {
         </div>
       </section>
 
-      {/* 净值曲线简表 */}
+      {/* 净值曲线：≥2 个结算点显示折线图（初始资金点 + 首个结算点即可连线） */}
       <section className="paper-section">
         <h3 className="paper-card-title">净值曲线</h3>
+        {equity.length >= 2 && <PaperEquityChart equity={equity} />}
         <div className="watchlist-table-wrap">
           <table className="watchlist-table">
             <thead>

@@ -5529,6 +5529,12 @@ button.comparison-tag-add:disabled {
 }
 
 /* ============ IC 衰减曲线 ============ */
+.paper-equity-chart {
+  width: 100%;
+  height: 220px;
+  margin-bottom: 10px;
+}
+
 .portfolio-curve {
   width: 100%;
   height: 240px;

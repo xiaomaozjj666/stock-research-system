@@ -112,7 +112,7 @@ beforeEach(() => {
   mockedQuarterly.mockReset();
   mockedEvents.mockReset();
   // 默认空事件捆绑：不影响既有用例的事件族缺席语义
-  mockedEvents.mockResolvedValue({ dividend: [], buyback: [], unlock: [] });
+  mockedEvents.mockResolvedValue({ dividend: [], buyback: [], unlock: [], dragonTiger: [] });
 });
 
 /** n 根日频 K 线；按代码给不同漂移，保证截面有真实的横截面差异 */
@@ -544,8 +544,18 @@ describe('POST /api/quant/factor/cross-section — 事件族（分红/回购/解
             unlock: [
               { freeDate: '2024-07-01', ratioOfFloatPct: 8, sharesWan: 1e3, marketCapWan: 9e4 },
             ],
+            dragonTiger: [
+              {
+                eventDate: '2024-04-10',
+                changeRate: 9.98,
+                netAmountYuan: 2.5e8,
+                netAmountRatioPct: 12.5,
+                freeMarketCapYuan: 2e10,
+                reason: '日涨幅偏离值达7%的证券',
+              },
+            ],
           }
-        : { dividend: [], buyback: [], unlock: [] },
+        : { dividend: [], buyback: [], unlock: [], dragonTiger: [] },
     );
     const res = await request(app)
       .post('/api/quant/factor/cross-section')
@@ -557,17 +567,19 @@ describe('POST /api/quant/factor/cross-section — 事件族（分红/回购/解
     expect(names).toContain('ev_dividend_yield');
     expect(names).toContain('ev_buyback_ratio');
     expect(names).toContain('ev_unlock_overhang');
+    expect(names).toContain('ev_dragon_tiger');
     // PEAD 仍随季度财报装配
     expect(names).toContain('ev_earnings_surprise');
   });
 
-  it('事件源返回空捆绑 → 三类新因子缺席，量价族不受影响', async () => {
+  it('事件源返回空捆绑 → 四类新因子缺席，量价族不受影响', async () => {
     const res = await request(app)
       .post('/api/quant/factor/cross-section')
       .send({ board: 'BK0475', topN: 3, horizons: [21] });
     expect(res.status).toBe(200);
     const names = res.body.factors.map((f: { name: string }) => f.name);
     expect(names).not.toContain('ev_dividend_yield');
+    expect(names).not.toContain('ev_dragon_tiger');
     expect(names).not.toContain('ev_buyback_ratio');
     expect(names).not.toContain('ev_unlock_overhang');
     expect(res.body.factors.some((f: { type: string }) => f.type === 'price_volume')).toBe(true);
