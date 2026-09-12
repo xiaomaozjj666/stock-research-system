@@ -6,6 +6,7 @@ import {
   type FactorExperiment,
 } from '../../api/client';
 import type { IndustryBoard } from './types';
+import EChart from '../../components/EChart';
 
 /** 默认板块按名称优先级（与截面面板同口径）：列表按市值降序首项过大过杂 */
 const PREFERRED_DEFAULT_BOARDS = ['白酒', '银行'];
@@ -32,6 +33,54 @@ function shortDate(iso: string): string {
  * 上半区验证一条表达式，下半区回看试过什么、哪些被采信。
  * 表达式走服务端白名单解析（不执行任意代码），非法会直接被拒并给出原因。
  */
+/** 组合 vs 基准净值曲线（内联 ECharts；数据点 = 每个调仓期末） */
+function PortfolioCurveChart({
+  equity,
+  benchmark,
+}: {
+  equity: { date: string; value: number }[];
+  benchmark: { date: string; value: number }[];
+}) {
+  const option = useMemo(
+    () => ({
+      animation: false,
+      grid: { left: 52, right: 12, top: 28, bottom: 24 },
+      legend: { top: 0, textStyle: { color: '#9ba6b4', fontSize: 11 } },
+      tooltip: { trigger: 'axis' },
+      xAxis: {
+        type: 'category',
+        data: equity.map((p) => p.date),
+        axisLabel: { color: '#657181', fontSize: 10 },
+        axisLine: { lineStyle: { color: '#333f4e' } },
+      },
+      yAxis: {
+        type: 'value',
+        scale: true,
+        axisLabel: { color: '#657181', fontSize: 10 },
+        splitLine: { lineStyle: { color: '#232b37' } },
+      },
+      series: [
+        {
+          name: '组合',
+          type: 'line',
+          showSymbol: false,
+          data: equity.map((p) => p.value),
+          lineStyle: { width: 2, color: '#4c8dff' },
+        },
+        {
+          name: '宇宙等权基准',
+          type: 'line',
+          showSymbol: false,
+          data: benchmark.map((p) => p.value),
+          lineStyle: { width: 1.5, color: '#9ba6b4' },
+        },
+      ],
+    }),
+    [equity, benchmark],
+  );
+  return <EChart option={option} className="portfolio-curve" />;
+}
+
 export default function FactorLabPanel() {
   const [boards, setBoards] = useState<IndustryBoard[]>([]);
   const [board, setBoard] = useState('');
@@ -111,7 +160,7 @@ export default function FactorLabPanel() {
     } finally {
       setRunning(false);
     }
-  }, [canRun, expression, board, topN, loadLedger]);
+  }, [canRun, expression, board, topN, loadLedger, portfolioOn, portfolioHoldDays, portfolioTopN]);
 
   return (
     <div className="card quant-panel factor-lab">
@@ -255,6 +304,18 @@ export default function FactorLabPanel() {
             {result.portfolio.winRate.toFixed(0)}%（vs 候选宇宙等权；收盘价撮合、涨停不建模，
             短周期口径偏乐观）
           </div>
+        </div>
+      )}
+
+      {result?.portfolio && !running && (
+        <div className="portfolio-chart-wrap">
+          <p className="batch-hint">
+            组合 vs 候选宇宙等权（净值，起始 1）——正分离 = 选股有效；绝对收益取决于板块本身
+          </p>
+          <PortfolioCurveChart
+            equity={result.portfolio.equityCurve}
+            benchmark={result.portfolio.benchmarkCurve}
+          />
         </div>
       )}
 

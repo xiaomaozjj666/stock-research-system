@@ -112,6 +112,8 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
   const [codesText, setCodesText] = useState('');
   const [horizonsText, setHorizonsText] = useState('21,63');
   const [includeFundamental, setIncludeFundamental] = useState(true);
+  /** 组合回测（可选）：为全部因子附「按它交易」的 PnL 视角 */
+  const [portfolioOn, setPortfolioOn] = useState(false);
   // 事件族（分红/回购/解禁 + PEAD）：默认开启；关闭可省去事件源网络调用
   const [includeEvents, setIncludeEvents] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -194,12 +196,20 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
       const horizons = parseHorizons(horizonsText);
       const data = await runCrossSectionEvaluation(
         source === 'board'
-          ? { board, topN, horizons, includeFundamental, includeEvents }
+          ? {
+              board,
+              topN,
+              horizons,
+              includeFundamental,
+              includeEvents,
+              ...(portfolioOn ? { portfolio: { holdDays: 21, topN: 5, costBps: 30 } } : {}),
+            }
           : {
               codes: codes.slice(0, MAX_CODES),
               horizons,
               includeFundamental,
               includeEvents,
+              ...(portfolioOn ? { portfolio: { holdDays: 21, topN: 5, costBps: 30 } } : {}),
             },
         controller.signal,
       );
@@ -223,6 +233,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
     horizonsText,
     includeFundamental,
     includeEvents,
+    portfolioOn,
     showToast,
   ]);
 
@@ -352,6 +363,15 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
             />
             包含事件因子（分红/回购/解禁走事件数据源；PEAD 依赖财报）
           </label>
+          <label className="batch-checkbox cs-fundamental-toggle">
+            <input
+              type="checkbox"
+              checked={portfolioOn}
+              disabled={loading}
+              onChange={(e) => setPortfolioOn(e.target.checked)}
+            />
+            因子组合回测（每因子 21 日调仓 top-5 等权，宇宙等权基准）
+          </label>
         </div>
 
         <div className="batch-actions">
@@ -452,6 +472,51 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+          {result.factors.some((f) => f.portfolio) && (
+            <div className="batch-table-wrap">
+              <table className="batch-table cs-table">
+                <thead>
+                  <tr>
+                    <th>因子组合回测（21日调仓 · top-5 等权 · 30bps）</th>
+                    <th>期数</th>
+                    <th>总收益</th>
+                    <th>年化</th>
+                    <th>夏普</th>
+                    <th>最大回撤</th>
+                    <th>周期胜率</th>
+                    <th>平均换手</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.factors
+                    .filter((f) => f.portfolio)
+                    .sort((a, b) => b.portfolio!.totalReturn - a.portfolio!.totalReturn)
+                    .map((f) => (
+                      <tr key={`pf-${f.name}`}>
+                        <td className="batch-code" title={f.name}>
+                          {FACTOR_LABELS[f.name] ?? f.name}
+                        </td>
+                        <td>{f.portfolio!.periods}</td>
+                        <td
+                          className={f.portfolio!.totalReturn >= 0 ? 'sig-valid' : 'sig-inverted'}
+                        >
+                          {f.portfolio!.totalReturn >= 0 ? '+' : ''}
+                          {f.portfolio!.totalReturn.toFixed(1)}%
+                        </td>
+                        <td>{f.portfolio!.annualizedReturn.toFixed(1)}%</td>
+                        <td>{f.portfolio!.sharpe.toFixed(2)}</td>
+                        <td>{f.portfolio!.maxDrawdown.toFixed(1)}%</td>
+                        <td>{f.portfolio!.winRate.toFixed(0)}%</td>
+                        <td>{(f.portfolio!.avgTurnover * 100).toFixed(0)}%</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+              <p className="batch-footnote">
+                基准 = 候选宇宙等权（因子中性对照）；收盘价撮合、涨停不建模，短周期口径偏乐观。
+              </p>
             </div>
           )}
           <p className="batch-footnote">
