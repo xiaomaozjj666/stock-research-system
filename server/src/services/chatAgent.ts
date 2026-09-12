@@ -148,6 +148,18 @@ export interface ChatAgentDeps {
   extractNewsSignal?: (
     code: string,
   ) => Promise<{ signal: { polarity: number; hasNews: boolean }; source: string }>;
+  /** 量化研究工具（不提供则对应工具在对话中返回未配置提示） */
+  getScreenerLatest?: () => unknown;
+  getFactorExperimentSummary?: () => unknown;
+  runTimeseriesAnalyze?: (input: {
+    test: string;
+    code: string;
+    code2?: string;
+    startDate?: string;
+    endDate?: string;
+    options?: Record<string, unknown>;
+  }) => Promise<unknown>;
+  listDigests?: (limit?: number) => unknown[];
   runDebate?: (analysisText: string) => Promise<DebateResult>;
   /** 风控三分视角辩论（激进/中性/保守）；不提供时用默认实现 */
   runRiskDebate?: (analysisText: string) => Promise<RiskDebateResult>;
@@ -494,6 +506,10 @@ export function createChatAgent(deps: ChatAgentDeps) {
         parseStrategyInput: deps.parseStrategyInput,
         fetchOHLCVData: deps.fetchOHLCVData,
         extractNewsSignal: deps.extractNewsSignal,
+        getScreenerLatest: deps.getScreenerLatest,
+        getFactorExperimentSummary: deps.getFactorExperimentSummary,
+        runTimeseriesAnalyze: deps.runTimeseriesAnalyze,
+        listDigests: deps.listDigests,
       };
 
       let content: string;
@@ -599,6 +615,10 @@ import { runBacktest } from '../quant/backtestEngine.js';
 import { parseStrategyInput } from '../quant/agents/orchestrator.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
 import { extractNewsSignal } from '../quant/newsSignal.js';
+import { readLatestScreenerRun } from '../quant/screener.js';
+import { summarizeFactorExperiments } from '../quant/factorLedger.js';
+import { analyzeTimeseries } from '../quant/timeseries/analyze.js';
+import { listResearchDigests } from '../quant/researchDigest.js';
 
 const productionDeps: ChatAgentDeps = {
   runAnalysis,
@@ -608,6 +628,10 @@ const productionDeps: ChatAgentDeps = {
   parseStrategyInput: parseStrategyInput as unknown as ChatAgentDeps['parseStrategyInput'],
   fetchOHLCVData,
   extractNewsSignal,
+  getScreenerLatest: () => readLatestScreenerRun(),
+  getFactorExperimentSummary: () => summarizeFactorExperiments(),
+  runTimeseriesAnalyze: (input) => analyzeTimeseries(input),
+  listDigests: (limit?: number) => listResearchDigests(limit),
   retrieveEvidence,
   embedder: embed,
   loadHistory,

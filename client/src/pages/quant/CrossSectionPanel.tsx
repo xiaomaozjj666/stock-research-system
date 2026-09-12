@@ -62,6 +62,12 @@ const TYPE_LABELS: Record<CrossSectionFactor['type'], string> = {
   margin: '两融',
 };
 
+/** 整数入参钳制：非法值回退默认，范围 [min,max] */
+function clampInt(v: number, min: number, max: number, dflt: number): number {
+  const n = Math.floor(Number.isFinite(v) ? v : dflt);
+  return Math.min(max, Math.max(min, n));
+}
+
 function parseCodes(text: string): string[] {
   return text
     .split(/[\n,，;；\s]+/)
@@ -125,6 +131,10 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
   const [includeFundamental, setIncludeFundamental] = useState(true);
   /** 组合回测（可选）：为全部因子附「按它交易」的 PnL 视角 */
   const [portfolioOn, setPortfolioOn] = useState(false);
+  // 组合回测参数：默认取 PORTFOLIO_DEFAULTS，界面可调（请求与展示共用同一 state）
+  const [portfolioHoldDays, setPortfolioHoldDays] = useState<number>(PORTFOLIO_DEFAULTS.holdDays);
+  const [portfolioTopN, setPortfolioTopN] = useState<number>(PORTFOLIO_DEFAULTS.topN);
+  const [portfolioCostBps, setPortfolioCostBps] = useState<number>(PORTFOLIO_DEFAULTS.costBps);
   // 事件族（分红/回购/解禁 + PEAD）：默认开启；关闭可省去事件源网络调用
   const [includeEvents, setIncludeEvents] = useState(true);
   // 两融族（融资余额变化率/拥挤度，PIT + T+1 披露）：默认开启；关闭可省去两融源网络调用
@@ -229,7 +239,15 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
         includeFundamental,
         includeEvents,
         includeMargin,
-        ...(portfolioOn ? { portfolio: { ...PORTFOLIO_DEFAULTS } } : {}),
+        ...(portfolioOn
+          ? {
+              portfolio: {
+                holdDays: clampInt(portfolioHoldDays, 5, 250, PORTFOLIO_DEFAULTS.holdDays),
+                topN: clampInt(portfolioTopN, 1, 20, PORTFOLIO_DEFAULTS.topN),
+                costBps: clampInt(portfolioCostBps, 0, 200, PORTFOLIO_DEFAULTS.costBps),
+              },
+            }
+          : {}),
       };
       const data = await runCrossSectionEvaluation(
         source === 'board'
@@ -270,6 +288,9 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
     includeEvents,
     includeMargin,
     portfolioOn,
+    portfolioHoldDays,
+    portfolioTopN,
+    portfolioCostBps,
     showToast,
   ]);
 
@@ -454,9 +475,50 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                 disabled={loading}
                 onChange={(e) => setPortfolioOn(e.target.checked)}
               />
-              因子组合回测（{PORTFOLIO_DEFAULTS.holdDays} 日调仓 top-{PORTFOLIO_DEFAULTS.topN}{' '}
-              等权）
+              因子组合回测
             </label>
+            {portfolioOn && (
+              <>
+                <label className="batch-checkbox cs-fundamental-toggle">
+                  调仓周期
+                  <input
+                    type="number"
+                    min={5}
+                    max={250}
+                    value={portfolioHoldDays}
+                    disabled={loading}
+                    onChange={(e) => setPortfolioHoldDays(Number(e.target.value))}
+                    style={{ width: 64 }}
+                  />
+                  日
+                </label>
+                <label className="batch-checkbox cs-fundamental-toggle">
+                  持仓只数
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={portfolioTopN}
+                    disabled={loading}
+                    onChange={(e) => setPortfolioTopN(Number(e.target.value))}
+                    style={{ width: 56 }}
+                  />
+                </label>
+                <label className="batch-checkbox cs-fundamental-toggle">
+                  单边成本
+                  <input
+                    type="number"
+                    min={0}
+                    max={200}
+                    value={portfolioCostBps}
+                    disabled={loading}
+                    onChange={(e) => setPortfolioCostBps(Number(e.target.value))}
+                    style={{ width: 56 }}
+                  />
+                  bps
+                </label>
+              </>
+            )}
           </div>
         </div>
 
@@ -576,8 +638,8 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                 <thead>
                   <tr>
                     <th>
-                      因子组合回测（{PORTFOLIO_DEFAULTS.holdDays}日调仓 · top-
-                      {PORTFOLIO_DEFAULTS.topN} 等权 · {PORTFOLIO_DEFAULTS.costBps}bps）
+                      因子组合回测（{portfolioHoldDays}日调仓 · top-
+                      {portfolioTopN} 等权 · {portfolioCostBps}bps）
                     </th>
                     <th>期数</th>
                     <th>总收益</th>

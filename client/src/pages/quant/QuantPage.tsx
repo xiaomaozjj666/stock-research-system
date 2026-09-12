@@ -9,6 +9,7 @@ import FactorPanel from './FactorPanel';
 import CompositeBatchPanel from './CompositeBatchPanel';
 import CrossSectionPanel from './CrossSectionPanel';
 import FactorLabPanel from './FactorLabPanel';
+import DigestPanel from './DigestPanel';
 import NewsSentimentCard from '../../components/NewsSentimentCard';
 import { AnalysisCancelledError, runQuantAnalysis } from '../../api/client';
 import { useToast } from '../../components/Toast';
@@ -280,6 +281,7 @@ export default function QuantPage() {
         <div className="quant-mode-pane" hidden={mode !== 'cross'}>
           <CrossSectionPanel active={mode === 'cross'} />
           <FactorLabPanel />
+          <DigestPanel />
         </div>
         <div className="quant-mode-pane" hidden={mode !== 'single'}>
           {error && <div className="error-banner">{error}</div>}

@@ -51,6 +51,21 @@ export interface ToolDeps {
     };
     source: string;
   }>;
+  /** 最近一次全市场初筛落盘结果（无记录为 null） */
+  getScreenerLatest?: () => unknown;
+  /** 实验台账概览（总量/采信/假阳性上界/OOS 占比） */
+  getFactorExperimentSummary?: () => unknown;
+  /** 时序计量分析（adf/garch/coint/arima/kalman-beta，与 HTTP 端点同口径） */
+  runTimeseriesAnalyze?: (input: {
+    test: string;
+    code: string;
+    code2?: string;
+    startDate?: string;
+    endDate?: string;
+    options?: Record<string, unknown>;
+  }) => Promise<unknown>;
+  /** 最近的研究简报 */
+  listDigests?: (limit?: number) => unknown[];
 }
 
 function truncate(s: string, n = 4000): string {
@@ -126,6 +141,58 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           endDate: { type: 'string', description: '结束日期 YYYY-MM-DD' },
         },
         required: ['stockCode', 'strategy'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_screener_latest',
+      description:
+        '读取最近一次全市场初筛结果（形态触发 + RPS 相对强度分位扫全市场）。无参数；从未运行过时返回提示。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_factor_experiments',
+      description:
+        '因子实验台账概览：累计实验数、采信数、期望假阳性上界、OOS 稳定占比、按来源分布。回答「试过哪些因子、哪些可信」类问题时使用。',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_timeseries_analyze',
+      description:
+        '对单只 A 股做时间序列计量分析：adf(单位根)/garch(波动率)/coint(两股协整,需 code2)/arima(定阶)/kalman-beta(时变对冲比率,需 code2)。默认取近 3 年日频数据，秒级完成。',
+      parameters: {
+        type: 'object',
+        properties: {
+          test: {
+            type: 'string',
+            description: "分析类型：'adf' | 'garch' | 'coint' | 'arima' | 'kalman-beta'",
+          },
+          stockCode: { type: 'string', description: '6 位股票代码（coint/kalman-beta 为因变量）' },
+          code2: { type: 'string', description: '第二条序列的 6 位代码（coint/kalman-beta 必填）' },
+        },
+        required: ['test', 'stockCode'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_recent_digests',
+      description:
+        '列出最近的研究简报（初筛状态 + 实验台账概览 + 增量说明）。回答「系统最近做了什么研究」类问题时使用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'number', description: '返回条数，默认 5' },
+        },
       },
     },
   },
@@ -244,6 +311,47 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
         experiment as import('../quant/types.js').BacktestResult,
       );
       return truncate(JSON.stringify(comparison, null, 2));
+    }
+    if (call.function.name === 'get_screener_latest') {
+      if (!deps.getScreenerLatest) return 'get_screener_latest 未配置';
+      const r = deps.getScreenerLatest();
+      if (
+        !r ||
+        (typeof r === 'object' && r !== null && 'at' in r && (r as { at: unknown }).at === null)
+      ) {
+        return '还没有初筛记录：需要先在「全市场初筛」里跑一次（POST /api/quant/screener/run）';
+      }
+      return truncate(JSON.stringify(r, null, 2));
+    }
+    if (call.function.name === 'get_factor_experiments') {
+      if (!deps.getFactorExperimentSummary) return 'get_factor_experiments 未配置';
+      return truncate(JSON.stringify(deps.getFactorExperimentSummary(), null, 2));
+    }
+    if (call.function.name === 'run_timeseries_analyze') {
+      if (!deps.runTimeseriesAnalyze) return 'run_timeseries_analyze 未配置';
+      const test = String(args.test || '').trim();
+      const code = String(args.stockCode || '').trim();
+      if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
+      const code2 = String(args.code2 || '').trim();
+      if ((test === 'coint' || test === 'kalman-beta') && !/^\d{6}$/.test(code2)) {
+        return `test='${test}' 需要第二条序列的 6 位代码（code2）`;
+      }
+      const r = await deps.runTimeseriesAnalyze({
+        test,
+        code,
+        ...(code2 ? { code2 } : {}),
+      });
+      return truncate(JSON.stringify(r, null, 2));
+    }
+    if (call.function.name === 'list_recent_digests') {
+      if (!deps.listDigests) return 'list_recent_digests 未配置';
+      const limit =
+        typeof args.limit === 'number' ? Math.max(1, Math.min(Math.floor(args.limit), 20)) : 5;
+      const items = deps.listDigests(limit);
+      if (items.length === 0) {
+        return '还没有研究简报：POST /api/quant/digests/run 可手动生成一份';
+      }
+      return truncate(JSON.stringify(items, null, 2));
     }
     return `工具 ${call.function.name} 无处理器`;
   } catch (err) {

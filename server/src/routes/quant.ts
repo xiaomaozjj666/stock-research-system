@@ -93,11 +93,8 @@ import {
   UNLOCK_WINDOW_DAYS,
 } from '../quant/eventPanels.js';
 import { detectPatternEvents, PATTERN_NAMES } from '../quant/patternEvents.js';
-import { adfTest, type AdfSpec } from '../quant/timeseries/adf.js';
-import { fitVolatilityModels } from '../quant/timeseries/garch.js';
-import { engleGranger } from '../quant/timeseries/cointegration.js';
-import { fitArima } from '../quant/timeseries/arima.js';
-import { timeVaryingBeta } from '../quant/timeseries/kalman.js';
+import { analyzeTimeseries } from '../quant/timeseries/analyze.js';
+import { listResearchDigests, runResearchDigest } from '../quant/researchDigest.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import {
   fetchOHLCVData,
@@ -1322,47 +1319,6 @@ router.get('/api/quant/screener/latest', quantLimiter, (_req, res) => {
 // ARIMA / Kalman 时变对冲比率。统一入口，按 test 分派。
 // ============================================================
 
-/** 本地时区日期 → YYYY-MM-DD */
-function localDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-/** 按日期对齐两条 K 线序列的收盘价（取交集，升序） */
-function alignCloses(a: OHLCVRow[], b: OHLCVRow[]): { y: number[]; x: number[]; dates: string[] } {
-  const map = new Map<string, number>();
-  for (const k of b) map.set(k.date, k.close);
-  const y: number[] = [];
-  const x: number[] = [];
-  const dates: string[] = [];
-  for (const k of a) {
-    const v = map.get(k.date);
-    if (v !== undefined) {
-      y.push(k.close);
-      x.push(v);
-      dates.push(k.date);
-    }
-  }
-  return { y, x, dates };
-}
-
-/** 收盘价 → 对数收益 */
-function logReturns(closes: number[]): number[] {
-  const out: number[] = [];
-  for (let i = 1; i < closes.length; i++) {
-    if (closes[i - 1] > 0 && closes[i] > 0) out.push(Math.log(closes[i] / closes[i - 1]));
-  }
-  return out;
-}
-
-/** K 线行的最小结构（避免引入 OHLCVData 全类型依赖） */
-interface OHLCVRow {
-  date: string;
-  close: number;
-}
-
-const TS_TESTS = ['adf', 'garch', 'coint', 'arima', 'kalman-beta'] as const;
-type TsTest = (typeof TS_TESTS)[number];
-
 router.post(
   '/api/quant/timeseries/analyze',
   quantLimiter,
@@ -1370,154 +1326,24 @@ router.post(
   async (req, res) => {
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const test = typeof body.test === 'string' ? body.test.trim() : '';
-      if (!TS_TESTS.includes(test as TsTest)) {
-        return res
-          .status(400)
-          .json({ error: `test 需为 ${TS_TESTS.map((t) => `'${t}'`).join(' | ')} 之一` });
-      }
-      const code = typeof body.code === 'string' ? body.code.trim() : '';
-      const code2 = typeof body.code2 === 'string' ? body.code2.trim() : '';
-      if (!code) return res.status(400).json({ error: 'code 必填' });
-      if ((test === 'coint' || test === 'kalman-beta') && !code2) {
-        return res.status(400).json({ error: `test='${test}' 需要第二条序列（code2）` });
-      }
-
-      // 时间窗口：默认近 3 年（日频 ≈ 730 个观测，GARCH/ADF 都够用），上限 10 年
-      const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-      const endD = new Date();
-      const defaultStart = new Date(endD);
-      defaultStart.setFullYear(defaultStart.getFullYear() - 3);
-      let endDate =
-        typeof body.endDate === 'string' && dateRe.test(body.endDate)
-          ? body.endDate
-          : localDateStr(endD);
-      let startDate =
-        typeof body.startDate === 'string' && dateRe.test(body.startDate)
-          ? body.startDate
-          : localDateStr(defaultStart);
-      const floor = new Date(endD);
-      floor.setFullYear(floor.getFullYear() - 10);
-      if (startDate < localDateStr(floor)) {
-        return res.status(400).json({ error: '时间窗口最多 10 年（startDate 过早）' });
-      }
-      if (startDate >= endDate) {
-        return res.status(400).json({ error: 'startDate 需早于 endDate' });
-      }
-
-      const klines = await fetchOHLCVData(code, startDate, endDate);
-      if (!klines || klines.length < 60) {
-        return res.status(502).json({
-          error: `${code} 的 K 线数据不足（${klines?.length ?? 0} 条 < 60），请检查代码或扩大时间窗口`,
-        });
-      }
-      const closes = klines.map((k) => ({ date: k.date, close: k.close }) as OHLCVRow);
-      const window = { startDate, endDate, n: closes.length };
-      const options = (body.options ?? {}) as Record<string, unknown>;
-
-      if (test === 'adf') {
-        const on = options.on === 'price' ? 'price' : 'return';
-        const spec = (typeof options.spec === 'string' ? options.spec : 'c') as AdfSpec;
-        if (!['n', 'c', 'ct'].includes(spec))
-          return res.status(400).json({ error: "spec 需为 'n' | 'c' | 'ct'" });
-        const series =
-          on === 'price' ? closes.map((r) => r.close) : logReturns(closes.map((r) => r.close));
-        const result = adfTest(series, {
-          spec,
-          ...(typeof options.criterion === 'string' && ['aic', 'bic'].includes(options.criterion)
-            ? { criterion: options.criterion as 'aic' | 'bic' }
-            : {}),
-        });
-        return res.json({
-          test,
-          code,
-          window,
-          input: on,
-          result,
-          note:
-            on === 'price'
-              ? '价格序列通常应拒绝失败（存在单位根）；若价格被判定为平稳，多见于样本极短或数据异常'
-              : '对数收益序列若不能拒绝单位根，说明该序列方差结构异常，慎用于 GARCH/ARIMA 前提检查',
-        });
-      }
-
-      if (test === 'garch') {
-        const returns = logReturns(closes.map((r) => r.close));
-        if (returns.length < 60) {
-          return res.status(502).json({ error: '对数收益观测不足 60 条，无法拟合 GARCH' });
-        }
-        const result = fitVolatilityModels(returns);
-        return res.json({ test, code, window, result });
-      }
-
-      if (test === 'arima') {
-        const d =
-          typeof options.d === 'number' && [0, 1, 2].includes(options.d) ? options.d : undefined;
-        const pMax =
-          typeof options.pMax === 'number' && options.pMax >= 0 ? options.pMax : undefined;
-        const result = fitArima(
-          closes.map((r) => r.close),
-          {
-            ...(d !== undefined ? { d } : {}),
-            ...(pMax !== undefined ? { pMax } : {}),
-          },
-        );
-        return res.json({ test, code, window, result });
-      }
-
-      // coint / kalman-beta：需要第二条对齐序列
-      const klines2 = await fetchOHLCVData(code2, startDate, endDate);
-      if (!klines2 || klines2.length < 60) {
-        return res
-          .status(502)
-          .json({ error: `${code2} 的 K 线数据不足（${klines2?.length ?? 0} 条 < 60）` });
-      }
-      const aligned = alignCloses(
-        closes,
-        klines2.map((k) => ({ date: k.date, close: k.close }) as OHLCVRow),
-      );
-      if (aligned.y.length < 60) {
-        return res.status(400).json({
-          error: `两序列按日期对齐后仅 ${aligned.y.length} 条（<60），日期范围可能不重叠`,
-        });
-      }
-      const windowAligned = { startDate, endDate, n: aligned.y.length };
-
-      if (test === 'coint') {
-        const result = engleGranger(aligned.y, aligned.x);
-        return res.json({
-          test,
-          code: [code, code2],
-          window: windowAligned,
-          result,
-          note: '结论仅说明历史区间内的统计关系，协整结构可能随时间漂移；交易执行还需叠加成本与持仓周期约束',
-        });
-      }
-
-      // kalman-beta
-      const qRatio =
-        typeof options.qRatio === 'number' && options.qRatio > 0 ? options.qRatio : undefined;
-      const result = timeVaryingBeta(aligned.y, aligned.x, qRatio ? { qRatio } : {});
-      // β 序列整体太大，响应里只回末端 60 天，避免超大 payload
-      const tail = Math.min(60, result.hedgeRatio.length);
-      return res.json({
-        test,
-        code: [code, code2],
-        window: windowAligned,
-        result: {
-          ...result,
-          intercept: result.intercept.slice(-tail),
-          hedgeRatio: result.hedgeRatio.slice(-tail),
-          oneStepErrors: result.oneStepErrors.slice(-tail),
-          tailLength: tail,
-          truncated: result.hedgeRatio.length > tail,
-        },
-        note: 'β_t 为状态随时间漂移的在线估计；期末 β 与静态 OLS β 的差距反映近期协整关系是否漂移',
+      const result = await analyzeTimeseries({
+        test: typeof body.test === 'string' ? body.test : '',
+        code: typeof body.code === 'string' ? body.code : '',
+        ...(typeof body.code2 === 'string' ? { code2: body.code2 } : {}),
+        ...(typeof body.startDate === 'string' ? { startDate: body.startDate } : {}),
+        ...(typeof body.endDate === 'string' ? { endDate: body.endDate } : {}),
+        ...(body.options && typeof body.options === 'object'
+          ? { options: body.options as Record<string, unknown> }
+          : {}),
       });
+      res.json(result);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      // 参数类错误（模块抛出的中文校验信息）直接透传给调用方
-      if (/(需|不足|至少|一致|失败)/.test(msg)) {
+      // 取数不足属上游/窗口问题（502），其余中文校验信息为参数问题（400）
+      if (/(数据不足|观测不足|对齐后仅)/.test(msg)) {
+        return res.status(502).json({ error: msg });
+      }
+      if (/(需|不足|至少|一致|失败|必填)/.test(msg)) {
         return res.status(400).json({ error: msg });
       }
       logger.error('Timeseries analyze error', {
@@ -1543,6 +1369,28 @@ router.get('/api/quant/research-memory/:code', quantLimiter, (req, res) => {
       err: error,
     });
     res.status(500).json({ error: '研究记忆读取失败' });
+  }
+});
+
+/** 研究简报列表（定时任务与手动触发共用同一落盘，读的是同一份历史） */
+router.get('/api/quant/digests', quantLimiter, (req, res) => {
+  try {
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) ? limitRaw : 20;
+    res.json({ items: listResearchDigests(limit) });
+  } catch (error) {
+    logger.error('Digest list error', { route: '/api/quant/digests', err: error });
+    res.status(500).json({ error: '研究简报读取失败' });
+  }
+});
+
+/** 手动触发一份研究简报（定时任务由 QUANT_DIGEST_INTERVAL_HOURS 控制，默认关闭） */
+router.post('/api/quant/digests/run', quantLimiter, (req, res) => {
+  try {
+    res.json(runResearchDigest());
+  } catch (error) {
+    logger.error('Digest run error', { route: '/api/quant/digests/run', err: error });
+    res.status(500).json({ error: '研究简报生成失败' });
   }
 });
 
