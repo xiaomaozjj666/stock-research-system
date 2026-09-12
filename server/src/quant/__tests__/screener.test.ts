@@ -50,6 +50,19 @@ function flatBars(): OHLCVData[] {
   }));
 }
 
+/** 260 根恒定收盘（RPS 专用：≥251 根才满足 250 日窗口的新口径） */
+function longFlatBars(): OHLCVData[] {
+  const base = new Date('2025-01-01').getTime();
+  return Array.from({ length: 260 }, (_, i) => ({
+    date: new Date(base + i * 86_400_000).toISOString().slice(0, 10),
+    open: 10,
+    high: 10,
+    low: 10,
+    close: 10,
+    volume: 1000,
+  }));
+}
+
 beforeEach(() => {
   process.env.QUANT_SCREENER_FILE = RESULT_FILE;
   if (fs.existsSync(RESULT_FILE)) fs.rmSync(RESULT_FILE, { force: true });
@@ -90,13 +103,15 @@ describe('runMarketScreener — 全市场初筛', () => {
   });
 
   it('RPS：250 日收益最高的股票获得 rps_250 命中（分位需 ≥10 只样本）', async () => {
-    // 600001 缓涨 20%（宇宙内最强），其余 10 只横盘 → 共 11 只，满足分位样本要求
-    const riser = Array.from({ length: 60 }, (_, i) => ({
-      date: `2025-11-${String(i + 1).padStart(2, '0')}`,
+    // 600001 缓涨 20%（宇宙内最强），其余 10 只横盘 → 共 11 只，满足分位样本要求。
+    // bars 均为 260 根（≥251）：新口径下上市不足 250 个交易日的次新股不参与 RPS 分位池
+    const base = new Date('2025-01-01').getTime();
+    const riser = Array.from({ length: 260 }, (_, i) => ({
+      date: new Date(base + i * 86_400_000).toISOString().slice(0, 10),
       open: 10,
       high: 10,
       low: 10,
-      close: 10 * (1 + (i / 59) * 0.2),
+      close: 10 * (1 + (i / 259) * 0.2),
       volume: 1000,
     }));
     mockedMaster.mockResolvedValue(
@@ -105,7 +120,9 @@ describe('runMarketScreener — 全市场初筛', () => {
         name: `股${i}`,
       })) as never,
     );
-    mockedBars.mockImplementation(async (code: string) => (code === '600001' ? riser : flatBars()));
+    mockedBars.mockImplementation(async (code: string) =>
+      code === '600001' ? riser : longFlatBars(),
+    );
     const result = await runMarketScreener({ maxStocks: 11 });
     expect(result.hits.some((h) => h.code === '600001' && h.strategy === 'rps_250')).toBe(true);
     // 横盘股不应获得 RPS 命中（收益 0 低于 87 分位阈值——11 只里阈值为 0，仅严格高于者命中）

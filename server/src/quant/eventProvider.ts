@@ -110,6 +110,11 @@ export async function fetchReportRows(
       ? AbortSignal.any([AbortSignal.timeout(15000), signal])
       : AbortSignal.timeout(15000),
   });
+  // HTTP 层错误（限流 429 / 网关 5xx）如实按状态上报，不能落进「结构异常」——
+  // 那会把上游频控误读成报表字段变化，误导排障方向
+  if (!response.ok) {
+    throw new Error(`东财 ${reportName} HTTP ${response.status}（限流或网关错误时如实重试/降级）`);
+  }
   const json = (await response.json()) as {
     success?: boolean;
     message?: string;
@@ -299,7 +304,9 @@ export async function fetchDragonTigerEvents(
     return dedupeByDateKeepMax(
       parsed.filter((r) => r.eventDate !== null),
       (r) => r.eventDate,
-      (r) => r.netAmountYuan ?? r.netAmountRatioPct ?? 0,
+      // 同日既有净买入也有大额净卖出时，最显著上榜按**绝对值**取
+      //（函数本身保留有符号最大值，供分红等「更大=更完整」语义使用）
+      (r) => Math.abs(r.netAmountYuan ?? r.netAmountRatioPct ?? 0),
     );
   });
 }

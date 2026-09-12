@@ -32,6 +32,8 @@ afterEach(() => {
 /** 东财 datacenter v1/get 响应体 */
 function dcBody(rows: Record<string, unknown>[]) {
   return {
+    ok: true,
+    status: 200,
     json: async () => ({ success: true, result: { pages: 1, count: rows.length, data: rows } }),
   } as unknown as Response;
 }
@@ -75,6 +77,8 @@ describe('fetchMarginSeries — 两融日度序列解析', () => {
 
   it('无数据（9201）返回空数组，非法行（余额缺失）被跳过', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
       json: async () => ({ success: false, code: 9201, message: '返回数据为空' }),
     } as unknown as Response);
     expect(await fetchMarginSeries('600000')).toEqual([]);

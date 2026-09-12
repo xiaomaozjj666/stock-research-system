@@ -91,8 +91,8 @@ export function cacheEntryCount(): number {
 
 /** 执行完整预检 */
 export async function runPreflight(): Promise<PreflightResult> {
-  const upstream = await probeUpstream();
-  const upstreamList = await probeUpstreamList();
+  // 两个上游探测互不依赖，并行跑（串行最坏 4s+4s=8s，health 接口等不起）
+  const [upstream, upstreamList] = await Promise.all([probeUpstream(), probeUpstreamList()]);
   const llm: PreflightCheck = {
     key: 'llm',
     ok: isLLMAvailable(),

@@ -56,13 +56,18 @@ const OK_PAYLOAD = {
 /** 一次性假子进程：stdin 收到请求后，按脚本输出 JSON（或模拟 ENOENT） */
 function fakeChild(stdoutText: string, opts: { enoent?: boolean; exitCode?: number } = {}) {
   const child = new EventEmitter() as EventEmitter & {
-    stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> };
+    stdin: {
+      write: ReturnType<typeof vi.fn>;
+      end: ReturnType<typeof vi.fn>;
+      on: ReturnType<typeof vi.fn>;
+    };
     stdout: EventEmitter;
     stderr: EventEmitter;
     kill: ReturnType<typeof vi.fn>;
   };
   child.stdin = {
     write: vi.fn(),
+    on: vi.fn(),
     end: vi.fn(() => {
       if (opts.enoent) {
         const e = new Error('spawn python ENOENT') as NodeJS.ErrnoException;

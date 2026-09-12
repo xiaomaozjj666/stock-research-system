@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   getPaperPortfolio,
   placePaperOrder,
@@ -94,7 +94,8 @@ const AUDIT_LEVEL_LABEL: Record<AuditRiskLevel, string> = {
 
 function riskBadge(level: AuditRiskLevel): { text: string; cls: string } {
   if (level === 'critical' || level === 'high') {
-    return { text: AUDIT_LEVEL_LABEL[level], cls: 'chip-negative' };
+    // 高危审计用 danger 红（状态语义），不用 negative 绿——那是「下跌」色
+    return { text: AUDIT_LEVEL_LABEL[level], cls: 'chip-danger' };
   }
   return { text: AUDIT_LEVEL_LABEL[level] ?? level, cls: 'chip-neutral' };
 }
@@ -167,9 +168,13 @@ export default function PaperTradingPage() {
     }
   }, []);
 
+  const auditSeqRef = useRef(0);
   const loadAudit = useCallback(async () => {
+    // 请求序守卫：快速切换风险等级时，只采纳最后一次请求的结果（旧响应乱序返回会被丢弃）
+    const seq = ++auditSeqRef.current;
     try {
       const res = await getAuditLog(auditLevel ? { riskLevel: auditLevel } : {});
+      if (seq !== auditSeqRef.current) return;
       setAuditEntries(res.entries);
     } catch {
       /* 审计查询失败不阻塞主流程 */
@@ -202,7 +207,8 @@ export default function PaperTradingPage() {
       return;
     }
     const quantity = Number(orderQty);
-    if (!Number.isFinite(quantity) || quantity <= 0) {
+    // 服务端会静默取整，前端必须先把非整数拦下（文案与判定保持一致）
+    if (!Number.isInteger(quantity) || quantity <= 0) {
       setError('数量必须为正整数');
       return;
     }
@@ -334,7 +340,11 @@ export default function PaperTradingPage() {
         <div className="paper-stat-card">
           <div className="paper-stat-label">最大回撤</div>
           <div className="paper-stat-value">
-            {stats ? `${stats.maxDrawdownPct?.toFixed(2) ?? '—'}%` : '—'}
+            {stats
+              ? stats.maxDrawdownPct !== null
+                ? `${stats.maxDrawdownPct.toFixed(2)}%`
+                : '—'
+              : '—'}
           </div>
         </div>
         <div className="paper-stat-card">

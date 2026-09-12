@@ -41,6 +41,8 @@ afterEach(() => {
 /** 东财 datacenter v1/get 响应体 */
 function dcBody(rows: Record<string, unknown>[]) {
   return {
+    ok: true,
+    status: 200,
     json: async () => ({ success: true, result: { pages: 1, count: rows.length, data: rows } }),
   } as unknown as Response;
 }
@@ -190,6 +192,8 @@ describe('fetchDividendEvents — 解析与缓存', () => {
 
   it('报表不存在（真实踩坑：RPT_REPURCHASE_PLAN 即如此）→ 抛结构异常', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
       json: async () => ({
         version: null,
         result: null,
@@ -203,6 +207,8 @@ describe('fetchDividendEvents — 解析与缓存', () => {
 
   it('code 9201「返回数据为空」→ 合法空结果（实测：600519 无解禁记录）', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
       json: async () => ({
         version: null,
         result: null,
@@ -216,6 +222,8 @@ describe('fetchDividendEvents — 解析与缓存', () => {
 
   it('success=true 但 result=null → 合法空结果', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
       json: async () => ({ success: true, result: null }),
     } as unknown as Response);
     expect(await fetchDividendEvents('600519')).toEqual([]);

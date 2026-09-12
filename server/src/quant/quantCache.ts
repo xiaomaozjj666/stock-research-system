@@ -87,6 +87,13 @@ export function writeCacheEntry<T>(key: string, data: T, ttlMs: number): void {
 }
 
 /**
+ * 同 key 并发去重：miss 时多个调用方共享同一个 producer Promise，
+ * 只打一次上游（全市场初筛/批量路由下同一股票会被并发请求）。
+ * producer 失败时该 key 的 Promise 落定后即清除，后续调用可重试。
+ */
+const inflight = new Map<string, Promise<unknown>>();
+
+/**
  * 带缓存地执行 producer：命中且新鲜则零网络返回，否则执行并回写。
  * producer 抛错时不写缓存，错误原样上抛（降级由调用方决定）。
  */
@@ -100,9 +107,17 @@ export async function withQuantCache<T>(
   if (!(ttlMs > 0)) return producer();
   const hit = readCacheEntry<T>(key);
   if (hit && isCacheFresh(hit.timestamp, ttlMs)) return hit.data;
-  const data = await producer();
-  writeCacheEntry(key, data, ttlMs);
-  return data;
+  const existing = inflight.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+  const p = (async () => {
+    const data = await producer();
+    writeCacheEntry(key, data, ttlMs);
+    return data;
+  })().finally(() => {
+    inflight.delete(key);
+  });
+  inflight.set(key, p);
+  return p;
 }
 
 const DEFAULT_MAX_FILES = 2000;

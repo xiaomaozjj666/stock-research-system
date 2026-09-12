@@ -137,24 +137,37 @@ const DEFAULT_SIMILARITY_THRESHOLD = 0.62;
 
 /** 字符 bigram 集合（中英文通用；标点/空白不影响判定） */
 function bigramSet(text: string): Set<string> {
-  const t = text.replace(/\s+/g, '').toLowerCase();
+  const t = text.replace(/[\s,，。;；:：!！?？、（）()[\]【】"'·…—-]/g, '').toLowerCase();
   const out = new Set<string>();
   for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2));
   return out;
 }
 
 /**
- * 两个答案的相似度 ∈ [0,1]：字符 bigram 的**重叠系数** |A∩B| / min(|A|,|B|)。
- * 重叠系数只问「短的那段有多少被长的那段覆盖」，比 Jaccard 对长度差稳健——
- * 两段同义长文的 Jaccard 会被并集稀释到 0.3 以下，重叠系数仍能保持 0.7+。
+ * 两个答案的相似度 ∈ [0,1]：字符 bigram 双向覆盖的**几何平均**。
+ * √(覆盖短者 × 覆盖长者)——只看覆盖短者（重叠系数）会把「短答案被长答案
+ * 包含」判成同义（"买入" vs "不建议买入" 相似度恒为 1，否定词直接丢失），
+ * 乘上对长者的覆盖后这类包含关系被压回 0.5 以下；同义改写双向覆盖都高，
+ * 分数不受影响。
+ *
+ * 结构化输出（JSON）不做模糊聚类：字符 bigram 分辨不了枚举值差异
+ * （"bullish" vs "bearish" 共享全部骨架），只有逐字相同才算同一答案。
  */
 export function answerSimilarity(a: string, b: string): number {
-  const A = bigramSet(a);
-  const B = bigramSet(b);
-  if (A.size === 0 || B.size === 0) return a.trim() === b.trim() ? 1 : 0;
+  const ta = a.trim();
+  const tb = b.trim();
+  if (ta === tb) return 1;
+  const structured =
+    (ta.startsWith('{') && tb.startsWith('{')) || (ta.startsWith('[') && tb.startsWith('['));
+  if (structured) return 0;
+  const A = bigramSet(ta);
+  const B = bigramSet(tb);
+  if (A.size === 0 || B.size === 0) return 0;
   let inter = 0;
   for (const g of A) if (B.has(g)) inter += 1;
-  return inter / Math.min(A.size, B.size);
+  const covShort = inter / Math.min(A.size, B.size);
+  const covLong = inter / Math.max(A.size, B.size);
+  return Math.sqrt(covShort * covLong);
 }
 
 /**
@@ -163,8 +176,8 @@ export function answerSimilarity(a: string, b: string): number {
  *
  * 投票 = 贪心加权聚类：答案按权重降序入场，与既有簇代表相似（≥阈值）则并入
  * 该簇，否则自立新簇；胜出簇 = 累计权重最高，consensus 取簇内权重最高成员的
- * 原文（聚类按权重降序遍历，先入簇者即簇内最高权重）。逐字相同的答案相似度
- * = 1，结构化输出场景与旧的精确分组完全等价。
+ * 原文（聚类按权重降序遍历，先入簇者即簇内最高权重）。结构化输出（JSON）
+ * 只认逐字相同——枚举值差异会被字符 bigram 的骨架重叠掩盖。
  */
 export async function runEnsemble(
   messages: ChatMessage[],

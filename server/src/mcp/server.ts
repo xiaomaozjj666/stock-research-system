@@ -50,6 +50,11 @@ export const MCP_TOOLS: McpTool[] = [
         horizons: { type: 'array', items: { type: 'number' }, description: '持有期，默认 [21,63]' },
         includeFundamental: { type: 'boolean' },
         includeEvents: { type: 'boolean' },
+        includeMargin: {
+          type: 'boolean',
+          description:
+            '是否包含两融因子（mg_balance_chg20 / mg_balance_pct，T+1 披露延迟 PIT），默认 true',
+        },
       },
     },
   },
@@ -89,8 +94,13 @@ export const MCP_TOOLS: McpTool[] = [
         expressions: {
           type: 'array',
           items: { type: 'string' },
+          maxItems: 50,
           description:
-            '因子表达式数组，如 ["close / mean(close, 20) - 1", "volume / mean(volume, 20)"]',
+            '因子表达式数组（≤50 条），如 ["close / mean(close, 20) - 1", "volume / mean(volume, 20)"]',
+        },
+        source: {
+          type: 'string',
+          description: "假设来源：'hypothesis'（LLM 生成假设）| 'expression'（手输表达式，默认）",
         },
         board: { type: 'string' },
         codes: { type: 'array', items: { type: 'string' } },
@@ -209,6 +219,7 @@ export async function executeTool(
         'horizons',
         'includeFundamental',
         'includeEvents',
+        'includeMargin',
       ]) {
         if (args[k] !== undefined) body[k] = args[k];
       }
@@ -230,7 +241,7 @@ export async function executeTool(
         : [];
       if (expressions.length === 0) throw new Error('需要 expressions 数组');
       const body: Record<string, unknown> = { expressions };
-      for (const k of ['board', 'codes', 'topN', 'horizons', 'name', 'portfolio']) {
+      for (const k of ['board', 'codes', 'topN', 'horizons', 'name', 'portfolio', 'source']) {
         if (args[k] !== undefined) body[k] = args[k];
       }
       return callApi('/api/quant/factor/expression/batch', { method: 'POST', body });

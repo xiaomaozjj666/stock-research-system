@@ -358,6 +358,18 @@ tr:hover td {
   color: var(--color-info);
 }
 
+/* 状态语义 chip：与涨跌解耦（风险等级/审计等场景用 danger，不用 negative 的绿） */
+.chip-danger {
+  background: var(--color-danger-dim);
+  color: var(--color-danger);
+}
+
+/* 数据源置信度 chip（App 数据源标签用） */
+.chip-confidence {
+  color: var(--text-secondary);
+  background: var(--bg-input);
+}
+
 /* ===== Score Bar ===== */
 .score-bar {
   height: 6px;
@@ -818,7 +830,7 @@ tr:hover td {
   color: var(--color-positive);
 }
 .vs-previous-flat {
-  background: var(--surface-2);
+  background: var(--bg-input);
   color: var(--text-secondary);
 }
 .vs-previous-rating {
@@ -836,7 +848,7 @@ tr:hover td {
 }
 .accuracy-tag {
   display: inline-block;
-  background: var(--surface-2);
+  background: var(--bg-input);
   color: var(--text-secondary);
   font-size: var(--text-caption);
   padding: 3px 10px;
@@ -847,7 +859,7 @@ tr:hover td {
 
 .accuracy-tag-accumulating {
   display: inline-block;
-  background: var(--surface-2);
+  background: var(--bg-input);
   color: var(--text-secondary);
   font-size: var(--text-caption);
   padding: 3px 10px;
@@ -890,7 +902,7 @@ tr:hover td {
 }
 .research-empty-card {
   max-width: 640px;
-  background: var(--surface-1);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md, 10px);
   padding: 36px 40px;

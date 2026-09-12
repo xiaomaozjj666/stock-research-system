@@ -86,7 +86,7 @@ describe('因子实验台账', () => {
     expect(s.lastAt).toBeTruthy();
   });
 
-  it('FDR 视角：期望假阳性 = Σp（采信集），OOS 稳定占比', () => {
+  it('FDR 视角：期望假阳性上界 = 采信数 × 5%，OOS 稳定占比', () => {
     recordFactorExperiments([
       entry({ name: 'a', kept: true, pValue: 0.03, oosStable: true }),
       entry({ name: 'b', kept: true, pValue: 0.04, oosStable: false }),
@@ -94,8 +94,9 @@ describe('因子实验台账', () => {
     ]);
     const s = summarizeFactorExperiments();
     expect(s.kept).toBe(2);
-    // 期望假阳性只累计采信集：0.03 + 0.04 = 0.07（未采信的 0.4 不计入）
-    expect(s.keptExpectedFalse).toBeCloseTo(0.07, 6);
+    // 上界只看采信数（最坏情形：采信集全部为真原假设）：2 × 0.05 = 0.1；
+    // 旧实现用 Σp（0.03+0.04）当期望假发现数——p 值不是 P(H0|采信)，公式无解释含义
+    expect(s.keptExpectedFalse).toBeCloseTo(0.1, 6);
     expect(s.keptOosShare).toBeCloseTo(0.5, 6);
   });
 

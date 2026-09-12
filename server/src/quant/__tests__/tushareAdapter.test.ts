@@ -44,6 +44,8 @@ describe('callTushare — Tushare Pro HTTP 适配器', () => {
   it('配置 token → POST JSON（api_name/token/params）并按 fields 转行对象', async () => {
     process.env.TUSHARE_TOKEN = 'tok-test';
     mockedFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
       json: async () => ({
         code: 0,
         msg: null,
@@ -80,6 +82,8 @@ describe('callTushare — Tushare Pro HTTP 适配器', () => {
   it('上游错误码 → 抛出并带 code/msg', async () => {
     process.env.TUSHARE_TOKEN = 'tok-test';
     mockedFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
       json: async () => ({ code: 40201, msg: '抱歉，您每天最多访问该接口1次', data: null }),
     });
     await expect(fetchIndexWeight('000300.SH', '20240102')).rejects.toThrow(/40201/);
@@ -90,6 +94,8 @@ describe('Cached 包装 — 频控纪律（免费积分 stock_basic 实测 1 次
   /** 单行全量主表夹具 */
   function okBody() {
     return {
+      ok: true,
+      status: 200,
       json: async () => ({
         code: 0,
         msg: null,
@@ -124,6 +130,8 @@ describe('Cached 包装 — 频控纪律（免费积分 stock_basic 实测 1 次
     // 推进 25 小时：缓存过期 → 下一次调用必然重打上游
     vi.setSystemTime(new Date(Date.now() + 25 * 3600 * 1000));
     mockedFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
       json: async () => ({ code: 40203, msg: '频率超限(1次/小时)', data: null }),
     });
     const stale = await fetchStockBasicCached();

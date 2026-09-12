@@ -234,8 +234,20 @@ export const EMPTY_PIT_SNAPSHOT: PitSnapshot = {
 
 /** 从已知报告集合提取 as-of 快照（纯函数；仅在公告落入时重算） */
 function pitSnapshotOf(known: QuarterlyReport[]): PitSnapshot {
-  const latest = known[known.length - 1] ?? null;
-  const latestAnnual = [...known].reverse().find((r) => r.reportDate.slice(5, 7) === '12');
+  // known 由调用方按公告日升序传入；「最新报告」必须按**报告期**取而不是
+  // 复用公告日序——年报与一季报常在同日或临近披露（年报 4-30 vs 一季报 4-28），
+  // 公告日序会拿旧报告期当最新，与 npYoYQ（报告期口径，见 deriveSingleQuarter）不一致
+  const latest = known.reduce<QuarterlyReport | null>(
+    (acc, r) => (acc === null || r.reportDate > acc.reportDate ? r : acc),
+    null,
+  );
+  const latestAnnual = known.reduce<QuarterlyReport | null>(
+    (acc, r) =>
+      r.reportDate.slice(5, 7) === '12' && (acc === null || r.reportDate > acc.reportDate)
+        ? r
+        : acc,
+    null,
+  );
   const points = deriveSingleQuarter(known);
   let npYoYQ: number | null = null;
   for (let i = points.length - 1; i >= 0; i--) {
@@ -273,7 +285,10 @@ export function buildPitSnapshots(reports: QuarterlyReport[], barDates: string[]
   let snapshot = EMPTY_PIT_SNAPSHOT;
   for (const date of barDates) {
     let announced = false;
-    while (cursor < timed.length && (timed[cursor].noticeDate as string) <= date) {
+    // 严格早于（<）：A 股定期报告绝大多数在公告日盘后（晚间）披露，t 日收盘
+    // 决策时点看不到公告日当天的报告——与 PEAD 的「对齐到公告日后首个交易日」
+    // 及两融因子的 T+1 纪律保持同一口径；公告日当天的 bar 仍用公告前快照
+    while (cursor < timed.length && (timed[cursor].noticeDate as string) < date) {
       cursor += 1;
       announced = true;
     }

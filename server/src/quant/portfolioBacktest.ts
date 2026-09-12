@@ -12,7 +12,8 @@
  *    开盘一笔换仓，与实盘节奏一致）。这同时消除两处乐观偏差：① 同 bar 决策-
  *    成交前视（收盘信号不可能以同一收盘价成交）；② A 股 T+1 卖出约束
  *    （当日买入次日才可卖——本口径天然满足）；
- *  - 成本：换手率 × costBps（单边，买卖各计一次）。costBps 默认 30（佣金
+ *  - 成本：**双边成交额占比** × costBps（含留任名额的等权再平衡；候选缩水、
+ *    清仓与首期建仓都按真实成交额计提）。costBps 默认 30（佣金
  *    万2.5 双边 + 印花税卖出万5 + 滑点余量），可用参数覆盖；
  *  - 涨跌停/停牌不撮合：候选池只含当日有因子观测的股票（停牌/数据缺失自然出局），
  *    开盘涨停无法买入 / 开盘跌停无法卖出未单独建模（对突破/涨停类因子偏乐观，
@@ -127,9 +128,15 @@ export function runPortfolioBacktest(
   barsBySymbol: Map<string, OHLCVData[]>,
   opts: PortfolioBacktestOptions = {},
 ): PortfolioBacktestResult | null {
-  const holdDays = Math.max(1, Math.floor(opts.holdDays ?? 21));
-  const topN = Math.max(1, Math.floor(opts.topN ?? 5));
-  const costBps = Math.max(0, opts.costBps ?? 30);
+  // 参数卫生：NaN 会穿透 Math.max/floor 污染整条净值曲线，非法值一律回落默认
+  const sanitizeInt = (v: number | undefined, dflt: number, min: number): number => {
+    const n = v !== undefined && Number.isFinite(v) ? Math.floor(v) : dflt;
+    return Math.max(min, n);
+  };
+  const holdDays = sanitizeInt(opts.holdDays, 21, 1);
+  const topN = sanitizeInt(opts.topN, 5, 1);
+  const costBps =
+    opts.costBps !== undefined && Number.isFinite(opts.costBps) ? Math.max(0, opts.costBps) : 30;
 
   const panel = buildPanel(observations, barsBySymbol);
   const calendar = panel.calendar;
@@ -156,10 +163,30 @@ export function runPortfolioBacktest(
     );
     const holdings = ranked.slice(0, topN).map((c) => c.symbol);
 
-    // 换手率：与上期持仓的名额变动占比；首期为满仓建仓（1）
+    // 换手率（名额占比口径，展示用）：与上期持仓的名额变动占比；首期为满仓建仓（1）
     const keep = holdings.filter((s) => prevHoldings.includes(s)).length;
     const turnover =
       prevHoldings.length === 0 ? 1 : (holdings.length - keep) / Math.max(holdings.length, 1);
+
+    // 成本按**双边成交额占比**计提（等权内部再平衡同样占用成交额）：
+    //   卖出 = 被剔除名额 × 1/|上期| + 留任名额权重下降部分（1/|上期| − 1/|当期|）
+    //   买入 = 新进名额 × 1/|当期| + 留任名额权重上升部分
+    // 等额持仓的常规换仓与「名额换手 × 单边 bps × 2」严格等价；候选缩水/清仓期
+    // 名额口径会漏掉「卖出被剔名额」的成交额（此前少计成本），这里按权重补齐；
+    // 首期只有买入（此前多计一次卖出），口径更诚实
+    const prevW = prevHoldings.length > 0 ? 1 / prevHoldings.length : 0;
+    const curW = holdings.length > 0 ? 1 / holdings.length : 0;
+    let soldNotional = 0;
+    let boughtNotional = 0;
+    for (const s of prevHoldings) {
+      if (!holdings.includes(s)) soldNotional += prevW;
+      else if (curW < prevW) soldNotional += prevW - curW;
+    }
+    for (const s of holdings) {
+      if (!prevHoldings.includes(s)) boughtNotional += curW;
+      else if (curW > prevW) boughtNotional += curW - prevW;
+    }
+    const costDrag = -((soldNotional + boughtNotional) * costBps) / 10_000;
 
     // 本期收益：等权、t+1 开盘买 / t+1+h 开盘卖；成交日缺开盘价（停牌/数据缺失）
     // 的持仓按 0 收益剔除出分母
@@ -174,8 +201,6 @@ export function runPortfolioBacktest(
       counted += 1;
     }
     const grossReturn = counted > 0 ? gross / counted : 0;
-    // 成本：换手 × 单边 bps ×（卖旧 + 买新各一次）
-    const costDrag = -(turnover * costBps * 2) / 10_000;
     const netReturn = grossReturn + costDrag;
 
     // 基准：候选宇宙等权（有成交日开盘价者），与组合同一 T+1 撮合口径

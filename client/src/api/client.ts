@@ -763,6 +763,10 @@ export interface FactorExperimentSummary {
   kept: number;
   bySource: Record<string, number>;
   lastAt: string | null;
+  /** 期望假阳性上界 = 采信数 × 5%（最坏情形：采信集全部为真原假设） */
+  keptExpectedFalse?: number;
+  /** 采信集中 OOS 稳定的占比（0-1） */
+  keptOosShare?: number;
 }
 
 /** 查询实验台账 */

@@ -25,7 +25,6 @@ Baostock sidecar（一次性进程，JSON over stdin/stdout）
     sh.600005）——这正是它对幸存者偏差的价值，也是东财/Tushare 免费通道都给不了的。
 """
 import contextlib
-import io
 import json
 import os
 import sys
@@ -61,7 +60,6 @@ def main():
 
         import baostock as bs
 
-        sink = io.StringIO()
         with contextlib.redirect_stdout(sys.stderr):
             lg = bs.login()
             if lg.error_code != "0":
