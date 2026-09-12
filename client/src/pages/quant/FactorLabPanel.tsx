@@ -33,6 +33,13 @@ function shortDate(iso: string): string {
  * 上半区验证一条表达式，下半区回看试过什么、哪些被采信。
  * 表达式走服务端白名单解析（不执行任意代码），非法会直接被拒并给出原因。
  */
+/** 实验来源中文标签 */
+const SOURCE_LABELS: Record<string, string> = {
+  expression: '表达式',
+  'cross-section': '截面',
+  hypothesis: '假设',
+};
+
 /** 组合 vs 基准净值曲线（内联 ECharts；数据点 = 每个调仓期末） */
 function PortfolioCurveChart({
   equity,
@@ -358,7 +365,7 @@ export default function FactorLabPanel() {
                   <tr key={it.id}>
                     <td className="batch-code">{shortDate(it.createdAt)}</td>
                     <td title={it.expression ?? it.name}>{it.name}</td>
-                    <td>{it.source}</td>
+                    <td>{SOURCE_LABELS[it.source] ?? it.source}</td>
                     <td>{it.horizon}</td>
                     <td className={it.icMean >= 0 ? 'sig-valid' : 'sig-inverted'}>
                       {fmtIc(it.icMean)}
