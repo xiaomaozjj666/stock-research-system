@@ -70,7 +70,17 @@ function PaperEquityChart({ equity }: { equity: { date: string; value: number }[
     }),
     [equity],
   );
-  return <EChart option={option} className="paper-equity-chart" />;
+  const allFlat = new Set(equity.map((e) => e.value)).size === 1;
+  return (
+    <div>
+      {allFlat && (
+        <p className="paper-note" role="status">
+          账户暂无盈亏变化（各结算点净值相同）：买入成交并完成日终结算后，曲线开始分化。
+        </p>
+      )}
+      <EChart option={option} className="paper-equity-chart" />
+    </div>
+  );
 }
 
 /** 审计风险等级 → 中文徽章（等级原值保留用于过滤，展示一律中文） */
@@ -94,9 +104,20 @@ const fmtMoney = (n: number) =>
 
 const fmtPct = (n: number | null) => (n === null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`);
 
-/** 今日日期 YYYY-MM-DD（日终结算默认基准日） */
-function todayStr(): string {
+/** 今天是否周末（节假日不识别——若恰逢节假日，结算会按无收盘价如实拒绝/记录） */
+function isWeekendToday(): boolean {
+  const day = new Date().getDay();
+  return day === 0 || day === 6;
+}
+
+/**
+ * 最近交易日 YYYY-MM-DD（日终结算默认基准日）：
+ * 今天是周六/周日时回退到周五——周末结算没有收盘价，挂单只会被拒、
+ * 净值点也是无意义的平点（2026-09-05/09-12 两个周六的实测教训）。
+ */
+function latestTradingDayStr(): string {
   const d = new Date();
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}-${m}-${day}`;
@@ -118,7 +139,7 @@ export default function PaperTradingPage() {
   const [orderPrice, setOrderPrice] = useState('');
 
   // 日终结算：日期 + 按持仓代码填收盘价（缺省视为停牌）
-  const [settleDate, setSettleDate] = useState(todayStr());
+  const [settleDate, setSettleDate] = useState(latestTradingDayStr());
   const [closePrices, setClosePrices] = useState<Record<string, string>>({});
   const [settling, setSettling] = useState(false);
 
@@ -400,6 +421,9 @@ export default function PaperTradingPage() {
             <div className="paper-field">
               <label>结算日期</label>
               <input value={settleDate} onChange={(e) => setSettleDate(e.target.value)} />
+              {isWeekendToday() && (
+                <span className="paper-note">今天是非交易日，默认已回退至最近交易日</span>
+              )}
             </div>
           </div>
           {positions.length === 0 ? (
