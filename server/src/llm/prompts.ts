@@ -83,17 +83,19 @@ export function formatInfoBrief(info: StockInfo): string {
   return `【基本信息】股票: ${info.name}(${info.code}), 行业: ${info.industry}, 市场: ${info.market}`;
 }
 
-/** 完整上下文摘要 */
+/** 完整上下文摘要（extraBrief：可选附加语境块，如机构一致预期，追加在末尾） */
 export function formatContext(
   financial: FinancialData,
   valuation: ValuationData,
   info: StockInfo,
+  extraBrief?: string | null,
 ): string {
-  return [
+  const base = [
     formatInfoBrief(info),
     formatFinancialBrief(financial),
     formatValuationBrief(valuation),
   ].join('\n\n');
+  return extraBrief ? `${base}\n\n${extraBrief}` : base;
 }
 
 /**

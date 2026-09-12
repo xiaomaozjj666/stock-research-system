@@ -167,6 +167,8 @@ export async function runCrossSectionEvaluation(
     includeFundamental?: boolean;
     /** 事件族（分红/回购/解禁 + PEAD），默认 true */
     includeEvents?: boolean;
+    /** 两融因子族（融资余额变化率/拥挤度，PIT + T+1 披露），默认 true */
+    includeMargin?: boolean;
     /** 可选：为全部因子附带组合回测（top-N 等权周期调仓，宇宙等权基准） */
     portfolio?: { holdDays?: number; topN?: number; costBps?: number };
   },

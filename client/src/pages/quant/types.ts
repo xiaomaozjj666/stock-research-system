@@ -316,7 +316,7 @@ export interface CrossSectionPeriodReport {
 /** 截面结果中的单因子条目 */
 export interface CrossSectionFactor {
   name: string;
-  type: 'price_volume' | 'fundamental' | 'event';
+  type: 'price_volume' | 'fundamental' | 'event' | 'pattern' | 'margin';
   /** 可选组合回测（portfolio 参数开启时）：按该因子交易的 PnL 视角 */
   portfolio?: {
     equityCurve: { date: string; value: number }[];

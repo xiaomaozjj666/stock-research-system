@@ -33,6 +33,11 @@ import { extractNewsSignal, earliestNewsDate, type NewsSignal } from '../quant/n
 import { auditDataAccess, auditLLMCall, auditTradeSignal } from './auditLog.js';
 import { buildFinancialGraph } from '../llm/knowledgeGraph.js';
 import { calculateSectorRotation, type SectorData } from '../quant/sectorRotation.js';
+import {
+  fetchConsensusSnapshot,
+  formatConsensusBrief,
+  type ConsensusSnapshot,
+} from '../quant/consensusProvider.js';
 import { styleFactorExposures, decomposeRisk } from '../quant/riskAttribution.js';
 import { withTimeout } from '../utils/timeout.js';
 import logger from '../utils/logger.js';
@@ -222,7 +227,19 @@ export async function runAnalysis(
     valuation.historicalPE = historicalPE;
   }
 
-  // 2. 多专家独立研判（并行 + 单专家降级 + 断点复用）
+  // 2. 机构一致预期快照（盈利预测 + 北向持股）：尽力而为（限时 6s），失败不阻断
+  //    主流程。**快照无历史序列，只进 LLM 语境与结果展示，不进任何回测因子**——
+  //    把今天的预期投影回历史截面就是前视（见 consensusProvider 的方法论边界）。
+  let consensus: ConsensusSnapshot | null = null;
+  let consensusBrief: string | null = null;
+  try {
+    consensus = await withTimeout(fetchConsensusSnapshot(stockCode), 6000).catch(() => null);
+    consensusBrief = consensus ? formatConsensusBrief(consensus) : null;
+  } catch (err) {
+    logger.warn('机构一致预期获取失败，降级跳过', { stockCode, err: err as Error });
+  }
+
+  // 3. 多专家独立研判（并行 + 单专家降级 + 断点复用）
   //    借鉴 TradingAgents 的节点级 crash-safety：单个专家失败不再拖垮整次分析，
   //    失败者从仲裁输入中剔除并记入 degradedExperts，由报告如实披露覆盖度。
   let expertOpinions: ExpertOpinion[];
@@ -243,23 +260,43 @@ export async function runAnalysis(
       {
         key: 'fundamental',
         name: '基本面专家',
-        run: () => fundamentalExpert(financial, valuation, info),
+        run: () => fundamentalExpert(financial, valuation, info, consensusBrief),
       },
       {
         key: 'valuation',
         name: '估值专家',
-        run: () => valuationExpert(financial, valuation, info),
+        run: () => valuationExpert(financial, valuation, info, consensusBrief),
       },
-      { key: 'industry', name: '行业专家', run: () => industryExpert(financial, valuation, info) },
-      { key: 'risk', name: '风险专家', run: () => riskExpert(financial, valuation, info) },
+      {
+        key: 'industry',
+        name: '行业专家',
+        run: () => industryExpert(financial, valuation, info, consensusBrief),
+      },
+      {
+        key: 'risk',
+        name: '风险专家',
+        run: () => riskExpert(financial, valuation, info, consensusBrief),
+      },
       {
         key: 'capital',
         name: '资金流专家',
-        run: () => capitalFlowExpert(financial, valuation, info),
+        run: () => capitalFlowExpert(financial, valuation, info, consensusBrief),
       },
-      { key: 'policy', name: '政策专家', run: () => policyExpert(financial, valuation, info) },
-      { key: 'hotMoney', name: '题材专家', run: () => hotMoneyExpert(financial, valuation, info) },
-      { key: 'unlock', name: '解禁专家', run: () => unlockExpert(financial, valuation, info) },
+      {
+        key: 'policy',
+        name: '政策专家',
+        run: () => policyExpert(financial, valuation, info, consensusBrief),
+      },
+      {
+        key: 'hotMoney',
+        name: '题材专家',
+        run: () => hotMoneyExpert(financial, valuation, info, consensusBrief),
+      },
+      {
+        key: 'unlock',
+        name: '解禁专家',
+        run: () => unlockExpert(financial, valuation, info, consensusBrief),
+      },
     ]);
     // 全部专家均失败时无法形成有效研判，直接抛错交由上层（500 / SSE error）处理
     if (expertOutcome.opinions.length === 0) {
@@ -760,6 +797,7 @@ export async function runAnalysis(
         scenarios: scenarios,
         strategyList: strategyList,
         newsSentiment: newsSignal?.hasNews ? newsSignal : undefined,
+        consensus: consensus ?? undefined,
         knowledgeGraphContext,
         sectorRotation: sectorRotationSignal,
         riskAttribution: {

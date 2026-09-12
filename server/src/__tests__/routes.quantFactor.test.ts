@@ -55,6 +55,10 @@ vi.mock('../services/quarterlyFinancials.js', () => ({
 vi.mock('../quant/eventProvider.js', () => ({
   fetchStockEvents: vi.fn(),
 }));
+vi.mock('../quant/marginProvider.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../quant/marginProvider.js')>()),
+  fetchMarginSeries: vi.fn(),
+}));
 // 预检会真的探测行情源：测试环境无外网，替换为直通结果（预检自身逻辑在
 // preflight.test.ts 单独覆盖）
 vi.mock('../quant/preflight.js', () => ({
@@ -85,6 +89,7 @@ import {
 import { fetchQuarterlyFinancials } from '../services/quarterlyFinancials.js';
 import type { QuarterlySeries } from '../services/quarterlyFinancials.js';
 import { fetchStockEvents } from '../quant/eventProvider.js';
+import { fetchMarginSeries } from '../quant/marginProvider.js';
 
 const mockedComposite = vi.mocked(computeCompositeAlphaForStrategy);
 const mockedBatch = vi.mocked(computeCompositeAlphaBatch);
@@ -94,6 +99,7 @@ const mockedBoardsMeta = vi.mocked(fetchIndustryBoardsWithMeta);
 const mockedConstituentsMeta = vi.mocked(fetchBoardConstituentsWithMeta);
 const mockedQuarterly = vi.mocked(fetchQuarterlyFinancials);
 const mockedEvents = vi.mocked(fetchStockEvents);
+const mockedMargin = vi.mocked(fetchMarginSeries);
 
 /** 6 只成分股（截面 / 表达式用例共用） */
 const CONST_SIX = ['600519', '000858', '603288', '600809', '000568', '600702'].map((code, i) => ({
@@ -113,6 +119,9 @@ beforeEach(() => {
   mockedEvents.mockReset();
   // 默认空事件捆绑：不影响既有用例的事件族缺席语义
   mockedEvents.mockResolvedValue({ dividend: [], buyback: [], unlock: [], dragonTiger: [] });
+  mockedMargin.mockReset();
+  // 默认空两融序列：两融因子缺席，与既有用例口径一致
+  mockedMargin.mockResolvedValue([]);
 });
 
 /** n 根日频 K 线；按代码给不同漂移，保证截面有真实的横截面差异 */

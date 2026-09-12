@@ -189,11 +189,13 @@ export async function policyExpert(
   financial: FinancialData,
   valuation: ValuationData,
   info: StockInfo,
+  /** 可选附加语境块（如机构一致预期），追加在上下文末尾 */
+  extraBrief?: string | null,
 ): Promise<ExpertOpinion> {
   return runExpertWithLLM({
     expertName: EXPERT_NAME,
     systemPrompt: SYSTEM_PROMPT,
-    context: formatContext(financial, valuation, info),
+    context: formatContext(financial, valuation, info, extraBrief),
     ruleFallback: () => policyExpertRule(financial, valuation, info),
   });
 }

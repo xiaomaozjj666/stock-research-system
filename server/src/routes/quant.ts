@@ -75,6 +75,7 @@ import {
   type PortfolioBacktestResult,
 } from '../quant/portfolioBacktest.js';
 import { fetchStockEvents } from '../quant/eventProvider.js';
+import { fetchMarginSeries, type MarginFactorName } from '../quant/marginProvider.js';
 import {
   buildEventObservations,
   buybackSignalEvents,
@@ -732,6 +733,7 @@ async function fetchPanelInputs(
     withFinancial?: boolean;
     withQuarterly?: boolean;
     withEvents?: boolean;
+    withMargin?: boolean;
   },
 ): Promise<StockPanelInput[]> {
   return mapWithConcurrency(
@@ -746,7 +748,12 @@ async function fetchPanelInputs(
         ? await fetchQuarterlyFinancialsCached(code, 16, opts.signal).catch(() => null)
         : null;
       const events = opts.withEvents ? await fetchStockEvents(code, opts.signal) : null;
-      return { code, bars, financial, quarterly, events };
+      // 两融序列（PIT 源，T+1 披露）：失败降级为空数组——缺两融只是少两个因子，
+      // 不拖垮其余因子（与事件同模式）
+      const margin = opts.withMargin
+        ? await fetchMarginSeries(code, opts.signal).catch(() => [])
+        : null;
+      return { code, bars, financial, quarterly, events, margin };
     },
     { signal: opts.signal },
   );
@@ -848,6 +855,8 @@ router.post(
         horizons?: unknown;
         includeFundamental?: unknown;
         includeEvents?: unknown;
+        /** 可选：两融因子族（融资余额变化率/拥挤度，PIT + T+1 披露延迟） */
+        includeMargin?: unknown;
         /** 可选：为全部因子附带组合回测（top-N 等权周期调仓，宇宙等权基准） */
         portfolio?: unknown;
       };
@@ -861,6 +870,8 @@ router.post(
       const includeFundamental = body.includeFundamental !== false;
       // 事件族开关（分红/回购/解禁 + PEAD）：默认开启；关闭可跳过事件源的网络调用
       const includeEvents = body.includeEvents !== false;
+      // 两融族开关：默认开启；关闭可跳过两融源的网络调用（与事件同模式）
+      const includeMargin = body.includeMargin !== false;
       const portfolioOpts = parsePortfolioOpts(body.portfolio);
 
       // 预检（在 universe 解析前）：源不可达 + 无任何本地缓存 → 直接 503；
@@ -898,6 +909,7 @@ router.post(
         signal,
         withQuarterly: includeFundamental,
         withEvents: includeEvents,
+        withMargin: includeMargin,
       });
       // 客户端已不在：跳过整段 CPU 评估，静默终止（socket 已关闭，无需写响应）
       if (abort.signal.aborted) return;
@@ -927,7 +939,19 @@ router.post(
         ][]) {
           if (obs.length < 30) continue;
           factors.push({ name, type: 'fundamental', report: evaluateWithVerdict(obs) });
-          factorObs.set(name, obs);
+        }
+      }
+
+      // 两融族（includeMargin 门控）：PIT + T+1 披露延迟口径；无两融数据的股票
+      // 不参与，样本不足的因子如实缺席。单股取数失败已在 fetchPanelInputs 内
+      // 降级为空数组——缺一类只是少一个因子，不拖垮其余。
+      if (includeMargin) {
+        for (const [name, obs] of Object.entries(panel.margin) as [
+          MarginFactorName,
+          FactorObservation[],
+        ][]) {
+          if (obs.length < 30) continue;
+          factors.push({ name, type: 'margin', report: evaluateWithVerdict(obs) });
         }
       }
 

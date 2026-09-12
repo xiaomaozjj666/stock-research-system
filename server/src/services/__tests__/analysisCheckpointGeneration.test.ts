@@ -74,6 +74,12 @@ afterAll(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
+// 机构一致预期快照：单测不依赖外网，默认无快照（管线降级跳过）
+vi.mock('../../quant/consensusProvider.js', () => ({
+  fetchConsensusSnapshot: vi.fn(async () => null),
+  formatConsensusBrief: vi.fn(() => ''),
+}));
+
 import { runAnalysis } from '../analysisPipeline.js';
 import { saveCheckpoint, loadCheckpoint } from '../analysisCheckpoint.js';
 

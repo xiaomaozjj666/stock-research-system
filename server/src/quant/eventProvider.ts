@@ -84,8 +84,9 @@ function strOf(row: Record<string, unknown>, keys: string[]): string | null {
 /**
  * 拉取一份 datacenter 报表（单票过滤）。
  * 返回 [] 表示「查询成功且无数据」；抛错表示网络/结构异常（由调用方降级）。
+ * 导出供同源体系的姊妹模块（marginProvider / consensusProvider）复用。
  */
-async function fetchReportRows(
+export async function fetchReportRows(
   reportName: string,
   filter: string,
   sortColumns: string,

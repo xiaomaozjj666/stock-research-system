@@ -308,7 +308,7 @@ export default function FactorLabPanel() {
             · 年化 {result.portfolio.annualizedReturn.toFixed(1)}% · 夏普{' '}
             {result.portfolio.sharpe.toFixed(2)} · 最大回撤{' '}
             {result.portfolio.maxDrawdown.toFixed(1)}% · 周期胜率{' '}
-            {result.portfolio.winRate.toFixed(0)}%（vs 候选宇宙等权；收盘价撮合、涨停不建模，
+            {result.portfolio.winRate.toFixed(0)}%（vs 候选宇宙等权；T+1 次日开盘撮合、涨停不建模，
             短周期口径偏乐观）
           </div>
         </div>

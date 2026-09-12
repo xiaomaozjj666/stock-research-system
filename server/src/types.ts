@@ -12,6 +12,10 @@ export interface StockInfo {
 import type { NewsSignal, NewsItem } from './quant/newsSignal.js';
 export type { NewsSignal, NewsItem };
 
+// 机构一致预期快照（来自 quant/consensusProvider；快照口径，不做回测因子）
+import type { ConsensusSnapshot } from './quant/consensusProvider.js';
+export type { ConsensusSnapshot };
+
 // 数据质量标记
 export interface DataQualityFlags {
   estimatedFields: string[]; // 估算字段列表
@@ -241,6 +245,8 @@ export interface AnalysisResult {
     scenarios?: ScenarioResult[];
     strategyList?: StrategyRecommendation[];
     newsSentiment?: NewsSignal; // 最新消息情绪信号
+    /** 机构一致预期快照（可选；盈利预测/评级分布/北向持股，当前快照口径） */
+    consensus?: ConsensusSnapshot;
     /** 知识图谱增强上下文（可选；由 analysisPipeline 从个股与同业可比数据构建） */
     knowledgeGraphContext?: string;
     /** 行业轮动信号（可选；股票有行业归属时附加） */

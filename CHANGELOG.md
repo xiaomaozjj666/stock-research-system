@@ -3,6 +3,14 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-12 — 数据面扩容 + 组合回测 T+1 撮合（本批）
+
+- **两融因子族**（`quant/marginProvider.ts`）：东财 datacenter `RPTA_WEB_RZRQ_GGMX` 逐股日度两融序列（字段口径实测：DATE/RZYE/RZJME/RZYEZB，RZYEZB=融资余额占总市值比）。新因子 `mg_balance_chg20`（融资余额 20 日变化率，杠杆资金动量）与 `mg_balance_pct`（占比，杠杆拥挤度）。**PIT + T+1 披露延迟**：交易所两融数据 T 日交易 T+1 盘前披露，t 日因子值强制只用严格早于 t 的行；截面路由 `includeMargin` 开关（默认开），失败降级为缺席不拖垮其余因子。
+- **组合回测 T+1 撮合**（`portfolioBacktest.ts`）：t 日收盘决策 → t+1 开盘建仓 → t+1+holdDays 开盘平仓（与下一期建仓同日，实盘节奏）。同时消除同 bar 决策-成交前视与 A 股 T+1 卖出约束两处乐观偏差；基准同口径；成交日缺开盘价（停牌）的持仓剔除出分母。最少数据要求由 2×holdDays 放宽为 holdDays+2。涨跌停仍不建模（按板块阈值误判创业板 20% 涨跌幅的代价更大，如实告知）。
+- **机构一致预期快照**（`quant/consensusProvider.ts`）：东财 `RPT_WEB_RESPREDICT`（覆盖机构数/评级分布/逐年度 EPS A-E/目标价区间，实测字段）+ `RPT_MUTUAL_HOLDSTOCKNORTH_STA` 北向季度持股（2024-08 起停止逐日披露）。接入深度分析管线：8 位专家 LLM 语境追加一致预期块；结果页新增「机构一致预期」卡片。**方法论纪律：快照无历史序列，只进语境与展示，严禁当回测因子（把今天的预期投影回历史即前视）**。
+- 客户端：截面页两融开关与「两融」类型标签（补齐此前缺失的「形态」标签）、撮合口径文案更新、ConsensusCard 组件。
+- 测试 +14（marginProvider 6 / consensusProvider 5 / builder 两融接线 2 / 回测 T+1 撮合口径）。
+
 ## 2026-09-12 — 组合构建层：因子组合回测引擎（1f5b377）
 
 - `quant/portfolioBacktest.ts` 纯函数：调仓日按因子值持 top-N 等权、holdDays 换仓、换手×costBps（默认30bps）计提成本，基准为候选宇宙等权（因子中性对照）。输出净值/基准双曲线、总收益/年化/夏普/回撤/胜率/换手。

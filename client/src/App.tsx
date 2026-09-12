@@ -13,6 +13,7 @@ import CapitalFlowSection from './components/CapitalFlowSection';
 import ScenarioSection from './components/ScenarioSection';
 import StrategyListSection from './components/StrategyListSection';
 import NewsSentimentCard from './components/NewsSentimentCard';
+import ConsensusCard from './components/ConsensusCard';
 import ScoringTable from './components/ScoringTable';
 import ControversySection from './components/ControversySection';
 import RiskSection from './components/RiskSection';
@@ -461,6 +462,13 @@ function App() {
                 {stockData.newsSentiment?.hasNews && (
                   <RevealSection>
                     <NewsSentimentCard data={stockData.newsSentiment} />
+                  </RevealSection>
+                )}
+
+                {/* 机构一致预期（若有；快照口径） */}
+                {stockData.consensus && (
+                  <RevealSection>
+                    <ConsensusCard data={stockData.consensus} />
                   </RevealSection>
                 )}
 
