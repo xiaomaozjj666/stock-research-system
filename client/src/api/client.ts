@@ -777,6 +777,28 @@ export async function getFactorExperiments(params?: {
 }
 
 /** 评估一条受限 DSL 因子表达式（不执行任意代码，越界由服务端拒绝） */
+/** 因子组合回测结果（top-N 等权、周期调仓、A 股成本） */
+export interface FactorPortfolioBacktest {
+  equityCurve: { date: string; value: number }[];
+  benchmarkCurve: { date: string; value: number }[];
+  rebalances: {
+    date: string;
+    endDate: string;
+    holdings: string[];
+    turnover: number;
+    grossReturn: number;
+    costDrag: number;
+    benchmarkReturn: number;
+  }[];
+  totalReturn: number;
+  annualizedReturn: number;
+  sharpe: number;
+  maxDrawdown: number;
+  winRate: number;
+  avgTurnover: number;
+  periods: number;
+}
+
 export async function runFactorExpression(payload: {
   expression: string;
   board?: string;
@@ -785,6 +807,7 @@ export async function runFactorExpression(payload: {
   horizons?: number[];
   name?: string;
   source?: 'expression' | 'hypothesis';
+  portfolio?: { holdDays?: number; topN?: number; costBps?: number };
 }): Promise<{
   stocksIncluded: string[];
   stocksSkipped: { code: string; reason: string }[];
@@ -800,6 +823,7 @@ export async function runFactorExpression(payload: {
       }[];
     };
   };
+  portfolio?: FactorPortfolioBacktest | null;
   ledger: { recorded: number; total: number };
 }> {
   try {

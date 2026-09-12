@@ -69,6 +69,11 @@ import {
   type ExprNode,
 } from '../quant/factorExpression.js';
 import { buildEarningsSurpriseObservations } from '../quant/fundamentalDepth.js';
+import {
+  runPortfolioBacktest,
+  type PortfolioBacktestOptions,
+  type PortfolioBacktestResult,
+} from '../quant/portfolioBacktest.js';
 import { fetchStockEvents } from '../quant/eventProvider.js';
 import {
   buildEventObservations,
@@ -746,6 +751,33 @@ async function fetchPanelInputs(
   );
 }
 
+/** 组合回测参数解析：范围外的值回落默认（一行内错误笔误的容错口径） */
+function parsePortfolioOpts(raw: unknown): PortfolioBacktestOptions | null {
+  if (raw === undefined || raw === null || typeof raw !== 'object') return null;
+  const p = raw as { holdDays?: unknown; topN?: unknown; costBps?: unknown };
+  const num = (v: unknown, lo: number, hi: number, dflt: number): number => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= lo && n <= hi ? n : dflt;
+  };
+  return {
+    holdDays: num(p.holdDays, 1, 250, 21),
+    topN: num(p.topN, 1, 50, 5),
+    costBps: num(p.costBps, 0, 500, 30),
+  };
+}
+
+/** 组合回测执行（表达式评估通过后调用）：inputs 的 bars 就是逐股收盘价来源 */
+function runPortfolioOnInputs(
+  obs: FactorObservation[],
+  inputs: StockPanelInput[],
+  opts: PortfolioBacktestOptions | null,
+): PortfolioBacktestResult | undefined {
+  if (!opts) return undefined;
+  const barsBySymbol = new Map(inputs.map((i) => [i.code, i.bars ?? []]));
+  const result = runPortfolioBacktest(obs, barsBySymbol, opts);
+  return result ?? undefined;
+}
+
 /** 表达式截面观测装配（single / batch 表达式路由共用）：逐股求值 + t→t+h 远期收益 */
 function assembleExpressionObservations(
   ast: ExprNode,
@@ -1420,6 +1452,8 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
       horizons?: unknown;
       /** hypothesis = LLM 生成的假设；expression = 手输表达式 */
       source?: unknown;
+      /** 可选：因子组合回测（top-N 等权、周期调仓、A 股成本）——从 IC 到 PnL 的最后一问 */
+      portfolio?: unknown;
     };
     const expression = String(body.expression ?? '').trim();
     if (!expression) return res.status(400).json({ error: '请提供因子表达式 expression' });
@@ -1439,6 +1473,7 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
       )
         ? (body.horizons as number[])
         : [21, 63];
+    const portfolioOpts = parsePortfolioOpts(body.portfolio);
 
     // 预检 + universe 解析（三路由共用助手；board 门槛 = 板块列表源）
     const preflight = await runPreflight();
@@ -1498,6 +1533,7 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
       stocksSkipped: skipped,
       horizons,
       factor,
+      portfolio: runPortfolioOnInputs(obs, inputs, portfolioOpts),
       run: runSnapshot({ kind: 'factor-expression', expression, start, end, horizons }),
       preflight,
       ledger: { recorded: recorded.length, total: summarizeFactorExperiments().total },
@@ -1532,6 +1568,8 @@ router.post(
         horizons?: unknown;
         /** hypothesis = LLM 生成的假设；expression = 手输表达式 */
         source?: unknown;
+        /** 可选：逐条做因子组合回测（共享同一取数面板） */
+        portfolio?: unknown;
       };
       const raw = Array.isArray(body.expressions) ? body.expressions : [];
       const expressions = raw
@@ -1550,6 +1588,7 @@ router.post(
         )
           ? (body.horizons as number[])
           : [21, 63];
+      const portfolioOpts = parsePortfolioOpts(body.portfolio);
 
       // 全部表达式先解析（纯 CPU，毫秒级）：非法项提前标记，不进入取数
       const parsed = expressions.map((src) => {
@@ -1641,6 +1680,7 @@ router.post(
           stocksSkipped: skipped,
           horizons,
           factor,
+          portfolio: runPortfolioOnInputs(obs, inputs, portfolioOpts),
           ledger: { recorded: recorded.length },
         });
       }

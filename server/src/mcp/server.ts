@@ -61,6 +61,11 @@ export const MCP_TOOLS: McpTool[] = [
         topN: { type: 'number' },
         horizons: { type: 'array', items: { type: 'number' } },
         name: { type: 'string' },
+        portfolio: {
+          type: 'object',
+          description:
+            '可选组合回测：{ holdDays: 调仓周期(默认21), topN: 持仓只数(默认5), costBps: 单边成本(默认30) }',
+        },
       },
       required: ['expression'],
     },
@@ -83,6 +88,10 @@ export const MCP_TOOLS: McpTool[] = [
         topN: { type: 'number' },
         horizons: { type: 'array', items: { type: 'number' } },
         name: { type: 'string', description: '因子名（默认 custom_expression）' },
+        portfolio: {
+          type: 'object',
+          description: '可选：逐条做组合回测 { holdDays, topN, costBps }',
+        },
       },
       required: ['expressions'],
     },
@@ -197,7 +206,7 @@ export async function executeTool(
       const expression = String(args.expression ?? '').trim();
       if (!expression) throw new Error('需要 expression');
       const body: Record<string, unknown> = { expression };
-      for (const k of ['board', 'codes', 'topN', 'horizons', 'name']) {
+      for (const k of ['board', 'codes', 'topN', 'horizons', 'name', 'portfolio']) {
         if (args[k] !== undefined) body[k] = args[k];
       }
       return callApi('/api/quant/factor/expression', { method: 'POST', body });
@@ -208,7 +217,7 @@ export async function executeTool(
         : [];
       if (expressions.length === 0) throw new Error('需要 expressions 数组');
       const body: Record<string, unknown> = { expressions };
-      for (const k of ['board', 'codes', 'topN', 'horizons', 'name']) {
+      for (const k of ['board', 'codes', 'topN', 'horizons', 'name', 'portfolio']) {
         if (args[k] !== undefined) body[k] = args[k];
       }
       return callApi('/api/quant/factor/expression/batch', { method: 'POST', body });
