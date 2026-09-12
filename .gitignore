@@ -63,3 +63,6 @@ _shots2/
 
 server/src/data/paperTrading.json
 server/src/data/screenerLatest.json
+
+# 研究简报落盘（运行时数据，不入库）
+server/src/data/researchDigests.json
