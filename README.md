@@ -181,6 +181,7 @@ Windows 一键启动：双击 `启动系统.bat`（零依赖，自动安装并�
 |           | `GET /api/quant/research-memory/:code`                                                               | 研究记忆：同股票历史结论 + 已验证因子作为先验                                               |
 |           | `POST /api/quant/screener/run`、`GET /api/quant/screener/latest`                                     | 全市场初筛雷达：形态触发（海龟/均线上穿/涨停）+ RPS 分位扫全市场，结果落盘                  |
 |           | `POST /api/quant/timeseries/analyze`                                                                 | 时间序列计量：`test=adf/garch/coint/arima/kalman-beta`（协整与时变对冲需传 `code2`）        |
+|           | `POST /api/quant/valuation/model`                                                                    | 估值建模：两阶段 EPS 贴现（内在价值+敏感性矩阵）+ 可比公司表，假设可缺省自动推导            |
 |           | `GET /api/quant/announcements`                                                                       | 公司公告：标题一览 + 指定篇目全文（`artCode` 参数），进研究语境与 Chat 工具                 |
 |           | `GET /api/quant/digests`、`POST /api/quant/digests/run`                                              | 研究简报：初筛状态 + 实验台账概览 + 增量说明；定时生成由 `QUANT_DIGEST_INTERVAL_HOURS` 控制 |
 |           | `POST /api/backtest/evaluate`                                                                        | 受控评估：新闻叠加 vs 基线（DSR / Bootstrap CI）                                            |
@@ -228,7 +229,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 `quant_factor_experiments`（实验台账查询）、`quant_screener_run` / `quant_screener_latest`
 （全市场初筛）、`quant_timeseries_analyze`（ADF/GARCH/协整/ARIMA/Kalman 时间序列计量）。
 同一套量化能力也已接入站内 Chat Agent（function-calling）：对话中可直接触发初筛结果
-查询、实验台账概览、时序计量、最近公告原文与研究简报列表。
+查询、实验台账概览、时序计量、最近公告原文、估值建模与研究简报列表。
 
 ## 测试与质量
 

@@ -941,6 +941,65 @@ export async function getIntlKlines(params: {
   }
 }
 
+/** 估值建模结果（两阶段 EPS 贴现 + 可比公司表） */
+export interface ValuationModelResult {
+  model: 'two_stage_eps_dcf';
+  code: string;
+  fairValue: number | null;
+  currentPrice: number;
+  upsidePct: number | null;
+  dcf: {
+    fairValue: number;
+    explicitValue: number;
+    terminalValue: number;
+    discountedTerminalValue: number;
+    cashFlows: { year: number; eps: number; discountFactor: number; presentValue: number }[];
+    assumptions: Record<string, number>;
+  } | null;
+  sensitivity: {
+    discountRates: number[];
+    growthRates1: number[];
+    matrix: number[][];
+  } | null;
+  comparables: {
+    peers: { code: string; name: string; pe: number | null; pb: number | null }[];
+    sampleSize: number;
+    medianPe: number | null;
+    medianPb: number | null;
+    medianRoe: number | null;
+    pePremiumPct: number | null;
+    pbPremiumPct: number | null;
+    impliedValueByMedianPe: number | null;
+  };
+  assumptions: {
+    baseEps: number;
+    growthRate1: number;
+    growthRate1Source: 'input' | 'eps_cagr_3y';
+    growthRate2: number;
+    discountRate: number;
+    explicitYears: number;
+  };
+  limitations: string[];
+}
+
+export async function runValuationModelApi(params: {
+  code: string;
+  assumptions?: {
+    growthRate1?: number;
+    growthRate2?: number;
+    discountRate?: number;
+    explicitYears?: number;
+    baseEps?: number;
+  };
+}): Promise<ValuationModelResult> {
+  try {
+    const response = await api.post('/quant/valuation/model', params, { timeout: 60000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '估值建模失败');
+  }
+}
+
 // === 研究历史记录（分析结果自动入库，前端列表/回看/删除） ===
 export async function fetchHistoryList(limit = 50): Promise<HistorySummary[]> {
   try {

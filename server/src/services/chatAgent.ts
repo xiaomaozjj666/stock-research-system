@@ -161,6 +161,10 @@ export interface ChatAgentDeps {
   }) => Promise<unknown>;
   listDigests?: (limit?: number) => unknown[];
   getAnnouncements?: (code: string) => Promise<unknown>;
+  runValuationModel?: (input: {
+    code: string;
+    assumptions?: { growthRate1?: number; discountRate?: number };
+  }) => Promise<unknown>;
   runDebate?: (analysisText: string) => Promise<DebateResult>;
   /** 风控三分视角辩论（激进/中性/保守）；不提供时用默认实现 */
   runRiskDebate?: (analysisText: string) => Promise<RiskDebateResult>;
@@ -512,6 +516,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
         runTimeseriesAnalyze: deps.runTimeseriesAnalyze,
         listDigests: deps.listDigests,
         getAnnouncements: deps.getAnnouncements,
+        runValuationModel: deps.runValuationModel,
       };
 
       let content: string;
@@ -613,6 +618,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
 
 // === 生产默认依赖（真实服务；仅在请求时拉起，避免测试期副作用） ===
 import { runAnalysis } from './analysisPipeline.js';
+import { getData } from './dataService.js';
 import { runBacktest } from '../quant/backtestEngine.js';
 import { parseStrategyInput } from '../quant/agents/orchestrator.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
@@ -622,6 +628,7 @@ import { summarizeFactorExperiments } from '../quant/factorLedger.js';
 import { analyzeTimeseries } from '../quant/timeseries/analyze.js';
 import { listResearchDigests } from '../quant/researchDigest.js';
 import { buildAnnouncementBrief } from '../quant/announcementProvider.js';
+import { runValuationModel } from '../quant/valuationModel.js';
 
 const productionDeps: ChatAgentDeps = {
   runAnalysis,
@@ -636,6 +643,10 @@ const productionDeps: ChatAgentDeps = {
   runTimeseriesAnalyze: (input) => analyzeTimeseries(input),
   listDigests: (limit?: number) => listResearchDigests(limit),
   getAnnouncements: (code: string) => buildAnnouncementBrief(code),
+  runValuationModel: async (input) => {
+    const { financial, valuation } = await getData(input.code);
+    return runValuationModel(input.code, financial, valuation, input.assumptions ?? {});
+  },
   retrieveEvidence,
   embedder: embed,
   loadHistory,

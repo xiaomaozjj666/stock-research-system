@@ -3,6 +3,21 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-12 — 内置估值建模：两阶段 EPS 贴现 + 可比公司表
+
+- `quant/valuationModel.ts`（纯函数零依赖）：`twoStageEpsDcf`（显性期 + Gordon 终值，
+  g2 ≥ r 直接抛错不输出发散值）、`sensitivityMatrix`（r × g1 逐格独立计算，非法格 NaN）、
+  `buildComparableAnalysis`（同业过滤非正估值后取中位数，本股折溢价 + 中位 PE 隐含价值）、
+  `runValuationModel` 组合入口（基期 EPS 取最新年报，显性期增速取 EPS 3 年 CAGR 钳制
+  [-20%,30%]，可整体覆盖；局限声明随结果 limitations 返回）。
+- `POST /api/quant/valuation/model` + Chat 工具 `run_valuation_model`；前端估值面板
+  （QuantPage 常驻）输出内在价值/现价溢价、逐期现金流表、敏感性矩阵与可比表。
+- 实测（600519）：EPS 65.66 自动推导、g1=9.56%（3 年 CAGR）、内在价值 1489.81 vs 现价
+  1275.16（+16.8%），可比 4 家中位 PE 17.57（本股溢价 +11.4%）。
+- 修一个实现 bug：epsCagr 运算符优先级（Math.round(x)*100/100 恒为 0）→ round4；
+  窗口语义改为「最近 years+1 个有效值」。
+- 测试 +12（DCF 手工算例对照/发散校验/矩阵/可比表/自动推导），全套 1495 通过。
+
 ## 2026-09-12 — 公告全文通道 + 港美股 K 线 + 数据来源溯源表
 
 - `quant/announcementProvider.ts`：东财公告网关适配（列表 np-anotice-stock / 正文
