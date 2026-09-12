@@ -917,6 +917,30 @@ export async function getIntlFundamentals(
   }
 }
 
+/** 港美股日 K 线（东财通道，secid 映射 116.x / 107.x） */
+export interface IntlKline {
+  date: string;
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+  volume: number;
+}
+
+export async function getIntlKlines(params: {
+  code: string;
+  market?: string;
+  startDate?: string;
+  endDate?: string;
+}): Promise<{ code: string; market: string; count: number; klines: IntlKline[] }> {
+  try {
+    const response = await api.get('/intl/klines', { params, timeout: 30000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '港美股 K 线获取失败');
+  }
+}
+
 // === 研究历史记录（分析结果自动入库，前端列表/回看/删除） ===
 export async function fetchHistoryList(limit = 50): Promise<HistorySummary[]> {
   try {

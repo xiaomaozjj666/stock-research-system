@@ -160,6 +160,7 @@ export interface ChatAgentDeps {
     options?: Record<string, unknown>;
   }) => Promise<unknown>;
   listDigests?: (limit?: number) => unknown[];
+  getAnnouncements?: (code: string) => Promise<unknown>;
   runDebate?: (analysisText: string) => Promise<DebateResult>;
   /** 风控三分视角辩论（激进/中性/保守）；不提供时用默认实现 */
   runRiskDebate?: (analysisText: string) => Promise<RiskDebateResult>;
@@ -510,6 +511,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
         getFactorExperimentSummary: deps.getFactorExperimentSummary,
         runTimeseriesAnalyze: deps.runTimeseriesAnalyze,
         listDigests: deps.listDigests,
+        getAnnouncements: deps.getAnnouncements,
       };
 
       let content: string;
@@ -619,6 +621,7 @@ import { readLatestScreenerRun } from '../quant/screener.js';
 import { summarizeFactorExperiments } from '../quant/factorLedger.js';
 import { analyzeTimeseries } from '../quant/timeseries/analyze.js';
 import { listResearchDigests } from '../quant/researchDigest.js';
+import { buildAnnouncementBrief } from '../quant/announcementProvider.js';
 
 const productionDeps: ChatAgentDeps = {
   runAnalysis,
@@ -632,6 +635,7 @@ const productionDeps: ChatAgentDeps = {
   getFactorExperimentSummary: () => summarizeFactorExperiments(),
   runTimeseriesAnalyze: (input) => analyzeTimeseries(input),
   listDigests: (limit?: number) => listResearchDigests(limit),
+  getAnnouncements: (code: string) => buildAnnouncementBrief(code),
   retrieveEvidence,
   embedder: embed,
   loadHistory,

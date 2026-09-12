@@ -181,6 +181,7 @@ Windows 一键启动：双击 `启动系统.bat`（零依赖，自动安装并�
 |           | `GET /api/quant/research-memory/:code`                                                               | 研究记忆：同股票历史结论 + 已验证因子作为先验                                               |
 |           | `POST /api/quant/screener/run`、`GET /api/quant/screener/latest`                                     | 全市场初筛雷达：形态触发（海龟/均线上穿/涨停）+ RPS 分位扫全市场，结果落盘                  |
 |           | `POST /api/quant/timeseries/analyze`                                                                 | 时间序列计量：`test=adf/garch/coint/arima/kalman-beta`（协整与时变对冲需传 `code2`）        |
+|           | `GET /api/quant/announcements`                                                                       | 公司公告：标题一览 + 指定篇目全文（`artCode` 参数），进研究语境与 Chat 工具                 |
 |           | `GET /api/quant/digests`、`POST /api/quant/digests/run`                                              | 研究简报：初筛状态 + 实验台账概览 + 增量说明；定时生成由 `QUANT_DIGEST_INTERVAL_HOURS` 控制 |
 |           | `POST /api/backtest/evaluate`                                                                        | 受控评估：新闻叠加 vs 基线（DSR / Bootstrap CI）                                            |
 | 模拟盘    | `GET /api/paper/portfolio`                                                                           | 账户：现金 / 持仓 / 订单 / 每日净值                                                         |
@@ -188,7 +189,7 @@ Windows 一键启动：双击 `启动系统.bat`（零依赖，自动安装并�
 |           | `POST /api/paper/settle`                                                                             | 日终结算：按收盘价撮合挂单 + 记录当日净值                                                   |
 |           | `GET /api/paper/stats`                                                                               | 累计收益 / 最大回撤 / 年化夏普                                                              |
 | 审计      | `GET /api/audit`                                                                                     | 合规审计查询（类别 / 风险等级 / 时间 / 会话过滤）                                           |
-| 港美股    | `GET /api/intl/fundamentals?code=&market=`                                                           | 港美股财务估值（`market=HK/US`）                                                            |
+| 港美股    | `GET /api/intl/fundamentals?code=&market=`、`GET /api/intl/klines`                                   | 港美股财务估值 + 日 K 线（与 A 股同一东财 K 线通道，secid 映射 116.x/107.x）                |
 | 对话      | `POST /api/chat`、`GET /api/chat/stream`                                                             | 自然语言研究助手（SSE 流式）                                                                |
 | 自选股    | `GET/POST/DELETE /api/watchlist`、`POST /api/watchlist/news-backtest`、`POST /api/watchlist/monitor` | 清单管理 / 批量新闻回测 / 异动监控                                                          |
 | 自治循环  | `POST /api/autonomous/start`、`/stop`、`GET /api/autonomous/status`                                  | 主动监控自治循环                                                                            |
@@ -227,7 +228,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 `quant_factor_experiments`（实验台账查询）、`quant_screener_run` / `quant_screener_latest`
 （全市场初筛）、`quant_timeseries_analyze`（ADF/GARCH/协整/ARIMA/Kalman 时间序列计量）。
 同一套量化能力也已接入站内 Chat Agent（function-calling）：对话中可直接触发初筛结果
-查询、实验台账概览、时序计量与研究简报列表。
+查询、实验台账概览、时序计量、最近公告原文与研究简报列表。
 
 ## 测试与质量
 

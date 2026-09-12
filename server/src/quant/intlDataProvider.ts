@@ -21,6 +21,8 @@
  */
 
 import logger from '../utils/logger.js';
+import { fetchKlineBySecid } from './dataProvider.js';
+import type { OHLCVData } from './types.js';
 
 /** 港美股市场标识 */
 export type IntlMarket = 'HK' | 'US';
@@ -344,6 +346,30 @@ export async function fetchIntlFundamentals(
     const reason = err instanceof Error ? err.message : String(err);
     return degradedResult(trimmedCode, market, fetchedAt, reason);
   }
+}
+
+/**
+ * 港美股日 K 线（东财 push2his 通道，与 A 股同一 K 线接口）：
+ * - HK: 116.{code}；US: 107.{CODE}（与 formatIntlCode 同一映射）
+ * - 复用 dataProvider.fetchKlineBySecid 的缓存合并 + look-ahead 防御，口径与 A 股一致
+ * - 抛错由调用方降级（网络失败与「无数据」语义与 A 股通道一致）
+ */
+export async function fetchIntlKlines(
+  code: string,
+  market: IntlMarket,
+  startDate: string,
+  endDate: string,
+): Promise<OHLCVData[]> {
+  const c = code.trim();
+  if (market === 'HK' && !/^\d{4,5}$/.test(c)) {
+    throw new Error(`港股代码需为 4-5 位数字（当前 ${c}）`);
+  }
+  if (market === 'US' && !/^[A-Za-z.]{1,8}$/.test(c)) {
+    throw new Error(`美股代码需为字母代码如 TSLA（当前 ${c}）`);
+  }
+  const secid = formatIntlCode(c, market);
+  const bars = await fetchKlineBySecid(secid, startDate, endDate, secid);
+  return bars ?? [];
 }
 
 /**

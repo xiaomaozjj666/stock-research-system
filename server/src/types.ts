@@ -66,6 +66,8 @@ export interface DataSource {
   name: string;
   description: string;
   confidence: number;
+  /** 覆盖范围：报告里哪些模块的数字来自该来源（溯源用） */
+  coverage?: string;
 }
 
 // 个股完整数据集合（由 dataService.getData 组装，供分析流水线使用）
@@ -247,6 +249,8 @@ export interface AnalysisResult {
     newsSentiment?: NewsSignal; // 最新消息情绪信号
     /** 机构一致预期快照（可选；盈利预测/评级分布/北向持股，当前快照口径） */
     consensus?: ConsensusSnapshot;
+    /** 最近公告语境（可选；标题一览 + 最新一篇正文摘录，原文口径不做改写） */
+    announcement_brief?: string;
     /** 知识图谱增强上下文（可选；由 analysisPipeline 从个股与同业可比数据构建） */
     knowledgeGraphContext?: string;
     /** 行业轮动信号（可选；股票有行业归属时附加） */

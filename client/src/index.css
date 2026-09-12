@@ -5805,3 +5805,38 @@ button.comparison-tag-add:disabled {
   font-size: 13px;
   padding: 6px 0;
 }
+
+/* ===== 数据来源与覆盖范围（溯源表） ===== */
+.data-source-table {
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.data-source-table .quant-panel-title {
+  margin: 0 0 10px;
+}
+.data-source-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.data-source-table th,
+.data-source-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-default);
+  text-align: left;
+  vertical-align: top;
+}
+.data-source-table th {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.data-source-table .ds-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.data-source-table .ds-desc {
+  color: var(--text-secondary);
+}
+.data-source-table .ds-coverage {
+  color: var(--text-secondary);
+}

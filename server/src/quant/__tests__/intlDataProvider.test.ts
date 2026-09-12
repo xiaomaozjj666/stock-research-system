@@ -1,11 +1,15 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import {
   detectMarket,
   formatIntlCode,
   fetchIntlFundamentals,
   fetchBatchFundamentals,
+  fetchIntlKlines,
 } from '../intlDataProvider.js';
 import { setLogLevel } from '../../utils/logger.js';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // 隔离网络：intlDataProvider 直接调用全局 fetch，统一 mock globalThis.fetch。
 // 备份原始 fetch，afterAll 恢复，避免污染其它测试套件。
@@ -443,5 +447,60 @@ describe('fetchBatchFundamentals', () => {
     expect(results.every((r) => r.degraded)).toBe(false);
     // HK 3 只各 1 次 + US 4 只各 2 次 = 11 次
     expect(mock).toHaveBeenCalledTimes(11);
+  });
+});
+
+describe('fetchIntlKlines — 港美股日 K 线', () => {
+  let tmpCacheDir = '';
+  beforeEach(() => {
+    tmpCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'srs-kline-'));
+    process.env.DATA_CACHE_DIR = tmpCacheDir;
+  });
+  afterEach(() => {
+    delete process.env.DATA_CACHE_DIR;
+    fs.rmSync(tmpCacheDir, { recursive: true, force: true });
+  });
+
+  const KLINE_JSON = {
+    data: {
+      klines: [
+        '2026-09-10,285.0,290.2,291.0,284.5,52000000',
+        '2026-09-11,290.0,292.8,293.5,289.1,48000000',
+      ],
+    },
+  };
+
+  it('美股代码映射 107.{CODE}，透传 K 线解析结果', async () => {
+    globalThis.fetch = vi.fn(async (url: unknown) => {
+      expect(String(url)).toContain('secid=107.TSLA');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => KLINE_JSON,
+      } as never;
+    }) as never;
+    const bars = await fetchIntlKlines('TSLA', 'US', '2026-09-01', '2026-09-12');
+    expect(bars).toHaveLength(2);
+    expect(bars[0].close).toBeCloseTo(290.2, 6);
+    expect(bars[1].date).toBe('2026-09-11');
+  });
+
+  it('港股 5 位代码映射 116.{code}', async () => {
+    globalThis.fetch = vi.fn(async (url: unknown) => {
+      expect(String(url)).toContain('secid=116.00700');
+      return { ok: true, status: 200, json: async () => KLINE_JSON } as never;
+    }) as never;
+    const bars = await fetchIntlKlines('00700', 'HK', '2026-09-01', '2026-09-12');
+    expect(bars).toHaveLength(2);
+  });
+
+  it('代码格式非法 → 抛错不发请求', async () => {
+    globalThis.fetch = vi.fn() as never;
+    await expect(fetchIntlKlines('700', 'HK', '2026-09-01', '2026-09-12')).rejects.toThrow(
+      '4-5 位',
+    );
+    await expect(fetchIntlKlines('600519', 'US', '2026-09-01', '2026-09-12')).rejects.toThrow(
+      '字母',
+    );
   });
 });

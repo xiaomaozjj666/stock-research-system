@@ -3,6 +3,20 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-12 — 公告全文通道 + 港美股 K 线 + 数据来源溯源表
+
+- `quant/announcementProvider.ts`：东财公告网关适配（列表 np-anotice-stock / 正文
+  np-cnotice-stock），列表 24h、正文 30 天（不可变）缓存；`buildAnnouncementBrief`
+  组装「标题一览 + 最新一篇正文摘录」语境块（原文口径截断标注，不做摘要改写）。
+  接线 `GET /api/quant/announcements`、分析管线（限时 6s 降级）、Chat 工具
+  `get_recent_announcements`。
+- `GET /api/intl/klines`：港美股日 K 线，secid 映射（HK=116.x / US=107.x）后复用
+  dataProvider.fetchKlineBySecid（导出原有私有函数），缓存合并与 look-ahead 防御与
+  A 股同一实现；模拟盘港美股查询结果区新增近一年收盘价曲线。
+- 数据来源溯源表：`DataSource` 增加 `coverage`（覆盖的报告模块），报告页由 chip 列表
+  升级为「来源 × 说明 × 覆盖范围 × 置信度」表格；公告/新闻/一致预期按可得性条件出现。
+- 测试 +10（公告列表/正文/语境块/校验、港美股 K 线 secid 映射与代码校验），全套 1483 通过。
+
 ## 2026-09-12 — 研究简报定时闭环 + Chat Agent 量化工具接入
 
 - `quant/researchDigest.ts`：研究简报（初筛最新状态 + 实验台账概览 + 与上一份的增量说明），落盘与 factorLedger 同模式（env 重定向 + 原子写 + 容量 60）。`startDigestScheduler` 由 `QUANT_DIGEST_INTERVAL_HOURS` 控制（默认 0 关闭），接线 `GET /api/quant/digests` 与 `POST /api/quant/digests/run`，前端新增简报面板（截面模式页）。

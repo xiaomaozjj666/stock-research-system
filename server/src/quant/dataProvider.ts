@@ -104,7 +104,7 @@ function mergeBars(existing: OHLCVData[], incoming: OHLCVData[]): OHLCVData[] {
  *
  * 另含 look-ahead 防御与模拟数据降级；模拟数据绝不写入缓存（避免污染真实历史）。
  */
-async function fetchKlineBySecid(
+export async function fetchKlineBySecid(
   secid: string,
   startDate: string,
   endDate: string,
