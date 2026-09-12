@@ -847,6 +847,8 @@ router.post(
         horizons?: unknown;
         includeFundamental?: unknown;
         includeEvents?: unknown;
+        /** 可选：为全部因子附带组合回测（top-N 等权周期调仓，宇宙等权基准） */
+        portfolio?: unknown;
       };
       const horizons =
         Array.isArray(body.horizons) &&
@@ -858,6 +860,7 @@ router.post(
       const includeFundamental = body.includeFundamental !== false;
       // 事件族开关（分红/回购/解禁 + PEAD）：默认开启；关闭可跳过事件源的网络调用
       const includeEvents = body.includeEvents !== false;
+      const portfolioOpts = parsePortfolioOpts(body.portfolio);
 
       // 预检（在 universe 解析前）：源不可达 + 无任何本地缓存 → 直接 503；
       // 源不可达但有缓存 → 继续走陈旧兜底（板块级精准拦截在 resolveUniverse 内）
@@ -908,10 +911,13 @@ router.post(
           byPeriod: report.byPeriod.map((p) => ({ ...p, verdict: judgeFactor(p) })),
         };
       };
+      // 组合回测（可选）需要各因子的原始观测面板：push 时同步登记
       const factors: { name: string; type: string; report: unknown }[] = [];
+      const factorObs = new Map<string, FactorObservation[]>();
       for (const [name, obs] of Object.entries(panel.priceVolume)) {
         if (obs.length < 30) continue; // 样本不足的因子如实跳过（评估器也会拒收）
         factors.push({ name, type: 'price_volume', report: evaluateWithVerdict(obs) });
+        factorObs.set(name, obs);
       }
       if (includeFundamental) {
         for (const [name, obs] of Object.entries(panel.fundamental) as [
@@ -920,6 +926,7 @@ router.post(
         ][]) {
           if (obs.length < 30) continue;
           factors.push({ name, type: 'fundamental', report: evaluateWithVerdict(obs) });
+          factorObs.set(name, obs);
         }
       }
 
@@ -947,6 +954,7 @@ router.post(
             type: 'event',
             report: evaluateWithVerdict(peadObs),
           });
+          factorObs.set('ev_earnings_surprise', peadObs);
         }
 
         // 分红（股息率，公告日后窗口）/ 回购（占总股本比例上限）/ 解禁（负的
@@ -993,6 +1001,7 @@ router.post(
         for (const { name, obs } of eventFactors) {
           if (obs.length >= 30) {
             factors.push({ name, type: 'event', report: evaluateWithVerdict(obs) });
+            factorObs.set(name, obs);
           }
         }
 
@@ -1013,7 +1022,20 @@ router.post(
           }
           if (obs.length >= 30) {
             factors.push({ name: pattern, type: 'pattern', report: evaluateWithVerdict(obs) });
+            factorObs.set(pattern, obs);
           }
+        }
+      }
+
+      // 因子组合回测（可选）：每个因子「按它交易」的 PnL 视角（宇宙等权基准，
+      // top-N 等权周期调仓、A 股成本）。观测面板已就位，这里是纯 CPU。
+      if (portfolioOpts) {
+        const barsBySymbol = new Map(inputs.map((i) => [i.code, i.bars ?? []]));
+        for (const f of factors) {
+          const obs = factorObs.get(f.name);
+          if (!obs) continue;
+          const pf = runPortfolioBacktest(obs, barsBySymbol, portfolioOpts);
+          if (pf) (f as { portfolio?: unknown }).portfolio = pf;
         }
       }
 

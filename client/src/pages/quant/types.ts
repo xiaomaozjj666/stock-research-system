@@ -317,6 +317,27 @@ export interface CrossSectionPeriodReport {
 export interface CrossSectionFactor {
   name: string;
   type: 'price_volume' | 'fundamental' | 'event';
+  /** 可选组合回测（portfolio 参数开启时）：按该因子交易的 PnL 视角 */
+  portfolio?: {
+    equityCurve: { date: string; value: number }[];
+    benchmarkCurve: { date: string; value: number }[];
+    totalReturn: number;
+    annualizedReturn: number;
+    sharpe: number;
+    maxDrawdown: number;
+    winRate: number;
+    avgTurnover: number;
+    periods: number;
+    rebalances: {
+      date: string;
+      endDate: string;
+      holdings: string[];
+      turnover: number;
+      grossReturn: number;
+      costDrag: number;
+      benchmarkReturn: number;
+    }[];
+  };
   report: {
     periods: number[];
     byPeriod: CrossSectionPeriodReport[];

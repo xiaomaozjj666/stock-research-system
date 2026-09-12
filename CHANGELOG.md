@@ -3,6 +3,44 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-12 — 组合构建层：因子组合回测引擎（1f5b377）
+
+- `quant/portfolioBacktest.ts` 纯函数：调仓日按因子值持 top-N 等权、holdDays 换仓、换手×costBps（默认30bps）计提成本，基准为候选宇宙等权（因子中性对照）。输出净值/基准双曲线、总收益/年化/夏普/回撤/胜率/换手。
+- 接线：`/factor/expression`、`/expression/batch`、`/factor/cross-section` 增可选 `portfolio` 参数；FactorLab 净值双曲线图 + 组合摘要；截面页因子组合回测表；MCP 同步。
+- 诚实口径：收盘价撮合（T+1 未建模）、涨停不建模、候选不足持实际数量、无候选空仓。
+- 实测：白酒8只 roe PIT 因子 21 日调仓 top-3，组合 −9.9% vs 宇宙等权 −14.4%（正分离 +4.5pp），平均换手 7%。
+
+## 2026-09-11 — 科学有效性批次（3c69fbe）
+
+- **基本面因子 PIT 化**：6 个基本面/季度因子按季度报告 NOTICE_DATE 门控（`buildPitSnapshots`），消除「今天的年报值投影回全窗口」的公告时点前视；表达式 DSL 标量（roe 等）同步 PIT 化；截面路由不再抓年报。
+- **批量假设验证 runner**：`POST /api/quant/factor/expression/batch`（≤50 条共享面板）+ 三路由公共助手（resolveUniverse/fetchPanelInputs/assembleExpressionObservations）+ MCP 工具。
+- **台账 FDR 折扣**：`keptExpectedFalse`（Σp，全历史试错维度的期望假阳性）与 `keptOosShare`，FactorLab 展示。
+- **幸存者偏差声明**：截面响应 `universe.survivorshipNote`。
+
+## 2026-09-11 — 两个设计取舍落最优解（2a71f36）
+
+- **初筛宇宙**：默认扫全市场（增量 K 线缓存），设上限时按代码排序等步长跨市场采样（替代主表前 N 的沪市主板偏置）；结果披露 universe/coverage/durationMs；路由接客户端断开中止。
+- **LLM 集成投票**：文本精确分组 → 字符 bigram 重叠系数 + 贪心加权聚类（自由文本同义改写聚为一组，agreement 恢复语义）；similarityThreshold 可覆盖。
+
+## 2026-09-11 — 新功能审查批次（7ad9b31）
+
+- `pat_limit_up` 信号由常数 1 改为实际涨停幅度（常数信号截面秩全并列，IC 恒 0）。
+- preflight 增板块列表源独立探针（push2 与 push2his 是两个域名，K 线通≠列表通）。
+- ADF 信息准则参数计数修正、协整半衰期 φ≤−1 归入 Infinity、形态因子中文标签。
+
+## 2026-09-05 — 交互体验批次（ecffb41）
+
+- 跨页发起分析自动切回深度研究页（修复其他页点「开始分析」无反馈）。
+- 量化页伪进度（定时伪造阶段 + 随机编造耗时）改真实已耗时计时；深度研究加载屏补耗时。
+- 量化三模式常驻挂载（切换不再丢结果）；批量/截面 loading 显耗时；模拟盘挂单提示与审计等级中文化；自选股移除按钮 aria 修正；对比页空占位可点聚焦。
+
+## 2026-09-05 — 量化研究收尾四项（8efe89a）
+
+- IC 衰减视图（[1,5,10,21,63] 网格 + SVG 衰减曲线，组合 alpha 仍只在 21/63 结算）。
+- 截面拉宽：东财行业板块 universe 管道（`/universe/boards` + board/topN）与量化页「截面因子」模式。
+- 基本面深度：季度财报时间序列（quarterlyFinancials）+ 单季差分/同比/超预期/ROE 斜率（fundamentalDepth）+ PEAD 事件因子接入截面。
+- 路由集成测试（composite/batch/cross-section/boards）与新模块单测。
+
 ## 2026-09-09 — 新增时间序列计量模块（ADF / GARCH / 协整 / ARIMA / Kalman）
 
 - `server/src/quant/timeseries/`：五个独立模块，纯函数、零第三方依赖、确定性可复现。
