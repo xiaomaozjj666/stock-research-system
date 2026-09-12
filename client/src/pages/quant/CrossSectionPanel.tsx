@@ -345,33 +345,35 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
             />
             <span className="batch-hint">默认 21,63</span>
           </label>
-          <label className="batch-checkbox cs-fundamental-toggle">
-            <input
-              type="checkbox"
-              checked={includeFundamental}
-              disabled={loading}
-              onChange={(e) => setIncludeFundamental(e.target.checked)}
-            />
-            包含基本面因子（拉取财务 + 季度财报，耗时增加）
-          </label>
-          <label className="batch-checkbox cs-fundamental-toggle">
-            <input
-              type="checkbox"
-              checked={includeEvents}
-              disabled={loading}
-              onChange={(e) => setIncludeEvents(e.target.checked)}
-            />
-            包含事件因子（分红/回购/解禁走事件数据源；PEAD 依赖财报）
-          </label>
-          <label className="batch-checkbox cs-fundamental-toggle">
-            <input
-              type="checkbox"
-              checked={portfolioOn}
-              disabled={loading}
-              onChange={(e) => setPortfolioOn(e.target.checked)}
-            />
-            因子组合回测（每因子 21 日调仓 top-5 等权，宇宙等权基准）
-          </label>
+          <div className="cs-toggles">
+            <label className="batch-checkbox cs-fundamental-toggle">
+              <input
+                type="checkbox"
+                checked={includeFundamental}
+                disabled={loading}
+                onChange={(e) => setIncludeFundamental(e.target.checked)}
+              />
+              包含基本面因子（拉取财务 + 季度财报）
+            </label>
+            <label className="batch-checkbox cs-fundamental-toggle">
+              <input
+                type="checkbox"
+                checked={includeEvents}
+                disabled={loading}
+                onChange={(e) => setIncludeEvents(e.target.checked)}
+              />
+              包含事件因子（分红/回购/解禁 + PEAD）
+            </label>
+            <label className="batch-checkbox cs-fundamental-toggle">
+              <input
+                type="checkbox"
+                checked={portfolioOn}
+                disabled={loading}
+                onChange={(e) => setPortfolioOn(e.target.checked)}
+              />
+              因子组合回测（21 日调仓 top-5 等权）
+            </label>
+          </div>
         </div>
 
         <div className="batch-actions">
