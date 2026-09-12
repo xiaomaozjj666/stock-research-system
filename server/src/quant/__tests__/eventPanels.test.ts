@@ -5,6 +5,7 @@ import {
   buybackSignalEvents,
   dividendSignalEvents,
   unlockSignalEvents,
+  dragonTigerSignalEvents,
 } from '../eventPanels.js';
 
 /**
@@ -213,5 +214,48 @@ describe('unlockSignalEvents — 解禁压力信号（负方向）', () => {
       { eventDate: '2024-08-10', value: -100 },
       { eventDate: '2025-08-10', value: -2.05 },
     ]);
+  });
+});
+
+describe('dragonTigerSignalEvents — 龙虎榜事件信号', () => {
+  it('信号 = 净买额/流通市值（%）；缺市值回落净买额占总成交比；双缺剔除', () => {
+    const rows = [
+      {
+        eventDate: '2024-04-10',
+        changeRate: 9.98,
+        netAmountYuan: 2e8,
+        netAmountRatioPct: 12.5,
+        freeMarketCapYuan: 2e10,
+        reason: '涨幅偏离',
+      },
+      {
+        eventDate: '2024-05-06',
+        changeRate: -5.5,
+        netAmountYuan: -1e8,
+        netAmountRatioPct: -8,
+        freeMarketCapYuan: null,
+        reason: '跌幅偏离',
+      },
+      {
+        eventDate: '2024-06-01',
+        changeRate: 3,
+        netAmountYuan: 5e7,
+        netAmountRatioPct: null,
+        freeMarketCapYuan: 0,
+        reason: '脏市值',
+      },
+      {
+        eventDate: null,
+        changeRate: 1,
+        netAmountYuan: 1,
+        netAmountRatioPct: 1,
+        freeMarketCapYuan: 1e9,
+        reason: '缺日期',
+      },
+    ];
+    const events = dragonTigerSignalEvents(rows as never);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toEqual({ eventDate: '2024-04-10', value: 1 }); // 2e8/2e10 = 1%
+    expect(events[1].value).toBe(-8); // 回落口径：净买额占总成交比
   });
 });

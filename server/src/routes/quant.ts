@@ -79,6 +79,7 @@ import {
   buildEventObservations,
   buybackSignalEvents,
   dividendSignalEvents,
+  dragonTigerSignalEvents,
   unlockSignalEvents,
   UNLOCK_START_OFFSET_DAYS,
   UNLOCK_WINDOW_DAYS,
@@ -963,9 +964,20 @@ router.post(
         const dividendObs: FactorObservation[] = [];
         const buybackObs: FactorObservation[] = [];
         const unlockObs: FactorObservation[] = [];
+        const dragonObs: FactorObservation[] = [];
         for (const input of inputs) {
           if (!input.bars || input.bars.length === 0 || !input.events) continue;
           const { code, bars, events } = input;
+          if (events.dragonTiger) {
+            dragonObs.push(
+              ...buildEventObservations({
+                code,
+                events: dragonTigerSignalEvents(events.dragonTiger),
+                bars,
+                horizons,
+              }),
+            );
+          }
           dividendObs.push(
             ...buildEventObservations({
               code,
@@ -997,6 +1009,7 @@ router.post(
           { name: 'ev_dividend_yield', obs: dividendObs },
           { name: 'ev_buyback_ratio', obs: buybackObs },
           { name: 'ev_unlock_overhang', obs: unlockObs },
+          { name: 'ev_dragon_tiger', obs: dragonObs },
         ];
         for (const { name, obs } of eventFactors) {
           if (obs.length >= 30) {

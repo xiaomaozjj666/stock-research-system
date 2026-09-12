@@ -1,6 +1,11 @@
 import type { OHLCVData } from './types.js';
 import type { FactorObservation } from './factorEvaluation.js';
-import type { BuybackEventRow, DividendEventRow, UnlockEventRow } from './eventProvider.js';
+import type {
+  BuybackEventRow,
+  DividendEventRow,
+  DragonTigerEventRow,
+  UnlockEventRow,
+} from './eventProvider.js';
 
 /**
  * 公司事件因子面板（分红 / 回购 / 解禁）。
@@ -168,3 +173,29 @@ export function unlockSignalEvents(rows: UnlockEventRow[]): StockEvent[] {
 /** 解禁事件的窗口参数：事件前 20 日（含）到事件后 20 日 */
 export const UNLOCK_START_OFFSET_DAYS = -20;
 export const UNLOCK_WINDOW_DAYS = 41;
+
+/**
+ * 龙虎榜事件：信号 = 净买额占流通市值比（%，正 = 净买入）。
+ * 假说：龙虎榜净买入（游资/机构席位真金白银）跟随者效应推动短期收益；
+ * A 股文献同样有「上榜即见顶」的反向证据——方向由 IC 判定，这正是事件族的目的。
+ * 分母优先流通市值（跨市值可比）；缺失时回落净买额占总成交比（%）。
+ * 剔除量纲不可比的两类：净买额与分母同时缺失（无信号）、流通市值为 0/负（脏数据）。
+ */
+export function dragonTigerSignalEvents(rows: DragonTigerEventRow[]): StockEvent[] {
+  const out: StockEvent[] = [];
+  for (const r of rows) {
+    if (!r.eventDate) continue;
+    const net = r.netAmountYuan;
+    const cap = r.freeMarketCapYuan;
+    let value: number | null = null;
+    if (net !== null && cap !== null && cap > 0) {
+      value = Math.round((net / cap) * 100 * 10000) / 10000;
+    } else if (net !== null && r.netAmountRatioPct !== null) {
+      // 回落口径：净买额占总成交比（%），与市值口径同向（正 = 净买入）
+      value = r.netAmountRatioPct;
+    }
+    if (value === null || !Number.isFinite(value)) continue;
+    out.push({ eventDate: r.eventDate, value });
+  }
+  return out.sort((a, b) => a.eventDate.localeCompare(b.eventDate));
+}
