@@ -53,6 +53,8 @@ const TYPE_LABELS: Record<CrossSectionFactor['type'], string> = {
   price_volume: '量价',
   fundamental: '基本面',
   event: '事件',
+  pattern: '形态',
+  margin: '两融',
 };
 
 function parseCodes(text: string): string[] {
@@ -117,6 +119,8 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
   const [portfolioOn, setPortfolioOn] = useState(false);
   // 事件族（分红/回购/解禁 + PEAD）：默认开启；关闭可省去事件源网络调用
   const [includeEvents, setIncludeEvents] = useState(true);
+  // 两融族（融资余额变化率/拥挤度，PIT + T+1 披露）：默认开启；关闭可省去两融源网络调用
+  const [includeMargin, setIncludeMargin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CrossSectionResult | null>(null);
@@ -203,6 +207,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
               horizons,
               includeFundamental,
               includeEvents,
+              includeMargin,
               ...(portfolioOn ? { portfolio: { holdDays: 21, topN: 5, costBps: 30 } } : {}),
             }
           : {
@@ -210,6 +215,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
               horizons,
               includeFundamental,
               includeEvents,
+              includeMargin,
               ...(portfolioOn ? { portfolio: { holdDays: 21, topN: 5, costBps: 30 } } : {}),
             },
         controller.signal,
@@ -234,6 +240,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
     horizonsText,
     includeFundamental,
     includeEvents,
+    includeMargin,
     portfolioOn,
     showToast,
   ]);
@@ -364,6 +371,15 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                 onChange={(e) => setIncludeEvents(e.target.checked)}
               />
               包含事件因子（分红/回购/解禁 + PEAD）
+            </label>
+            <label className="batch-checkbox cs-fundamental-toggle">
+              <input
+                type="checkbox"
+                checked={includeMargin}
+                disabled={loading}
+                onChange={(e) => setIncludeMargin(e.target.checked)}
+              />
+              包含两融因子（融资余额变化率/拥挤度）
             </label>
             <label className="batch-checkbox cs-fundamental-toggle">
               <input
@@ -518,7 +534,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                 </tbody>
               </table>
               <p className="batch-footnote">
-                基准 = 候选宇宙等权（因子中性对照）；收盘价撮合、涨停不建模，短周期口径偏乐观。
+                基准 = 候选宇宙等权（因子中性对照）；T+1 次日开盘撮合、涨停不建模。
               </p>
             </div>
           )}

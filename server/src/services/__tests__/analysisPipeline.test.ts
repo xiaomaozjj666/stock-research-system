@@ -64,6 +64,12 @@ vi.mock('../../quant/newsSignal.js', () => ({
   extractNewsSignal: vi.fn(async () => ({ signal: null, source: 'none' })),
 }));
 
+// 机构一致预期快照：单测不依赖外网，默认无快照（管线降级跳过）
+vi.mock('../../quant/consensusProvider.js', () => ({
+  fetchConsensusSnapshot: vi.fn(async () => null),
+  formatConsensusBrief: vi.fn(() => ''),
+}));
+
 // 可选增强模块默认返回 undefined → 流水线内部降级跳过；成功/失败路径在用例中切换
 vi.mock('../../llm/knowledgeGraph.js', () => ({
   buildFinancialGraph: vi.fn(),

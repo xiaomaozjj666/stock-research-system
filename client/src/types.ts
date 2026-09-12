@@ -216,6 +216,8 @@ export interface StockPoolItem {
   scenarios?: ScenarioResult[];
   strategyList?: StrategyRecommendation[];
   newsSentiment?: NewsSignal;
+  /** 机构一致预期快照（可选；盈利预测/评级/北向持股，当前快照口径） */
+  consensus?: ConsensusSnapshot;
   /** 行情历史（日K线，用于走势图渲染；取数失败时为模拟数据） */
   priceHistory?: PricePoint[];
   /** 风险归因：风格因子暴露 + 系统/特异风险分解（可选） */
@@ -391,4 +393,21 @@ export interface IntlFundamentalsResult {
   degraded: boolean;
   source: string;
   fetchedAt: string;
+}
+
+/** 机构一致预期快照（东财盈利预测 + 北向季度持股；无历史序列，不参与回测） */
+export interface ConsensusSnapshot {
+  code: string;
+  orgNum: number | null;
+  ratings: {
+    buy: number | null;
+    add: number | null;
+    neutral: number | null;
+    reduce: number | null;
+    sale: number | null;
+  };
+  forecasts: { year: number; eps: number; mark: 'A' | 'E' }[];
+  targetPriceMax: number | null;
+  targetPriceMin: number | null;
+  north?: { date: string; holdSharesRatio: number | null; holdMarketCap: number | null };
 }

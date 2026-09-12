@@ -134,14 +134,83 @@ describe('runPortfolioBacktest — 因子组合回测', () => {
     expect(r.rebalances[0].holdings).toEqual(['A']);
   });
 
-  it('数据不足（< 2×holdDays）→ null（如实拒绝，不出空报告）', () => {
-    const bars = new Map([['A', barsFor('A', 30, 100, 0.001)]]);
+  it('数据不足（< holdDays+2）→ null；恰好 holdDays+2 → 1 期（如实拒绝，不出空报告）', () => {
+    // 一个完整期需要：决策日 + 次日建仓 + holdDays 后平仓
+    const short = new Map([['A', barsFor('A', 22, 100, 0.001)]]);
+    expect(
+      runPortfolioBacktest([{ date: '2024-01-01', symbol: 'A', value: 1, returns: {} }], short, {
+        holdDays: 21,
+      }),
+    ).toBeNull();
+
+    const exact = new Map([['A', barsFor('A', 23, 100, 0.001)]]);
+    const ok = runPortfolioBacktest(
+      [{ date: '2024-01-01', symbol: 'A', value: 1, returns: {} }],
+      exact,
+      { holdDays: 21 },
+    );
+    expect(ok).not.toBeNull();
+    expect(ok!.periods).toBe(1);
+    expect(ok!.rebalances[0].fillDate).toBe('2024-01-02');
+    expect(ok!.rebalances[0].exitDate).toBe('2024-01-23');
+  });
+
+  it('T+1 撮合：以 t+1 开盘价建仓、t+1+h 开盘价平仓，而非决策日收盘价', () => {
+    // 决策日（day0）收盘 20 / 次日开盘 22 / 平仓日开盘 33：
+    // 旧口径（收盘撮合）会得出 33/20−1=65%，新口径应得 33/22−1=50%
+    const mk = (date: string, open: number, close: number): OHLCVData => ({
+      date,
+      open,
+      high: Math.max(open, close),
+      low: Math.min(open, close),
+      close,
+      volume: 1_000_000,
+    });
+    const bars = new Map([
+      ['A', [mk('2024-01-01', 10, 20), mk('2024-01-02', 22, 22), mk('2024-01-03', 33, 33)]],
+    ]);
     const r = runPortfolioBacktest(
       [{ date: '2024-01-01', symbol: 'A', value: 1, returns: {} }],
       bars,
-      { holdDays: 21 },
-    );
-    expect(r).toBeNull();
+      { holdDays: 1, topN: 1, costBps: 0 },
+    )!;
+    expect(r.rebalances).toHaveLength(1);
+    expect(r.rebalances[0].date).toBe('2024-01-01');
+    expect(r.rebalances[0].fillDate).toBe('2024-01-02');
+    expect(r.rebalances[0].exitDate).toBe('2024-01-03');
+    expect(r.rebalances[0].grossReturn).toBeCloseTo(0.5, 10);
+    // 基准同一撮合口径
+    expect(r.rebalances[0].benchmarkReturn).toBeCloseTo(0.5, 10);
+    // 曲线点落在平仓成交日
+    expect(r.equityCurve[0].date).toBe('2024-01-03');
+    expect(r.equityCurve[0].value).toBeCloseTo(1.5, 3);
+  });
+
+  it('成交日缺开盘价（停牌）→ 该持仓剔除出分母，不按 0 计入', () => {
+    const mk = (date: string, open: number, close: number): OHLCVData => ({
+      date,
+      open,
+      high: Math.max(open, close),
+      low: Math.min(open, close),
+      close,
+      volume: 1_000_000,
+    });
+    const bars = new Map([
+      ['A', [mk('2024-01-01', 10, 10), mk('2024-01-02', 11, 11), mk('2024-01-03', 12, 12)]],
+      // B 在建仓日（01-02）无开盘价 → 停牌无法成交
+      ['B', [mk('2024-01-01', 10, 10), mk('2024-01-03', 20, 20)]],
+    ]);
+    const r = runPortfolioBacktest(
+      [
+        { date: '2024-01-01', symbol: 'A', value: 2, returns: {} },
+        { date: '2024-01-01', symbol: 'B', value: 1, returns: {} },
+      ],
+      bars,
+      { holdDays: 1, topN: 2, costBps: 0 },
+    )!;
+    // 持仓名单仍含 B（决策层不剔除），但收益分母只数 A：11→12 = 9.09%
+    expect(r.rebalances[0].holdings).toEqual(['A', 'B']);
+    expect(r.rebalances[0].grossReturn).toBeCloseTo(12 / 11 - 1, 10);
   });
 
   it('指标口径：年化/夏普/回撤可从期收益手工复算', () => {

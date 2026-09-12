@@ -222,3 +222,48 @@ describe('buildCrossSectionPanel — 季度派生因子（cs_np_yoy_q / cs_roe_s
     expect(withoutQ.fundamental.cs_roe_slope).toEqual([]);
   });
 });
+
+describe('buildCrossSectionPanel — 两融因子（PIT + T+1 披露延迟）', () => {
+  it('有 margin 序列的股票进入两融因子面板，观测结构与量价一致', () => {
+    const bars = barsFor('600519', N_BARS, 0.1);
+    const marginRows = Array.from({ length: N_BARS - 1 }, (_, i) => ({
+      date: bars[i].date, // 行止于倒数第二根 bar：末根 bar 的取值仍来自严格早行
+      balance: 1000 + i,
+      balancePct: 2 + i * 0.01,
+      netBuy: i,
+    }));
+    const panel = buildCrossSectionPanel([{ code: '600519', bars, margin: marginRows }], HORIZONS);
+    expect(panel.stocksIncluded).toEqual(['600519']);
+    // 两个两融因子都有观测（行数充足）
+    for (const key of ['mg_balance_chg20', 'mg_balance_pct'] as const) {
+      expect(panel.margin[key].length).toBeGreaterThan(30);
+      const first = panel.margin[key][0];
+      expect(first.symbol).toBe('600519');
+      expect(Object.keys(first.returns)).toContain(String(HORIZONS[0]));
+    }
+    // 无 margin 的股票不产出两融观测
+    const bare = buildCrossSectionPanel(
+      [{ code: '000858', bars: barsFor('000858', N_BARS, 0.0) }],
+      HORIZONS,
+    );
+    expect(bare.margin.mg_balance_pct).toHaveLength(0);
+  });
+
+  it('末根 bar 的两融取值不使用当日行（T+1 披露纪律在装配层生效）', () => {
+    const bars = barsFor('600519', 60, 0.1);
+    // 两融行覆盖全部 bar 日期（含末根）；末根 bar 的可用行只有倒数第二根之前
+    const marginRows = bars.map((b, i) => ({
+      date: b.date,
+      balance: 1000 + i,
+      balancePct: 2 + i * 0.01,
+      netBuy: i,
+    }));
+    const panel = buildCrossSectionPanel([{ code: '600519', bars, margin: marginRows }], [21]);
+    const dates = new Set(panel.margin.mg_balance_pct.map((o) => o.date));
+    // bar[20] 的取值 = 严格早于它的最后一行（index 19）→ pct = 2 + 19*0.01
+    const obs = panel.margin.mg_balance_pct.find((o) => o.date === bars[20].date);
+    expect(obs?.value).toBeCloseTo(2 + 19 * 0.01, 10);
+    // 末根 bar（窗口尾部无远期收益）与任何日期 ≥ 自身行的「当日值」都不出现
+    expect(dates.has(bars[bars.length - 1].date)).toBe(false);
+  });
+});

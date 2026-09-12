@@ -7,15 +7,20 @@
  * 同宇宙等权组合。这是从「统计显著」到「可交易」之间的桥。
  *
  * 口径与诚实边界：
- *  - 收盘价撮合：调仓日以收盘价建仓/平仓（A股 T+1 下实际次日才能卖，未建模——
- *    对 h ≥ 5 的周期影响有限，对 h = 1 偏乐观）；
+ *  - **T+1 次日开盘撮合**：t 日收盘计算因子并决策，t+1 开盘价成交建仓/换仓，
+ *    持有至 t+1+holdDays 开盘卖出（下一期的建仓日与本期平仓日是同一天——
+ *    开盘一笔换仓，与实盘节奏一致）。这同时消除两处乐观偏差：① 同 bar 决策-
+ *    成交前视（收盘信号不可能以同一收盘价成交）；② A 股 T+1 卖出约束
+ *    （当日买入次日才可卖——本口径天然满足）；
  *  - 成本：换手率 × costBps（单边，买卖各计一次）。costBps 默认 30（佣金
  *    万2.5 双边 + 印花税卖出万5 + 滑点余量），可用参数覆盖；
  *  - 涨跌停/停牌不撮合：候选池只含当日有因子观测的股票（停牌/数据缺失自然出局），
- *    涨停无法买入未单独建模（对突破/涨停类因子偏乐观，如实告知）；
+ *    开盘涨停无法买入 / 开盘跌停无法卖出未单独建模（对突破/涨停类因子偏乐观，
+ *    如实告知——按板块阈值误判创业板 20% 涨跌幅的代价大于不建模）；
+ *  - 成交日缺开盘价（停牌/数据缺失）的持仓按 0 收益剔除出分母；
  *  - 候选不足 topN 时持有实际数量；候选为空 → 当期空仓（现金收益 0）；
- *  - 基准 = 每期候选宇宙的等权组合（因子中性对照），而非宽基指数——
- *    回答的是「因子选股是否跑赢不选股」，与截面 IC 的语义严格一致。
+ *  - 基准 = 每期候选宇宙的等权组合（因子中性对照），**与组合同一 T+1 开盘
+ *    撮合口径**——回答的是「因子选股是否跑赢不选股」，与截面 IC 的语义严格一致。
  *
  * 全部纯函数、确定性、无第三方依赖。
  */
@@ -24,24 +29,28 @@ import type { FactorObservation } from './factorEvaluation.js';
 
 /** 单次调仓记录 */
 export interface RebalanceRecord {
-  /** 调仓日 */
+  /** 决策日（t 日收盘计算因子） */
   date: string;
-  /** 期末日期（下一调仓日前一交易日 / 数据末日） */
+  /** 建仓成交日（t+1 开盘撮合） */
+  fillDate: string;
+  /** 平仓成交日（t+1+holdDays 开盘撮合；与下一期建仓同日） */
+  exitDate: string;
+  /** 期末日期（决策网格上下一调仓日前一交易日 / 数据末日） */
   endDate: string;
   /** 持仓代码（按因子值降序） */
   holdings: string[];
   /** 换手率 ∈ [0,1]：与上期持仓相比变动的名额占比（首期为 1） */
   turnover: number;
-  /** 本期组合收益（扣费前，小数） */
+  /** 本期组合收益（扣费前，小数；按建仓/平仓开盘价计） */
   grossReturn: number;
   /** 本期成本拖累（小数，负收益形式给出） */
   costDrag: number;
-  /** 本期基准（候选宇宙等权）收益（小数） */
+  /** 本期基准（候选宇宙等权，同 T+1 开盘撮合口径）收益（小数） */
   benchmarkReturn: number;
 }
 
 export interface PortfolioBacktestResult {
-  /** 组合净值曲线（每个调仓期末一个点，起始 1） */
+  /** 组合净值曲线（每个调仓期平仓成交日一个点，起始 1） */
   equityCurve: { date: string; value: number }[];
   /** 基准净值曲线（同口径） */
   benchmarkCurve: { date: string; value: number }[];
@@ -74,8 +83,8 @@ export interface PortfolioBacktestOptions {
 interface Panel {
   /** date → 该日候选观测（symbol → value） */
   byDate: Map<string, { symbol: string; value: number }[]>;
-  /** symbol → { date → close } */
-  closes: Map<string, Map<string, number>>;
+  /** symbol → { date → open }（T+1 开盘撮合的成交价来源） */
+  opens: Map<string, Map<string, number>>;
   /** 全体 bars 的交易日历（并集，升序） */
   calendar: string[];
 }
@@ -91,17 +100,17 @@ function buildPanel(
     if (list) list.push({ symbol: o.symbol, value: o.value });
     else byDate.set(o.date, [{ symbol: o.symbol, value: o.value }]);
   }
-  const closes = new Map<string, Map<string, number>>();
+  const opens = new Map<string, Map<string, number>>();
   const calSet = new Set<string>();
   for (const [symbol, bars] of barsBySymbol) {
-    const m = new Map<string, number>();
+    const om = new Map<string, number>();
     for (const b of bars) {
-      if (b.close > 0) m.set(b.date, b.close);
+      if (b.open > 0) om.set(b.date, b.open);
       calSet.add(b.date);
     }
-    closes.set(symbol, m);
+    opens.set(symbol, om);
   }
-  return { byDate, closes, calendar: [...calSet].sort((a, b) => a.localeCompare(b)) };
+  return { byDate, opens, calendar: [...calSet].sort((a, b) => a.localeCompare(b)) };
 }
 
 /**
@@ -109,7 +118,7 @@ function buildPanel(
  *
  * @param observations  因子截面面板（date / symbol / value；价值方向由研究者保证，
  *                      值越大越看多——反向因子请在 DSL 里取负）
- * @param barsBySymbol  逐股 K 线（调仓期起止收盘价的取数来源）
+ * @param barsBySymbol  逐股 K 线（t+1 开盘成交价与交易日历的取数来源）
  * @param opts          holdDays / topN / costBps
  * @returns 候选观测不足以构成任何一个调仓期时返回 null（如实拒绝，不出空报告）
  */
@@ -124,7 +133,8 @@ export function runPortfolioBacktest(
 
   const panel = buildPanel(observations, barsBySymbol);
   const calendar = panel.calendar;
-  if (calendar.length < holdDays * 2) return null; // 连一个完整调仓期都凑不出
+  // 一个完整调仓期需要：决策日 + 次日建仓 + holdDays 后平仓 → 至少 holdDays+2 根 K 线
+  if (calendar.length < holdDays + 2) return null;
 
   const rebalances: RebalanceRecord[] = [];
   const equityCurve: { date: string; value: number }[] = [];
@@ -133,9 +143,11 @@ export function runPortfolioBacktest(
   let bench = 1;
   let prevHoldings: string[] = [];
 
-  for (let start = 0; start + holdDays < calendar.length; start += holdDays) {
+  for (let start = 0; start + holdDays + 1 < calendar.length; start += holdDays) {
     const date = calendar[start];
+    const fillDate = calendar[start + 1]; // t+1 开盘建仓
     const endDate = calendar[start + holdDays];
+    const exitDate = calendar[start + holdDays + 1]; // t+1+holdDays 开盘平仓
     const candidates = panel.byDate.get(date) ?? [];
 
     // 排序取 topN（值降序）；并列按 symbol 字典序稳定排序（可复现）
@@ -149,13 +161,14 @@ export function runPortfolioBacktest(
     const turnover =
       prevHoldings.length === 0 ? 1 : (holdings.length - keep) / Math.max(holdings.length, 1);
 
-    // 本期收益：等权、期初买期末卖；缺收盘价的持仓按 0 收益剔除出分母
+    // 本期收益：等权、t+1 开盘买 / t+1+h 开盘卖；成交日缺开盘价（停牌/数据缺失）
+    // 的持仓按 0 收益剔除出分母
     let gross = 0;
     let counted = 0;
     for (const sym of holdings) {
-      const m = panel.closes.get(sym);
-      const p0 = m?.get(date);
-      const p1 = m?.get(endDate);
+      const om = panel.opens.get(sym);
+      const p0 = om?.get(fillDate);
+      const p1 = om?.get(exitDate);
       if (p0 === undefined || p1 === undefined) continue;
       gross += p1 / p0 - 1;
       counted += 1;
@@ -165,13 +178,13 @@ export function runPortfolioBacktest(
     const costDrag = -(turnover * costBps * 2) / 10_000;
     const netReturn = grossReturn + costDrag;
 
-    // 基准：候选宇宙等权（有首尾收盘价者）
+    // 基准：候选宇宙等权（有成交日开盘价者），与组合同一 T+1 撮合口径
     let bSum = 0;
     let bCount = 0;
     for (const c of candidates) {
-      const m = panel.closes.get(c.symbol);
-      const p0 = m?.get(date);
-      const p1 = m?.get(endDate);
+      const om = panel.opens.get(c.symbol);
+      const p0 = om?.get(fillDate);
+      const p1 = om?.get(exitDate);
       if (p0 === undefined || p1 === undefined) continue;
       bSum += p1 / p0 - 1;
       bCount += 1;
@@ -180,11 +193,13 @@ export function runPortfolioBacktest(
 
     equity *= 1 + netReturn;
     bench *= 1 + benchReturn;
-    equityCurve.push({ date: endDate, value: Math.round(equity * 10_000) / 10_000 });
-    benchmarkCurve.push({ date: endDate, value: Math.round(bench * 10_000) / 10_000 });
+    equityCurve.push({ date: exitDate, value: Math.round(equity * 10_000) / 10_000 });
+    benchmarkCurve.push({ date: exitDate, value: Math.round(bench * 10_000) / 10_000 });
     rebalances.push({
       date,
+      fillDate,
       endDate,
+      exitDate,
       holdings,
       turnover: Math.round(turnover * 10_000) / 10_000,
       grossReturn,
