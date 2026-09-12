@@ -5840,3 +5840,35 @@ button.comparison-tag-add:disabled {
 .data-source-table .ds-coverage {
   color: var(--text-secondary);
 }
+
+/* ===== 估值建模面板 ===== */
+.valuation-panel .valuation-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.valuation-panel .valuation-form .batch-input {
+  flex: 1;
+  min-width: 160px;
+}
+.valuation-summary {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.valuation-summary .paper-stat-card {
+  flex: 1;
+  min-width: 140px;
+}
+.valuation-assumptions {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.valuation-summary .paper-stat-value.neg {
+  color: var(--color-negative);
+}
+.valuation-summary .paper-stat-value.pos {
+  color: var(--color-positive);
+}

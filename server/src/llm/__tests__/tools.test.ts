@@ -3,7 +3,7 @@ import { TOOL_DEFINITIONS, getTool, executeToolCall, type ToolDeps } from '../to
 
 describe('tool registry', () => {
   it('defines valid OpenAI-compatible tool schemas', () => {
-    expect(TOOL_DEFINITIONS.length).toBe(9);
+    expect(TOOL_DEFINITIONS.length).toBe(10);
     expect(TOOL_DEFINITIONS.map((t) => t.function.name)).toEqual([
       'run_analysis',
       'compare_stocks',
@@ -14,6 +14,7 @@ describe('tool registry', () => {
       'run_timeseries_analyze',
       'list_recent_digests',
       'get_recent_announcements',
+      'run_valuation_model',
     ]);
     for (const t of TOOL_DEFINITIONS) {
       expect(t.type).toBe('function');

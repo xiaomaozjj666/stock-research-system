@@ -68,6 +68,11 @@ export interface ToolDeps {
   listDigests?: (limit?: number) => unknown[];
   /** 最近公告语境（标题一览 + 最新一篇正文摘录，原文口径） */
   getAnnouncements?: (code: string) => Promise<unknown>;
+  /** 估值建模：两阶段 EPS 贴现 + 可比公司表（假设可部分覆盖） */
+  runValuationModel?: (input: {
+    code: string;
+    assumptions?: { growthRate1?: number; growthRate2?: number; discountRate?: number };
+  }) => Promise<unknown>;
 }
 
 function truncate(s: string, n = 4000): string {
@@ -208,6 +213,26 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         type: 'object',
         properties: {
           stockCode: { type: 'string', description: '6 位股票代码' },
+        },
+        required: ['stockCode'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_valuation_model',
+      description:
+        '估值建模：两阶段 EPS 贴现 DCF（内在价值 + 敏感性矩阵）+ 同业可比表（PE/PB 中位数折溢价）。假设可省略（自动从年报 EPS 推导），也可显式覆盖。',
+      parameters: {
+        type: 'object',
+        properties: {
+          stockCode: { type: 'string', description: '6 位股票代码' },
+          growthRate1: {
+            type: 'number',
+            description: '显性期年增速（小数，如 0.12），缺省自动推导',
+          },
+          discountRate: { type: 'number', description: '折现率（小数，如 0.09），缺省 9%' },
         },
         required: ['stockCode'],
       },
@@ -379,6 +404,23 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
         return `${code} 最近没有可读的公告记录`;
       }
       return truncate(String(brief), 6000);
+    }
+    if (call.function.name === 'run_valuation_model') {
+      if (!deps.runValuationModel) return 'run_valuation_model 未配置';
+      const code = String(args.stockCode || '').trim();
+      if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
+      const assumptions: Record<string, number> = {};
+      if (typeof args.growthRate1 === 'number' && Number.isFinite(args.growthRate1)) {
+        assumptions.growthRate1 = args.growthRate1;
+      }
+      if (typeof args.discountRate === 'number' && Number.isFinite(args.discountRate)) {
+        assumptions.discountRate = args.discountRate;
+      }
+      const r = await deps.runValuationModel({
+        code,
+        ...(Object.keys(assumptions).length > 0 ? { assumptions } : {}),
+      });
+      return truncate(JSON.stringify(r, null, 2));
     }
     return `工具 ${call.function.name} 无处理器`;
   } catch (err) {

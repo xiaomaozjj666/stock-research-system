@@ -96,6 +96,8 @@ import { detectPatternEvents, PATTERN_NAMES } from '../quant/patternEvents.js';
 import { analyzeTimeseries } from '../quant/timeseries/analyze.js';
 import { listResearchDigests, runResearchDigest } from '../quant/researchDigest.js';
 import { fetchAnnouncementList, fetchAnnouncementContent } from '../quant/announcementProvider.js';
+import { runValuationModel } from '../quant/valuationModel.js';
+import { getData } from '../services/dataService.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import {
   fetchOHLCVData,
@@ -1417,6 +1419,40 @@ router.get('/api/quant/announcements', quantLimiter, async (req, res) => {
     }
     logger.error('Announcements error', { route: '/api/quant/announcements', err: error });
     res.status(502).json({ error: '公告获取失败（上游不可达时如实重试）' });
+  }
+});
+
+/**
+ * 估值建模：两阶段 EPS 贴现 + 可比公司表。假设可整体缺省（自动推导：基期 EPS 取
+ * 最新年报，显性期增速取 EPS 3 年 CAGR 钳制 [-20%,30%]，r=9%、g2=3%、5 年显性期）。
+ * 模型口径与局限随结果 limitations 返回，前端照实展示。
+ */
+router.post('/api/quant/valuation/model', quantLimiter, circuitBreakerGuard, async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const code = typeof body.code === 'string' ? body.code.trim() : '';
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({ error: '请提供 6 位股票代码' });
+    }
+    const { financial, valuation } = await getData(code);
+    const opts = (body.assumptions ?? {}) as Record<string, unknown>;
+    const num = (k: string): number | undefined =>
+      typeof opts[k] === 'number' && Number.isFinite(opts[k]) ? (opts[k] as number) : undefined;
+    const result = runValuationModel(code, financial, valuation, {
+      ...(num('growthRate1') !== undefined ? { growthRate1: num('growthRate1') } : {}),
+      ...(num('growthRate2') !== undefined ? { growthRate2: num('growthRate2') } : {}),
+      ...(num('discountRate') !== undefined ? { discountRate: num('discountRate') } : {}),
+      ...(num('explicitYears') !== undefined ? { explicitYears: num('explicitYears') } : {}),
+      ...(num('baseEps') !== undefined ? { baseEps: num('baseEps') } : {}),
+    });
+    res.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (/(需|必填|严格小于|正数|整数)/.test(msg)) {
+      return res.status(400).json({ error: msg });
+    }
+    logger.error('Valuation model error', { route: '/api/quant/valuation/model', err: error });
+    res.status(502).json({ error: '估值建模失败（数据获取或计算异常）' });
   }
 });
 
