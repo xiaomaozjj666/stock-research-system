@@ -105,7 +105,10 @@ function IcCell({ p }: { p: CrossSectionPeriodReport }) {
 
 export default function CrossSectionPanel({ active = true }: { active?: boolean }) {
   const { showToast } = useToast();
-  const [source, setSource] = useState<'board' | 'codes'>('board');
+  const [source, setSource] = useState<'board' | 'codes' | 'index'>('board');
+  /** 指数历史成分源（Baostock sidecar）：指数与可选快照日期 */
+  const [indexName, setIndexName] = useState<'hs300' | 'zz500' | 'sz50'>('hs300');
+  const [indexDate, setIndexDate] = useState('');
   const [boards, setBoards] = useState<IndustryBoard[]>([]);
   const [boardsError, setBoardsError] = useState<string | null>(null);
   // 板块默认留空，列表加载成功后自动选第一个——板块代码会随数据源体系调整
@@ -199,25 +202,25 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
     abortRef.current = controller;
     try {
       const horizons = parseHorizons(horizonsText);
+      const common = {
+        horizons,
+        includeFundamental,
+        includeEvents,
+        includeMargin,
+        ...(portfolioOn ? { portfolio: { holdDays: 21, topN: 5, costBps: 30 } } : {}),
+      };
       const data = await runCrossSectionEvaluation(
         source === 'board'
-          ? {
-              board,
-              topN,
-              horizons,
-              includeFundamental,
-              includeEvents,
-              includeMargin,
-              ...(portfolioOn ? { portfolio: { holdDays: 21, topN: 5, costBps: 30 } } : {}),
-            }
-          : {
-              codes: codes.slice(0, MAX_CODES),
-              horizons,
-              includeFundamental,
-              includeEvents,
-              includeMargin,
-              ...(portfolioOn ? { portfolio: { holdDays: 21, topN: 5, costBps: 30 } } : {}),
-            },
+          ? { board, topN, ...common }
+          : source === 'index'
+            ? {
+                indexUniverse: {
+                  index: indexName,
+                  ...(indexDate.trim() ? { date: indexDate.trim() } : {}),
+                },
+                ...common,
+              }
+            : { codes: codes.slice(0, MAX_CODES), ...common },
         controller.signal,
       );
       setResult(data);
@@ -235,6 +238,8 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
     source,
     board,
     topN,
+    indexName,
+    indexDate,
     codesText,
     codes,
     horizonsText,
@@ -245,7 +250,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
     showToast,
   ]);
 
-  const canRun = source === 'board' ? !!board : codes.length >= 2;
+  const canRun = source === 'board' ? !!board : source === 'index' ? true : codes.length >= 2;
 
   // 板块中文名从本面板已加载的板块列表解析（下拉是板块唯一入口，必有名称）；
   // 服务端不再为取名字多发一次板块列表请求
@@ -274,6 +279,14 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
             disabled={loading}
           >
             按行业板块
+          </button>
+          <button
+            type="button"
+            className={`quant-mode ${source === 'index' ? 'active' : ''}`}
+            onClick={() => setSource('index')}
+            disabled={loading}
+          >
+            指数历史成分
           </button>
           <button
             type="button"
@@ -324,6 +337,36 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
               <span className="batch-hint">
                 3-300；越大截面统计功效越强，数百只全市场面板冷启动可能耗时数分钟
               </span>
+            </label>
+          </div>
+        ) : source === 'index' ? (
+          <div className="batch-field-row">
+            <label className="batch-field">
+              <span className="batch-label">指数</span>
+              <select
+                className="batch-input"
+                value={indexName}
+                disabled={loading}
+                onChange={(e) => setIndexName(e.target.value as 'hs300' | 'zz500' | 'sz50')}
+              >
+                <option value="hs300">沪深300</option>
+                <option value="zz500">中证500</option>
+                <option value="sz50">上证50</option>
+              </select>
+              <span className="batch-hint">
+                历史成分快照（Baostock），含其后退市的证券——可正面观察幸存者偏差
+              </span>
+            </label>
+            <label className="batch-field">
+              <span className="batch-label">快照日期（可选）</span>
+              <input
+                type="date"
+                className="batch-input"
+                value={indexDate}
+                disabled={loading}
+                onChange={(e) => setIndexDate(e.target.value)}
+              />
+              <span className="batch-hint">留空 = 最新成分；指定日期取该日前最近一次调仓名单</span>
             </label>
           </div>
         ) : (
@@ -415,13 +458,23 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
       {result && !loading && (
         <>
           <p className="batch-summary">
-            {result.universe.source === 'board' ? `板块 ${boardLabel}` : '手输代码'} · 请求{' '}
-            {result.universe.requested} 只 · 入组 <b>{result.stocksIncluded.length}</b> · 跳过{' '}
+            {result.universe.source === 'board'
+              ? `板块 ${boardLabel}`
+              : result.universe.source === 'index'
+                ? `指数历史成分（${result.universe.index ?? ''}${
+                    result.universe.updateDate ? ` @ ${result.universe.updateDate}` : ''
+                  }）`
+                : '手输代码'}{' '}
+            · 请求 {result.universe.requested} 只 · 入组 <b>{result.stocksIncluded.length}</b> ·
+            跳过{' '}
             <b className={result.stocksSkipped.length > 0 ? 'negative' : ''}>
               {result.stocksSkipped.length}
             </b>{' '}
             · 因子 {result.factors.length} 个 · 持有期 {result.horizons.map(periodLabel).join('/')}
           </p>
+          {result.universe.survivorshipNote && (
+            <p className="batch-hint">{result.universe.survivorshipNote}</p>
+          )}
           {result.stocksSkipped.length > 0 && (
             <div className="batch-notice">
               ⚠ 跳过：

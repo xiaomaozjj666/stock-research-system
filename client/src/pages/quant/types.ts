@@ -351,10 +351,16 @@ export interface CrossSectionFactor {
 /** 截面因子评估响应 */
 export interface CrossSectionResult {
   universe: {
-    source: 'codes' | 'board';
+    source: 'codes' | 'board' | 'index';
     board?: string;
+    /** index 源：指数名与成分快照调仓日（Baostock 历史成分，含其后退市证券） */
+    index?: string;
+    requestedDate?: string | null;
+    updateDate?: string | null;
     requested: number;
     constituents?: { code: string; name: string }[];
+    /** 幸存者偏差 / 成分口径声明（服务端按宇宙来源生成） */
+    survivorshipNote?: string;
   };
   stocksIncluded: string[];
   stocksSkipped: { code: string; reason: string }[];
