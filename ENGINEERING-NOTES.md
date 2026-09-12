@@ -310,3 +310,33 @@ backtrader 主循环事实：Cerebro 只做组装与广播，**撮合真相在 B
 - **历史快照提示条**：回看历史时研究页顶部显示"正在查看历史快照（非实时分析）"提示（`viewingHistory` 状态，新分析开始即清除），避免用户误以为历史数据是实时结果。
 - **构建产物清理**：`client/vite.config.ts` 的 `build.emptyOutDir` 恢复为 `true`（沙箱安全删除守卫已不在，恢复 Vite 默认清理，dist 不再堆积旧产物）。
 - **验证**：825 tests 全绿 / client build OK（首屏无 echarts modulepreload）/ E2E 9/9 / 双端 tsc / lint / format:check 全过。
+
+## 2026-09-12 数据通道扩展实测事实（东财 datacenter / Tushare / Baostock）
+
+- **东财 datacenter 报表名逐一实测**（猜名必 9501「报表配置不存在」）：
+  - 融资融券明细 `RPTA_WEB_RZRQ_GGMX`：**时间列是 DATE 不是 DIM_DATE**（后者 9501
+    列不存在）；filter=(scode="600036")；RZYEZB=融资余额占总市值比（%，与
+    RZYE/SZ×100 互证）；RZJME=融资净买入。
+  - 盈利预测 `RPT_WEB_RESPREDICT`：一行一票；RATING_ORG/BUY/ADD/NEUTRAL/REDUCE/
+    SALE_NUM 评级分布；YEARn + YEAR_MARKn（"A"=实际/"E"=预测）+ EPSn 配对；
+    DEC_AIMPRICEMAX/MIN 目标价。**快照口径，无历史序列**。
+  - 北向持股 `RPT_MUTUAL_HOLDSTOCKNORTH_STA`：**2024-08 起只余季度快照一行**。
+- **Tushare 免费积分频控实测**（错误码 40203，报错文案随用量升级：1次/分钟 →
+  1次/小时 → 5次/天）：stock_basic 可用（L=5562，含行业）；index_weight 免费积分
+  **无权限**（非频控）。→ 请求路径禁止直连裸函数，一律 `*Cached` 包装
+  （24h/30d 缓存 + 失败回落陈旧缓存 + 同 key 并发去重，tushareAdapter 与
+  baostockBridge 同模式）。
+- **Baostock 0.9.3（本机 Python 3.13）**：
+  - 免费无注册，`bs.login()` 即用；本机 pip/python 版本错位（默认 pip 挂在另一条
+    Python 上）→ 用 `python -m pip install baostock -i https://pypi.org/simple`。
+  - 它会在 cwd 附近写运行日志 → sidecar 先 chdir 临时目录再 import。
+  - `query_hs300_stocks(date)` 返回 ≤date 最近一次调仓快照（以 updateDate 字段为
+    准）；code 是 "sh.600000" 格式需归一 6 位数字码；**历史快照含其后退市证券**
+    （2015 成分含武钢股份）——幸存者偏差修复数据源。
+  - login/logout 的 "success!" 打印会污染 stdout 协议 → `redirect_stdout(sys.stderr)`
+    包住全部 baostock 调用，stdout 只留最终一行 JSON。
+- **Windows spawn 传 JSON**：argv 引号转义不可靠 → 子进程协议一律走 stdin。
+- **CI prettier 检查 glob 含根目录 `*.{json,md,mjs}`**——本地自查必须与 CI glob
+  完全一致（曾因只查 ts/tsx 漏掉 DATA-SOURCES.md 等 CI 失败一轮）。
+- **vitest 过滤器必须从 repo root 用 `server/src/...` 相对路径**（include 是
+  `server/src/**`）；在 server/ 目录内跑会 "No test files found"。

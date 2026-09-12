@@ -35,7 +35,7 @@ flowchart TB
     SV --> LLM
     LLM --> DATA
     Q --> DATA
-    DATA -->|"公开行情/财务数据"| EXT["东方财富等公开数据源"]
+    DATA -->|"公开行情/财务数据"| EXT["东方财富 / Tushare Pro / Baostock（Python sidecar）等数据源"]
 ```
 
 ## 目录
@@ -126,7 +126,7 @@ server/          Express API 服务
   │   ├── expertRunner.ts        多专家并行 + 有限重试 + 单专家降级
   │   ├── analysisCheckpoint.ts  按阶段落盘的断点续跑（TTL 过期保护）
   │   └── outcomeTracker.ts      评级台账：实际收益回填 + 命中率统计
-  ├── quant/        回测引擎（Analyzer + CostModel + T+1）+ 因子分析 + 风险归因 + 模拟盘
+  ├── quant/        回测引擎（Analyzer + CostModel + T+1）+ 因子分析（量价/基本面PIT/事件/形态/两融）+ 因子组合回测 + 风险归因 + 模拟盘
   │   └── agents/     DataEngineer / BacktestAuditor / StrategyOptimizer
   ├── llm/          模型路由、成本治理、RAG、知识图谱、MCP 工具
   └── data/         证券主数据 / 模拟盘账户 / 审计日志 / 研究历史（本地缓存）
