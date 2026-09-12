@@ -3,6 +3,14 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-12 — 研究简报定时闭环 + Chat Agent 量化工具接入
+
+- `quant/researchDigest.ts`：研究简报（初筛最新状态 + 实验台账概览 + 与上一份的增量说明），落盘与 factorLedger 同模式（env 重定向 + 原子写 + 容量 60）。`startDigestScheduler` 由 `QUANT_DIGEST_INTERVAL_HOURS` 控制（默认 0 关闭），接线 `GET /api/quant/digests` 与 `POST /api/quant/digests/run`，前端新增简报面板（截面模式页）。
+- Chat Agent 新增 4 个 function-calling 工具：`get_screener_latest`（初筛最新结果）、`get_factor_experiments`（台账概览）、`run_timeseries_analyze`（时序计量，与 HTTP 端点同口径）、`list_recent_digests`（简报列表）；deps 注入可 mock。
+- 时序计量入口收敛到 `quant/timeseries/analyze.ts`：HTTP 路由与 Chat 工具共用同一实现，消除参数校验与窗口口径的漂移面；HTTP 层退化为薄包装（错误按数据不足/参数类映射 502/400）。
+- 组合回测参数化 UI：截面面板内可调调仓周期/持仓只数/单边成本（请求与展示同一 state，非法输入钳制回默认）。
+- 测试：+14（简报聚合/增量/轮换/调度开关、4 个新工具分支），全套 1473 通过。
+
 ## 2026-09-12 — Baostock Python sidecar：指数历史成分宇宙接入（本批）
 
 - **幸存者偏差的正面修复落地**：Baostock `query_hs300/zz500/sz50_stocks(date)` 提供任意历史日期的指数成分快照，**含其后退市的证券**（实测 2015-06-30 沪深300 成分含 2016 年退市的武钢股份）——东财免费通道与 Tushare 免费积分（index_weight 无权限）都给不了的数据。

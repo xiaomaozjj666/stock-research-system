@@ -12,6 +12,7 @@ import * as path from 'path';
 import { loadStockMaster } from './services/stockMaster.js';
 import { startOutcomeRefresher, stopOutcomeRefresher } from './services/outcomeTracker.js';
 import { startQuantCachePruner } from './quant/quantCache.js';
+import { startDigestScheduler } from './quant/researchDigest.js';
 import { configureTracer, expressTracerMiddleware } from './services/telemetry.js';
 import { httpMetricsMiddleware } from './services/metrics.js';
 import logger from './utils/logger.js';
@@ -265,6 +266,8 @@ if (process.env.NODE_ENV !== 'test') {
     startOutcomeRefresher();
     // 量化缓存（K线合并历史 + 基本面）定期清理：此前该目录无清理机制，磁盘无界增长
     startQuantCachePruner();
+    // 研究简报定时生成：QUANT_DIGEST_INTERVAL_HOURS 控制（默认 0 = 关闭）
+    startDigestScheduler();
   });
 
   // === Graceful Shutdown ===

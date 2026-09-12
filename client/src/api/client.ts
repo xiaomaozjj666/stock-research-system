@@ -786,6 +786,45 @@ export async function getFactorExperiments(params?: {
   }
 }
 
+/** 研究简报（初筛 + 台账聚合的定期快照） */
+export interface ResearchDigest {
+  id: string;
+  createdAt: string;
+  screener: {
+    at: string | null;
+    scanned: number | null;
+    eligible: number | null;
+    hitCount: number | null;
+    topHits: { code: string; name: string; strategy: string; detail: string }[];
+  };
+  ledger: {
+    total: number;
+    kept: number;
+    keptExpectedFalse: number;
+    keptOosShare: number;
+    bySource: Record<string, number>;
+  };
+  notes: string[];
+}
+
+export async function getResearchDigests(limit = 10): Promise<{ items: ResearchDigest[] }> {
+  try {
+    const response = await api.get('/quant/digests', { params: { limit }, timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '研究简报读取失败');
+  }
+}
+
+export async function runResearchDigestNow(): Promise<ResearchDigest> {
+  try {
+    const response = await api.post('/quant/digests/run', {}, { timeout: 60000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '研究简报生成失败');
+  }
+}
+
 /** 评估一条受限 DSL 因子表达式（不执行任意代码，越界由服务端拒绝） */
 /** 因子组合回测结果（top-N 等权、周期调仓、A 股成本） */
 export interface FactorPortfolioBacktest {

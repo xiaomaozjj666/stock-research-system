@@ -3,7 +3,17 @@ import { TOOL_DEFINITIONS, getTool, executeToolCall, type ToolDeps } from '../to
 
 describe('tool registry', () => {
   it('defines valid OpenAI-compatible tool schemas', () => {
-    expect(TOOL_DEFINITIONS.length).toBe(4);
+    expect(TOOL_DEFINITIONS.length).toBe(8);
+    expect(TOOL_DEFINITIONS.map((t) => t.function.name)).toEqual([
+      'run_analysis',
+      'compare_stocks',
+      'run_backtest',
+      'evaluate_backtest',
+      'get_screener_latest',
+      'get_factor_experiments',
+      'run_timeseries_analyze',
+      'list_recent_digests',
+    ]);
     for (const t of TOOL_DEFINITIONS) {
       expect(t.type).toBe('function');
       expect(t.function.name).toBeTruthy();
@@ -260,5 +270,119 @@ describe('tool registry', () => {
       deps,
     );
     expect(r).toContain('6 位');
+  });
+});
+
+describe('量化研究工具（初筛/台账/时序/简报）', () => {
+  it('get_screener_latest：有记录返回 JSON，无记录给可执行提示', async () => {
+    const r1 = await executeToolCall(
+      { id: '1', type: 'function', function: { name: 'get_screener_latest', arguments: '{}' } },
+      { getScreenerLatest: () => ({ at: '2026-09-12T10:00:00.000Z', hits: [1, 2] }) },
+    );
+    expect(r1).toContain('2026-09-12');
+    const r2 = await executeToolCall(
+      { id: '2', type: 'function', function: { name: 'get_screener_latest', arguments: '{}' } },
+      { getScreenerLatest: () => null },
+    );
+    expect(r2).toContain('还没有初筛记录');
+    expect(r2).toContain('/api/quant/screener/run');
+  });
+
+  it('get_factor_experiments：透传概览 JSON', async () => {
+    const r = await executeToolCall(
+      { id: '1', type: 'function', function: { name: 'get_factor_experiments', arguments: '{}' } },
+      {
+        getFactorExperimentSummary: () => ({
+          total: 30,
+          kept: 4,
+          keptExpectedFalse: 0.2,
+        }),
+      },
+    );
+    expect(r).toContain('"keptExpectedFalse": 0.2');
+  });
+
+  it('run_timeseries_analyze：未配置/代码非法/缺 code2 均有明确提示', async () => {
+    const r1 = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: {
+          name: 'run_timeseries_analyze',
+          arguments: '{"test":"garch","stockCode":"600519"}',
+        },
+      },
+      {},
+    );
+    expect(r1).toContain('未配置');
+    const r2 = await executeToolCall(
+      {
+        id: '2',
+        type: 'function',
+        function: {
+          name: 'run_timeseries_analyze',
+          arguments: '{"test":"garch","stockCode":"abc"}',
+        },
+      },
+      { runTimeseriesAnalyze: async () => ({}) },
+    );
+    expect(r2).toContain('6 位');
+    const r3 = await executeToolCall(
+      {
+        id: '3',
+        type: 'function',
+        function: {
+          name: 'run_timeseries_analyze',
+          arguments: '{"test":"coint","stockCode":"600036"}',
+        },
+      },
+      { runTimeseriesAnalyze: async () => ({}) },
+    );
+    expect(r3).toContain('code2');
+  });
+
+  it('run_timeseries_analyze：透传到注入实现（含 code2）', async () => {
+    const seen: { test: string; code: string; code2?: string }[] = [];
+    const r = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: {
+          name: 'run_timeseries_analyze',
+          arguments: JSON.stringify({ test: 'coint', stockCode: '600036', code2: '601318' }),
+        },
+      },
+      {
+        runTimeseriesAnalyze: async (input) => {
+          seen.push(input);
+          return { test: input.test, ok: true };
+        },
+      },
+    );
+    expect(seen[0]).toEqual({ test: 'coint', code: '600036', code2: '601318' });
+    expect(r).toContain('"ok": true');
+  });
+
+  it('list_recent_digests：空列表给生成提示；limit 钳制到 [1,20]', async () => {
+    const r1 = await executeToolCall(
+      { id: '1', type: 'function', function: { name: 'list_recent_digests', arguments: '{}' } },
+      { listDigests: () => [] },
+    );
+    expect(r1).toContain('还没有研究简报');
+    const seen: number[] = [];
+    await executeToolCall(
+      {
+        id: '2',
+        type: 'function',
+        function: { name: 'list_recent_digests', arguments: '{"limit":999}' },
+      },
+      {
+        listDigests: (limit?: number) => {
+          seen.push(limit ?? -1);
+          return [{ id: 'a' }];
+        },
+      },
+    );
+    expect(seen[0]).toBe(20);
   });
 });
