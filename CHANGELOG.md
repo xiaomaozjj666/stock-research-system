@@ -3,6 +3,15 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-12 — Tushare token 配置 + 适配器实机验证接线（本批）
+
+- token 注入 `server/.env`（gitignored，不入库），`.env.example` 补文档块。
+- **免费积分频控实测**：`stock_basic` 1 次/小时（40203，报错文案随用量从 1 次/分钟升级）；
+  `index_weight` 免费积分**无权限**（40203「没有接口访问权限」）——历史成分缺口需充值积分或走 Baostock。
+- 适配器加 `*Cached` 包装：24h 磁盘缓存（`QUANT_TUSHARE_CACHE_TTL_HOURS` 可覆盖）+ 上游失败回落陈旧缓存 + 并发去重；请求路径禁止直连裸函数（头注释写死纪律）。
+- 接线：`/api/quant/health` 新增 `tushare` 块（配置态 / 上市·退市·暂停计数 / 失败降级披露，不影响 preflight.ok）；截面响应幸存者偏差声明在 token 可用时附退市股名单规模。
+- 实测：`stock_basic` L=5562 只（含行业）；缓存/陈旧兜底/并发去重 + TTL=0 旁路 + health 双路径 单测覆盖。
+
 ## 2026-09-12 — 数据面扩容 + 组合回测 T+1 撮合（本批）
 
 - **两融因子族**（`quant/marginProvider.ts`）：东财 datacenter `RPTA_WEB_RZRQ_GGMX` 逐股日度两融序列（字段口径实测：DATE/RZYE/RZJME/RZYEZB，RZYEZB=融资余额占总市值比）。新因子 `mg_balance_chg20`（融资余额 20 日变化率，杠杆资金动量）与 `mg_balance_pct`（占比，杠杆拥挤度）。**PIT + T+1 披露延迟**：交易所两融数据 T 日交易 T+1 盘前披露，t 日因子值强制只用严格早于 t 的行；截面路由 `includeMargin` 开关（默认开），失败降级为缺席不拖垮其余因子。
