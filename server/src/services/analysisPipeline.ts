@@ -38,6 +38,7 @@ import {
   formatConsensusBrief,
   type ConsensusSnapshot,
 } from '../quant/consensusProvider.js';
+import { buildAnnouncementBrief } from '../quant/announcementProvider.js';
 import { styleFactorExposures, decomposeRisk } from '../quant/riskAttribution.js';
 import { withTimeout } from '../utils/timeout.js';
 import logger from '../utils/logger.js';
@@ -238,6 +239,15 @@ export async function runAnalysis(
     consensusBrief = consensus ? formatConsensusBrief(consensus) : null;
   } catch (err) {
     logger.warn('机构一致预期获取失败，降级跳过', { stockCode, err: err as Error });
+  }
+
+  // 2.5 最近公告语境（标题一览 + 最新一篇正文摘录）：尽力而为（限时 6s），失败不阻断。
+  //     只呈现公告原文（截断标注），专家研判可回指原文，不做摘要改写。
+  let announcementBrief: string | null = null;
+  try {
+    announcementBrief = await withTimeout(buildAnnouncementBrief(stockCode), 6000);
+  } catch (err) {
+    logger.warn('最近公告获取失败，降级跳过', { stockCode, err: err as Error });
   }
 
   // 3. 多专家独立研判（并行 + 单专家降级 + 断点复用）
@@ -578,10 +588,56 @@ export async function runAnalysis(
       name: '年度财务报告',
       description: `公司${financial.years[0]}-${financial.years[n - 1]}年公开年报数据`,
       confidence: 90,
+      coverage: '基本面专家 / 估值水平 / 财务指标表',
     },
-    { name: '实时行情数据', description: '东方财富/新浪财经实时行情接口', confidence: 85 },
-    { name: '行业对比数据', description: '同业可比公司公开财务指标', confidence: 80 },
-    { name: '估值历史数据', description: '历史PE/PB等估值指标', confidence: 75 },
+    {
+      name: '实时行情数据',
+      description: '东方财富/新浪财经实时行情接口',
+      confidence: 85,
+      coverage: 'K线图 / 回测价格 / 资金筹码专家',
+    },
+    {
+      name: '行业对比数据',
+      description: '同业可比公司公开财务指标',
+      confidence: 80,
+      coverage: '行业专家 / 可比公司表',
+    },
+    {
+      name: '估值历史数据',
+      description: '历史PE/PB等估值指标',
+      confidence: 75,
+      coverage: '估值分位 / 情景推演',
+    },
+    ...(newsSignal?.hasNews
+      ? [
+          {
+            name: '新闻舆情',
+            description: '个股新闻检索与情绪打分（有新闻时出现）',
+            confidence: 70,
+            coverage: '消息情绪信号 / newsAware 策略对比',
+          },
+        ]
+      : []),
+    ...(consensus
+      ? [
+          {
+            name: '机构一致预期',
+            description: '东财分析师盈利预测与北向持股快照',
+            confidence: 78,
+            coverage: '一致预期卡片（当前快照口径）',
+          },
+        ]
+      : []),
+    ...(announcementBrief
+      ? [
+          {
+            name: '公司公告',
+            description: '东财公告网关：标题一览 + 最新一篇正文摘录（原文口径）',
+            confidence: 88,
+            coverage: '公告语境块（LLM 研判与报告展示）',
+          },
+        ]
+      : []),
   ];
 
   // 12. 情景推演（可选叠加最新消息情绪 z 与极性微调）
@@ -799,6 +855,7 @@ export async function runAnalysis(
         strategyList: strategyList,
         newsSentiment: newsSignal?.hasNews ? newsSignal : undefined,
         consensus: consensus ?? undefined,
+        announcement_brief: announcementBrief ?? undefined,
         knowledgeGraphContext,
         sectorRotation: sectorRotationSignal,
         riskAttribution: {

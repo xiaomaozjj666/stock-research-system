@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import EChart from '../../components/EChart';
 import {
   getPaperPortfolio,
   placePaperOrder,
@@ -6,10 +7,11 @@ import {
   getPaperStats,
   getAuditLog,
   getIntlFundamentals,
+  getIntlKlines,
   normalizeApiError,
 } from '../../api/client';
+import type { IntlKline } from '../../api/client';
 import StockSearchInput from '../../components/StockSearchInput';
-import EChart from '../../components/EChart';
 import type {
   PaperPortfolio,
   PaperStats,
@@ -148,6 +150,8 @@ export default function PaperTradingPage() {
   const [intlCode, setIntlCode] = useState('');
   const [intlMarket, setIntlMarket] = useState<'' | 'HK' | 'US'>('');
   const [intlResult, setIntlResult] = useState<IntlFundamentalsResult | null>(null);
+  const [intlKlines, setIntlKlines] = useState<IntlKline[] | null>(null);
+  const [intlKlineError, setIntlKlineError] = useState<string | null>(null);
   const [intlLoading, setIntlLoading] = useState(false);
 
   // 审计日志
@@ -278,6 +282,21 @@ export default function PaperTradingPage() {
     try {
       const res = await getIntlFundamentals(code, intlMarket || undefined);
       setIntlResult(res);
+      setIntlKlines(null);
+      setIntlKlineError(null);
+      try {
+        const end = new Date().toISOString().slice(0, 10);
+        const start = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+        const k = await getIntlKlines({
+          code,
+          market: res.fundamentals?.market ?? intlMarket ?? undefined,
+          startDate: start,
+          endDate: end,
+        });
+        setIntlKlines(k.klines);
+      } catch (err) {
+        setIntlKlineError(err instanceof Error ? err.message : String(err));
+      }
     } catch (err) {
       setError(normalizeApiError(err, '港美股数据获取失败').message);
     } finally {
@@ -657,6 +676,35 @@ export default function PaperTradingPage() {
                   </tr>
                 </tbody>
               </table>
+              {intlKlines && intlKlines.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <EChart
+                    option={{
+                      grid: { left: 56, right: 16, top: 28, bottom: 40 },
+                      tooltip: { trigger: 'axis' },
+                      xAxis: { type: 'category', data: intlKlines.map((k) => k.date) },
+                      yAxis: {
+                        type: 'value',
+                        scale: true,
+                        name: intlResult.fundamentals.currency,
+                      },
+                      series: [
+                        {
+                          type: 'line',
+                          name: '收盘价',
+                          data: intlKlines.map((k) => k.close),
+                          showSymbol: false,
+                          lineStyle: { width: 1.5 },
+                        },
+                      ],
+                      color: ['#ef3f4c'],
+                    }}
+                    style={{ height: 260, width: '100%' }}
+                  />
+                  <p className="paper-note">近一年日收盘价（{intlKlines.length} 根）</p>
+                </div>
+              )}
+              {intlKlineError && <p className="paper-note">K 线加载失败：{intlKlineError}</p>}
               <p className="paper-note">
                 数据源：{intlResult.source} · 抓取时间{' '}
                 {new Date(intlResult.fetchedAt).toLocaleString('zh-CN')}

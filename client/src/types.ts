@@ -53,6 +53,8 @@ export interface DataSource {
   name: string;
   description: string;
   confidence: number;
+  /** 覆盖范围：报告里哪些模块的数字来自该来源（溯源用） */
+  coverage?: string;
 }
 
 // 专家论点

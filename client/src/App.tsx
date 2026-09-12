@@ -475,16 +475,36 @@ function App() {
                   </RevealSection>
                 )}
 
-                {/* 数据来源标签 */}
+                {/* 数据来源与覆盖范围（溯源表：来源 → 报告里哪些数字出自它） */}
                 {analysisResult?.data_sources && analysisResult.data_sources.length > 0 && (
                   <RevealSection>
-                    <div className="data-source-tags">
-                      {analysisResult.data_sources.map((src, i) => (
-                        <span key={i} className="chip chip-neutral">
-                          {src.name}
-                          <span className="chip-confidence">{src.confidence}%</span>
-                        </span>
-                      ))}
+                    <div className="card data-source-table">
+                      <h4 className="quant-panel-title">数据来源与覆盖范围</h4>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>来源</th>
+                            <th>说明</th>
+                            <th>覆盖的报告模块</th>
+                            <th>置信度</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {analysisResult.data_sources.map((src, i) => (
+                            <tr key={i}>
+                              <td className="ds-name">{src.name}</td>
+                              <td className="ds-desc">{src.description}</td>
+                              <td className="ds-coverage">{src.coverage ?? '—'}</td>
+                              <td>
+                                <span className="chip-confidence">{src.confidence}%</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="batch-hint">
+                        各模块数字可在对应卡片中回看；公告与新闻类来源为原文口径，研判结论不构成投资建议。
+                      </p>
                     </div>
                   </RevealSection>
                 )}

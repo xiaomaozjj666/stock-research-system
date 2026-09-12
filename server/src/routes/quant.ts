@@ -95,6 +95,7 @@ import {
 import { detectPatternEvents, PATTERN_NAMES } from '../quant/patternEvents.js';
 import { analyzeTimeseries } from '../quant/timeseries/analyze.js';
 import { listResearchDigests, runResearchDigest } from '../quant/researchDigest.js';
+import { fetchAnnouncementList, fetchAnnouncementContent } from '../quant/announcementProvider.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import {
   fetchOHLCVData,
@@ -1391,6 +1392,31 @@ router.post('/api/quant/digests/run', quantLimiter, (req, res) => {
   } catch (error) {
     logger.error('Digest run error', { route: '/api/quant/digests/run', err: error });
     res.status(500).json({ error: '研究简报生成失败' });
+  }
+});
+
+/** 公告列表（默认最近 10 条）；带 artCode 参数时返回该篇全文 */
+router.get('/api/quant/announcements', quantLimiter, async (req, res) => {
+  try {
+    const code = String(req.query.code ?? '').trim();
+    const artCode = String(req.query.artCode ?? '').trim();
+    if (artCode) {
+      const content = await fetchAnnouncementContent(artCode);
+      return res.json({ artCode, content });
+    }
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({ error: '公告查询需 6 位 A 股代码' });
+    }
+    const limitRaw = Number(req.query.pageSize);
+    const pageSize = Number.isFinite(limitRaw) ? limitRaw : 10;
+    res.json(await fetchAnnouncementList(code, pageSize));
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (/(需|必填)/.test(msg)) {
+      return res.status(400).json({ error: msg });
+    }
+    logger.error('Announcements error', { route: '/api/quant/announcements', err: error });
+    res.status(502).json({ error: '公告获取失败（上游不可达时如实重试）' });
   }
 });
 

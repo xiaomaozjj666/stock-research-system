@@ -66,6 +66,8 @@ export interface ToolDeps {
   }) => Promise<unknown>;
   /** 最近的研究简报 */
   listDigests?: (limit?: number) => unknown[];
+  /** 最近公告语境（标题一览 + 最新一篇正文摘录，原文口径） */
+  getAnnouncements?: (code: string) => Promise<unknown>;
 }
 
 function truncate(s: string, n = 4000): string {
@@ -193,6 +195,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         properties: {
           limit: { type: 'number', description: '返回条数，默认 5' },
         },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_recent_announcements',
+      description:
+        '获取单只 A 股最近公告：标题一览 + 最新一篇正文摘录（原文，未改写）。回答「最近有什么公告」「公司刚发了什么」类问题时使用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          stockCode: { type: 'string', description: '6 位股票代码' },
+        },
+        required: ['stockCode'],
       },
     },
   },
@@ -352,6 +369,16 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
         return '还没有研究简报：POST /api/quant/digests/run 可手动生成一份';
       }
       return truncate(JSON.stringify(items, null, 2));
+    }
+    if (call.function.name === 'get_recent_announcements') {
+      if (!deps.getAnnouncements) return 'get_recent_announcements 未配置';
+      const code = String(args.stockCode || '').trim();
+      if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
+      const brief = await deps.getAnnouncements(code);
+      if (!brief || (typeof brief === 'string' && brief.trim() === '')) {
+        return `${code} 最近没有可读的公告记录`;
+      }
+      return truncate(String(brief), 6000);
     }
     return `工具 ${call.function.name} 无处理器`;
   } catch (err) {
