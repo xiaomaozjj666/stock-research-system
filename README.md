@@ -166,6 +166,8 @@ npm run dev:client    # 前端 → http://localhost:5173
 
 > 可选增强（Python 侧车）：Baostock 指数历史成分通道由 `server/scripts/baostock-sidecar.py` 提供，除标准库外**仅依赖 `baostock`**，需另行 `pip install baostock`；未安装时该增强通道优雅跳过，不影响其余功能。
 
+> 可选增强（PDF 入库）：研报/财报/公告的 **PDF** 抽取依赖 `pdfjs-dist`（`server/src/quant/pdfExtract.ts` 用动态 import 加载，故未安装时不影响构建与其余功能），需另行 `npm i pdfjs-dist`；未安装时该入口会抛出明确错误并提示改用纯文本入口 `text`，**不会静默降级**。
+
 生产构建：
 
 ```bash
