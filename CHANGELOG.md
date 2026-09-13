@@ -3,6 +3,13 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-12 — 多步研究 Agent 规划层：AlphaSense 式四阶段编排
+
+- 新增 `server/src/research-agent/`（19 个文件，含独立 `DESIGN.md`）：把「研究问题 → 结构化研究报告」拆为 **Planner → Retriever → Verifier → Synthesizer → Report** 四阶段可观测编排。`ResearchOrchestrator`（`orchestrator.ts`）持有事件总线（`AgentEvent`）、运行统计（`RunStats`）、终止门与 replan；证据模型强制携带 `SourceRef` + `AcquisitionPath`（轮次 / 查询词 / 适配器 / 尝试次数 / 降级链），可信度 = 来源层级基准分 × 时效衰减，不与 LLM 自评耦合。
+- 收敛与兜底：四重终止条件（P0 全部达标 / 连续 N 轮无新证据 / 达 `maxRounds` / 无待办任务）保证有限轮数内产出结果；证据不足自动触发补充检索，检索失败或持续证据不足触发 replan（计划版本化修订，**P0 不可被丢弃**）；结论编排对 `keyEvidenceIds` 做存在性校验，编造 ID 一律剔除并回退到验证采信集合；检索失败、证据不足与未决冲突全部进报告 `limitations`。
+- 公共 API 出口 `index.ts`：`ResearchOrchestrator` / `EvidenceRetriever` / `createPlan`·`revisePlan` / `verifySubQuestion`·`computeEvidenceStrength`·`buildSupplementHints` / `synthesize` / `renderReportMarkdown` / `completeJson`；LLM 与检索适配器为接口定义，具体渠道由调用方注入。
+- 测试 +58（7 个文件：15 项编排 e2e + planner/retriever/verifier/synthesizer/utils/report 单元测试），全套 **1553 通过**；模块逻辑覆盖率 lines 98.1% / functions 97.5% / branches 92.2%。
+
 ## 2026-09-12 — 内置估值建模：两阶段 EPS 贴现 + 可比公司表
 
 - `quant/valuationModel.ts`（纯函数零依赖）：`twoStageEpsDcf`（显性期 + Gordon 终值，
@@ -154,7 +161,7 @@
 - **多模型集成投票与校准**（`llm/ensemble.ts`）：并行多模型加权共识 + 一致度；校准权重为 Laplace 平滑命中率（下限 1/3），无标签不更新、不编造准确率。**默认单模型（关闭）**，`LLM_ENSEMBLE_SIZE>1` 或显式传 models 才启用；端点 `POST /api/llm/ensemble`、`GET/POST /api/llm/calibration`。
 - **技能路由**（`llm/skillRouter.ts`）：确定性规则表判定细分技能并附回归基准；`AgentPlan` 增加可选 `skill` 标签（不改变执行路径）。
 - **研究记忆**（`llm/researchMemory.ts`）：同股票历史结论 + 已验证因子作为研究先验；端点 `GET /api/quant/research-memory/:code`。
-- **MCP server**（`mcp/server.ts`，`npm run mcp:serve`）：stdio JSON-RPC 薄适配器，5 个工具暴露给 Cursor / Claude Code / Cline。
+- **MCP server**（`mcp/server.ts`，`npm run mcp:serve`）：stdio JSON-RPC 薄适配器，9 个工具暴露给 Cursor / Claude Code / Cline。
 
 ### 长任务取消与健壮性（feat/fix，2026-09-06 起）
 

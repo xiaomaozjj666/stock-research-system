@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-1370%20cases-brightgreen" alt="1370 测试用例" />
+  <img src="https://img.shields.io/badge/tests-1553%20cases-brightgreen" alt="1553 测试用例" />
   <img src="https://img.shields.io/badge/CI-GitHub%20Actions-brightgreen" alt="CI" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -82,6 +82,14 @@ flowchart TB
 **对话式研究助手**
 自然语言提问，检索增强（RAG）取证、多空辩论、事实校验与幻觉防护、知识图谱上下文，SSE 流式返回，支持研究增强模式。
 
+**多步研究 Agent 规划层**
+把「研究问题 → 结构化研究报告」拆为 Planner / Retriever / Verifier / Synthesizer 四阶段编排：Planner 拆解子问题（P0/P1/P2 优先级 + 预期来源 + 成功判据）→ Retriever 按计划取证（每条证据强制携带来源与获取路径：轮次 / 查询词 / 适配器 / 降级链）→ Verifier 交叉验证（一致性判定 + 冲突按维度结构化留痕，未决冲突进报告局限性）→ Synthesizer 结论编排 + Markdown 渲染；引用不可幻觉，编造的证据 ID 一律剔除并回退到验证采信集合。P0 子问题不可被 replan 丢弃，四重终止条件（P0 全部达标 / 连续无新证据 / 达轮数上限 / 无待办任务）保证有限轮数内收敛，检索失败与证据不足一律如实进 `limitations` 而非静默。模块入口 `server/src/research-agent/`（公共 API 见 `index.ts`，设计详见 `DESIGN.md`，LLM 与检索适配器由调用方注入）：
+
+```ts
+const agent = new ResearchOrchestrator({ llm, adapters, onEvent });
+const { report, reportMarkdown, events } = await agent.run('分析 XX 行业 2026 年竞争格局');
+```
+
 **港美股财务估值**
 港美股基本面与估值数据（东方财富 datacenter 网关，免费无 token）。
 
@@ -144,7 +152,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 前端组件，923 用例）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，1553 用例 / 140 个测试文件）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
 
 ## 快速开始
 
@@ -155,6 +163,8 @@ npm run dev:client    # 前端 → http://localhost:5173
 ```
 
 > 安装说明：`--legacy-peer-deps` 用于绕过 TypeScript 7 与 typescript-eslint 的 peer 依赖冲突；`--dangerously-allow-all-scripts` 用于放行 esbuild 等构建工具的原生安装脚本（本仓库依赖无第三方 postinstall 恶意脚本，仅本机安装依赖时使用该参数）。
+
+> 可选增强（Python 侧车）：Baostock 指数历史成分通道由 `server/scripts/baostock-sidecar.py` 提供，除标准库外**仅依赖 `baostock`**，需另行 `pip install baostock`；未安装时该增强通道优雅跳过，不影响其余功能。
 
 生产构建：
 
@@ -226,6 +236,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 
 可用工具：`quant_health`（上游预检）、`quant_universe_boards`（板块列表）、
 `quant_cross_section`（截面因子评估）、`quant_factor_expression`（因子假设实验室）、
+`quant_factor_expression_batch`（批量因子假设验证，≤50 条共享同一面板）、
 `quant_factor_experiments`（实验台账查询）、`quant_screener_run` / `quant_screener_latest`
 （全市场初筛）、`quant_timeseries_analyze`（ADF/GARCH/协整/ARIMA/Kalman 时间序列计量）。
 同一套量化能力也已接入站内 Chat Agent（function-calling）：对话中可直接触发初筛结果
@@ -234,7 +245,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（1370 用例：服务 / 量化 / 前端组件）
+npm test              # Vitest 全量单测（1553 用例 / 140 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（9 用例，真实浏览器 + 隔离数据）
 npm run lint          # ESLint
 npm run format:check  # Prettier 格式检查

@@ -25,8 +25,8 @@ jobs:
         uses: actions/setup-node@v7
         with:
           # 与本地一致（本地 Node v24.19.0 / npm 12.0.2）。
-          # 当前 24.x 均捆绑 npm ≥12，可识别根 package.json 的 allowScripts 字段
-          # 与 --dangerously-allow-all-scripts 参数（见下方 install 说明）。
+          # 当前 24.x 均捆绑 npm ≥12，可识别 --dangerously-allow-all-scripts 参数
+          # （见下方 install 说明）。
           node-version: 24
           cache: npm
 
@@ -34,7 +34,7 @@ jobs:
         # 参照 ENGINEERING-NOTES 的安装命令（npm ci 按 lockfile 复刻，v3 锁文件）：
         #   --legacy-peer-deps        绕过 TS7 的 peer 约束
         #   --dangerously-allow-all-scripts  放行 esbuild 等依赖构建脚本
-        #     （根 package.json 的 allowScripts 已声明 esbuild，参数为兜底）
+        #     （根 package.json 已无 allowScripts 字段，该参数为唯一放行手段）
         run: npm ci --legacy-peer-deps --dangerously-allow-all-scripts --no-audit --no-fund
 
       - name: Lint
