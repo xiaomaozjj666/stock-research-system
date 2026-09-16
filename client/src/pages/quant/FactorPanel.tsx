@@ -7,6 +7,7 @@ import type {
   CompositeDirection,
 } from './types';
 import IcDecayChart from './IcDecayChart';
+import { signCls } from '../../lib/colors';
 
 /** 因子中文显示名（提升可读性，原始 key 为英文） */
 const FACTOR_LABELS: Record<PriceVolumeFactorName, string> = {
@@ -68,12 +69,10 @@ const DIRECTION_LABEL: Record<CompositeDirection, string> = {
 
 /** 多因子加权组合 alpha 汇总条：综合方向 + 各持有期 α + 显著因子数 + 方向一致率 */
 function CompositeSummary({ alpha }: { alpha: CompositeAlpha }) {
-  const dirCls =
-    alpha.overallDirection === 'up'
-      ? 'sig-valid'
-      : alpha.overallDirection === 'down'
-        ? 'sig-inverted'
-        : 'sig-none';
+  // 方向（看多/看空）是"涨跌"语义 → 走红涨绿跌；此前借用显著性色板，
+  // 导致"看多"显示为绿色，与 A 股惯例及同页其它模块矛盾
+  const directionSign: Record<CompositeDirection, number> = { up: 1, down: -1, neutral: 0 };
+  const dirCls = signCls(directionSign[alpha.overallDirection]);
   return (
     <div className="composite-summary">
       <div className={`composite-overall ${dirCls}`}>
@@ -86,9 +85,7 @@ function CompositeSummary({ alpha }: { alpha: CompositeAlpha }) {
             <span className="composite-horizon-period">
               {h.period === 21 ? '1月' : h.period === 63 ? '3月' : `${h.period}日`}
             </span>
-            <span
-              className={`composite-alpha ${h.direction === 'up' ? 'sig-valid' : h.direction === 'down' ? 'sig-inverted' : 'sig-none'}`}
-            >
+            <span className={`composite-alpha ${signCls(directionSign[h.direction])}`}>
               α {h.alpha >= 0 ? '+' : ''}
               {h.alpha.toFixed(3)}
             </span>
