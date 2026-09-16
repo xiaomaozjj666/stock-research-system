@@ -860,3 +860,86 @@ describe('审计日志落盘持久化（JSON 行追加到 audit.log）', () => {
     expect(throwing.size()).toBe(1);
   });
 });
+
+// ============================================================================
+// 辅助函数与 traceId 打通
+// ----------------------------------------------------------------------------
+// 背景（审计）：AuditEntry 早已支持 traceId，但四个 helper 都不接受该参数，
+// 生产调用点无一处传入 → 审计条目无法回查请求链路。这里同时钉住两件事：
+//   1. 传入 traceId 时条目里能读到（且可按 traceId 查询到）；
+//   2. 不传时**字段缺省**（不出现 traceId: undefined 之类脏值）。
+// ============================================================================
+describe('辅助函数 — traceId 透传', () => {
+  beforeEach(() => {
+    auditLogger.clear();
+  });
+
+  it('auditLLMCall 接受 traceId 并写入条目', () => {
+    const entry = auditLLMCall('s1', 'gpt-4', 'p', 'r', 'low', 'trace-llm');
+    expect(entry.traceId).toBe('trace-llm');
+    expect(auditLogger.query({ traceId: 'trace-llm' })).toHaveLength(1);
+  });
+
+  it('auditToolCall 接受 traceId 并写入条目', () => {
+    const entry = auditToolCall('s1', 'run_analysis', {}, {}, 'low', 'trace-tool');
+    expect(entry.traceId).toBe('trace-tool');
+    expect(auditLogger.query({ traceId: 'trace-tool' })[0].category).toBe('tool_call');
+  });
+
+  it('auditTradeSignal 接受 traceId 并写入条目', () => {
+    const entry = auditTradeSignal('s1', '600519', '买入', '基本面良好', 'trace-trade');
+    expect(entry.traceId).toBe('trace-trade');
+    expect(entry.riskLevel).toBe('medium'); // 追加参数不影响既有风险分级
+  });
+
+  it('auditDataAccess 接受 traceId 并写入条目', () => {
+    const entry = auditDataAccess('s1', '行情接口', 'read', 'trace-data');
+    expect(entry.traceId).toBe('trace-data');
+    expect(auditLogger.query({ traceId: 'trace-data' })[0].action).toBe('data.read');
+  });
+
+  it('不传 traceId 时字段缺省（条目里没有该键，也没有 undefined 脏值）', () => {
+    const entries = [
+      auditLLMCall('s1', 'm', 'p', 'r'),
+      auditToolCall('s1', 't', {}, {}),
+      auditTradeSignal('s1', '600519', '买入', 'r'),
+      auditDataAccess('s1', 'res', 'read'),
+    ];
+    for (const e of entries) {
+      expect('traceId' in e).toBe(false);
+      expect(e.traceId).toBeUndefined();
+      // 落盘/导出走 JSON.stringify：不得出现 "traceId":null 之类占位
+      expect(JSON.stringify(e)).not.toContain('traceId');
+    }
+  });
+
+  it('log() 直接调用时同样"传了就写、不传就没有"', () => {
+    const withTrace = auditLogger.log({
+      sessionId: 's1',
+      action: 'a',
+      category: 'system',
+      detail: '1',
+      riskLevel: 'info',
+      traceId: 'trace-direct',
+    });
+    const withoutTrace = auditLogger.log({
+      sessionId: 's1',
+      action: 'b',
+      category: 'system',
+      detail: '2',
+      riskLevel: 'info',
+    });
+    expect(withTrace.traceId).toBe('trace-direct');
+    expect('traceId' in withoutTrace).toBe(false);
+    // 导出（含全量条目）时也不出现脏字段
+    expect(auditLogger.export()).not.toContain('"traceId": null');
+  });
+
+  it('同一 traceId 可把多条审计条目串成一条链路', () => {
+    auditLLMCall('s1', 'm', 'p', 'r', 'low', 'trace-chain');
+    auditToolCall('s1', 't', {}, {}, 'low', 'trace-chain');
+    auditDataAccess('s1', 'res', 'read', 'trace-chain');
+    auditDataAccess('s1', 'res', 'read'); // 无链路：不应被串进来
+    expect(auditLogger.query({ traceId: 'trace-chain' })).toHaveLength(3);
+  });
+});

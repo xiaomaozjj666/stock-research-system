@@ -6082,3 +6082,17 @@ button.comparison-tag-add:disabled {
   display: flex;
   gap: 8px;
 }
+
+/* ===== 窄屏宽表：给出"可横向滑动"的视觉线索 =====
+   这些容器本就有 overflow-x:auto，但没有任何提示——用户看到被截断的列会以为
+   数据缺失。右侧内阴影是常见且零副作用的滑动暗示（不改变滚动与布局）。 */
+@media (max-width: 768px) {
+  .finance-table-wrap,
+  .comparison-table-wrap,
+  .watchlist-table-wrap,
+  .batch-table-wrap,
+  .factor-table-wrap,
+  .quant-sensitivity-table-wrap {
+    box-shadow: inset -14px 0 12px -12px rgba(0, 0, 0, 0.55);
+  }
+}

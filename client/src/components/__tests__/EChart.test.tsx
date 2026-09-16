@@ -31,10 +31,15 @@ describe('EChart 轻量封装（替代 echarts-for-react）', () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverStub);
   });
 
-  it('挂载时 init 并应用 option（notMerge 整体替换）', () => {
+  it('挂载时 init 并应用 option（增量合并 + 指定组件 replaceMerge）', () => {
     render(<EChart option={{ a: 1 }} style={{ height: 280 }} />);
     expect(echartsMock.init).toHaveBeenCalledTimes(1);
-    expect(chart.setOption).toHaveBeenCalledWith({ a: 1 }, { notMerge: true });
+    // notMerge:false 让图表按组件增量更新而非整图重建；replaceMerge 兜住"系列数变少"的场景
+    // （例如关掉 MACD 后旧系列必须被移除）
+    expect(chart.setOption).toHaveBeenCalledWith(
+      { a: 1 },
+      { notMerge: false, replaceMerge: ['series', 'xAxis', 'yAxis', 'grid', 'dataZoom'] },
+    );
   });
 
   it('option 内容不变时（新对象引用）不重复 setOption（滚动重渲染防抖）', () => {
@@ -49,7 +54,20 @@ describe('EChart 轻量封装（替代 echarts-for-react）', () => {
   it('option 内容变化时增量 setOption', () => {
     const { rerender } = render(<EChart option={{ a: 1 }} />);
     rerender(<EChart option={{ a: 2 }} />);
-    expect(chart.setOption).toHaveBeenLastCalledWith({ a: 2 }, { notMerge: true });
+    expect(chart.setOption).toHaveBeenLastCalledWith(
+      { a: 2 },
+      { notMerge: false, replaceMerge: ['series', 'xAxis', 'yAxis', 'grid', 'dataZoom'] },
+    );
+  });
+
+  it('传入 ariaLabel 时给出 role=img 的文本替代；不传则不生成空名元素', () => {
+    const { container, rerender } = render(<EChart option={{}} ariaLabel="回测权益曲线" />);
+    const labeled = container.querySelector('[role="img"]');
+    expect(labeled?.getAttribute('aria-label')).toBe('回测权益曲线');
+
+    // 不传时不应留下"有名无实"的 role=img（读屏会念"图像"却无内容）
+    rerender(<EChart option={{}} />);
+    expect(container.querySelector('[role="img"]')).toBeNull();
   });
 
   it('卸载时 dispose 图表实例（防泄漏）', () => {

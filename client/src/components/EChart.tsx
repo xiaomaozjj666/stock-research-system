@@ -8,6 +8,11 @@ interface EChartProps {
   style?: CSSProperties;
   className?: string;
   onChartReady?: (instance: ECharts) => void;
+  /**
+   * 图表的文本替代（读屏用）。canvas 对辅助技术是不可见的，
+   * 不传时该图表对读屏等于不存在——传一句话说明"这张图在表达什么"即可。
+   */
+  ariaLabel?: string;
 }
 
 /**
@@ -26,7 +31,7 @@ interface EChartProps {
  * 内容级比较的成本控制：option 由父组件用 useMemo 稳定引用（依赖不含悬停索引），
  * 因此 memo 能挡住父组件因悬停/滚动产生的重渲染，避免每帧重复 JSON.parse 级别的工作。
  */
-function EChart({ option, style, className, onChartReady }: EChartProps) {
+function EChart({ option, style, className, onChartReady, ariaLabel }: EChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ECharts | null>(null);
 
@@ -62,11 +67,28 @@ function EChart({ option, style, className, onChartReady }: EChartProps) {
   useEffect(() => {
     if (prevOptionKeyRef.current === optionKey) return;
     prevOptionKeyRef.current = optionKey;
-    chartRef.current?.setOption(option as never, { notMerge: true });
+    // notMerge:false + replaceMerge：切换周期/叠加 MA/BOLL/MACD 时按组件增量更新，
+    // 而不是整图重建（此前 notMerge:true 会丢弃实例状态、每次全量重绘）。
+    // 之所以仍列出 replaceMerge：调用方每次都传完整 option，系列数可能减少
+    // （例如关掉 MACD），不 replace 会残留上一次的系列。
+    chartRef.current?.setOption(option as never, {
+      notMerge: false,
+      replaceMerge: ['series', 'xAxis', 'yAxis', 'grid', 'dataZoom'],
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optionKey]);
 
-  return <div ref={containerRef} className={className} style={style} />;
+  return (
+    <div
+      ref={containerRef}
+      className={className}
+      style={style}
+      role="img"
+      aria-label={ariaLabel}
+      // 无 ariaLabel 时不生成 role（空名元素比没有更糟：读屏会念"图像"却无内容）
+      {...(ariaLabel ? {} : { role: undefined, 'aria-label': undefined })}
+    />
+  );
 }
 
 export default memo(EChart);

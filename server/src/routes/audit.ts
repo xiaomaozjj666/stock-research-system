@@ -4,6 +4,7 @@
 import { Router } from 'express';
 import { metaLimiter } from '../middleware.js';
 import { auditLogger } from '../services/auditLog.js';
+import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -24,7 +25,7 @@ router.get('/api/audit', metaLimiter, (req, res) => {
     res.json({ count: entries.length, entries });
   } catch (error) {
     logger.error('Audit query error', { route: '/api/audit', err: error });
-    res.status(500).json({ error: '审计查询失败', detail: (error as Error).message });
+    res.status(500).json({ error: '审计查询失败', detail: errorDetail(error) });
   }
 });
 

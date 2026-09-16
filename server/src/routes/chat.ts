@@ -7,6 +7,7 @@ import { chatAgent } from '../services/chatAgent.js';
 import { clearHistory } from '../services/chatMemory.js';
 import { validateChatHistory, isQueueTimeoutError } from '../utils/limitGate.js';
 import { createSseChannel } from '../utils/sse.js';
+import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -41,7 +42,7 @@ router.post('/api/chat', chatLimiter, circuitBreakerGuard, async (req, res) => {
     // LLM 闸门排队超时 → 429 + Retry-After，而不是笼统 500
     if (respondIfQueueTimeout(res, error, '/api/chat')) return;
     logger.error('Chat error', { route: '/api/chat', err: error });
-    res.status(500).json({ error: '对话处理失败', detail: (error as Error).message });
+    res.status(500).json({ error: '对话处理失败', detail: errorDetail(error) });
   }
 });
 
@@ -85,7 +86,9 @@ router.get('/api/chat/stream', chatLimiter, circuitBreakerGuard, async (req, res
       });
     } else {
       logger.error('Chat stream error', { route: '/api/chat/stream', err: error });
-      sse.trySend({ phase: 'error', message: (error as Error).message || '对话处理失败' });
+      // 与 /api/chat 的 detail 同口径：生产环境不回传原始 message（可能是上游 URL /
+      // 内部路径），前端 data.message 为空时兜底显示 '流式对话失败'
+      sse.trySend({ phase: 'error', message: errorDetail(error) || '对话处理失败' });
     }
   } finally {
     if (!res.writableEnded) res.end();

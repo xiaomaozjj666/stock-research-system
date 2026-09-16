@@ -165,9 +165,11 @@ export class AuditLogger {
       category: entry.category,
       detail: entry.detail,
       riskLevel: entry.riskLevel,
-      traceId: entry.traceId,
       metadata: entry.metadata,
     };
+    // traceId 缺省时**不写该键**：留着 undefined 会在内存条目、导出 JSON 与落盘行里
+    // 表现成"有链路 ID 但为空"，查询/排查时无法与"确实没带链路"区分
+    if (entry.traceId !== undefined) full.traceId = entry.traceId;
     this.entries.push(full);
     // 超过上限：丢弃最旧条目（保持最近 maxEntries 条）
     if (this.entries.length > this.maxEntries) {
@@ -407,6 +409,7 @@ export const auditLogger = new AuditLogger({ persistenceHook: filePersistenceHoo
  * @param prompt 输入提示词
  * @param response 模型响应
  * @param riskLevel 风险等级（默认 low）
+ * @param traceId 链路追踪 ID（可选；不传则该条目不含该字段）
  */
 export function auditLLMCall(
   sessionId: string,
@@ -414,6 +417,7 @@ export function auditLLMCall(
   prompt: string,
   response: string,
   riskLevel: RiskLevel = 'low',
+  traceId?: string,
 ): AuditEntry {
   return auditLogger.log({
     sessionId,
@@ -421,6 +425,7 @@ export function auditLLMCall(
     category: 'llm_call',
     detail: `LLM 调用: model=${model}`,
     riskLevel,
+    ...(traceId !== undefined ? { traceId } : {}),
     metadata: { model, prompt, response },
   });
 }
@@ -432,6 +437,7 @@ export function auditLLMCall(
  * @param args 调用参数
  * @param result 调用结果
  * @param riskLevel 风险等级（默认 low）
+ * @param traceId 链路追踪 ID（可选；不传则该条目不含该字段）
  */
 export function auditToolCall(
   sessionId: string,
@@ -439,6 +445,7 @@ export function auditToolCall(
   args: unknown,
   result: unknown,
   riskLevel: RiskLevel = 'low',
+  traceId?: string,
 ): AuditEntry {
   return auditLogger.log({
     sessionId,
@@ -446,6 +453,7 @@ export function auditToolCall(
     category: 'tool_call',
     detail: `工具调用: ${toolName}`,
     riskLevel,
+    ...(traceId !== undefined ? { traceId } : {}),
     metadata: { toolName, args, result },
   });
 }
@@ -456,12 +464,14 @@ export function auditToolCall(
  * @param stockCode 股票代码
  * @param signal 信号内容（如 "买入" / "强烈卖出"）
  * @param reasoning 决策依据
+ * @param traceId 链路追踪 ID（可选；不传则该条目不含该字段）
  */
 export function auditTradeSignal(
   sessionId: string,
   stockCode: string,
   signal: string,
   reasoning: string,
+  traceId?: string,
 ): AuditEntry {
   // 交易信号涉及投资建议，默认中等风险
   // 强烈信号（强烈买入/卖出、重仓、清仓等）提升为高风险，符合合规审计审慎原则
@@ -472,6 +482,7 @@ export function auditTradeSignal(
     category: 'trade_signal',
     detail: `${stockCode} 交易信号: ${signal}`,
     riskLevel: isStrong ? 'high' : 'medium',
+    ...(traceId !== undefined ? { traceId } : {}),
     metadata: { stockCode, signal, reasoning },
   });
 }
@@ -481,14 +492,21 @@ export function auditTradeSignal(
  * @param sessionId 会话 ID
  * @param resource 资源标识（如 "财务数据库" / "行情接口"）
  * @param action 操作类型（如 "read" / "write" / "export"）
+ * @param traceId 链路追踪 ID（可选；不传则该条目不含该字段）
  */
-export function auditDataAccess(sessionId: string, resource: string, action: string): AuditEntry {
+export function auditDataAccess(
+  sessionId: string,
+  resource: string,
+  action: string,
+  traceId?: string,
+): AuditEntry {
   return auditLogger.log({
     sessionId,
     action: `data.${action}`,
     category: 'data_access',
     detail: `数据访问: ${resource} (${action})`,
     riskLevel: 'info',
+    ...(traceId !== undefined ? { traceId } : {}),
     metadata: { resource, action },
   });
 }

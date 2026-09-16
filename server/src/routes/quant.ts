@@ -2,7 +2,7 @@
  * 量化研究：回测 + 数据质量 + 审计 + 优化 + 摘要；受控回测评估（基线 vs 新闻叠加）；
  * 量价因子（A 股方向校正）与单因子评估 tear sheet。
  */
-import { Router, type Response } from 'express';
+import { Router, type Request } from 'express';
 import {
   quantLimiter,
   watchlistLimiter,
@@ -120,6 +120,10 @@ import {
 } from '../quant/dataProvider.js';
 import { runBacktest } from '../quant/backtestEngine.js';
 import { withTimeout } from '../utils/timeout.js';
+import { auditToolCall } from '../services/auditLog.js';
+import { getReqTraceContext } from '../services/telemetry.js';
+import { abortOnClientClose } from '../utils/clientAbort.js';
+import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -343,11 +347,29 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
       limitations: limitations.join('；'),
     };
 
+    // 审计留痕并带上链路 ID：量化分析会产出可交易的策略结论，属审计范围内的高价值操作；
+    // traceId 取 telemetry 注入的 res.locals（index.ts 的 expressTracerMiddleware），
+    // 退化取请求 ID 中间件挂在 req 上的 reqId；都取不到就透传 undefined（不写脏字段）。
+    const traceId = getReqTraceContext(res)?.traceId ?? (req as Request & { reqId?: string }).reqId;
+    auditToolCall(
+      'quant',
+      'quant.analyze',
+      {
+        stockCode: strategyConfig.stockCode,
+        startDate: strategyConfig.startDate,
+        endDate: strategyConfig.endDate,
+        useNews: Boolean(useNews),
+      },
+      { confidence, tradeCount: backtestResult.tradeCount },
+      'low',
+      traceId,
+    );
+
     res.json(report);
   } catch (error) {
     logger.error('Quant analysis error', { route: '/api/quant/analyze', err: error });
-    const message = error instanceof Error ? error.message : '量化分析过程出错';
-    res.status(500).json({ error: '量化分析失败', detail: message });
+    // detail 只在非生产环境回传（路由内 catch 不经过 index.ts 通用错误中间件）
+    res.status(500).json({ error: '量化分析失败', detail: errorDetail(error) });
   }
 });
 
@@ -425,8 +447,7 @@ router.post('/api/quant/factor/evaluate', quantLimiter, circuitBreakerGuard, (re
   } catch (error) {
     // maxLoss 超限属数据问题（调用方可放宽阈值重试），返回 422 而非 500
     logger.warn('Factor evaluate error', { route: '/api/quant/factor/evaluate', err: error });
-    const message = error instanceof Error ? error.message : '因子评估失败';
-    res.status(422).json({ error: '因子评估失败', detail: message });
+    res.status(422).json({ error: '因子评估失败', detail: errorDetail(error) });
   }
 });
 
@@ -465,10 +486,9 @@ router.post('/api/quant/factor/composite', quantLimiter, circuitBreakerGuard, as
     res.json(result);
   } catch (error) {
     logger.error('Composite alpha error', { route: '/api/quant/factor/composite', err: error });
-    const message = error instanceof Error ? error.message : '组合 alpha 计算失败';
     // 「无法获取 K 线」属数据问题 → 422；其余（意外异常）→ 500
     const status = error instanceof Error && /无法获取/.test(error.message) ? 422 : 500;
-    res.status(status).json({ error: '组合 alpha 计算失败', detail: message });
+    res.status(status).json({ error: '组合 alpha 计算失败', detail: errorDetail(error) });
   }
 });
 
@@ -549,8 +569,7 @@ router.post(
         route: '/api/quant/factor/composite/batch',
         err: error,
       });
-      const message = error instanceof Error ? error.message : '批量组合 alpha 计算失败';
-      res.status(500).json({ error: '批量组合 alpha 计算失败', detail: message });
+      res.status(500).json({ error: '批量组合 alpha 计算失败', detail: errorDetail(error) });
     }
   },
 );
@@ -573,23 +592,9 @@ router.get('/api/quant/universe/boards', metaLimiter, async (req, res) => {
     });
   } catch (error) {
     logger.error('Universe boards error', { route: '/api/quant/universe/boards', err: error });
-    const message = error instanceof Error ? error.message : '行业板块列表获取失败';
-    res.status(502).json({ error: '行业板块列表获取失败', detail: message });
+    res.status(502).json({ error: '行业板块列表获取失败', detail: errorDetail(error) });
   }
 });
-
-/**
- * 客户端提前断开时中止在途取数。
- * 监听 res close（连接断开）且响应尚未写完 → abort。返回的 signal 由调用方
- * 传入 mapWithConcurrency / 各取数函数，取消沿调用链级联到 socket 级。
- */
-function abortOnClientClose(res: Response): AbortController {
-  const controller = new AbortController();
-  res.on('close', () => {
-    if (!res.writableFinished) controller.abort();
-  });
-  return controller;
-}
 
 /**
  * 量化运行快照（可复现留痕）：把「这次是用什么参数 / 数据区间 / 运行时跑出来的」
@@ -744,7 +749,8 @@ async function resolveUniverse(
         status: 502,
         payload: {
           error: `指数 ${index} 历史成分获取失败`,
-          detail: (error as Error).message,
+          // 非生产环境回原始报错（可能是 Python/baostock 的解释器路径），生产环境不回
+          detail: errorDetail(error),
           hint: '本机需要 Python + baostock（pip install baostock，或 PYTHON_BIN 指定解释器）；或改用 board / codes 源',
         },
       };
@@ -801,13 +807,12 @@ async function resolveUniverse(
       };
     } catch (error) {
       logger.warn('板块成分股获取失败', { board, err: error });
-      const message = error instanceof Error ? error.message : '成分股获取失败';
       return {
         ok: false,
         status: 502,
         payload: {
           error: `板块 ${board} 成分股获取失败`,
-          detail: message,
+          detail: errorDetail(error),
           ...(!upstreamListOk && !hasCachedConstituents(board, topNRaw)
             ? { hint: '板块列表源当前不可用，可稍后重试，或改用 codes 指定已缓存过的股票' }
             : {}),
@@ -1316,8 +1321,7 @@ router.post('/api/llm/ensemble', quantLimiter, circuitBreakerGuard, async (req, 
     // 闸门排队超时 → 429 + Retry-After（此前落到 502，客户端无法据此退避重试）
     if (respondIfQueueTimeout(res, error, '/api/llm/ensemble')) return;
     logger.error('LLM ensemble error', { route: '/api/llm/ensemble', err: error });
-    const message = error instanceof Error ? error.message : '集成调用失败';
-    res.status(502).json({ error: '多模型集成调用失败', detail: message });
+    res.status(502).json({ error: '多模型集成调用失败', detail: errorDetail(error) });
   }
 });
 
@@ -1540,7 +1544,10 @@ async function tushareHealthBlock(): Promise<Record<string, unknown>> {
       suspended: count('P'),
     };
   } catch (error) {
-    return { configured: true, degraded: true, detail: (error as Error).message };
+    // 失败原因只在服务端留档：生产环境 detail 不回传（见 utils/errorDetail.ts），
+    // 若这里不 warn，生产环境就只剩 degraded: true 而无从定位
+    logger.warn('[quant-health] tushare 通道不可用，如实降级披露', { err: error });
+    return { configured: true, degraded: true, detail: errorDetail(error) };
   }
 }
 
@@ -1624,6 +1631,8 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
     try {
       ast = parseFactorExpression(expression);
     } catch (error) {
+      // 刻意不走 errorDetail：这是**用户自己**的表达式解析报错（400 校验提示，
+      // 不含上游 URL / 文件路径），生产环境也必须原样回传，否则前端无法提示改哪里
       return res.status(400).json({
         error: '因子表达式非法',
         detail: error instanceof Error ? error.message : String(error),
@@ -1928,8 +1937,7 @@ router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, asy
       stockCode: (req.body as { stockCode?: unknown } | undefined)?.stockCode,
       err: error,
     });
-    const message = error instanceof Error ? error.message : '受控回测评估失败';
-    res.status(500).json({ error: '受控回测评估失败', detail: message });
+    res.status(500).json({ error: '受控回测评估失败', detail: errorDetail(error) });
   }
 });
 

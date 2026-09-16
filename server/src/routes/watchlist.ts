@@ -2,7 +2,7 @@
  * 自选股：清单管理 / 批量新闻回测 / 异动监控。
  */
 import { Router } from 'express';
-import type { Response } from 'express';
+import type { Request } from 'express';
 import { watchlistLimiter, circuitBreakerGuard } from '../middleware.js';
 import {
   getWatchlist,
@@ -15,7 +15,11 @@ import {
 } from '../services/watchlistService.js';
 import { runWatchlistNewsBacktest } from '../services/watchlistBacktest.js';
 import { detectAlerts } from '../services/alerts.js';
+import { auditDataAccess } from '../services/auditLog.js';
+import { getReqTraceContext } from '../services/telemetry.js';
+import { abortOnClientClose } from '../utils/clientAbort.js';
 import { normalizeAShareCode } from '../utils/stockCode.js';
+import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -88,8 +92,8 @@ router.post(
         route: '/api/watchlist/news-backtest',
         err: error,
       });
-      const message = error instanceof Error ? error.message : '批量回测失败';
-      res.status(500).json({ error: '自选股批量回测失败', detail: message });
+      // detail 只在非生产环境回传（本路由的 catch 不经过 index.ts 通用错误中间件）
+      res.status(500).json({ error: '自选股批量回测失败', detail: errorDetail(error) });
     }
   },
 );
@@ -102,7 +106,7 @@ router.get('/api/watchlist/alerts', (_req, res) => {
 // 自选股主动监控：重跑批量新闻回测并检出异动预警
 router.post('/api/watchlist/monitor', watchlistLimiter, circuitBreakerGuard, async (req, res) => {
   // 客户端提前断开（关页/取消）→ 级联中止在途取数：整张清单是几十只 × 逐只拉 K 线 + 新闻，
-  // 断开后继续跑只会白烧上游配额（与 routes/quant.ts 的 abortOnClientClose 同一思路）。
+  // 断开后继续跑只会白烧上游配额（共用 utils/clientAbort 的同一份实现）。
   const abort = abortOnClientClose(res);
   try {
     const codes = getWatchlist();
@@ -126,6 +130,11 @@ router.post('/api/watchlist/monitor', watchlistLimiter, circuitBreakerGuard, asy
       skipped,
     });
     saveWatchlistAlertsSnapshot(snapshot);
+    // 审计留痕并带上链路 ID：本路由一次拉几十只的行情与新闻（上游数据访问），
+    // traceId 取 telemetry 注入的 res.locals（index.ts 的 expressTracerMiddleware），
+    // 退化取请求 ID 中间件挂在 req 上的 reqId；都取不到就透传 undefined（不写脏字段）。
+    const traceId = getReqTraceContext(res)?.traceId ?? (req as Request & { reqId?: string }).reqId;
+    auditDataAccess('watchlist', '自选股批量行情与新闻', 'read', traceId);
     res.json(snapshot);
   } catch (error) {
     if (abort.signal.aborted) {
@@ -133,23 +142,8 @@ router.post('/api/watchlist/monitor', watchlistLimiter, circuitBreakerGuard, asy
       return;
     }
     logger.error('Watchlist monitor error', { route: '/api/watchlist/monitor', err: error });
-    res.status(500).json({ error: '自选股监控失败', detail: (error as Error).message });
+    res.status(500).json({ error: '自选股监控失败', detail: errorDetail(error) });
   }
 });
-
-/**
- * 客户端提前断开时中止在途取数。
- * 监听 res close（连接断开）且响应尚未写完 → abort；返回的 signal 传进
- * runWatchlistNewsBacktest → mapWithConcurrency → fetchOHLCVData，取消沿调用链级联到 socket 级。
- * 与 routes/quant.ts 的同名实现语义一致（该 helper 未导出，跨模块共享需改动 quant.ts，
- * 不在本次允许范围内，故此处保留一份）。
- */
-function abortOnClientClose(res: Response): AbortController {
-  const controller = new AbortController();
-  res.on('close', () => {
-    if (!res.writableFinished) controller.abort();
-  });
-  return controller;
-}
 
 export default router;

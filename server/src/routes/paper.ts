@@ -2,9 +2,13 @@
  * 模拟盘（paper trading）研究闭环：无实盘资金，日 K 收盘撮合 + A 股规则（T+1/涨跌停/整手/费用）。
  */
 import { Router } from 'express';
+import type { Request } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PaperAccount } from '../quant/paperTrading.js';
+import { auditTradeSignal } from '../services/auditLog.js';
+import { getReqTraceContext } from '../services/telemetry.js';
+import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -73,7 +77,7 @@ router.get('/api/paper/portfolio', (_req, res) => {
     });
   } catch (error) {
     logger.error('Paper portfolio error', { route: '/api/paper/portfolio', err: error });
-    res.status(500).json({ error: '模拟盘账户读取失败', detail: (error as Error).message });
+    res.status(500).json({ error: '模拟盘账户读取失败', detail: errorDetail(error) });
   }
 });
 
@@ -120,13 +124,25 @@ router.post('/api/paper/order', (req, res) => {
       logger.error('Paper order save failed', { route: '/api/paper/order', err: saveError });
       return res.status(500).json({
         error: '下单已受理，但落盘失败（重启后可能丢失）',
-        detail: (saveError as Error).message,
+        detail: errorDetail(saveError),
       });
     }
+    // 审计留痕并带上链路 ID：模拟盘下单是"会产生持仓变动"的操作，属审计范围。
+    // traceId 取 telemetry 注入的 res.locals（index.ts 的 expressTracerMiddleware），
+    // 退化取请求 ID 中间件挂在 req 上的 reqId；都取不到就透传 undefined（不写脏字段）。
+    const traceId = getReqTraceContext(res)?.traceId ?? (req as Request & { reqId?: string }).reqId;
+    auditTradeSignal(
+      'paper',
+      order.code,
+      order.side === 'buy' ? '模拟盘买入' : '模拟盘卖出',
+      `委托 ${order.quantity} 股（${order.type === 'market' ? '市价' : '限价'}，交易日 ${order.placedDate}）`,
+      traceId,
+    );
     res.json({ order });
   } catch (error) {
     logger.warn('Paper order rejected', { route: '/api/paper/order', err: error });
-    res.status(400).json({ error: '下单失败', detail: (error as Error).message });
+    // 下单失败的 500 分支同样走统一脱敏（400 分支都是固定中文校验提示，保持原样）
+    res.status(400).json({ error: '下单失败', detail: errorDetail(error) });
   }
 });
 
@@ -152,7 +168,7 @@ router.post('/api/paper/settle', (req, res) => {
     res.json({ date: body.date, cash: acct.cash, latestEquity: equity.at(-1), history: equity });
   } catch (error) {
     logger.error('Paper settle error', { route: '/api/paper/settle', err: error });
-    res.status(500).json({ error: '日终结算失败', detail: (error as Error).message });
+    res.status(500).json({ error: '日终结算失败', detail: errorDetail(error) });
   }
 });
 
@@ -161,7 +177,7 @@ router.get('/api/paper/stats', (_req, res) => {
     res.json(getPaperAccount().computeStats());
   } catch (error) {
     logger.error('Paper stats error', { route: '/api/paper/stats', err: error });
-    res.status(500).json({ error: '统计失败', detail: (error as Error).message });
+    res.status(500).json({ error: '统计失败', detail: errorDetail(error) });
   }
 });
 

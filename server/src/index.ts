@@ -16,6 +16,8 @@ import { startDigestScheduler } from './quant/researchDigest.js';
 import { configureTracer, expressTracerMiddleware } from './services/telemetry.js';
 import { httpMetricsMiddleware } from './services/metrics.js';
 import logger from './utils/logger.js';
+import { sanitizeUrlForLog } from './utils/logSanitize.js';
+import { errorDetail } from './utils/errorDetail.js';
 
 // 路由模块
 import healthRouter from './routes/health.js';
@@ -27,7 +29,7 @@ import chatRouter from './routes/chat.js';
 import paperRouter from './routes/paper.js';
 import auditRouter from './routes/audit.js';
 import intlRouter from './routes/intl.js';
-import documentsRouter from './routes/documents.js';
+import documentsRouter, { INGEST_PATH } from './routes/documents.js';
 import costRouter from './routes/cost.js';
 import autonomousRouter from './routes/autonomous.js';
 
@@ -128,7 +130,18 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
 });
 
 // === 请求体大小限制：防止 DoS ===
-app.use(express.json({ limit: '100kb' }));
+// 默认 100kb 覆盖所有路由，**唯一例外是 /api/ingest**：它收的是 PDF（pdfBase64），
+// 真实研报动辄几百 KB~数 MB，base64 还要再膨胀约 1/3，100kb 会让该接口的上传
+// 必然 413（审计确认的 P1）。这里不放大全局上限（那会抬高所有路由的内存占用），
+// 而是只跳过这一个路径——由 routes/documents.ts 自带 8MB 解析器与大小预检。
+const defaultJsonParser = express.json({ limit: '100kb' });
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.path === INGEST_PATH) {
+    next();
+    return;
+  }
+  defaultJsonParser(req, res, next);
+});
 
 // === 请求 ID 中间件：便于日志追踪 ===
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -147,7 +160,9 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     logger.info('HTTP request', {
       reqId,
       method: req.method,
-      url: req.originalUrl,
+      // 只记路径 + 白名单 query：/api/chat/stream?message=... 与
+      // /api/stocks/search?keyword=... 的值是用户原文，不能进日志（见 utils/logSanitize.ts）
+      url: sanitizeUrlForLog(req.originalUrl),
       statusCode: res.statusCode,
       durationMs: duration,
     });
@@ -247,7 +262,8 @@ app.use(
     logger.error('Unhandled error', { reqId, err });
     res.status(500).json({
       error: '服务器内部错误',
-      detail: process.env.NODE_ENV === 'production' ? undefined : err.message,
+      // 与路由内 catch 共用同一判定（非生产回 message、生产回 undefined）
+      detail: errorDetail(err),
       requestId: reqId,
     });
   },

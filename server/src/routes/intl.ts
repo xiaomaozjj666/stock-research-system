@@ -9,6 +9,7 @@ import {
   type IntlMarket,
 } from '../quant/intlDataProvider.js';
 import { normalizeStockCode, normalizeStockCodeFor, type StockMarket } from '../utils/stockCode.js';
+import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -72,7 +73,7 @@ router.get('/api/intl/fundamentals', metaLimiter, async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error('Intl fundamentals error', { route: '/api/intl/fundamentals', err: error });
-    res.status(500).json({ error: '港美股数据获取失败', detail: (error as Error).message });
+    res.status(500).json({ error: '港美股数据获取失败', detail: errorDetail(error) });
   }
 });
 
@@ -109,7 +110,7 @@ router.get('/api/intl/klines', metaLimiter, async (req, res) => {
       return res.status(400).json({ error: msg });
     }
     logger.error('Intl klines error', { route: '/api/intl/klines', err: error });
-    res.status(500).json({ error: '港美股 K 线获取失败', detail: msg });
+    res.status(500).json({ error: '港美股 K 线获取失败', detail: errorDetail(error) });
   }
 });
 

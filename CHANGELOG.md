@@ -3,6 +3,35 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-16 — 第三轮收尾：清空全部遗留项（新增 87 个测试）
+
+把前两轮明确记为"未做/有疑虑"的条目全部落地，不再保留已知缺口。测试 1891 → **1978 用例 / 181 文件**；覆盖率 lines 79.77% / statements 78.48% / functions 75% / branches 66%。
+
+**服务端：流式健壮性与信息边界**
+
+- **SSE 心跳**：新增每 15 秒的注释帧（`: ping`，`SSE_HEARTBEAT_MS` 可调、0 关闭）。此前通道没有任何心跳，而深度分析在 `experts → arbitration` 之间可能静默 60s+，nginx/ALB 的默认读超时会把连接掐断——前端表现为"分析莫名中断"。
+- **生产环境不再回传原始错误消息**：新增 `utils/errorDetail.ts`，各路由 catch 统一改用它（生产返回 `undefined`，本地保留 message 便于排障）。此前路由内 catch 绕过了全局错误中间件的 `NODE_ENV` 判断，会把上游 URL/内部路径随 `detail` 一起泄漏。
+- **日志与 trace 去敏**：新增 `utils/logSanitize.ts`，请求日志与 span 只记路径 + 白名单 query 参数，其余键值记 `[redacted]`。此前 `/api/chat/stream?message=…`、`/api/stocks/search?keyword=…` 会把用户原文写进日志与 span。
+- **`/api/ingest` 的 body 上限**：全局 100kb 会让真实 PDF（base64 后更大）必然 413；现只对该路径放行 8MB 并加大小预检，全局上限保持不变（不抬高所有路由的内存占用）。
+- **无界增长收口**：成本台账、纸面盘订单/净值序列加上限（净值曲线保留最近 N 条、统计口径不受影响），估值分析的**负缓存加 TTL**（此前失败结果永久缓存，一次瞬时抖动会让该股估值一直走兜底到重启）。
+- **审计与链路打通**：审计 helper 支持写入 `traceId`，quant 等路由从请求上下文透传，审计条目可回查请求链路。
+- **`abortOnClientClose` 去重**：两份等价实现抽到 `utils/clientAbort.ts`（watchlist 与 quant 共用）。
+- **自治循环披露裁剪**：清单超过单次上限时，状态响应里给出 `requested`/`skipped`，不再让用户以为监控覆盖了全部清单。
+- **`watchlistLimiter` 补测**：该限流器的 429 分支此前零断言（测试配置把阈值放大到 100 规避了限流），现用独立文件在 import 前压回阈值 1 验证 429 + `Retry-After`。
+
+**客户端：图表行为与可访问性**
+
+- **`EChart` 改增量更新**：`notMerge:true`（每次整图重建）→ `notMerge:false` + `replaceMerge`，切换周期/叠加 MA/BOLL/MACD 时不再整图重建，同时保证系列数减少时旧系列被正确移除。
+- **图表文本替代**：`EChart` 支持 `ariaLabel`，K 线图与回测曲线补上 `role="img"` + 说明（canvas 对读屏不可见，此前这些图等于不存在）；未传标签时不生成空名元素。
+- **窄屏宽表滑动线索**：≤768px 给宽表容器加右侧内阴影，提示"还有列可以横向滑动"（此前只截断、无任何提示）。
+- **对比部分成功的渲染测试**：补齐客户端用例（成功列保留、失败列标注原因并可单只重试、全部成功不出现失败标记、全部失败逐列可重试）——上一轮因 mock 路径与夹具问题删掉的那条，这次真正跑通。
+
+**依赖与测试稳定性**
+
+- **nanoid 跨主版本修正**：override 原为 `>=3.3.17`，实际解析到 6.0.1（ESM-only），而 postcss 声明的是 `^3.3.x`——`npm ls` 报 invalid，构建期 `require('nanoid/non-secure')` 失败。现改为 `^3.3.18` 并显式声明依赖，解析到 3.3.19。
+- 移除无引用的 `@testing-library/user-event` 与重复声明的 `playwright`（`@playwright/test` 已传递依赖）；`.npmrc` 清理已不在树中的 esbuild 死白名单条目。
+- 限流测试稳定性：这类用例每个都要 `resetModules` 后重新 import 整个应用，全量套件（181 文件并行）下会超过默认 5s 用例超时并间歇性假失败，已为相关文件设置 30s 超时。
+
 ## 2026-09-16 — 第二轮收尾：并发闸门 / 出站校验 / 复访入口（新增 237 个测试）
 
 承接同日三批优化，把审计中**尚未落地**的项做完。测试 1654 → **1891 用例 / 172 文件**；覆盖率 lines 78.54% / statements 77.26% / functions 73.4% / branches 64.46%。

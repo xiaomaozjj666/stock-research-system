@@ -324,13 +324,67 @@ function priceField(d: Record<string, unknown>, field: string): number {
   return Number(d[field] ?? 0) / 100;
 }
 
-/** 估值分析 RPT_VALUEANALYSIS_DET 的请求级缓存（同一代码在同一请求中可能被
- *  valuation 和 board 两个调用方各自触发，始终只请求一次远端） */
-const valueAnalysisCache = new Map<string, Record<string, unknown> | null>();
+/**
+ * 估值分析 RPT_VALUEANALYSIS_DET 的请求级缓存（同一代码在同一请求中可能被
+ * valuation 和 board 两个调用方各自触发，始终只请求一次远端）。
+ *
+ * 容量与负缓存 TTL（长期运行防膨胀 + 防"一次失败永久兜底"）：
+ *  - 条目上限 VALUE_ANALYSIS_CACHE_MAX（默认 500），超限淘汰最旧（Map 头即最旧），
+ *    避免进程长期运行后按股票代码无限堆积；
+ *  - **失败结果（null）只在 VALUE_ANALYSIS_NEGATIVE_TTL_MS（默认 5 分钟）内有效**：
+ *    修复前 null 被永久缓存，一次瞬时网络抖动会让该股估值一直走 push2 兜底/抛错，
+ *    直到进程重启；现在过期即重试。成功的行不设 TTL（同一交易日内视为不变，
+ *    且已有容量上限兜底）。
+ */
+interface ValueAnalysisCacheEntry {
+  /** 行数据；null 表示上次取数失败（负缓存） */
+  row: Record<string, unknown> | null;
+  /** 写入时刻（负缓存 TTL 判定用） */
+  at: number;
+}
+
+const valueAnalysisCache = new Map<string, ValueAnalysisCacheEntry>();
+
+/** 估值缓存默认条目上限 */
+const VALUE_ANALYSIS_CACHE_MAX_DEFAULT = 500;
+/** 负缓存默认有效期：5 分钟（上游瞬时失败的恢复窗口） */
+const VALUE_ANALYSIS_NEGATIVE_TTL_MS_DEFAULT = 5 * 60 * 1000;
+
+/**
+ * 当前缓存条目上限：每次调用时解析（便于测试与运行期调整），
+ * 非法值（非数字 / 小于 1）回退默认——与 watchlistBatchMax() 同一 env 解析口径。
+ */
+export function valueAnalysisCacheMax(): number {
+  const raw = Number(process.env.VALUE_ANALYSIS_CACHE_MAX);
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : VALUE_ANALYSIS_CACHE_MAX_DEFAULT;
+}
+
+/**
+ * 当前负缓存 TTL（毫秒）：显式 0 = 不缓存失败结果（每次重试），
+ * 未设置 / 空串 / 非数字 / 负数一律回退默认——与项目其他缓存 TTL 的解析口径一致
+ * （见 utils/rag 的 RAG_CORPUS_TTL_MS、services/analysisCheckpoint.ts）。
+ */
+export function valueAnalysisNegativeTtlMs(): number {
+  const raw = process.env.VALUE_ANALYSIS_NEGATIVE_TTL_MS;
+  if (raw === undefined || raw === '') return VALUE_ANALYSIS_NEGATIVE_TTL_MS_DEFAULT;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : VALUE_ANALYSIS_NEGATIVE_TTL_MS_DEFAULT;
+}
 
 /** 清除估值分析缓存（供测试重置，避免跨用例缓存污染） */
 export function clearValueAnalysisCache(): void {
   valueAnalysisCache.clear();
+}
+
+/** 写入缓存并施加容量上限（淘汰最旧：Map 保持插入顺序，头部即最早写入） */
+function setValueAnalysisCache(code: string, row: Record<string, unknown> | null): void {
+  valueAnalysisCache.set(code, { row, at: Date.now() });
+  const max = valueAnalysisCacheMax();
+  while (valueAnalysisCache.size > max) {
+    const oldest = valueAnalysisCache.keys().next().value;
+    if (oldest === undefined) break;
+    valueAnalysisCache.delete(oldest);
+  }
 }
 
 /**
@@ -339,7 +393,16 @@ export function clearValueAnalysisCache(): void {
  */
 async function fetchValueAnalysisRow(code: string): Promise<Record<string, unknown> | null> {
   const cached = valueAnalysisCache.get(code);
-  if (cached !== undefined) return cached;
+  if (cached) {
+    // 失败的负缓存过期即失效并重试；命中的条目顺带续期（LRU：最近使用的不易被淘汰）
+    const expired = cached.row === null && Date.now() - cached.at >= valueAnalysisNegativeTtlMs();
+    if (!expired) {
+      valueAnalysisCache.delete(code);
+      valueAnalysisCache.set(code, cached);
+      return cached.row;
+    }
+    valueAnalysisCache.delete(code);
+  }
 
   try {
     const secucode = `${code}.${code.startsWith('6') ? 'SH' : 'SZ'}`;
@@ -348,10 +411,10 @@ async function fetchValueAnalysisRow(code: string): Promise<Record<string, unkno
       result?: { data?: Array<Record<string, unknown>> };
     } | null;
     const row = data?.result?.data?.[0] ?? null;
-    valueAnalysisCache.set(code, row);
+    setValueAnalysisCache(code, row);
     return row;
   } catch {
-    valueAnalysisCache.set(code, null);
+    setValueAnalysisCache(code, null);
     return null;
   }
 }

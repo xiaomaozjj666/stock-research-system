@@ -12,6 +12,7 @@ import {
 import { getSupportedStocks, searchStocks } from '../services/dataService.js';
 import { runAnalysis } from '../services/analysisPipeline.js';
 import { isQueueTimeoutError } from '../utils/limitGate.js';
+import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -47,7 +48,14 @@ router.get('/api/stocks/search', searchLimiter, async (req, res) => {
     const results = await searchStocks(keyword);
     res.json(results);
   } catch (error) {
-    logger.warn('股票搜索失败，返回空结果', { keyword: req.query.keyword, err: error });
+    // 只记关键词长度、不记关键词本身：搜索词是用户输入（可能是人名），
+    // 与请求日志/span 的脱敏口径一致（见 utils/logSanitize.ts）。
+    // 注意 keyword 是 try 块内的 const，catch 里取不到，故从 req.query 重取并做类型收敛
+    const rawKeyword = req.query.keyword;
+    logger.warn('股票搜索失败，返回空结果', {
+      keywordLength: typeof rawKeyword === 'string' ? rawKeyword.length : undefined,
+      err: error,
+    });
     res.json([]);
   }
 });
@@ -244,8 +252,8 @@ router.post('/api/compare', compareLimiter, circuitBreakerGuard, async (req, res
     if (respondIfQueueTimeout(res, error, '/api/compare')) return;
     // detail 只在非生产环境回传：路由内 catch 不经过 index.ts 的通用错误中间件，
     // 若无条件回传，生产环境会把上游 URL / 内部路径随错误一起泄漏出去
-    const detail = process.env.NODE_ENV === 'production' ? undefined : (error as Error).message;
-    res.status(500).json({ error: '对比分析失败', detail });
+    // （口径统一在 utils/errorDetail.ts，与其余路由共用同一实现）
+    res.status(500).json({ error: '对比分析失败', detail: errorDetail(error) });
   }
 });
 

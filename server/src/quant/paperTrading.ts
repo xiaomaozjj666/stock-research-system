@@ -65,6 +65,49 @@ export interface EquityPoint {
   value: number; // 现金 + 持仓市值
 }
 
+/**
+ * 净值序列的累计统计（不随 equityHistory 截断而丢失历史）。
+ * ----------------------------------------------------------------------------
+ * 为什么要有它：equityHistory 有容量上限（PAPER_MAX_EQUITY_POINTS，默认 2000 点），
+ * 而绩效统计（累计天数 / 最大回撤 / 夏普）在语义上依赖**完整序列**——直接截断会让
+ * 总天数缩水、让"窗口外的历史峰值"消失从而低估最大回撤。故每记录一个净值点就把
+ * 不可从窗口内重建的量累计在这里，截断后 computeStats 仍与截断前逐项一致。
+ */
+export interface EquitySummary {
+  /** 已记录净值点总数（含已被淘汰的）→ totalDays */
+  settledDays: number;
+  /** 全部净值点的历史最高值（用于最大回撤的起点，截断后仍需保留） */
+  peak: number;
+  /** 全部历史的最大回撤 %（逐点增量计算，与"全序列重算"等价） */
+  maxDrawdownPct: number;
+  /** 上一个净值点（用于下一日收益；即使该点已被淘汰也要留着） */
+  prevEquity: number;
+  /** 逐日收益率的累计一阶/二阶和与个数（用于全历史夏普） */
+  returnCount: number;
+  returnSum: number;
+  returnSumSquares: number;
+}
+
+/** 默认订单流水的内存保留条数（PAPER_MAX_ORDERS 可覆盖）：超出即淘汰最旧 */
+const ORDERS_MAX_DEFAULT = 2000;
+/** 默认净值点保留条数（PAPER_MAX_EQUITY_POINTS 可覆盖）：约 8 年交易日 */
+const EQUITY_POINTS_MAX_DEFAULT = 2000;
+
+/**
+ * 订单流水保留上限：每次调用时解析（便于测试与运行期调整）。
+ * 非法值（非数字 / 小于 1）回退默认——与 watchlistBatchMax() 同一 env 解析口径。
+ */
+export function paperMaxOrders(): number {
+  const raw = Number(process.env.PAPER_MAX_ORDERS);
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : ORDERS_MAX_DEFAULT;
+}
+
+/** 净值点保留上限：解析口径同 paperMaxOrders；统计口径不受其影响（见 EquitySummary） */
+export function paperMaxEquityPoints(): number {
+  const raw = Number(process.env.PAPER_MAX_EQUITY_POINTS);
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : EQUITY_POINTS_MAX_DEFAULT;
+}
+
 /** 账户绩效统计 */
 export interface PaperStats {
   initialCapital: number;
@@ -109,16 +152,62 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** 空白的净值累计统计（新账户 / 旧快照回填起点） */
+function emptyEquitySummary(): EquitySummary {
+  return {
+    settledDays: 0,
+    peak: 0,
+    maxDrawdownPct: 0,
+    prevEquity: 0,
+    returnCount: 0,
+    returnSum: 0,
+    returnSumSquares: 0,
+  };
+}
+
+/**
+ * 只保留最近 limit 条（从头部淘汰最旧）。
+ * 订单流水/净值序列都是"追加 + 时间升序"，故头部即最旧；
+ * 二者均有容量上限，避免长期运行把内存与落盘快照一起撑大。
+ */
+function keepRecent<T>(arr: T[], limit: number): void {
+  if (arr.length > limit) arr.splice(0, arr.length - limit);
+}
+
+/**
+ * 把一个净值点并入累计统计（单调增量，与"全序列重算"等价）。
+ * 逐日收益率的一阶/二阶矩用 Welford 之外的朴素累计：Σ(r-avg)² = Σr² - n·avg²，
+ * 可仅凭 (n, Σr, Σr²) 还原全历史均值/标准差——这正是截断后仍能算对夏普的关键。
+ */
+function accumulateEquity(s: EquitySummary, value: number): void {
+  if (s.settledDays > 0 && s.prevEquity > 0) {
+    const r = (value - s.prevEquity) / s.prevEquity;
+    s.returnCount += 1;
+    s.returnSum += r;
+    s.returnSumSquares += r * r;
+  }
+  if (value > s.peak) s.peak = value;
+  // peak 在首个点之后必为正（净值 = 现金 + 市值，恒 > 0），此处仅防御异常快照
+  if (s.peak > 0) {
+    const dd = ((s.peak - value) / s.peak) * 100;
+    if (dd > s.maxDrawdownPct) s.maxDrawdownPct = dd;
+  }
+  s.settledDays += 1;
+  s.prevEquity = value;
+}
+
 export class PaperAccount {
   readonly initialCapital: number;
   /** 可用现金 */
   cash: number;
   /** 持仓：code → Position */
   readonly positions: Map<string, Position>;
-  /** 完整订单流水（含已成交/过期/拒绝），供审计 */
+  /** 完整订单流水（含已成交/过期/拒绝），供审计；只保留最近 paperMaxOrders() 条 */
   readonly orders: PaperOrder[];
-  /** 每日净值记录 */
+  /** 每日净值记录；只保留最近 paperMaxEquityPoints() 条，统计走 equitySummary */
   readonly equityHistory: EquityPoint[];
+  /** 净值累计统计（截断安全，随快照落盘） */
+  equitySummary: EquitySummary;
 
   private readonly opts: {
     filePath: string;
@@ -141,6 +230,7 @@ export class PaperAccount {
     this.positions = new Map();
     this.orders = [];
     this.equityHistory = [];
+    this.equitySummary = emptyEquitySummary();
     this.opts = {
       filePath: storeFile(options.filePath),
       commissionRate: options.commissionRate ?? DEFAULTS.commissionRate,
@@ -220,7 +310,7 @@ export class PaperAccount {
       }
     }
 
-    this.orders.push(order);
+    this.recordOrder(order);
     return order;
   }
 
@@ -331,7 +421,7 @@ export class PaperAccount {
 
     // 记录当日净值（停牌持仓以最近收盘价/成本兜底估值）
     const equity = this.markToMarket(closePrices);
-    this.equityHistory.push({ date, value: round2(equity) });
+    this.recordEquity(date, round2(equity));
 
     // 更新昨收
     for (const [code, close] of closePrices) this.lastClose.set(code, close);
@@ -349,13 +439,21 @@ export class PaperAccount {
     return total;
   }
 
-  /** 绩效统计：累计收益 / 最大回撤 / 简单年化夏普 */
+  /**
+   * 绩效统计：累计收益 / 最大回撤 / 简单年化夏普。
+   * ------------------------------------------------------------------
+   * 统计口径**不受 equityHistory 容量上限影响**：
+   *  - totalDays 取累计净值点数（settledDays）；
+   *  - 最大回撤用逐点增量算好的累计值（保留"窗口外的历史峰值"）；
+   *  - 夏普用全历史逐日收益的 (n, Σr, Σr²) 累计量；
+   *  - 只有 dailyReturns 是"保留窗口内"的逐日收益（有界数组，供前端画图）。
+   */
   computeStats(): PaperStats {
-    const { equityHistory, initialCapital } = this;
+    const { equityHistory, initialCapital, equitySummary } = this;
     const finalEquity =
       equityHistory.length > 0 ? equityHistory[equityHistory.length - 1].value : initialCapital;
 
-    if (equityHistory.length === 0) {
+    if (equitySummary.settledDays === 0) {
       return {
         initialCapital,
         finalEquity,
@@ -369,31 +467,23 @@ export class PaperAccount {
 
     const totalReturnPct = ((finalEquity - initialCapital) / initialCapital) * 100;
 
-    // 最大回撤
-    let peak = equityHistory[0].value;
-    let maxDrawdownPct = 0;
-    for (const p of equityHistory) {
-      if (p.value > peak) peak = p.value;
-      const dd = ((peak - p.value) / peak) * 100;
-      if (dd > maxDrawdownPct) maxDrawdownPct = dd;
-    }
-
-    // 逐日收益率
+    // 逐日收益率（保留窗口内；跨窗口的那一天由 prevEquity 兜住，见 recordEquity）
     const dailyReturns: number[] = [];
     for (let i = 1; i < equityHistory.length; i++) {
       const prev = equityHistory[i - 1].value;
       if (prev > 0) dailyReturns.push((equityHistory[i].value - prev) / prev);
     }
 
-    // 简单年化夏普（无风险利率按 2.5%）；至少 3 个净值点（≥2 个日收益）才有意义
+    // 简单年化夏普（无风险利率按 2.5%）；至少 3 个净值点（≥2 个日收益）才有意义。
+    // 用累计量算全历史均值/标准差：Σ(r-avg)² = Σr² - n·avg²（截断后仍与全序列一致）
     let sharpeRatio: number | null = null;
-    if (dailyReturns.length >= 2) {
+    const n = equitySummary.returnCount;
+    if (n >= 2) {
       const riskFreeDaily = 0.025 / 252;
-      const avg = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
+      const avg = equitySummary.returnSum / n;
       const excess = avg - riskFreeDaily;
-      const std = Math.sqrt(
-        dailyReturns.reduce((s, r) => s + (r - avg) ** 2, 0) / dailyReturns.length,
-      );
+      const variance = Math.max(0, equitySummary.returnSumSquares / n - avg * avg);
+      const std = Math.sqrt(variance);
       sharpeRatio = std > 0 ? (excess / std) * Math.sqrt(252) : 0;
     }
 
@@ -401,14 +491,18 @@ export class PaperAccount {
       initialCapital,
       finalEquity: round2(finalEquity),
       totalReturnPct: round2(totalReturnPct),
-      maxDrawdownPct: round2(maxDrawdownPct),
+      maxDrawdownPct: round2(equitySummary.maxDrawdownPct),
       sharpeRatio: sharpeRatio === null ? null : round2(sharpeRatio),
-      totalDays: equityHistory.length,
+      totalDays: equitySummary.settledDays,
       dailyReturns,
     };
   }
 
-  /** 原子化落盘：先写临时文件再 rename，避免半写快照 */
+  /**
+   * 原子化落盘：先写临时文件再 rename，避免半写快照。
+   * 仍是"全量重写"，但订单/净值序列都有容量上限（paperMaxOrders / paperMaxEquityPoints），
+   * 故单次写入量有界，不会随运行时长无限膨胀。
+   */
   save(): void {
     const file = this.opts.filePath;
     const dir = path.dirname(file);
@@ -426,6 +520,9 @@ export class PaperAccount {
       positions: Object.fromEntries(this.positions),
       orders: this.orders,
       equityHistory: this.equityHistory,
+      // 累计统计随快照落盘：否则"存盘→读盘"会把截断后的窗口当成全历史，
+      // 总天数/最大回撤/夏普会在重启后静默缩水
+      equitySummary: this.equitySummary,
       lastClose: Object.fromEntries(this.lastClose),
     };
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -453,6 +550,8 @@ export class PaperAccount {
       positions?: Record<string, Position>;
       orders?: PaperOrder[];
       equityHistory?: EquityPoint[];
+      /** 累计统计（新快照带；旧快照缺省时由完整序列重建） */
+      equitySummary?: EquitySummary;
       lastClose?: Record<string, number>;
     };
     const acct = new PaperAccount(data.initialCapital, {
@@ -471,6 +570,12 @@ export class PaperAccount {
     acct.orders.push(...(data.orders ?? []));
     acct.equityHistory.length = 0;
     acct.equityHistory.push(...(data.equityHistory ?? []));
+    // 顺序：先定累计统计（旧快照用完整序列重建），再套用容量上限截断，
+    // 否则旧快照的历史峰值/天数会在截断后永久丢失
+    if (data.equitySummary) acct.equitySummary = { ...emptyEquitySummary(), ...data.equitySummary };
+    else acct.rebuildEquitySummary();
+    keepRecent(acct.orders, paperMaxOrders());
+    keepRecent(acct.equityHistory, paperMaxEquityPoints());
     return acct;
   }
 
@@ -485,7 +590,7 @@ export class PaperAccount {
   private reject(order: PaperOrder, reason: string): PaperOrder {
     order.status = 'rejected';
     order.rejectReason = reason;
-    this.orders.push(order);
+    this.recordOrder(order);
     return order;
   }
 
@@ -493,5 +598,36 @@ export class PaperAccount {
   private rejectAt(order: PaperOrder, reason: string): void {
     order.status = 'rejected';
     order.rejectReason = reason;
+  }
+
+  /**
+   * 订单入流水（唯一入口）：超上限即淘汰最旧。
+   * 淘汰安全性：pending 单的生命周期不超过一个交易日（settleDay 结束时会全部成交或过期），
+   * 而默认上限 2000 条——同一交易日内先挂 2000 单以上才会把尚未结算的挂单挤掉。
+   */
+  private recordOrder(order: PaperOrder): void {
+    this.orders.push(order);
+    keepRecent(this.orders, paperMaxOrders());
+  }
+
+  /**
+   * 净值入序列（唯一入口）：先累计统计、再追加与截断。
+   * 顺序很重要——累计量必须在截断前更新，且跨窗口的那一天要靠 prevEquity 兜住，
+   * 否则截断后第一天的收益会被当成"没有前一天"而丢失。
+   */
+  private recordEquity(date: string, value: number): void {
+    accumulateEquity(this.equitySummary, value);
+    this.equityHistory.push({ date, value });
+    keepRecent(this.equityHistory, paperMaxEquityPoints());
+  }
+
+  /**
+   * 由完整净值序列重建累计统计（旧快照没有 equitySummary 字段时用）。
+   * 旧快照保存的是**未截断**的完整序列，故重建结果与历史口径一致。
+   */
+  private rebuildEquitySummary(): void {
+    const summary = emptyEquitySummary();
+    for (const p of this.equityHistory) accumulateEquity(summary, p.value);
+    this.equitySummary = summary;
   }
 }

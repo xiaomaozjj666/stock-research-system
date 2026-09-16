@@ -152,7 +152,11 @@ export default function BacktestChart({ data }: Props) {
       <div className="quant-chart-card">
         <h4 className="quant-chart-title">权益曲线</h4>
         {/* .quant-chart 自带 width:100%/height:320px，与原 div 完全一致 */}
-        <EChart option={option} className="quant-chart" />
+        <EChart
+          option={option}
+          className="quant-chart"
+          ariaLabel="回测权益曲线（净值随交易日变化）"
+        />
       </div>
     </div>
   );

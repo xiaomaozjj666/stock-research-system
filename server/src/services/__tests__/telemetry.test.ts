@@ -515,6 +515,73 @@ describe('expressTracerMiddleware', () => {
     expect(span.attributes['http.aborted']).toBeUndefined();
     expect(span.events).toEqual([]);
   });
+
+  // ==========================================================================
+  // span 的 http.url 脱敏（审计：/api/chat/stream 的用户原话、/api/stocks/search
+  // 的关键词都在 query 里，而 span 走 debug 导出时整段落盘）
+  // ==========================================================================
+  it('span 的 http.url 抹掉敏感 query 值，保留路径与参数键名', () => {
+    configureTracer({});
+    const tracer = getTracer();
+    const middleware = expressTracerMiddleware();
+
+    const req = {
+      method: 'GET',
+      originalUrl: '/api/chat/stream?message=我持有贵州茅台，成本1680&sessionId=abc-123',
+      path: '/api/chat/stream',
+      url: '/api/chat/stream',
+      ip: '127.0.0.1',
+    } as unknown as import('express').Request;
+    const res = {
+      statusCode: 200,
+      locals: {} as Record<string, unknown>,
+      setHeader: vi.fn(),
+      on: vi.fn(),
+    } as unknown as import('express').Response;
+
+    middleware(req, res, vi.fn());
+
+    const ctx = (res.locals as { traceContext: TraceContext }).traceContext;
+    const span = tracer.getTrace(ctx.traceId)[0];
+    const url = span.attributes['http.url'] as string;
+
+    expect(url).toBe('/api/chat/stream?message=[redacted]&sessionId=[redacted]');
+    expect(url).not.toContain('贵州茅台');
+    expect(url).not.toContain('1680');
+    expect(url).not.toContain('abc-123');
+    // 排查仍需要的信息（路径）没丢
+    expect(url.startsWith('/api/chat/stream')).toBe(true);
+  });
+
+  it('span 的 http.url 对白名单 query（股票代码等）保持原值', () => {
+    configureTracer({});
+    const tracer = getTracer();
+    const middleware = expressTracerMiddleware();
+
+    const req = {
+      method: 'GET',
+      originalUrl: '/api/analyze/stream?stockCode=600519&resume=1&keyword=张三',
+      path: '/api/analyze/stream',
+      url: '/api/analyze/stream',
+      ip: '127.0.0.1',
+    } as unknown as import('express').Request;
+    const res = {
+      statusCode: 200,
+      locals: {} as Record<string, unknown>,
+      setHeader: vi.fn(),
+      on: vi.fn(),
+    } as unknown as import('express').Response;
+
+    middleware(req, res, vi.fn());
+
+    const ctx = (res.locals as { traceContext: TraceContext }).traceContext;
+    const span = tracer.getTrace(ctx.traceId)[0];
+
+    expect(span.attributes['http.url']).toBe(
+      '/api/analyze/stream?stockCode=600519&resume=1&keyword=[redacted]',
+    );
+    expect(span.attributes['http.url']).not.toContain('张三');
+  });
 });
 
 // 辅助：从 tracer 中筛出指定 name 的 span（用于 withSpan 用例）

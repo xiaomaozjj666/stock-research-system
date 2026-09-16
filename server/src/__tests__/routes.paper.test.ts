@@ -112,6 +112,37 @@ describe('模拟盘路由（/api/paper）', () => {
     expect(typeof res.body.latestEquity.value).toBe('number');
     expect(Array.isArray(res.body.history)).toBe(true);
   });
+
+  it('下单成功后留下审计条目，并带上本次请求的 traceId（审计与链路打通）', async () => {
+    auditLogger.clear();
+    const res = await request(app)
+      .post('/api/paper/order')
+      .send({ code: '000001', side: 'buy', type: 'market', quantity: 200, date: '2026-08-03' });
+    expect(res.status).toBe(200);
+
+    // index.ts 的 expressTracerMiddleware 为每个请求注入 X-Trace-Id
+    const traceId = res.headers['x-trace-id'];
+    expect(typeof traceId).toBe('string');
+    expect(traceId).toBeTruthy();
+
+    // 按 traceId 反查应正好命中这条下单审计（同一条链路可串联多条事件）
+    const entries = auditLogger.query({ traceId: String(traceId) });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].category).toBe('trade_signal');
+    expect(entries[0].action).toBe('trade.signal');
+    expect(entries[0].sessionId).toBe('paper');
+    expect(entries[0].metadata?.stockCode).toBe('000001');
+    expect(entries[0].traceId).toBe(traceId);
+  });
+
+  it('校验失败（400）不写审计条目：非法请求不产生"交易信号"留痕', async () => {
+    auditLogger.clear();
+    const res = await request(app)
+      .post('/api/paper/order')
+      .send({ side: 'buy', type: 'market', quantity: 0, date: '2026-08-03' });
+    expect(res.status).toBe(400);
+    expect(auditLogger.query({ category: 'trade_signal' })).toHaveLength(0);
+  });
 });
 
 describe('合规审计查询路由（/api/audit）', () => {

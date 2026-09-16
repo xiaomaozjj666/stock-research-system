@@ -543,6 +543,8 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
           option={option}
           className={`trend-plot-chart ${macdOn ? 'trend-plot-chart-macd' : ''}`}
           onChartReady={handleReady}
+          // 读屏文本替代：canvas 对辅助技术不可见，至少说清这张图在表达什么
+          ariaLabel={`${stockName || '标的'}日K线走势图（含成交量与均线，可悬停查看逐日开高低收）`}
         />
       </div>
     </div>

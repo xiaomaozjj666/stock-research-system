@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 
 // 隔离网络：dataFetcher 的所有 fetch* 函数都经由 fetchJsonWithTimeout -> fetchJson。
 // 直接 mock fetchJson 即可驱动每个解析分支，无需真实网络。
@@ -14,6 +14,8 @@ import {
   fetchValuationData,
   fetchBoardInfo,
   clearValueAnalysisCache,
+  valueAnalysisCacheMax,
+  valueAnalysisNegativeTtlMs,
   toNum,
   yuanToYi,
   toPercent,
@@ -222,5 +224,128 @@ describe('fetchBoardInfo', () => {
   it('无结果时返回 null', async () => {
     mockFetchJson.mockResolvedValue({ result: { data: [] } });
     expect(await fetchBoardInfo('688825')).toBeNull();
+  });
+});
+
+// ============================================================================
+// 估值分析缓存：容量上限 + 负缓存 TTL（审计：失败结果 null 被永久缓存，
+// 一次瞬时失败会让该股估值一直走兜底直到进程重启；条目也无上限）
+// 用 Date.now 打桩推进"时间"，无需假定时器；fetchJson 已 mock，不触网络。
+// ============================================================================
+describe('估值分析缓存：容量上限与负缓存 TTL', () => {
+  const ORIGINAL_ENV = { ...process.env };
+  /** 可控时钟（仅打桩 Date.now：该代码路径不依赖定时器） */
+  let clock = 1_700_000_000_000;
+  let nowSpy: ReturnType<typeof vi.spyOn>;
+
+  /** 构造 datacenter 成功响应 */
+  const rowResponse = (name: string, board = '白酒') => ({
+    result: { data: [{ SECURITY_NAME_ABBR: name, BOARD_NAME: board }] },
+  });
+
+  beforeEach(() => {
+    clock = 1_700_000_000_000;
+    nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    delete process.env.VALUE_ANALYSIS_CACHE_MAX;
+    delete process.env.VALUE_ANALYSIS_NEGATIVE_TTL_MS;
+  });
+
+  afterEach(() => {
+    nowSpy.mockRestore();
+    for (const key of Object.keys(process.env)) {
+      if (!(key in ORIGINAL_ENV)) delete process.env[key];
+    }
+    Object.assign(process.env, ORIGINAL_ENV);
+  });
+
+  it('valueAnalysisCacheMax / valueAnalysisNegativeTtlMs：非法值回退默认', () => {
+    expect(valueAnalysisCacheMax()).toBe(500);
+    expect(valueAnalysisNegativeTtlMs()).toBe(5 * 60 * 1000);
+
+    for (const bad of ['abc', '0', '-1', '']) {
+      process.env.VALUE_ANALYSIS_CACHE_MAX = bad;
+      expect(valueAnalysisCacheMax(), `非法上限 ${JSON.stringify(bad)}`).toBe(500);
+    }
+    for (const bad of ['abc', '-1', '']) {
+      process.env.VALUE_ANALYSIS_NEGATIVE_TTL_MS = bad;
+      expect(valueAnalysisNegativeTtlMs(), `非法 TTL ${JSON.stringify(bad)}`).toBe(5 * 60 * 1000);
+    }
+
+    // 合法值：上限向下取整；TTL 显式 0 = 关闭负缓存（与项目其他缓存 TTL 的 0 语义一致）
+    process.env.VALUE_ANALYSIS_CACHE_MAX = '12.8';
+    expect(valueAnalysisCacheMax()).toBe(12);
+    process.env.VALUE_ANALYSIS_NEGATIVE_TTL_MS = '0';
+    expect(valueAnalysisNegativeTtlMs()).toBe(0);
+  });
+
+  it('失败的负缓存有 TTL：到期后重新取数，不再永久走兜底', async () => {
+    process.env.VALUE_ANALYSIS_NEGATIVE_TTL_MS = '60000';
+    mockFetchJson.mockRejectedValueOnce(new Error('上游瞬时抖动'));
+
+    expect(await fetchBoardInfo('600519')).toBeNull(); // 第 1 次：失败并入负缓存
+    expect(mockFetchJson).toHaveBeenCalledTimes(1);
+
+    mockFetchJson.mockResolvedValue(rowResponse('贵州茅台'));
+    clock += 59_000; // TTL 内
+    expect(await fetchBoardInfo('600519')).toBeNull();
+    expect(mockFetchJson).toHaveBeenCalledTimes(1); // 命中负缓存，不重复请求
+
+    clock += 2_000; // 越过 60s TTL
+    expect(await fetchBoardInfo('600519')).toEqual({ name: '贵州茅台', boardName: '白酒' });
+    expect(mockFetchJson).toHaveBeenCalledTimes(2); // 过期即重试
+  });
+
+  it('TTL 非法值按默认 5 分钟生效（不是"立即过期"）', async () => {
+    process.env.VALUE_ANALYSIS_NEGATIVE_TTL_MS = 'abc';
+    mockFetchJson.mockRejectedValueOnce(new Error('boom'));
+
+    expect(await fetchBoardInfo('600519')).toBeNull();
+    mockFetchJson.mockResolvedValue(rowResponse('贵州茅台'));
+
+    clock += 60_000; // 1 分钟 < 默认 5 分钟
+    expect(await fetchBoardInfo('600519')).toBeNull();
+    expect(mockFetchJson).toHaveBeenCalledTimes(1);
+
+    clock += 4 * 60_000 + 1; // 越过默认 TTL
+    expect(await fetchBoardInfo('600519')).toEqual({ name: '贵州茅台', boardName: '白酒' });
+    expect(mockFetchJson).toHaveBeenCalledTimes(2);
+  });
+
+  it('VALUE_ANALYSIS_NEGATIVE_TTL_MS=0 关闭负缓存：每次失败都重试', async () => {
+    process.env.VALUE_ANALYSIS_NEGATIVE_TTL_MS = '0';
+    mockFetchJson.mockRejectedValue(new Error('持续不可用'));
+
+    expect(await fetchBoardInfo('600519')).toBeNull();
+    expect(await fetchBoardInfo('600519')).toBeNull();
+    expect(mockFetchJson).toHaveBeenCalledTimes(2);
+  });
+
+  it('成功的行不受 TTL 限制（负缓存 TTL 不误伤正向缓存）', async () => {
+    process.env.VALUE_ANALYSIS_NEGATIVE_TTL_MS = '1000';
+    mockFetchJson.mockResolvedValue(rowResponse('贵州茅台'));
+
+    expect(await fetchBoardInfo('600519')).toEqual({ name: '贵州茅台', boardName: '白酒' });
+    clock += 60 * 60 * 1000; // 1 小时后仍应命中（估值行按请求级缓存语义保留）
+    expect(await fetchBoardInfo('600519')).toEqual({ name: '贵州茅台', boardName: '白酒' });
+    expect(mockFetchJson).toHaveBeenCalledTimes(1);
+  });
+
+  it('容量上限：超限淘汰最旧（被淘汰的代码会重新取数，较新的仍命中）', async () => {
+    process.env.VALUE_ANALYSIS_CACHE_MAX = '2';
+    mockFetchJson.mockImplementation(async (url: string) => {
+      const code = String(url).match(/SECUCODE="(\d{6})/)?.[1] ?? 'unknown';
+      return rowResponse(`名称${code}`);
+    });
+
+    expect(await fetchBoardInfo('600519')).not.toBeNull(); // A → 请求 1
+    expect(await fetchBoardInfo('000001')).not.toBeNull(); // B → 请求 2
+    expect(await fetchBoardInfo('300750')).not.toBeNull(); // C → 请求 3（A 被淘汰）
+    expect(mockFetchJson).toHaveBeenCalledTimes(3);
+
+    expect(await fetchBoardInfo('600519')).not.toBeNull(); // A 已被淘汰 → 请求 4
+    expect(mockFetchJson).toHaveBeenCalledTimes(4);
+
+    expect(await fetchBoardInfo('300750')).not.toBeNull(); // C 仍在缓存
+    expect(mockFetchJson).toHaveBeenCalledTimes(4);
   });
 });

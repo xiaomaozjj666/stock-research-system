@@ -13,6 +13,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { recordUsage, type CostEntry } from '../llm/cost.js';
 import logger from '../utils/logger.js';
+import { sanitizeUrlForLog } from '../utils/logSanitize.js';
 
 /** Span 状态：对齐 OTel SpanStatus 枚举子集 */
 export type SpanStatus = 'unset' | 'ok' | 'error';
@@ -322,7 +323,9 @@ export function expressTracerMiddleware() {
     const spanName = `http.${req.method.toLowerCase()}`;
     const { span, ctx } = tracer.startSpan(spanName);
     span.attributes['http.method'] = req.method;
-    span.attributes['http.url'] = req.originalUrl ?? req.url;
+    // 脱敏后再入 span：span 走 debug 导出时整段落盘，而 /api/chat/stream?message=...
+    // 的 message 是用户原话（详见 utils/logSanitize.ts）
+    span.attributes['http.url'] = sanitizeUrlForLog(req.originalUrl ?? req.url);
     span.attributes['http.path'] = req.path;
     if (req.ip) span.attributes['http.ip'] = req.ip;
 

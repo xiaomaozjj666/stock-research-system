@@ -20,6 +20,7 @@ import {
 } from '../services/historyService.js';
 import { recordAnalysis } from '../services/outcomeTracker.js';
 import { createSseChannel } from '../utils/sse.js';
+import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -84,7 +85,9 @@ router.post('/api/analyze', analyzeLimiter, circuitBreakerGuard, async (req, res
     });
     // LLM 排队超时是"系统繁忙可退避"，必须回 429 而不是 500
     if (respondIfQueueTimeout(res, error, '/api/analyze')) return;
-    res.status(500).json({ error: '分析过程出错', detail: (error as Error).message });
+    // detail 只在非生产环境回传：路由内 catch 不经过 index.ts 的通用错误中间件，
+    // 无条件回传 error.message 会把上游 URL / 内部路径泄漏出去（见 utils/errorDetail.ts）
+    res.status(500).json({ error: '分析过程出错', detail: errorDetail(error) });
   }
 });
 
@@ -119,9 +122,11 @@ router.get('/api/analyze/stream', analyzeLimiter, circuitBreakerGuard, async (re
       const queueTimeout = isQueueTimeoutError(error);
       sse.trySend({
         phase: 'error',
+        // 生产环境不回传原始 message（同 detail 口径），只给稳定中文兜底；
+        // 前端 data.message 为空时本就有 '分析过程出错' 的兜底文案
         message: queueTimeout
           ? `LLM 调用排队超时（系统繁忙），请约 ${Math.max(1, Math.ceil(error.retryAfterMs / 1000))} 秒后重试`
-          : (error as Error).message || '分析过程出错',
+          : errorDetail(error) || '分析过程出错',
         ...(queueTimeout ? { code: error.code } : {}),
       });
     }

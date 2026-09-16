@@ -1,6 +1,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import request from 'supertest';
 
+// 每个用例都要 resetModules 后重新 import 整个应用（限流计数在模块级实例里，见下方说明）。
+// 全量套件（180+ 文件并行）时这一步可能超过 vitest 默认的 5s 用例超时——
+// 那是加载竞争导致的假失败，不是逻辑错误，故给本文件放宽到 30s。
+vi.setConfig({ testTimeout: 30_000 });
+
 /**
  * 新增限流器的 429 分支（P1：部分网络型/只读端点无限流）
  * ----------------------------------------------------------------------------

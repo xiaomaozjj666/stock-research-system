@@ -55,6 +55,7 @@ vi.mock('../quant/dataProvider.js', async (importOriginal) => {
 });
 
 import { app } from '../index.js';
+import { auditLogger } from '../services/auditLog.js';
 
 /** 生成 n 根确定性日 K 线（正弦+微升，保证因子有非退化取值） */
 function genBars(n = 280, start = '2024-01-01'): OHLCVData[] {
@@ -272,5 +273,38 @@ describe('POST /api/quant/analyze 主路径', () => {
     expect(raw).not.toContain('.ts:');
     expect(raw).not.toContain('node_modules');
     expect(raw).not.toContain('at ');
+  });
+
+  it('成功分析后留下 tool.quant.analyze 审计条目，并带上本次请求的 traceId', async () => {
+    auditLogger.clear();
+    const res = await request(app)
+      .post('/api/quant/analyze')
+      .send({ strategy: '双均线交叉策略，5日和20日' });
+    expect(res.status).toBe(200);
+
+    // index.ts 的 expressTracerMiddleware 为每个请求注入 X-Trace-Id
+    const traceId = res.headers['x-trace-id'];
+    expect(typeof traceId).toBe('string');
+    expect(traceId).toBeTruthy();
+
+    const entries = auditLogger.query({ traceId: String(traceId) });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].action).toBe('tool.quant.analyze');
+    expect(entries[0].category).toBe('tool_call');
+    expect(entries[0].sessionId).toBe('quant');
+    expect(entries[0].metadata?.args).toMatchObject({ stockCode: '600519' });
+    // 风险等级为 low：审计留痕不得把常规分析算成高风险操作（否则会误触熔断）
+    expect(entries[0].riskLevel).toBe('low');
+  });
+
+  it('失败路径（编排抛错）不留下夸大的成功审计条目', async () => {
+    auditLogger.clear();
+    mocks.orchestrate.mockRejectedValue(new Error('审计子 Agent 不可用'));
+
+    const res = await request(app).post('/api/quant/analyze').send({ strategy: strategyFixture() });
+    expect(res.status).toBe(500);
+    // AuditQueryFilter 不支持按 action 过滤（只有 category/riskLevel/traceId 等），
+    // 故取全部条目后在测试侧筛 action——语义与"查询该 action"等价
+    expect(auditLogger.query({}).filter((e) => e.action === 'tool.quant.analyze')).toHaveLength(0);
   });
 });
