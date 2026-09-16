@@ -30,8 +30,10 @@ test.describe('应用加载与导航', () => {
     await expect(page.getByRole('heading', { name: '股票对比' })).toBeVisible();
 
     // 量化研究（懒加载，Suspense fallback 后出现）
+    // 注意 .first()：tab 标签与面板标题都含「量化研究」，用非唯一选择器会在面板渲染完成后
+    // 触发 strict mode violation（此前靠"断言早于面板渲染"侥幸通过，属时序脆断言）
     await page.getByRole('tab', { name: '量化研究' }).click();
-    await expect(page.getByText('量化研究', { exact: false })).toBeVisible();
+    await expect(page.getByText('量化研究', { exact: false }).first()).toBeVisible();
 
     // 自选股
     await page.getByRole('tab', { name: '自选股' }).click();
