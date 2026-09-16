@@ -21,6 +21,10 @@ test.describe('应用加载与导航', () => {
     // 深度研究（默认 tab，首屏即渲染搜索区）
     await expect(page.getByPlaceholder(/输入股票代码或名称/)).toBeVisible();
 
+    // 今日（聚合页：自选股异动 / 关注股观点变化 / 最近简报）
+    await page.getByRole('tab', { name: '今日' }).click();
+    await expect(page.getByText('自选股异动').first()).toBeVisible();
+
     // 对比分析
     await page.getByRole('tab', { name: '对比分析' }).click();
     await expect(page.getByRole('heading', { name: '股票对比' })).toBeVisible();
