@@ -5,9 +5,17 @@
  * 财报、估值做关键词/BM25-lite 检索，供 LLM 引用证据，从而降低幻觉。
  *
  * 纯函数核心 retrieveEvidenceFromDocs 可单测；retrieveEvidence 包装文件索引（best-effort）。
+ *
+ * 语料索引的性能约束：缓存目录按 prune 上限可达 2000 文件 / 上百 MB，而检索发生在
+ * **每条对话**里。因此磁盘索引做「快照 + 失效判据」缓存，并把读盘全部改为异步
+ * （fs/promises）——原先每条消息 sync readdir/readFile/JSON.parse 整目录，
+ * 会把事件循环阻塞数秒。对外契约不变（同样的语料内容与 topK 结果）。
  */
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
+import { getDataCacheDir } from '../services/dataService.js';
+import { getQuantCacheDir } from '../quant/quantCache.js';
 
 export interface EvidenceDoc {
   id: string;
@@ -93,28 +101,96 @@ export function retrieveEvidenceFromDocs(
   return scored.slice(0, topK).map((s) => s.doc);
 }
 
-/** 索引本地缓存目录下的 JSON 为证据文档（best-effort，忽略一切错误） */
-export function indexCorpus(): EvidenceDoc[] {
-  const roots = [
-    path.join(import.meta.dirname, '..', 'data', 'cache'),
-    path.join(import.meta.dirname, '..', 'quant', 'cache'),
-  ];
+/** 语料索引快照（仅磁盘部分；运行时注入文档实时拼接，不受快照 TTL 影响） */
+interface CorpusSnapshot {
+  docs: EvidenceDoc[];
+  /** 目录签名：各根目录的 mtime + .json 条目数（新增/删除缓存文件即变化） */
+  signature: string;
+  loadedAt: number;
+}
+
+/** 语料快照默认有效期（`RAG_CORPUS_TTL_MS` 可覆盖；<=0 表示每次检索都重扫） */
+const DEFAULT_CORPUS_TTL_MS = 60_000;
+
+let corpusSnapshot: CorpusSnapshot | null = null;
+let corpusRefreshInFlight: Promise<void> | null = null;
+
+function corpusTtlMs(): number {
+  const raw = process.env.RAG_CORPUS_TTL_MS;
+  if (raw === undefined || raw === '') return DEFAULT_CORPUS_TTL_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_CORPUS_TTL_MS;
+}
+
+/**
+ * 语料根目录：与两个缓存模块共用同一套目录解析（DATA_CACHE_DIR 生效），
+ * 而不是硬编码相对路径——否则 DATA_CACHE_DIR 生效时索引的是空目录。
+ * 共享同一目录时去重，避免同一份文档被索引两次。
+ */
+function corpusRoots(): string[] {
+  return [...new Set([getDataCacheDir(), getQuantCacheDir()])];
+}
+
+/**
+ * 目录签名（异步，只 stat + readdir，不读文件内容）：
+ * 文件新增/删除会改变目录 mtime 或条目数 → 判为「语料变了」。
+ * 同名单文件的内容覆盖不改变签名，由 TTL 兜底（见 loadCorpus）。
+ */
+async function corpusSignature(): Promise<string> {
+  const parts: string[] = [];
+  for (const root of corpusRoots()) {
+    try {
+      const st = await fsp.stat(root);
+      const count = (await fsp.readdir(root)).filter((f) => f.endsWith('.json')).length;
+      parts.push(`${root}:${st.mtimeMs}:${count}`);
+    } catch {
+      parts.push(`${root}:missing`);
+    }
+  }
+  return parts.join('|');
+}
+
+/** 把单个缓存文件解析为证据文档；不可读/无文本时返回 null */
+function docFromCacheFile(file: string, raw: string): EvidenceDoc | null {
+  try {
+    const json = JSON.parse(raw);
+    const code = String(json?.stockCode || json?.code || '');
+    const text = flatten(json).join(' ').slice(0, 2000);
+    if (text.trim().length === 0) return null;
+    return { id: file, source: `cache:${file}`, text, stockCode: code || undefined };
+  } catch {
+    return null; // 单文件损坏忽略
+  }
+}
+
+/** 异步索引磁盘缓存目录（生产路径：全程 fs/promises，不阻塞事件循环） */
+async function indexCorpusFromDisk(): Promise<EvidenceDoc[]> {
   const docs: EvidenceDoc[] = [];
-  // 先加入运行时注入的文档（研报/财报/用户粘贴）
-  for (const d of ingestedDocs) docs.push(d);
-  for (const root of roots) {
+  for (const root of corpusRoots()) {
+    try {
+      const files = (await fsp.readdir(root)).filter((f) => f.endsWith('.json'));
+      for (const f of files) {
+        const doc = docFromCacheFile(f, await fsp.readFile(path.join(root, f), 'utf-8'));
+        if (doc) docs.push(doc);
+      }
+    } catch {
+      /* 目录不可读忽略 */
+    }
+  }
+  return docs;
+}
+
+/** 同步索引磁盘缓存目录（仅冷启动兜底，见 indexCorpus；热路径不再走这里） */
+function indexCorpusFromDiskSync(): EvidenceDoc[] {
+  const docs: EvidenceDoc[] = [];
+  for (const root of corpusRoots()) {
     try {
       if (!fs.existsSync(root)) continue;
       const files = fs.readdirSync(root).filter((f) => f.endsWith('.json'));
       for (const f of files) {
         try {
-          const raw = fs.readFileSync(path.join(root, f), 'utf-8');
-          const json = JSON.parse(raw);
-          const code = String(json?.stockCode || json?.code || '');
-          const text = flatten(json).join(' ').slice(0, 2000);
-          if (text.trim().length > 0) {
-            docs.push({ id: f, source: `cache:${f}`, text, stockCode: code || undefined });
-          }
+          const doc = docFromCacheFile(f, fs.readFileSync(path.join(root, f), 'utf-8'));
+          if (doc) docs.push(doc);
         } catch {
           /* 单文件损坏忽略 */
         }
@@ -124,6 +200,66 @@ export function indexCorpus(): EvidenceDoc[] {
     }
   }
   return docs;
+}
+
+/** 拼接最终语料：注入文档在前且实时生效（不受磁盘快照 TTL 影响） */
+function composeCorpus(diskDocs: EvidenceDoc[]): EvidenceDoc[] {
+  return ingestedDocs.length > 0 ? [...ingestedDocs, ...diskDocs] : [...diskDocs];
+}
+
+/** 触发一次异步重建（single-flight：并发检索共享同一次读盘） */
+function refreshCorpus(): Promise<void> {
+  if (corpusRefreshInFlight) return corpusRefreshInFlight;
+  corpusRefreshInFlight = (async () => {
+    const signature = await corpusSignature();
+    const docs = await indexCorpusFromDisk();
+    corpusSnapshot = { docs, signature, loadedAt: Date.now() };
+  })()
+    .catch(() => {
+      // 读盘失败：不写快照（下次检索重试），保留旧快照继续服务
+    })
+    .finally(() => {
+      corpusRefreshInFlight = null;
+    });
+  return corpusRefreshInFlight;
+}
+
+/**
+ * 异步取语料：每次检索做一次**廉价的**目录签名比对（stat + readdir，异步、不读文件内容），
+ * 仅在「目录签名变化（有缓存文件新增/删除）」或「TTL 到期（同名单文件内容被覆盖）」时全量重建。
+ */
+async function loadCorpus(): Promise<EvidenceDoc[]> {
+  const snapshot = corpusSnapshot;
+  const ttl = corpusTtlMs();
+  if (!snapshot || ttl <= 0) {
+    // 无快照（冷启动）或显式关闭缓存（ttl<=0）：直接重建，保证内容最新
+    await refreshCorpus();
+    return composeCorpus(corpusSnapshot?.docs ?? []);
+  }
+  const signatureChanged = (await corpusSignature()) !== snapshot.signature;
+  const expired = Date.now() - snapshot.loadedAt >= ttl;
+  if (signatureChanged || expired) await refreshCorpus();
+  // 重建失败时退回旧快照（缓存是加速器，不是数据源）
+  return composeCorpus(corpusSnapshot?.docs ?? snapshot.docs);
+}
+
+/**
+ * 索引本地缓存目录下的 JSON 为证据文档（best-effort，忽略一切错误）。
+ *
+ * 同步契约保留（既有调用方无需改动）：命中快照直接返回；冷启动（进程内首次调用）
+ * 做一次同步读盘兜底，之后不再同步读盘。生产热路径经 retrieveEvidence 走异步加载。
+ */
+export function indexCorpus(): EvidenceDoc[] {
+  if (!corpusSnapshot) {
+    // signature 留空：下次异步加载时会与真实签名不同，从而补建完整快照
+    corpusSnapshot = { docs: indexCorpusFromDiskSync(), signature: '', loadedAt: Date.now() };
+  }
+  return composeCorpus(corpusSnapshot.docs);
+}
+
+/** 清空语料快照（测试/运维用：下次检索强制重扫缓存目录） */
+export function resetCorpusCache(): void {
+  corpusSnapshot = null;
 }
 
 /** 嵌入函数类型（由调用方注入真实 embed 或 mock） */
@@ -220,7 +356,8 @@ export async function retrieveEvidence(
   query: string,
   opts: { topK?: number; stockCode?: string; embedder?: Embedder; docs?: EvidenceDoc[] } = {},
 ): Promise<EvidenceDoc[]> {
-  const docs = opts.docs ?? indexCorpus();
+  // 未显式传入语料时走异步索引（快照 + 失效判据），每条对话不再同步重扫缓存目录
+  const docs = opts.docs ?? (await loadCorpus());
   const embedder = opts.embedder;
   if (embedder && docs.length > 0) {
     try {

@@ -256,8 +256,14 @@ app.use(
 // === Start Server（仅作为进程入口直接运行时监听端口；测试通过 supertest 引用导出的 app，不监听） ===
 if (process.env.NODE_ENV !== 'test') {
   const PORT = Number(process.env.PORT) || 3001;
-  const server = app.listen(PORT, () => {
-    logger.info('Server running', { url: `http://localhost:${PORT}` });
+  // 默认只监听回环地址：本系统按本地单机定位、无鉴权，绑定全网卡会让同局域网内
+  // 任何设备都能调用写接口（下单/结算/清空自选）。确需局域网访问时显式设 HOST=0.0.0.0。
+  const HOST = process.env.HOST?.trim() || '127.0.0.1';
+  const server = app.listen(PORT, HOST, () => {
+    logger.info('Server running', {
+      url: `http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`,
+      host: HOST,
+    });
     // 预热证券全表，使首次兜底模糊搜索即时响应
     loadStockMaster().catch((err) =>
       logger.warn('[stockMaster] 预热失败，首次搜索将按需加载', { err: err as Error }),

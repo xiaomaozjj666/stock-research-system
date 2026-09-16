@@ -28,6 +28,20 @@ describe('metrics — normalizeRoute 路由标签归一化', () => {
     expect(normalizeRoute('/')).toBe('static_assets');
     expect(normalizeRoute('/assets/index-abc.js')).toBe('static_assets');
   });
+
+  it('新增路由自动进表（取自 OpenAPI 契约），不再被打成 /api/:other', () => {
+    // 这些路由此前不在手工维护的 KNOWN_ROUTES 里，全部退化成 /api/:other
+    expect(normalizeRoute('/api/quant/factor/composite')).toBe('/api/quant/factor/composite');
+    expect(normalizeRoute('/api/quant/factor/composite/batch')).toBe(
+      '/api/quant/factor/composite/batch',
+    );
+    expect(normalizeRoute('/api/history')).toBe('/api/history');
+  });
+
+  it('契约里的路径参数按 Express 形态归一（标签基数仍有界）', () => {
+    expect(normalizeRoute('/api/history/abc-123')).toBe('/api/history/:id');
+    expect(normalizeRoute('/api/watchlist/600519')).toBe('/api/watchlist/:code');
+  });
 });
 
 describe('metrics — recordHttpRequest + renderPrometheus', () => {
@@ -86,15 +100,22 @@ describe('metrics — recordHttpRequest + renderPrometheus', () => {
 describe('metrics — httpMetricsMiddleware', () => {
   beforeEach(() => resetMetrics());
 
-  it('响应 finish 时记录请求', () => {
+  /** 造一个可手动触发 finish/close 的极简 res */
+  function mockRes(statusCode = 200, writableEnded = false) {
     const listeners: Record<string, ((...args: unknown[]) => void)[]> = {};
-    const req = { method: 'GET', path: '/api/watchlist/600519' };
     const res = {
-      statusCode: 200,
+      statusCode,
+      writableEnded,
       on(event: string, cb: (...args: unknown[]) => void) {
         (listeners[event] ||= []).push(cb);
       },
     };
+    return { res, listeners };
+  }
+
+  it('响应 finish 时记录请求', () => {
+    const { res, listeners } = mockRes(200);
+    const req = { method: 'GET', path: '/api/watchlist/600519' };
     let nextCalled = false;
     httpMetricsMiddleware()(req as never, res as never, () => {
       nextCalled = true;
@@ -107,5 +128,57 @@ describe('metrics — httpMetricsMiddleware', () => {
     expect(out).toContain(
       'http_requests_total{method="GET",route="/api/watchlist/:code",status="200"} 1',
     );
+  });
+
+  it('客户端中途断开（只有 close、没有 finish）记为 status="aborted"', () => {
+    const { res, listeners } = mockRes(200, false);
+    const req = { method: 'GET', path: '/api/analyze/stream' };
+    httpMetricsMiddleware()(req as never, res as never, () => {});
+
+    listeners['close'].forEach((cb) => cb()); // 断开：没有 finish
+
+    const out = renderPrometheus();
+    // SSE 长请求被取消必须可见（原实现只监听 finish，这类请求在指标里完全不存在）
+    expect(out).toContain(
+      'http_requests_total{method="GET",route="/api/analyze/stream",status="aborted"} 1',
+    );
+    // 耗时同样入直方图：能看到「分析了多久才被放弃」
+    expect(out).toContain(
+      'http_request_duration_ms_count{method="GET",route="/api/analyze/stream"} 1',
+    );
+  });
+
+  it('finish 之后的 close 不重复计数，也不产生 aborted', () => {
+    const { res, listeners } = mockRes(200, true); // 正常结束：writableEnded=true
+    const req = { method: 'GET', path: '/api/analyze/stream' };
+    httpMetricsMiddleware()(req as never, res as never, () => {});
+
+    listeners['finish'].forEach((cb) => cb());
+    listeners['close'].forEach((cb) => cb());
+
+    const out = renderPrometheus();
+    expect(out).toContain(
+      'http_requests_total{method="GET",route="/api/analyze/stream",status="200"} 1',
+    );
+    expect(out).not.toContain('status="aborted"');
+    expect(out).toContain(
+      'http_request_duration_ms_count{method="GET",route="/api/analyze/stream"} 1',
+    );
+  });
+
+  it('finish 与 close 同时到达也只计一次（幂等）', () => {
+    const { res, listeners } = mockRes(200, false); // 极端时序：close 先到
+    const req = { method: 'GET', path: '/api/health' };
+    httpMetricsMiddleware()(req as never, res as never, () => {});
+
+    listeners['close'].forEach((cb) => cb());
+    listeners['finish'].forEach((cb) => cb());
+
+    const out = renderPrometheus();
+    expect(out).toContain(
+      'http_requests_total{method="GET",route="/api/health",status="aborted"} 1',
+    );
+    expect(out).not.toContain('route="/api/health",status="200"');
+    expect(out).toContain('http_request_duration_ms_count{method="GET",route="/api/health"} 1');
   });
 });

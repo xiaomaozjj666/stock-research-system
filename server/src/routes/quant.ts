@@ -3,7 +3,7 @@
  * 量价因子（A 股方向校正）与单因子评估 tear sheet。
  */
 import { Router, type Response } from 'express';
-import { quantLimiter, watchlistLimiter, circuitBreakerGuard } from '../middleware.js';
+import { quantLimiter, watchlistLimiter, metaLimiter, circuitBreakerGuard } from '../middleware.js';
 import { parseStrategyInput, orchestrate, generateSummary } from '../quant/agents/orchestrator.js';
 import type { StrategyConfig, FactorOverlay } from '../quant/types.js';
 import {
@@ -526,7 +526,9 @@ router.post(
 
 // 行业板块列表（东方财富 clist，m:90+t:2）：供前端下拉选择截面 universe。
 // 板块与成分股为低频数据（provider 内有 TTL 缓存），失败转 502 不编造列表。
-router.get('/api/quant/universe/boards', quantLimiter, circuitBreakerGuard, async (req, res) => {
+// 限流用 metaLimiter（30/min）而非 quantLimiter（5/min）：该请求由页面挂载触发、
+// 多个面板共享，属廉价只读元数据，与分钟级重计算共用配额会让正常浏览就吃 429。
+router.get('/api/quant/universe/boards', metaLimiter, async (req, res) => {
   try {
     const meta: WithStaleness<IndustryBoard[]> = await fetchIndustryBoardsWithMeta();
     // 东财新旧两套行业体系并存（银行 / 银行Ⅱ / 国有大型银行Ⅲ）：名称后缀 Ⅱ/Ⅲ

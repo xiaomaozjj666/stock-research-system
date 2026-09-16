@@ -3,11 +3,28 @@
  */
 import { Router } from 'express';
 import * as fs from 'fs';
-import * as path from 'path';
 import { renderPrometheus } from '../services/metrics.js';
 import { buildOpenApiDocument } from '../services/openapi.js';
+import { getDataCacheDir } from '../services/dataService.js';
+import { getQuantCacheDir } from '../quant/quantCache.js';
 
 const router = Router();
+
+/**
+ * 只读探测缓存目录状态（**不创建目录**）：
+ * 健康检查是被监控系统高频拉取的只读探针，早期实现在 GET 里 mkdirSync——
+ * 既产生了「读接口写盘」的副作用，又让「目录不存在」被掩盖成 ok。
+ * 目录尚未创建（如全新部署、尚未发生任何分析）只如实报告 'missing'，不算故障。
+ */
+function describeCacheDir(dir: string): { status: string; path: string; error?: string } {
+  try {
+    if (!fs.existsSync(dir)) return { status: 'missing', path: dir };
+    fs.accessSync(dir, fs.constants.R_OK | fs.constants.W_OK);
+    return { status: 'ok', path: dir };
+  } catch (err) {
+    return { status: 'error', path: dir, error: (err as Error).message };
+  }
+}
 
 // === Enhanced Health Check ===
 router.get('/api/health', async (_req, res) => {
@@ -34,17 +51,11 @@ router.get('/api/health', async (_req, res) => {
     clearTimeout(timeout);
   }
 
-  // Check cache directory
-  const cacheDir = path.join(import.meta.dirname, '..', 'data', 'cache');
-  try {
-    if (!fs.existsSync(cacheDir)) {
-      fs.mkdirSync(cacheDir, { recursive: true });
-    }
-    fs.accessSync(cacheDir, fs.constants.R_OK | fs.constants.W_OK);
-    health.cacheDir = { status: 'ok', path: cacheDir };
-  } catch (err) {
-    health.cacheDir = { status: 'error', path: cacheDir, error: (err as Error).message };
-  }
+  // Check cache directories：复用各缓存模块自身的目录解析逻辑（支持 DATA_CACHE_DIR），
+  // 避免此处硬编码路径与真实写入目录不一致（曾经：DATA_CACHE_DIR 生效时健康检查仍在看旧目录）。
+  // 两套缓存（股票数据 / 量化）分别报告：共享目录时也能一眼看出解析结果是否如预期。
+  health.cacheDir = describeCacheDir(getDataCacheDir());
+  health.quantCacheDir = describeCacheDir(getQuantCacheDir());
 
   const externalApiUnreachable =
     typeof health.externalApi === 'object' &&

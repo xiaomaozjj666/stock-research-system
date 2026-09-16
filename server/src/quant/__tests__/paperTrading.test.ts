@@ -225,3 +225,33 @@ describe('PaperAccount 持久化 round-trip', () => {
     expect(loaded.getDailyEquity()).toHaveLength(3);
   });
 });
+
+describe('PaperAccount 枚举校验（防绕过 T+1 与错误撮合路径）', () => {
+  it('非法 side 被拒单，且不会在结算时被当作卖出扣持仓', () => {
+    const acct = makeAccount();
+    // 先建仓：100 股 @100
+    acct.placeOrder(order({ quantity: 100 }));
+    acct.settleDay(closes({ '600519': 100 }));
+    expect(acct.positions.get('600519')!.quantity).toBe(100);
+
+    // 同日用一个非法 side 试图卖出：修复前它会跳过 T+1 校验（只判 === 'sell'），
+    // 并在 settleDay 的 else 分支按卖出处理，从而绕过 T+1。
+    const bogus = acct.placeOrder(
+      order({ side: 'SELL' as unknown as PlaceOrderInput['side'], quantity: 100 }),
+    );
+    expect(bogus.status).toBe('rejected');
+    expect(bogus.rejectReason).toContain('买卖方向');
+
+    acct.settleDay(closes({ '600519': 105 }));
+    // 持仓不变、没有因非法订单被卖出
+    expect(acct.positions.get('600519')!.quantity).toBe(100);
+  });
+
+  it('非法 type 被拒单，不会进入限价撮合分支', () => {
+    const acct = makeAccount();
+    const bogus = acct.placeOrder(order({ type: 'LIMIT' as unknown as PlaceOrderInput['type'] }));
+    expect(bogus.status).toBe('rejected');
+    expect(bogus.rejectReason).toContain('订单类型');
+    expect(acct.orders[0].status).toBe('rejected');
+  });
+});

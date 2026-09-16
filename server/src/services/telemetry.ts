@@ -308,7 +308,8 @@ export async function withSpan<T>(
 
 /**
  * Express 中间件：自动为每个 HTTP 请求创建 root span，
- * 注入 traceId 到响应头 X-Trace-Id；请求结束时自动 end span。
+ * 注入 traceId 到响应头 X-Trace-Id；请求结束（finish）或客户端断开（未 finish 的 close）
+ * 时自动 end span，断开者标记 `http.aborted` 并以 error 收尾。
  *
  * 用法：app.use(expressTracerMiddleware())
  *
@@ -332,12 +333,25 @@ export function expressTracerMiddleware() {
     // 响应头注入 traceId，便于客户端 / 日志关联
     res.setHeader('X-Trace-Id', ctx.traceId);
 
-    // 响应结束时记录状态码并 end span
+    // 响应结束时记录状态码并 end span。
+    // 注意：只监听 finish 会漏掉客户端中途断开（SSE 长请求被取消）的请求——
+    // 而「1~3 分钟的分析被取消」恰恰是最需要被看到的失败，故 close 一并处理。
+    let settled = false;
     res.on('finish', () => {
+      settled = true;
       span.attributes['http.statusCode'] = res.statusCode;
       const status: SpanStatus =
         res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'error' : 'ok';
       tracer.endSpan(span, status);
+    });
+
+    res.on('close', () => {
+      // 正常结束后的 close（writableEnded=true）不重复处理；endSpan 本身也是幂等的
+      if (settled || res.writableEnded) return;
+      span.attributes['http.statusCode'] = res.statusCode;
+      span.attributes['http.aborted'] = true;
+      tracer.addEvent(span, 'http.client_disconnected');
+      tracer.endSpan(span, 'error');
     });
 
     next();

@@ -86,6 +86,24 @@ function writeStore(store: OutcomeStore): boolean {
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
+/**
+ * 台账写入串行锁。
+ * evaluateOutcomes 是「读快照 → await 取行情 → 写回」的跨 await 读-改-写：
+ * 并发/重叠执行（/api/compare 并行分析、6 小时定时回填与分析收尾重叠）会互相覆盖，
+ * 导致评级记录或回填结果静默丢失。这里把所有此类操作排成队列，单进程内串行执行。
+ */
+let storeLock: Promise<void> = Promise.resolve();
+
+function withStoreLock<T>(fn: () => Promise<T> | T): Promise<T> {
+  const result = storeLock.then(() => fn());
+  // 无论成功失败都续上队列，避免一次异常让后续写入永久挂起
+  storeLock = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
 const pctChange = (from: number, to: number) => (from > 0 ? ((to - from) / from) * 100 : 0);
 
 function daysSince(iso: string): number {
@@ -155,6 +173,10 @@ export function recordAnalysis(input: {
  * 单条失败不影响其他条目；返回本次成功评估的条数。
  */
 export async function evaluateOutcomes(limit = 3): Promise<number> {
+  return withStoreLock(() => evaluateOutcomesLocked(limit));
+}
+
+async function evaluateOutcomesLocked(limit: number): Promise<number> {
   let done = 0;
   try {
     const store = readStore();
@@ -199,7 +221,24 @@ export async function evaluateOutcomes(limit = 3): Promise<number> {
         logger.warn('单条评级结果回填失败', { stockCode: item.stockCode, err: err as Error });
       }
     }
-    if (done > 0) writeStore(store);
+    if (done > 0) {
+      // 写前重读并按 id 合并，而不是写回本轮开始时的陈旧快照：
+      // 取行情期间可能有新评级写入（recordAnalysis），整份覆盖会静默丢掉这些记录。
+      const fresh = readStore();
+      const byId = new Map(fresh.items.map((it) => [it.id, it]));
+      for (const item of pending) {
+        if (!item.evaluatedAt) continue; // 本轮未成功评估的条目保持原样
+        const target = byId.get(item.id);
+        if (!target) continue; // 期间已被容量淘汰，不再复活
+        target.evaluatedAt = item.evaluatedAt;
+        target.exitPrice = item.exitPrice;
+        target.returnPct = item.returnPct;
+        target.excessPct = item.excessPct;
+        target.hit = item.hit;
+        target.holdingDays = item.holdingDays;
+      }
+      writeStore(fresh);
+    }
   } catch (err) {
     logger.warn('评级结果回填失败，降级跳过', { err: err as Error });
   }

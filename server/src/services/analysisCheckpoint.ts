@@ -50,6 +50,13 @@ export interface AnalysisCheckpoint {
   stockCode: string;
   updatedAt: string;
   stage: CheckpointStage;
+  /**
+   * 断点代次标识：同一次分析（含其续跑链）共享同一个 runId。
+   * saveCheckpoint 只在代次一致时合并旧产物，loadCheckpoint 可要求代次相符——
+   * 并发两代写同一股票时不会把 A 代的专家结论并进 B 代的断点（跨代错配）。
+   * 旧格式断点没有该字段，读取时按「未知代次」处理（不参与代次校验）。
+   */
+  runId?: string;
   data?: CheckpointDataPayload;
   expertOpinions?: ExpertOpinion[];
   degradedExperts?: string[];
@@ -60,6 +67,23 @@ export interface AnalysisCheckpoint {
 }
 
 const DEFAULT_DIR = path.join(import.meta.dirname, '..', 'data', 'checkpoints');
+
+/** 代次序号：同一毫秒内多次新建也能得到不同 id */
+let runSeq = 0;
+
+/**
+ * 新建断点代次 id（形如 `lz9k2p-1-8f3a`：时间戳 base36 + 序号 + 随机后缀）。
+ * 带时间戳前缀是为了排障时能从文件名/断点内容直接看出这一代是什么时候起的。
+ */
+export function newRunId(): string {
+  runSeq += 1;
+  return `${Date.now().toString(36)}-${runSeq.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 清洗代次 id，用于拼接临时文件名（防路径穿越；id 由 newRunId 生成，正常不会被改写） */
+function sanitizeRunId(runId: string): string {
+  return runId.replace(/[^0-9a-zA-Z_-]/g, '_');
+}
 
 function getDir(): string {
   const env = process.env.ANALYSIS_CHECKPOINT_DIR;
@@ -78,20 +102,26 @@ function fileFor(stockCode: string): string {
   return path.join(getDir(), `${safe}.json`);
 }
 
-/** 读取断点；不存在 / 过期 / 损坏时返回 null（任何异常静默降级为"无断点"） */
-export function loadCheckpoint(stockCode: string): AnalysisCheckpoint | null {
+/**
+ * 读取断点；不存在 / 过期 / 损坏 / 代次不符时返回 null（任何异常静默降级为「无断点」）。
+ *
+ * @param runId 需要校验的代次：传入时只有代次完全一致的断点才可用（并发另一代的断点视为无断点）。
+ *              续跑方在读取时尚不知道上一代 id，可省略以获得任意代断点并采用其 runId。
+ */
+export function loadCheckpoint(stockCode: string, runId?: string): AnalysisCheckpoint | null {
   try {
     const file = fileFor(stockCode);
     if (!fs.existsSync(file)) return null;
     const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as AnalysisCheckpoint;
     if (!parsed || parsed.stockCode !== stockCode) return null;
+    if (runId !== undefined && parsed.runId !== runId) return null;
 
     const ttl = getTtlMs();
     const age = Date.now() - new Date(parsed.updatedAt).getTime();
     // ttl <= 0 表示不复用任何断点；age >= ttl 视为过期（age 与 ttl 相等即刚好到期）。
     // 不可用 age > ttl：写入与读取落在同一毫秒时 age === 0，ttl 为 0 会被误判为未过期。
     if (!Number.isFinite(age) || ttl <= 0 || age >= ttl) {
-      clearCheckpoint(stockCode); // 过期即清理，避免陈旧数据被误用
+      clearCheckpoint(stockCode, parsed.runId); // 过期即清理，避免陈旧数据被误用
       return null;
     }
     return parsed;
@@ -101,25 +131,35 @@ export function loadCheckpoint(stockCode: string): AnalysisCheckpoint | null {
 }
 
 /**
- * 合并写入断点（保留已有阶段产物，仅覆盖本次传入的字段）。
+ * 合并写入断点（保留本代已有阶段产物，仅覆盖本次传入的字段）。
  * 写盘失败静默降级：断点只是优化手段，不影响分析正确性。
+ *
+ * @param runId 本代代次（由调用方在开跑时 newRunId 得到，续跑沿用它）。
+ *              磁盘上残留的其他代断点**不参与合并**——否则并发两代会互相污染：
+ *              A 的 experts 产物被 merge 进 B 的断点后，B 中断续跑会拿到
+ *              「B 的数据 + A 的专家结论」拼成的报告。
  */
 export function saveCheckpoint(
   stockCode: string,
-  patch: Omit<AnalysisCheckpoint, 'stockCode' | 'updatedAt'>,
+  patch: Omit<AnalysisCheckpoint, 'stockCode' | 'updatedAt' | 'runId'>,
+  runId: string,
 ): void {
   try {
     const dir = getDir();
     fs.mkdirSync(dir, { recursive: true });
     const file = fileFor(stockCode);
     const prev = loadCheckpointRaw(file);
+    // 只有同代才作为合并基底；异代（或旧格式无 runId）一律从头开始，杜绝跨代混写
+    const base = prev && prev.runId === runId ? prev : null;
     const next: AnalysisCheckpoint = {
-      ...(prev ?? {}),
+      ...(base ?? {}),
       ...patch,
       stockCode,
+      runId,
       updatedAt: new Date().toISOString(),
     };
-    const tmp = `${file}.tmp`;
+    // 临时名带代次：并发两代各写各的 tmp，不会互相踩到半写文件
+    const tmp = `${file}.${sanitizeRunId(runId)}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(next), 'utf-8');
     fs.renameSync(tmp, file); // 原子替换，避免半写状态
   } catch (err) {
@@ -127,11 +167,21 @@ export function saveCheckpoint(
   }
 }
 
-/** 清除断点（分析成功完成后调用）；失败静默 */
-export function clearCheckpoint(stockCode: string): void {
+/**
+ * 清除断点（分析成功完成后调用）；失败静默。
+ *
+ * @param runId 传入时只清本代文件（代次不符则不动），避免把并发另一代的在途断点删掉；
+ *              省略时无条件清除（全新分析要丢弃任意残留旧代）。
+ */
+export function clearCheckpoint(stockCode: string, runId?: string): void {
   try {
     const file = fileFor(stockCode);
-    if (fs.existsSync(file)) fs.unlinkSync(file);
+    if (!fs.existsSync(file)) return;
+    if (runId !== undefined) {
+      const onDisk = loadCheckpointRaw(file);
+      if (!onDisk || onDisk.runId !== runId) return;
+    }
+    fs.unlinkSync(file);
   } catch {
     /* 清理失败不影响主流程 */
   }

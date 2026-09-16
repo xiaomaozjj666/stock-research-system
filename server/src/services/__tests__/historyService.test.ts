@@ -10,6 +10,7 @@ import {
   getPreviousAnalysis,
   computeVsPrevious,
   MAX_HISTORY_ITEMS,
+  MAX_TIMELINE_POINTS,
   type HistoryEntryInput,
   type HistoryItem,
   type HistorySummary,
@@ -236,5 +237,135 @@ describe('historyService 研究历史', () => {
     for (let i = 1; i <= 5; i++) saveHistoryEntry(makeEntry(String(600000 + i)));
     expect(listHistory(0)).toHaveLength(1); // 下限 1
     expect(listHistory(2)).toHaveLength(2);
+  });
+
+  /* ==========================================================================
+   * 评分/评级时间线：去重覆盖后仍能回答"观点怎么变的"
+   * ========================================================================*/
+
+  it('首次保存：时间线只有当次一个点', () => {
+    saveHistoryEntry(makeEntry('600519', { totalScore: 88, rating: '优先跟踪' }));
+    const item = listHistory()[0];
+    expect(item.timeline).toHaveLength(1);
+    expect(item.timeline![0]).toMatchObject({ score: 88, rating: '优先跟踪' });
+    expect(item.timeline![0].date).toMatch(/^\d{4}-\d{2}-\d{2}$/); // YYYY-MM-DD
+  });
+
+  it('同股票重复保存：时间线按时间累积（由旧到新），最新点即当前评分', () => {
+    saveHistoryEntry(makeEntry('600519', { totalScore: 80, rating: '持续观察' }));
+    saveHistoryEntry(makeEntry('600519', { totalScore: 87, rating: '优先跟踪' }));
+    saveHistoryEntry(makeEntry('600519', { totalScore: 69, rating: '谨慎观望' }));
+
+    const item = listHistory()[0];
+    expect(item.totalScore).toBe(69);
+    expect(item.timeline!.map((p) => p.score)).toEqual([80, 87, 69]);
+    expect(item.timeline!.map((p) => p.rating)).toEqual(['持续观察', '优先跟踪', '谨慎观望']);
+    // 时间线在同一个 id / 同一条记录内累积，不新增历史条目
+    expect(listHistory()).toHaveLength(1);
+  });
+
+  it('时间线裁剪：只保留最近 MAX_TIMELINE_POINTS 个点（最早的被丢弃）', () => {
+    const total = MAX_TIMELINE_POINTS + 5;
+    for (let i = 0; i < total; i++) {
+      saveHistoryEntry(makeEntry('600519', { totalScore: 50 + i }));
+    }
+    const points = listHistory()[0].timeline!;
+    expect(points).toHaveLength(MAX_TIMELINE_POINTS);
+    // 保留了最后 MAX_TIMELINE_POINTS 次：分数从 55 到 74
+    expect(points[0].score).toBe(50 + (total - MAX_TIMELINE_POINTS));
+    expect(points[points.length - 1].score).toBe(50 + total - 1);
+  });
+
+  it('旧数据兼容：没有 timeline 字段的记录正常列出（不抛、不返回空数组）', () => {
+    writeFileSync(
+      tmpFile,
+      JSON.stringify({
+        items: [
+          {
+            id: 'legacy',
+            stockCode: '600519',
+            stockName: '贵州茅台',
+            createdAt: '2026-08-01T00:00:00.000Z',
+            rating: '持续观察',
+            totalScore: 70,
+            result: {},
+            // 故意不带 timeline（升级前落盘的老数据）
+          },
+        ],
+      }),
+      'utf-8',
+    );
+
+    const list = listHistory();
+    expect(list).toHaveLength(1);
+    expect(list[0].totalScore).toBe(70);
+    // 关键：无时间线时字段就是 undefined（不是 []），前端据此不渲染变化量、也不会出现空括号
+    expect(list[0].timeline).toBeUndefined();
+    expect(getPreviousAnalysis('600519')!.timeline).toBeUndefined();
+  });
+
+  it('旧数据兼容：老记录首次被更新时自动补种起点，立刻可算出变化', () => {
+    writeFileSync(
+      tmpFile,
+      JSON.stringify({
+        items: [
+          {
+            id: 'legacy',
+            stockCode: '600519',
+            stockName: '贵州茅台',
+            createdAt: '2026-08-01T00:00:00.000Z',
+            rating: '持续观察',
+            totalScore: 70,
+            result: {},
+          },
+        ],
+      }),
+      'utf-8',
+    );
+
+    saveHistoryEntry(makeEntry('600519', { totalScore: 85, rating: '优先跟踪' }));
+    const points = listHistory()[0].timeline!;
+    expect(points).toHaveLength(2);
+    expect(points[0]).toMatchObject({ date: '2026-08-01', score: 70, rating: '持续观察' });
+    expect(points[1]).toMatchObject({ score: 85, rating: '优先跟踪' });
+  });
+
+  it('脏时间线被净化：非法点丢弃，非法字段收敛（不炸列表接口）', () => {
+    writeFileSync(
+      tmpFile,
+      JSON.stringify({
+        items: [
+          {
+            id: 'dirty',
+            stockCode: '600519',
+            stockName: '贵州茅台',
+            createdAt: '2026-08-02T00:00:00.000Z',
+            rating: '持续观察',
+            totalScore: 70,
+            result: {},
+            timeline: [
+              { date: '2026-07-01', score: 60, rating: '持续观察' },
+              { date: '2026-07-02', score: 'not-a-number', rating: 'x' },
+              { score: 1 },
+              null,
+            ],
+          },
+        ],
+      }),
+      'utf-8',
+    );
+
+    const points = listHistory()[0].timeline!;
+    expect(points).toHaveLength(1);
+    expect(points[0]).toEqual({ date: '2026-07-01', score: 60, rating: '持续观察' });
+  });
+
+  it('时间线不携带完整 result（列表响应体不膨胀）', () => {
+    saveHistoryEntry(makeEntry('600519', { totalScore: 80 }));
+    saveHistoryEntry(makeEntry('600519', { totalScore: 90 }));
+    const item = listHistory()[0];
+    expect(item).not.toHaveProperty('result');
+    const keys = Object.keys(item.timeline![0]).sort();
+    expect(keys).toEqual(['date', 'rating', 'score']);
   });
 });

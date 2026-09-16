@@ -243,3 +243,61 @@ describe('可选增强：失败降级不崩', () => {
     expect(stock.sectorRotation).toBeUndefined();
   });
 });
+
+describe('并发去重（single-flight）', () => {
+  beforeEach(() => {
+    vi.mocked(getData).mockClear();
+  });
+
+  it(
+    '同代码并发两次：只跑一轮（取数一次）、复用同一结果、两个调用都收到进度',
+    { timeout: 30000 },
+    async () => {
+      const seenByFirst: string[] = [];
+      const seenBySecond: string[] = [];
+      const [first, second] = await Promise.all([
+        runAnalysis('600519', (s) => seenByFirst.push(s.phase)),
+        // 第二个调用者（SSE 双标签页 / compare 并发）：不得另起一轮
+        runAnalysis('600519', (s) => seenBySecond.push(s.phase)),
+      ]);
+
+      // 只跑一轮：取数（昂贵上游）只发生一次
+      expect(vi.mocked(getData)).toHaveBeenCalledTimes(1);
+      // 复用同一结果对象（不是各自跑完后凑出两份等值结果）
+      expect(second).toBe(first);
+      // 进度广播给所有订阅者：第二个调用者也能看到阶段推进
+      expect(seenByFirst.length).toBeGreaterThan(0);
+      expect(seenBySecond.length).toBeGreaterThan(0);
+    },
+  );
+
+  it('订阅者断开（SSE 客户端关闭）不影响同轮其他调用者拿到结果', { timeout: 30000 }, async () => {
+    // 模拟真实时序：SSE 客户端在分析开始后断开，下一次阶段推送才发现
+    let emitted = 0;
+    const disconnectedAfterStart = () => {
+      emitted += 1;
+      if (emitted > 1) throw new Error('SSE_CLIENT_DISCONNECTED');
+    };
+    // 第一个调用者模拟断开的 SSE，第二个是仍在等结果的 POST/工具调用
+    const results = await Promise.all([
+      runAnalysis('600519', disconnectedAfterStart),
+      runAnalysis('600519'),
+    ]);
+    expect(emitted).toBeGreaterThan(1); // 断开确实被感知到
+    expect(results[0]).toBe(results[1]);
+    expect(vi.mocked(getData)).toHaveBeenCalledTimes(1);
+    expect(results[1].stock_pool[0].stock_code).toBe('600519');
+  });
+
+  it(
+    '唯一订阅者断开时整轮中止（保留「无人消费即不白跑 LLM」语义）',
+    { timeout: 30000 },
+    async () => {
+      await expect(
+        runAnalysis('600519', () => {
+          throw new Error('SSE_CLIENT_DISCONNECTED');
+        }),
+      ).rejects.toThrow('SSE_CLIENT_DISCONNECTED');
+    },
+  );
+});

@@ -14,12 +14,29 @@ export interface StockDataSet {
 }
 
 // 缓存目录可被 DATA_CACHE_DIR 重定向（测试据此隔离到临时目录，避免污染真实缓存）
-const CACHE_DIR =
-  process.env.DATA_CACHE_DIR || path.join(import.meta.dirname, '..', 'data', 'cache');
+const DEFAULT_CACHE_DIR = path.join(import.meta.dirname, '..', 'data', 'cache');
 
-// 确保缓存目录存在（同步，模块加载时执行一次）
-if (!fs.existsSync(CACHE_DIR)) {
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
+/**
+ * 股票数据缓存目录（DATA_CACHE_DIR 可重定向；惰性解析以便测试/运维在运行期切换，
+ * 与 quant/quantCache.getQuantCacheDir 同一口径——/api/health 也复用本函数）。
+ */
+export function getDataCacheDir(): string {
+  const env = process.env.DATA_CACHE_DIR;
+  return env && env.length > 0 ? env : DEFAULT_CACHE_DIR;
+}
+
+/** 本类条目的归属标记：与 quant/quantCache 共享目录时用于互相区分、互不误删 */
+const STOCK_KIND = 'stocks';
+
+/**
+ * 异类条目判定（本模块视角）：
+ * - 带 kind 且不是 'stocks' → 对侧（量化缓存）或未来新增类型；
+ * - 旧格式无 kind：量化缓存条目一定带 ttlMs（quantCache.writeCacheEntry），据此识别。
+ */
+function isForeignCacheEntry(parsed: { kind?: unknown; ttlMs?: unknown } | null): boolean {
+  if (parsed?.kind === STOCK_KIND) return false;
+  if (parsed?.kind !== undefined) return true;
+  return typeof parsed?.ttlMs === 'number';
 }
 
 const CACHE_TTL_HOURS = Number(process.env.CACHE_TTL_HOURS) || 24;
@@ -64,21 +81,27 @@ const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
  * 清理磁盘缓存：
- * 1. 删除已过 TTL 的缓存文件与损坏文件；
- * 2. 剩余数量超过 FILE_CACHE_MAX 时，按写入时间从最旧开始淘汰。
- * best-effort：任何 IO 失败都静默降级，不影响主流程。
+ * 1. 删除已过 TTL 的**本类**缓存文件与损坏文件；
+ * 2. **异类条目（quant/quantCache 的量化缓存）一律跳过**：量化 K 线的 TTL 以「天」计
+ *    （如 30 天），远长于股票缓存的 24h，若按本规则判定会整批误删，导致缓存静默失效、
+ *    反复全量重拉上游；容量上限也只统计本类，避免两类互相挤占；
+ * 3. best-effort：任何 IO 失败都静默降级，不影响主流程。
  */
 export async function pruneFileCache(): Promise<{ removed: number }> {
   let removed = 0;
   try {
-    const files = (await fs.promises.readdir(CACHE_DIR)).filter((f) => f.endsWith('.json'));
+    const dir = getDataCacheDir();
+    const files = (await fs.promises.readdir(dir)).filter((f) => f.endsWith('.json'));
     const alive: { file: string; timestamp: number }[] = [];
     for (const f of files) {
-      const full = path.join(CACHE_DIR, f);
+      const full = path.join(dir, f);
       try {
         const parsed = JSON.parse(await fs.promises.readFile(full, 'utf-8')) as {
           timestamp?: number;
+          kind?: unknown;
+          ttlMs?: unknown;
         };
+        if (isForeignCacheEntry(parsed)) continue; // 异类：交给对侧 pruner
         if (typeof parsed.timestamp !== 'number' || Date.now() - parsed.timestamp > CACHE_TTL) {
           await fs.promises.unlink(full);
           removed += 1;
@@ -153,13 +176,14 @@ export function getData(stockCode: string): Promise<StockDataSet> {
 
 async function fetchDataAndCache(stockCode: string): Promise<StockDataSet> {
   // 1. 检查文件缓存（异步文件 I/O）
-  const cacheFile = path.join(CACHE_DIR, `${stockCode}.json`);
+  const cacheFile = path.join(getDataCacheDir(), `${stockCode}.json`);
   try {
     if (fs.existsSync(cacheFile)) {
       const cachedContent = await fs.promises.readFile(cacheFile, 'utf-8');
       const cached = JSON.parse(cachedContent);
       const cacheAge = Date.now() - cached.timestamp;
-      if (cacheAge < CACHE_TTL) {
+      // 异类条目（量化缓存）不得当作股票数据用：共享 DATA_CACHE_DIR 时二者同目录
+      if (!isForeignCacheEntry(cached) && cacheAge < CACHE_TTL) {
         const data = cached.data as StockDataSet;
         memCacheSet(stockCode, data); // 预热到内存 LRU
         return data;
@@ -206,9 +230,12 @@ async function fetchDataAndCache(stockCode: string): Promise<StockDataSet> {
     // 写入缓存（内存 LRU + 异步文件）
     memCacheSet(stockCode, dataSet);
     try {
+      // 目录按需创建（原先在模块加载时同步创建一次；改为惰性解析后，创建挪到真正的写入方，
+      // 健康检查等只读路径不再写盘）
+      await fs.promises.mkdir(getDataCacheDir(), { recursive: true });
       await fs.promises.writeFile(
         cacheFile,
-        JSON.stringify({ data: dataSet, timestamp: Date.now() }, null, 2),
+        JSON.stringify({ kind: STOCK_KIND, data: dataSet, timestamp: Date.now() }, null, 2),
         'utf-8',
       );
     } catch (writeErr) {
@@ -248,14 +275,18 @@ export async function getSupportedStocks(): Promise<
 
   // 从缓存目录读取已查询过的股票（异步）
   try {
-    if (fs.existsSync(CACHE_DIR)) {
-      const files = (await fs.promises.readdir(CACHE_DIR)).filter((f) => f.endsWith('.json'));
+    const dir = getDataCacheDir();
+    if (fs.existsSync(dir)) {
+      const files = (await fs.promises.readdir(dir)).filter((f) => f.endsWith('.json'));
       const entries = await Promise.all(
         files.map(async (file) => {
           try {
-            const content = await fs.promises.readFile(path.join(CACHE_DIR, file), 'utf-8');
+            const content = await fs.promises.readFile(path.join(dir, file), 'utf-8');
             const cached = JSON.parse(content);
-            const info = (cached.data as StockDataSet).info;
+            // 共享目录下的量化缓存条目没有 info：跳过，避免列表里出现 code/name 皆为空的条目
+            if (isForeignCacheEntry(cached)) return null;
+            const info = (cached.data as StockDataSet)?.info;
+            if (!info?.code) return null;
             return { code: info.code, name: info.name, industry: info.industry };
           } catch {
             return null;

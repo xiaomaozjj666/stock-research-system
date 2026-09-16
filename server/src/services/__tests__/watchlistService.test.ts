@@ -7,7 +7,13 @@ import {
   addToWatchlist,
   removeFromWatchlist,
   setWatchlist,
+  getWatchlistAlertsSnapshot,
+  normalizeAlertsSnapshot,
+  saveWatchlistAlertsSnapshot,
+  MAX_ALERTS_PER_SNAPSHOT,
+  type WatchlistAlertsSnapshot,
 } from '../watchlistService.js';
+import type { WatchlistAlert } from '../alerts.js';
 
 let tmpFile: string;
 
@@ -70,5 +76,124 @@ describe('watchlistService', () => {
   it('损坏的 JSON 文件降级为 []（不抛）', () => {
     fs.writeFileSync(tmpFile, '{ this is not json', 'utf-8');
     expect(getWatchlist()).toEqual([]);
+  });
+});
+
+/* ============================================================================
+ * 最近一次异动监控快照：落盘 → 读回 / 原子写 / 上限裁剪 / 空结构
+ * ==========================================================================*/
+describe('watchlistService 异动监控快照', () => {
+  let alertsDir: string;
+  let alertsFile: string;
+
+  beforeEach(() => {
+    alertsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchlist-alerts-'));
+    alertsFile = path.join(alertsDir, 'watchlistAlerts.json');
+    process.env.WATCHLIST_ALERTS_FILE = alertsFile;
+  });
+
+  afterEach(() => {
+    delete process.env.WATCHLIST_ALERTS_FILE;
+    try {
+      fs.rmSync(alertsDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  function alert(code: string): WatchlistAlert {
+    return {
+      code,
+      name: `股票${code}`,
+      level: 'strong-bull',
+      polarity: 0.8,
+      weightedImpact: 0.5,
+      detail: `${code} 新闻姿态强烈看多`,
+    };
+  }
+
+  function snapshotWith(alerts: WatchlistAlert[]): WatchlistAlertsSnapshot {
+    return normalizeAlertsSnapshot({
+      generatedAt: '2026-09-15T10:00:00.000Z',
+      monitored: alerts.length,
+      alerts,
+    });
+  }
+
+  it('无快照文件时返回稳定空结构（不抛、不 404）', () => {
+    expect(getWatchlistAlertsSnapshot()).toEqual({ generatedAt: null, monitored: 0, alerts: [] });
+  });
+
+  it('落盘后可读回（刷新/复访回看的依据）', () => {
+    expect(saveWatchlistAlertsSnapshot(snapshotWith([alert('600519')]))).toBe(true);
+    const back = getWatchlistAlertsSnapshot();
+    expect(back.generatedAt).toBe('2026-09-15T10:00:00.000Z');
+    expect(back.monitored).toBe(1);
+    expect(back.alerts).toHaveLength(1);
+    expect(back.alerts[0]).toMatchObject({ code: '600519', level: 'strong-bull' });
+  });
+
+  it('只保留最近一次快照：二次写入覆盖前一次，文件不累积', () => {
+    saveWatchlistAlertsSnapshot(snapshotWith([alert('600519')]));
+    saveWatchlistAlertsSnapshot(snapshotWith([alert('000001')]));
+    expect(getWatchlistAlertsSnapshot().alerts.map((a) => a.code)).toEqual(['000001']);
+    // 目录里只有快照本身，没有历史归档文件
+    expect(fs.readdirSync(alertsDir)).toEqual(['watchlistAlerts.json']);
+  });
+
+  it('原子写：写完不留 .tmp 残留，且覆盖时旧快照不会被写坏', () => {
+    fs.writeFileSync(alertsFile, JSON.stringify({ generatedAt: 'old', monitored: 1, alerts: [] }));
+    saveWatchlistAlertsSnapshot(snapshotWith([alert('600519')]));
+    expect(fs.existsSync(`${alertsFile}.tmp`)).toBe(false);
+    // 文件始终是完整可解析的 JSON（半写状态在 rename 语义下不可能被读到）
+    expect(() => JSON.parse(fs.readFileSync(alertsFile, 'utf-8'))).not.toThrow();
+  });
+
+  it('落盘失败返回 false 且清理临时文件（如目标路径不可写）', () => {
+    // 把快照路径指向一个目录：临时文件能写、rename 必失败
+    process.env.WATCHLIST_ALERTS_FILE = alertsDir;
+    expect(saveWatchlistAlertsSnapshot(snapshotWith([alert('600519')]))).toBe(false);
+    expect(fs.existsSync(`${alertsDir}.tmp`)).toBe(false); // 失败也要清干净
+    expect(getWatchlistAlertsSnapshot()).toEqual({ generatedAt: null, monitored: 0, alerts: [] });
+  });
+
+  it('条数上限：超出 MAX_ALERTS_PER_SNAPSHOT 的条目被裁剪（文件不无限增长）', () => {
+    const many = Array.from({ length: MAX_ALERTS_PER_SNAPSHOT + 50 }, (_, i) =>
+      alert(String(600000 + i)),
+    );
+    expect(saveWatchlistAlertsSnapshot(snapshotWith(many))).toBe(true);
+    expect(getWatchlistAlertsSnapshot().alerts).toHaveLength(MAX_ALERTS_PER_SNAPSHOT);
+  });
+
+  it('文件损坏时降级为空结构（不抛）', () => {
+    fs.writeFileSync(alertsFile, '{ not valid json', 'utf-8');
+    expect(getWatchlistAlertsSnapshot()).toEqual({ generatedAt: null, monitored: 0, alerts: [] });
+  });
+
+  it('脏数据条目被丢弃，不把非法字段透给前端', () => {
+    fs.writeFileSync(
+      alertsFile,
+      JSON.stringify({
+        generatedAt: '2026-09-15T10:00:00.000Z',
+        monitored: 4,
+        alerts: [
+          {
+            code: '600519',
+            level: 'strong-bull',
+            detail: 'ok',
+            polarity: 0.7,
+            weightedImpact: 0.4,
+          },
+          { code: '000001', level: 'not-a-level', detail: 'bad level' },
+          { level: 'strong-bear', detail: 'no code' },
+          null,
+        ],
+      }),
+      'utf-8',
+    );
+    const back = getWatchlistAlertsSnapshot();
+    expect(back.alerts).toHaveLength(1);
+    expect(back.alerts[0].code).toBe('600519');
+    expect(back.alerts[0].name).toBeNull(); // 缺失字段收敛为 null，而非 undefined
   });
 });

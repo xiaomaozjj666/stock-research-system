@@ -161,4 +161,63 @@ describe('pruneQuantCache — 过期删除与容量淘汰', () => {
     const { removed } = await pruneQuantCache();
     expect(removed).toBe(0);
   });
+
+  it('共享 DATA_CACHE_DIR 时不误删 dataService 股票缓存（本类不清异类）', async () => {
+    // 新格式：带 kind='stocks'，文件名为 6 位股票代码（dataService 的写法）
+    fs.writeFileSync(
+      join(getQuantCacheDir(), '600519.json'),
+      JSON.stringify({ kind: 'stocks', data: { info: { code: '600519' } }, timestamp: Date.now() }),
+      'utf-8',
+    );
+    // 旧格式（无 kind、无 ttlMs）：历史股票缓存也不能当成「缺 ttlMs 的旧量化条目」删掉
+    fs.writeFileSync(
+      join(getQuantCacheDir(), '000858.json'),
+      JSON.stringify({ data: { info: { code: '000858' } }, timestamp: Date.now() }),
+      'utf-8',
+    );
+    // 本类里真正过期的条目：仍然要删
+    writeCacheEntry('k_old', { v: 1 }, 1_000);
+    ageFile('k_old', 60_000);
+
+    const { removed } = await pruneQuantCache();
+    expect(removed).toBe(1);
+    const left = fs.readdirSync(getQuantCacheDir()).sort();
+    expect(left).toEqual(['000858.json', '600519.json']);
+  });
+
+  it('容量淘汰只统计本类条目（跨类不互相挤占、也不误删）', async () => {
+    fs.writeFileSync(
+      join(getQuantCacheDir(), '600519.json'),
+      JSON.stringify({ kind: 'stocks', data: {}, timestamp: Date.now() - 10_000 }),
+      'utf-8',
+    );
+    writeCacheEntry('c_x', { v: 1 }, 30 * DAY);
+    writeCacheEntry('c_y', { v: 2 }, 30 * DAY);
+    writeCacheEntry('c_z', { v: 3 }, 30 * DAY);
+
+    // 上限 2：本类 3 条 → 淘汰 1 条；异类（股票缓存）不计入也不被淘汰
+    const { removed } = await pruneQuantCache({ maxFiles: 2 });
+    expect(removed).toBe(1);
+    expect(fs.existsSync(join(getQuantCacheDir(), '600519.json'))).toBe(true);
+  });
+});
+
+describe('quantCache — 与 dataService 条目互不误读', () => {
+  it('同名文件若是股票缓存条目 → 视为未命中（不把股票数据集当量化缓存用）', () => {
+    fs.writeFileSync(
+      join(getQuantCacheDir(), '600519.json'),
+      JSON.stringify({ kind: 'stocks', data: { info: {} }, timestamp: Date.now() }),
+      'utf-8',
+    );
+    expect(readCacheEntry('600519')).toBeNull();
+  });
+
+  it('旧格式量化条目（无 kind 但有 ttlMs）仍可读——升级不丢缓存', () => {
+    fs.writeFileSync(
+      join(getQuantCacheDir(), 'legacy_k.json'),
+      JSON.stringify({ data: { v: 5 }, timestamp: Date.now(), ttlMs: 60_000 }),
+      'utf-8',
+    );
+    expect(readCacheEntry<{ v: number }>('legacy_k')?.data).toEqual({ v: 5 });
+  });
 });

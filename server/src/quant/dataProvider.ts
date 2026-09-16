@@ -357,7 +357,10 @@ function generateSimulatedData(stockCode: string, startDate: string, endDate: st
     // 跳过周末：日期标签用 toISOString（UTC），星期判断也必须用 UTC 口径，
     // 否则 UTC 负偏移服务器上周末跳过与日期标签错位
     if (current.getUTCDay() !== 0 && current.getUTCDay() !== 6) {
-      const daySeed = (seed * current.getDate() * (current.getMonth() + 1)) % 100;
+      // 种子也必须用 UTC 口径：与上面的星期判断、下面的日期标签（toISOString）保持同一时区。
+      // 此前这里用本地 getDate()/getMonth()，在 UTC 负偏移宿主（美区 runner/自建机）上
+      // 会取到与 UTC 不同的日/月，模拟序列随宿主时区变化，确定性被破坏。
+      const daySeed = (seed * current.getUTCDate() * (current.getUTCMonth() + 1)) % 100;
       const change = (daySeed - 50) / 500; // ±10% 波动
       price = price * (1 + change);
       price = Math.max(price, 5);

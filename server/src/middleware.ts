@@ -45,6 +45,19 @@ export const quantLimiter = rateLimit({
   message: { error: '量化分析请求过于频繁（限制：每分钟5次），请稍后再试', retryAfter: 60 },
 });
 
+/**
+ * 只读元数据（板块列表等）：前端页面挂载即请求，且多个面板会共享同一份数据。
+ * 这类请求廉价且有 TTL 缓存，不应与分钟级的量化重计算共用 5 req/min 的配额
+ * （否则打开量化页就可能连吃 429，实测过），故单独放宽到 30 req/min。
+ */
+export const metaLimiter = rateLimit({
+  windowMs,
+  max: Number(process.env.RATE_LIMIT_MAX_META) || 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: '元数据请求过于频繁，请稍后再试', retryAfter: Math.ceil(windowMs / 1000) },
+});
+
 /** 自选股批量回测 / 监控（默认 3 req/min） */
 export const watchlistLimiter = rateLimit({
   windowMs: 60000,

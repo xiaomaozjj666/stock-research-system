@@ -196,4 +196,51 @@ describe('outcomeTracker 决策-结果闭环', () => {
       expect(overall.sampleCount).toBe(3);
     });
   });
+
+  describe('并发读写不丢记录（跨 await 读-改-写竞态）', () => {
+    it('回填在途时新写入的评级不会被陈旧快照整体覆盖', async () => {
+      seed([{ id: 'due-1' }]); // 40 天前的待评估记录
+
+      // 让取行情挂起，制造"回填进行中"的时间窗口
+      const originalImpl = fetchMock.getMockImplementation();
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      fetchMock.mockImplementation(async (code: string) => {
+        await gate;
+        if (code === '000300') {
+          return [
+            { close: 100, isSimulated: false },
+            { close: 110, isSimulated: false },
+          ] as never[];
+        }
+        return [{ close: 120, isSimulated: false }] as never[];
+      });
+
+      try {
+        const evaluating = evaluateOutcomes(3);
+        // 回填在途期间，另一次分析完成并写入新评级（模拟 /api/compare 并发场景）
+        recordAnalysis({
+          stockCode: '000001',
+          rating: '优先跟踪',
+          totalScore: 80,
+          entryPrice: 50,
+        });
+        release();
+        const done = await evaluating;
+
+        const items = (JSON.parse(readFileSync(tmpFile, 'utf-8')) as { items: OutcomeRecord[] })
+          .items;
+        expect(done).toBe(1);
+        // 旧记录被正确回填
+        expect(items.find((it) => it.id === 'due-1')?.evaluatedAt).toBeTruthy();
+        // 修复前：写回本轮开始时的陈旧快照，会把在途期间写入的新评级静默抹掉
+        expect(items.some((it) => it.stockCode === '000001')).toBe(true);
+        expect(items).toHaveLength(2);
+      } finally {
+        if (originalImpl) fetchMock.mockImplementation(originalImpl);
+      }
+    });
+  });
 });

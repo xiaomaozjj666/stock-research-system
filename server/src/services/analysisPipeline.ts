@@ -21,6 +21,7 @@ import {
   loadCheckpoint,
   saveCheckpoint,
   clearCheckpoint,
+  newRunId,
   stageLabel,
 } from './analysisCheckpoint.js';
 import { evaluateOutcomes, getRatingAccuracy, formatAccuracyHint } from './outcomeTracker.js';
@@ -95,27 +96,120 @@ export interface RunAnalysisOptions {
   resume?: boolean;
 }
 
-export async function runAnalysis(
+/**
+ * 在途分析登记（按股票代码 single-flight）。
+ *
+ * 并发语义选择：**等待并复用同一轮结果**，而不是抛「可重试错误」。
+ * 理由：① 与本项目既有并发策略一致——dataService.getData / quantCache.withQuantCache
+ * 都是共享同一个 producer Promise；② SSE 与 POST 双入口（双标签页）、/api/compare 并行
+ * 触发同一代码时，第二个调用方拿到结果比拿到错误更有用（前端无需自行重试）；
+ * ③ 真正要解决的痛点是「重复调用 LLM 重复付费」，复用结果即可彻底消除。
+ */
+interface InFlightAnalysis {
+  promise: Promise<AnalysisResult>;
+  /** 进度订阅者：抛错（SSE 已断开）即被移除，其余订阅者与等待者不受影响 */
+  listeners: Set<(stage: AnalysisStage) => void>;
+  /** 是否曾有订阅者（仅 SSE 路由会传回调）：用于判断「已无人消费进度」是否成立 */
+  hadListener: boolean;
+  /** 无进度回调的等待者数（POST / 工具调用）：只要还有人等结果，就不因订阅者断开而中止整轮 */
+  silentWaiters: number;
+}
+
+const inFlightAnalyses = new Map<string, InFlightAnalysis>();
+
+/**
+ * 运行一次完整分析（按股票代码去重：同代码已有在途分析时挂到同一轮，不重复开跑）。
+ */
+export function runAnalysis(
   stockCode: string,
   onProgress?: (stage: AnalysisStage) => void,
   options: RunAnalysisOptions = {},
 ): Promise<AnalysisResult> {
+  const existing = inFlightAnalyses.get(stockCode);
+  if (existing) {
+    // 已有同代码在途分析：复用结果（不重复调用 LLM），进度广播给新订阅者
+    if (onProgress) {
+      existing.listeners.add(onProgress);
+      existing.hadListener = true;
+    } else {
+      existing.silentWaiters += 1;
+    }
+    return existing.promise;
+  }
+
+  const handle: InFlightAnalysis = {
+    promise: undefined as unknown as Promise<AnalysisResult>, // 紧随其后赋值
+    listeners: new Set(),
+    hadListener: false,
+    silentWaiters: 0,
+  };
+  if (onProgress) {
+    handle.listeners.add(onProgress);
+    handle.hadListener = true;
+  } else {
+    handle.silentWaiters = 1;
+  }
+  handle.promise = executeAnalysis(stockCode, handle, options).finally(() => {
+    // 只删自己那一轮：避免把随后新起的同代码轮次误删
+    if (inFlightAnalyses.get(stockCode) === handle) inFlightAnalyses.delete(stockCode);
+  });
+  inFlightAnalyses.set(stockCode, handle);
+  return handle.promise;
+}
+
+async function executeAnalysis(
+  stockCode: string,
+  handle: InFlightAnalysis,
+  options: RunAnalysisOptions,
+): Promise<AnalysisResult> {
   const emit = (stage: AnalysisStage) => {
-    onProgress?.(stage);
+    // 逐个订阅者推送：某个订阅者断开（SSE 已关闭时 send 抛错）不得影响其余订阅者与等待者。
+    // 先取快照再遍历：本轮内被移除的订阅者不应再收到本次事件。
+    for (const listener of Array.from(handle.listeners)) {
+      try {
+        listener(stage);
+      } catch {
+        handle.listeners.delete(listener);
+      }
+    }
+    // 保持既有语义：进度订阅者全部断开、且没有别的调用方在等结果时，在阶段边界提前中止，
+    // 不再白跑 1-3 分钟的专家研判/外部请求（无人消费的结论没有意义，且要白付 LLM 成本）。
+    if (handle.hadListener && handle.listeners.size === 0 && handle.silentWaiters === 0) {
+      throw new Error('SSE_CLIENT_DISCONNECTED');
+    }
   };
 
   // 断点续跑：仅在显式请求 resume 时读取，避免陈旧中间态被误用
   const ck = options.resume ? loadCheckpoint(stockCode) : null;
+  // 本代代次：续跑沿用断点记录的代次（同一条续跑链共享一代），全新分析新起一代
+  const runId = ck?.runId ?? newRunId();
   if (ck) {
     emit({
       phase: 'data',
       message: `从上次中断处继续（已完成至「${stageLabel(ck.stage)}」阶段，跳过已完成的环节）`,
     });
+    if (ck.runId !== runId) {
+      // 旧格式断点（无 runId）：把本次采用的上游产物显式落到本代。
+      // 否则后续 saveCheckpoint 会因代次不符拒绝 merge，续跑链的产物断在原地。
+      saveCheckpoint(
+        stockCode,
+        {
+          stage: ck.stage,
+          data: ck.data,
+          expertOpinions: ck.expertOpinions,
+          degradedExperts: ck.degradedExperts,
+          expertByKey: ck.expertByKey,
+          controversies: ck.controversies,
+          finalOpinion: ck.finalOpinion,
+        },
+        runId,
+      );
+    }
   } else {
     // 全新分析：丢弃磁盘上任何残留断点（含未被读取清理的已过期代）。
-    // saveCheckpoint 按 patch 合并，若不先清理，上一代的 experts/arbitration 产物
-    // 会混入新生成的断点——新分析若在 experts 完成前中断，后续 resume 会把
-    // 新取的数据与旧代专家结论拼在一起（跨代错配）。
+    // 若不清，上一代的 experts/arbitration 产物会混入新生成的断点——新分析若在 experts
+    // 完成前中断，后续 resume 会把新取的数据与旧代专家结论拼在一起（跨代错配）。
+    // saveCheckpoint 侧另有代次校验兜底（异代一律不 merge），两道防线互不依赖。
     clearCheckpoint(stockCode);
   }
 
@@ -150,16 +244,20 @@ export async function runAnalysis(
     priceHistory = fetchedPrices;
     // 落盘保存「未经 PE/PB 修正」的原始数据：后续修正是确定性纯计算，
     // 续跑时重放得到同样结果，避免修正被重复叠加。
-    saveCheckpoint(stockCode, {
-      stage: 'data',
-      data: {
-        info: fetchedData.info,
-        financial: fetchedData.financial,
-        valuation: fetchedData.valuation,
-        newsSignal,
-        priceHistory: fetchedPrices,
+    saveCheckpoint(
+      stockCode,
+      {
+        stage: 'data',
+        data: {
+          info: fetchedData.info,
+          financial: fetchedData.financial,
+          valuation: fetchedData.valuation,
+          newsSignal,
+          priceHistory: fetchedPrices,
+        },
       },
-    });
+      runId,
+    );
   }
   const { info, financial, valuation } = dataResult;
   const n = financial.years.length;
@@ -316,7 +414,11 @@ export async function runAnalysis(
     expertOpinions = expertOutcome.opinions;
     degradedExperts = expertOutcome.degradedExperts;
     expertByKey = expertOutcome.byKey;
-    saveCheckpoint(stockCode, { stage: 'experts', expertOpinions, degradedExperts, expertByKey });
+    saveCheckpoint(
+      stockCode,
+      { stage: 'experts', expertOpinions, degradedExperts, expertByKey },
+      runId,
+    );
   }
 
   /** 按 key 取专家情绪；该专家降级时以 neutral 兜底，保证下游自省逻辑不中断 */
@@ -352,7 +454,7 @@ export async function runAnalysis(
     });
     controversies = arbitration.controversies;
     finalOpinion = arbitration.finalOpinion;
-    saveCheckpoint(stockCode, { stage: 'arbitration', controversies, finalOpinion });
+    saveCheckpoint(stockCode, { stage: 'arbitration', controversies, finalOpinion }, runId);
   }
 
   const allOpinions = [...expertOpinions, finalOpinion];
@@ -828,10 +930,16 @@ export async function runAnalysis(
   });
   const riskDecomposition = decomposeRisk(styleExposures, SPECIFIC_RISK_BASELINE);
 
-  // 分析成功：清除断点（中间产物已无用，避免陈旧数据被后续误用）
-  clearCheckpoint(stockCode);
+  // 分析成功：清除本代断点（中间产物已无用，避免陈旧数据被后续误用）。
+  // 带 runId 只清本代：并发另一代的在途断点不该被这一轮的成功收尾顺手删掉。
+  clearCheckpoint(stockCode, runId);
 
   return {
+    // 报告生成时间与行情数据截止日：金融结论必须能判断"这是什么时候的"。
+    // 此前结果对象里没有任何时间字段，报告与导出的 Markdown 都失去时间锚点。
+    generatedAt: new Date().toISOString(),
+    // 行情数据截止日（最后一根 K 线日期）；无行情（取数失败且无降级数据）时不出现该字段
+    dataAsOf: priceHistory.length > 0 ? priceHistory[priceHistory.length - 1].date : undefined,
     stock_pool: [
       {
         stock_code: info.code,

@@ -15,13 +15,18 @@
  */
 import type { Request, Response, NextFunction } from 'express';
 import { getCostReport } from '../llm/cost.js';
+import { buildOpenApiDocument } from './openapi.js';
 import { auditLogger } from './auditLog.js';
 
 /** 请求耗时直方图桶边界（毫秒） */
 const DURATION_BUCKETS_MS = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000];
 
-/** 已知静态路由（精确匹配） */
-const KNOWN_ROUTES = new Set([
+/**
+ * 历史静态路由表（兜底）。
+ * 保留既有标签集：即使 OpenAPI 契约与运行时路由发现都拿不到（如单测直接调用
+ * normalizeRoute），已有标签也不会退化成 /api/:other。
+ */
+const LEGACY_STATIC_ROUTES = [
   '/api/health',
   '/api/metrics',
   '/api/openapi.json',
@@ -53,18 +58,104 @@ const KNOWN_ROUTES = new Set([
   '/api/autonomous/status',
   '/api/quant/analyze',
   '/api/quant/factor/evaluate',
-]);
+];
 
-/** 自选股删除路由带路径参数：/api/watchlist/600519 → /api/watchlist/:code */
-const WATCHLIST_CODE_RE = /^\/api\/watchlist\/\d{6}$/;
+/** OpenAPI 契约里的路径（`/api/watchlist/{code}`）→ Express 形态（`/api/watchlist/:code`） */
+function toExpressPath(openApiPath: string): string {
+  return openApiPath.replace(/\{([^}]+)\}/g, ':$1');
+}
+
+/** 由 Express 路由路径编译匹配器：静态段精确匹配，:param 段匹配单段任意值 */
+function compileRoutePattern(routePath: string): RegExp {
+  const escaped = routePath
+    .split('/')
+    .map((seg) => (seg.startsWith(':') ? '[^/]+' : seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    .join('/');
+  return new RegExp(`^${escaped}$`);
+}
+
+interface RouteLabelTable {
+  /** 无路径参数的静态路由 */
+  exact: Set<string>;
+  /** 带路径参数的路由（标签用模式本身，基数有界） */
+  patterns: { re: RegExp; label: string }[];
+}
+
+/**
+ * 从已注册路由自动发现路径（Express 5：`app.router.stack`，挂载的子路由在
+ * `layer.handle.stack` 里递归展开）。任何结构不符都静默放弃——自动发现只是
+ * 「新增路由不必手工补表」的主路径，兜底表始终有效。
+ */
+function collectRegisteredPaths(app: unknown): string[] {
+  const out: string[] = [];
+  const visited = new Set<unknown>();
+  const walk = (stack: unknown, depth: number): void => {
+    if (!Array.isArray(stack) || depth > 5) return;
+    for (const layer of stack as Array<Record<string, unknown>>) {
+      const routePath = (layer?.route as { path?: unknown } | undefined)?.path;
+      const candidates = Array.isArray(routePath) ? routePath : [routePath];
+      for (const p of candidates) {
+        if (typeof p === 'string' && p.startsWith('/api')) out.push(p);
+      }
+      const handle = layer?.handle as { stack?: unknown } | undefined;
+      if (handle && !visited.has(handle)) {
+        visited.add(handle);
+        walk(handle.stack, depth + 1);
+      }
+    }
+  };
+  walk((app as { router?: { stack?: unknown } } | undefined)?.router?.stack, 0);
+  return out;
+}
+
+/**
+ * 构建路由标签表：OpenAPI 契约（机器可读、与路由同步维护）+ 运行时自动发现
+ * （已注册路由，含未写入契约的）+ 历史静态兜底。三者在标签层面等价，只增不减。
+ */
+export function buildRouteLabelTable(app?: unknown): RouteLabelTable {
+  const paths = new Set<string>(LEGACY_STATIC_ROUTES);
+  try {
+    for (const p of Object.keys(buildOpenApiDocument().paths)) paths.add(toExpressPath(p));
+  } catch {
+    /* 契约不可用时保留兜底表 */
+  }
+  for (const p of collectRegisteredPaths(app)) paths.add(p);
+
+  const exact = new Set<string>();
+  const patterns: RouteLabelTable['patterns'] = [];
+  for (const p of paths) {
+    if (p.includes(':')) patterns.push({ re: compileRoutePattern(p), label: p });
+    else exact.add(p);
+  }
+  return { exact, patterns };
+}
+
+let routeTable = buildRouteLabelTable();
+let routeTableApp: unknown = null;
+
+/** 首次请求时用真实 app 补全自动发现的路由表（同一 app 只重建一次） */
+function ensureRouteTableFor(app: unknown): void {
+  if (app === undefined || app === null || app === routeTableApp) return;
+  routeTableApp = app;
+  routeTable = buildRouteLabelTable(app);
+}
+
+/** 测试用：按指定 app 重建路由表（不传则只保留契约 + 兜底表） */
+export function resetRouteTable(app?: unknown): void {
+  routeTableApp = app ?? null;
+  routeTable = buildRouteLabelTable(app);
+}
 
 /**
  * 路由标签归一化：有界标签集，防止 Prometheus 标签基数爆炸。
- * 未匹配的 /api 路径归为 /api/:other，非 API 路径（生产 SPA 静态资源）归为 static_assets。
+ * 表由 OpenAPI 契约 + 已注册路由自动生成（新增路由无需手工补表）；
+ * 仍无匹配的 /api 路径归为 /api/:other，非 API 路径（生产 SPA 静态资源）归为 static_assets。
  */
 export function normalizeRoute(path: string): string {
-  if (KNOWN_ROUTES.has(path)) return path;
-  if (WATCHLIST_CODE_RE.test(path)) return '/api/watchlist/:code';
+  if (routeTable.exact.has(path)) return path;
+  for (const { re, label } of routeTable.patterns) {
+    if (re.test(path)) return label;
+  }
   if (path.startsWith('/api/')) return '/api/:other';
   return 'static_assets';
 }
@@ -79,14 +170,25 @@ interface HistogramState {
 const requestCounts = new Map<string, number>(); // key: method|route|status
 const histograms = new Map<string, HistogramState>(); // key: method|route
 
-/** 记录一次 HTTP 请求（由中间件在响应完成时调用） */
+/** 请求结束形态：finished=响应已写出（含 4xx/5xx）；aborted=客户端中途断开（未 finish） */
+export type HttpRequestOutcome = 'finished' | 'aborted';
+
+/**
+ * 记录一次 HTTP 请求（由中间件在响应完成或连接断开时调用）。
+ *
+ * aborted 用 `status="aborted"` 计入同一 counter，并进入同一耗时直方图：
+ * SSE 长请求被客户端取消时最需要看到的正是「这轮分析了多久才被放弃」——
+ * 原先只监听 finish，这类请求在指标里完全不存在。
+ */
 export function recordHttpRequest(
   method: string,
   route: string,
   status: number,
   durationMs: number,
+  outcome: HttpRequestOutcome = 'finished',
 ): void {
-  const countKey = `${method}|${route}|${status}`;
+  const statusLabel = outcome === 'aborted' ? 'aborted' : String(status);
+  const countKey = `${method}|${route}|${statusLabel}`;
   requestCounts.set(countKey, (requestCounts.get(countKey) ?? 0) + 1);
 
   const histKey = `${method}|${route}`;
@@ -102,13 +204,33 @@ export function recordHttpRequest(
   hist.count += 1;
 }
 
-/** HTTP 指标采集中间件：挂在路由之前，响应 finish 时记录 */
+/** HTTP 指标采集中间件：挂在路由之前，响应 finish / 连接 close 时记录（二者只计一次） */
 export function httpMetricsMiddleware() {
   return (req: Request, res: Response, next: NextFunction) => {
     const start = Date.now();
-    res.on('finish', () => {
-      recordHttpRequest(req.method, normalizeRoute(req.path), res.statusCode, Date.now() - start);
+    // 用真实 app 补全路由表（含未写入 OpenAPI 契约的运行时路由）
+    ensureRouteTableFor((req as Request & { app?: unknown }).app);
+
+    let recorded = false;
+    const record = (outcome: HttpRequestOutcome) => {
+      if (recorded) return; // finish 与 close 都会触发，保证一次请求只计一次
+      recorded = true;
+      recordHttpRequest(
+        req.method,
+        normalizeRoute(req.path),
+        res.statusCode,
+        Date.now() - start,
+        outcome,
+      );
+    };
+
+    res.on('finish', () => record('finished'));
+    // 客户端中途断开（页面关闭、SSE 被取消）只有 close 没有 finish：
+    // 必须在这里补记 aborted，否则最需要监控的 1~3 分钟分析被取消后完全不可见。
+    res.on('close', () => {
+      if (!res.writableEnded) record('aborted');
     });
+
     next();
   };
 }

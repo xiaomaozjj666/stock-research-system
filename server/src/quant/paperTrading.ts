@@ -189,6 +189,15 @@ export class PaperAccount {
       status: 'pending',
     };
 
+    // 枚举校验必须前置：非法 side 会跳过下方卖出分支（只判 === 'sell'），
+    // 并在结算时落入 else 被当成卖出处理，从而绕过 T+1 约束；
+    // 非法 type 则会被当作限价单走错误的撮合路径。路由层已校验，此处兜底防直连引擎。
+    if (String(side) !== 'buy' && String(side) !== 'sell') {
+      return this.reject(order, '买卖方向无效（应为 buy / sell）');
+    }
+    if (String(type) !== 'market' && String(type) !== 'limit') {
+      return this.reject(order, '订单类型无效（应为 market / limit）');
+    }
     if (!/^\d{6}$/.test(code)) return this.reject(order, '股票代码需为 6 位数字');
     if (!Number.isFinite(input.quantity) || input.quantity <= 0) {
       return this.reject(order, '数量必须为正整数');

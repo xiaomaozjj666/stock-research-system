@@ -217,8 +217,9 @@ describe('fetchOHLCVData — 网络解析与降级', () => {
     for (const d of result) {
       expect(d.isSimulated).toBe(true);
       expect(d.high).toBeGreaterThanOrEqual(d.low);
-      // 不含周末
-      const day = new Date(d.date).getDay();
+      // 不含周末：必须用 UTC 口径判断——日期标签由 toISOString() 生成（UTC），
+      // 若这里用本地 getDay()，在 UTC 负偏移宿主上合法的 UTC 周一会被本地判成周日而假失败。
+      const day = new Date(d.date).getUTCDay();
       expect(day).not.toBe(0);
       expect(day).not.toBe(6);
     }

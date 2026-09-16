@@ -439,6 +439,82 @@ describe('expressTracerMiddleware', () => {
       expect(span.attributes['http.statusCode']).toBe(code);
     }
   });
+
+  it('客户端中途断开（未 finish 的 close）：span 标记 aborted 并以 error 收尾', () => {
+    configureTracer({});
+    const tracer = getTracer();
+    const middleware = expressTracerMiddleware();
+
+    // SSE 长请求：客户端关页面 → 只有 close，没有 finish
+    const handlers: Record<string, () => void> = {};
+    const req = {
+      method: 'GET',
+      originalUrl: '/api/analyze/stream?stockCode=600519',
+      path: '/api/analyze/stream',
+      url: '/api/analyze/stream',
+      ip: '127.0.0.1',
+    } as unknown as import('express').Request;
+    const res = {
+      statusCode: 200,
+      writableEnded: false,
+      locals: {} as Record<string, unknown>,
+      setHeader: vi.fn(),
+      on: vi.fn((event: string, cb: () => void) => {
+        handlers[event] = cb;
+      }),
+    } as unknown as import('express').Response;
+
+    middleware(req, res, vi.fn());
+    const ctx = (res.locals as { traceContext: TraceContext }).traceContext;
+    const span = tracer.getTrace(ctx.traceId)[0];
+    expect(span.endTime).toBeNull(); // 断开前仍在进行
+
+    handlers['close']();
+
+    // 被取消的分析必须可见：span 结束、状态 error、带 aborted 标记与事件
+    expect(span.endTime).not.toBeNull();
+    expect(span.status).toBe('error');
+    expect(span.attributes['http.aborted']).toBe(true);
+    expect(span.attributes['http.statusCode']).toBe(200);
+    expect(span.events.some((e) => e.name === 'http.client_disconnected')).toBe(true);
+  });
+
+  it('正常 finish 之后的 close 不覆盖 span（不重复处理）', () => {
+    configureTracer({});
+    const tracer = getTracer();
+    const middleware = expressTracerMiddleware();
+
+    const handlers: Record<string, () => void> = {};
+    const req = {
+      method: 'GET',
+      originalUrl: '/api/health',
+      path: '/api/health',
+      url: '/api/health',
+      ip: '127.0.0.1',
+    } as unknown as import('express').Request;
+    const res = {
+      statusCode: 200,
+      writableEnded: true, // res.end() 之后 close 才会到
+      locals: {} as Record<string, unknown>,
+      setHeader: vi.fn(),
+      on: vi.fn((event: string, cb: () => void) => {
+        handlers[event] = cb;
+      }),
+    } as unknown as import('express').Response;
+
+    middleware(req, res, vi.fn());
+    handlers['finish']();
+    const ctx = (res.locals as { traceContext: TraceContext }).traceContext;
+    const span = tracer.getTrace(ctx.traceId)[0];
+    const endTime = span.endTime;
+
+    handlers['close']();
+
+    expect(span.endTime).toBe(endTime);
+    expect(span.status).toBe('ok');
+    expect(span.attributes['http.aborted']).toBeUndefined();
+    expect(span.events).toEqual([]);
+  });
 });
 
 // 辅助：从 tracer 中筛出指定 name 的 span（用于 withSpan 用例）

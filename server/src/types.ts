@@ -226,6 +226,10 @@ export interface WatchlistNewsBacktestReport {
 
 // 完整分析结果
 export interface AnalysisResult {
+  /** 报告生成时间（ISO 字符串）：报告与导出文件的时间锚点 */
+  generatedAt?: string;
+  /** 行情数据截止日（YYYY-MM-DD，最后一根 K 线）；无行情数据时缺省 */
+  dataAsOf?: string;
   stock_pool: {
     stock_code: string;
     stock_name: string;

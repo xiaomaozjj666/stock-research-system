@@ -573,6 +573,17 @@ export function buildOpenApiDocument() {
           },
         },
       },
+      '/api/watchlist/alerts': {
+        get: {
+          tags: ['watchlist'],
+          summary: '最近一次异动监控快照',
+          description:
+            '返回最近一次 POST /api/watchlist/monitor 落盘的快照（生成时间 + 覆盖只数 + 预警条目），供自选股页常驻展示；从未监控过时返回 generatedAt=null 的空结构而非 404。',
+          responses: {
+            200: { description: '监控快照 { generatedAt, monitored, alerts }' },
+          },
+        },
+      },
       '/api/autonomous/start': {
         post: {
           tags: ['autonomous'],

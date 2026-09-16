@@ -30,4 +30,13 @@ describe('GET /api/metrics 路由', () => {
     // 上面那次 /api/health 请求本身应已被计入
     expect(body).toContain('route="/api/health"');
   });
+
+  it('运行时注册的路由（未写入 OpenAPI 契约）自动获得独立标签', async () => {
+    // /api/llm/skills 不在手工维护的旧路由表里，也未写入 OpenAPI 契约：
+    // 修复前会与所有新量化/LLM 路由一起被压成 /api/:other（可观测量化路由的盲区）
+    await request(app).get('/api/llm/skills');
+
+    const res = await request(app).get('/api/metrics');
+    expect(res.text).toContain('route="/api/llm/skills"');
+  });
 });

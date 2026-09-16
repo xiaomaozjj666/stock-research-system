@@ -3,7 +3,14 @@
  */
 import { Router } from 'express';
 import { watchlistLimiter, circuitBreakerGuard } from '../middleware.js';
-import { getWatchlist, addToWatchlist, removeFromWatchlist } from '../services/watchlistService.js';
+import {
+  getWatchlist,
+  addToWatchlist,
+  removeFromWatchlist,
+  getWatchlistAlertsSnapshot,
+  normalizeAlertsSnapshot,
+  saveWatchlistAlertsSnapshot,
+} from '../services/watchlistService.js';
 import { runWatchlistNewsBacktest } from '../services/watchlistBacktest.js';
 import { detectAlerts } from '../services/alerts.js';
 import logger from '../utils/logger.js';
@@ -62,6 +69,11 @@ router.post(
   },
 );
 
+// 最近一次异动监控快照（只读回看）：无快照时返回稳定空结构而非 404，前端一条分支即可处理
+router.get('/api/watchlist/alerts', (_req, res) => {
+  res.json(getWatchlistAlertsSnapshot());
+});
+
 // 自选股主动监控：重跑批量新闻回测并检出异动预警
 router.post('/api/watchlist/monitor', watchlistLimiter, circuitBreakerGuard, async (req, res) => {
   try {
@@ -71,7 +83,15 @@ router.post('/api/watchlist/monitor', watchlistLimiter, circuitBreakerGuard, asy
     }
     const report = await runWatchlistNewsBacktest(codes);
     const alerts = detectAlerts(report.results);
-    res.json({ generatedAt: report.generatedAt, monitored: report.count, alerts });
+    // 落盘「最近一次」快照：只回给当次请求的话，用户一刷新就丢，预警触达不到人。
+    // 响应与落盘共用同一份规范化结果（条数上限一致），写盘失败也不影响本次返回。
+    const snapshot = normalizeAlertsSnapshot({
+      generatedAt: report.generatedAt,
+      monitored: report.count,
+      alerts,
+    });
+    saveWatchlistAlertsSnapshot(snapshot);
+    res.json(snapshot);
   } catch (error) {
     logger.error('Watchlist monitor error', { route: '/api/watchlist/monitor', err: error });
     res.status(500).json({ error: '自选股监控失败', detail: (error as Error).message });

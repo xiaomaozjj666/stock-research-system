@@ -20,12 +20,20 @@ router.get('/api/stocks', async (_req, res) => {
   }
 });
 
+// 关键词长度上限：兜底模糊匹配会对全表 5000+ 只股票逐只做最长公共子串 DP
+// （O(|q|·|name|)），超长关键词会长时间阻塞事件循环（实测 1500 汉字约 0.5s），
+// 故在路由层直接拒绝，避免单个请求拖慢所有并发请求。
+const MAX_KEYWORD_LENGTH = 32;
+
 // 搜索股票
 router.get('/api/stocks/search', searchLimiter, async (req, res) => {
   try {
     const { keyword } = req.query;
     if (!keyword || typeof keyword !== 'string') {
       return res.status(400).json({ error: '请提供搜索关键词' });
+    }
+    if (keyword.length > MAX_KEYWORD_LENGTH) {
+      return res.status(400).json({ error: `搜索关键词过长（上限 ${MAX_KEYWORD_LENGTH} 个字符）` });
     }
     const results = await searchStocks(keyword);
     res.json(results);

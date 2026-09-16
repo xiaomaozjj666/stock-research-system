@@ -12,11 +12,23 @@ import logger from '../utils/logger.js';
  *
  * 设计要点：
  * - 目录走 DATA_CACHE_DIR 惰性解析（与 services/dataService 同口径），测试可隔离到临时目录；
- * - 每条记录自带 ttlMs，prune 逐文件判断是否过期（K线合并历史与财报的 TTL 差两个数量级，
- *   不能用一个全局 TTL 判定）；
+ * - 每条记录自带 ttlMs 与 kind 标记，prune 逐文件判断是否过期（K线合并历史与财报的 TTL
+ *   差两个数量级，不能用一个全局 TTL 判定），且**只清理本类条目**——DATA_CACHE_DIR 把两套
+ *   缓存指向同一目录时，dataService 的 24h pruner 与本模块的逐条 TTL 不会互相删对方的条目；
  * - 所有 IO 失败静默降级：缓存是加速器，不是数据源，读不到就当未命中。
  */
 const DEFAULT_QUANT_CACHE_DIR = path.join(import.meta.dirname, 'cache');
+
+/** 本模块条目的归属标记 */
+const QUANT_KIND = 'quant';
+/** 对侧（services/dataService）股票缓存的归属标记：只识别，不写 */
+const STOCK_KIND = 'stocks';
+/**
+ * dataService 股票缓存的命名形态（`<6 位代码>.json`）。
+ * 旧格式（升级前写入）既没有 kind 也没有 ttlMs，与「缺 ttlMs 的旧量化分片」无法靠字段区分，
+ * 只能按命名收敛：6 位纯数字文件名一律视为 dataService 所有。
+ */
+const STOCK_FILE_RE = /^\d{6}\.json$/;
 
 /** 缓存目录（DATA_CACHE_DIR 可重定向；惰性解析以便测试在 beforeEach 中切换） */
 export function getQuantCacheDir(): string {
@@ -35,6 +47,8 @@ function cacheFilePath(key: string): string {
 }
 
 interface CacheFile<T> {
+  /** 条目归属标记：prune/读取据此区分本类与 dataService 股票缓存 */
+  kind: typeof QUANT_KIND;
   data: T;
   timestamp: number;
   /** 该条目的有效时长，供 prune 逐文件判断是否过期 */
@@ -42,8 +56,25 @@ interface CacheFile<T> {
 }
 
 /**
+ * 条目归属判定：'own' 本类（按自身 ttlMs 判过期）/ 'foreign' 异类（prune 一律跳过，不删不计数）。
+ * 兼容历史格式：无 kind 但带 ttlMs 的是升级前的量化条目；6 位代码命名的是 dataService 股票缓存。
+ */
+export function classifyCacheEntry(
+  parsed: { kind?: unknown; ttlMs?: unknown } | null | undefined,
+  fileName: string,
+): 'own' | 'foreign' {
+  if (parsed?.kind === QUANT_KIND) return 'own';
+  if (parsed?.kind === STOCK_KIND) return 'foreign';
+  if (parsed?.kind !== undefined) return 'foreign'; // 未来新增类型：同样不认领
+  if (typeof parsed?.ttlMs === 'number') return 'own';
+  if (STOCK_FILE_RE.test(fileName)) return 'foreign';
+  // 其余旧格式量化分片：保持既有自愈行为（缺 ttlMs 视为过期删除）
+  return 'own';
+}
+
+/**
  * 读取缓存条目。不判断新鲜度——调用方按自身 TTL 语义决定（K线合并历史要读出来
- * 增量补尾，即使整体已「过期」也要读）。损坏/不可读一律返回 null（由 prune 物理删除）。
+ * 增量补尾，即使整体已「过期」也要读）。损坏/不可读/异类条目一律返回 null（异类由对侧 pruner 负责）。
  */
 export function readCacheEntry<T>(key: string): { data: T; timestamp: number } | null {
   try {
@@ -51,6 +82,7 @@ export function readCacheEntry<T>(key: string): { data: T; timestamp: number } |
     if (!fs.existsSync(file)) return null;
     const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as Partial<CacheFile<T>>;
     if (typeof parsed?.timestamp !== 'number' || !('data' in parsed)) return null;
+    if (classifyCacheEntry(parsed, path.basename(file)) !== 'own') return null;
     return { data: parsed.data as T, timestamp: parsed.timestamp };
   } catch {
     return null;
@@ -79,7 +111,7 @@ export function writeCacheEntry<T>(key: string, data: T, ttlMs: number): void {
   try {
     const dir = getQuantCacheDir();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const payload: CacheFile<T> = { data, timestamp: Date.now(), ttlMs };
+    const payload: CacheFile<T> = { kind: QUANT_KIND, data, timestamp: Date.now(), ttlMs };
     fs.writeFileSync(cacheFilePath(key), JSON.stringify(payload));
   } catch (error) {
     logger.warn('写入量化缓存失败', { key, err: error });
@@ -125,9 +157,11 @@ const DEFAULT_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
  * 清理量化缓存目录：
- * 1. 逐文件按自身 ttlMs 判断是否过期（缺失 ttlMs 的旧格式文件视为过期，自愈式淘汰）；
- * 2. 损坏/不可解析文件直接删除；
- * 3. 存活数量超过上限时按写入时间从最旧开始淘汰。
+ * 1. 逐文件按自身 ttlMs 判断是否过期（缺失 ttlMs 的旧量化分片视为过期，自愈式淘汰）；
+ * 2. **异类条目（services/dataService 的股票缓存）一律跳过**：它们没有 ttlMs，
+ *    若按本规则判定会被整批删除，导致共享 DATA_CACHE_DIR 时股票缓存静默失效、反复全量重拉；
+ * 3. 损坏/不可解析文件直接删除（无法判定归属，且对两侧都无价值）；
+ * 4. 存活数量超过上限时按写入时间从最旧开始淘汰（只统计本类）。
  * best-effort：任何 IO 失败静默降级，不影响主流程。
  */
 export async function pruneQuantCache(
@@ -147,6 +181,7 @@ export async function pruneQuantCache(
         const parsed = JSON.parse(await fs.promises.readFile(full, 'utf-8')) as Partial<
           CacheFile<unknown>
         >;
+        if (classifyCacheEntry(parsed, f) === 'foreign') continue; // 异类：交给对侧 pruner
         const expired =
           typeof parsed?.timestamp !== 'number' ||
           typeof parsed?.ttlMs !== 'number' ||

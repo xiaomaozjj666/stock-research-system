@@ -28,6 +28,38 @@ function getPaperAccount(): PaperAccount {
   return _paperAccount;
 }
 
+/** 单次结算允许的价格条目上限（防超大 body 造成无谓的遍历与落盘膨胀） */
+const MAX_PRICE_ENTRIES = 500;
+
+/**
+ * 解析「股票代码 → 价格」映射并做数值校验。
+ * 必须严格校验：结算价一旦是非数值（如 "abc"），会经 Math.round(NaN*100)/100 传染到
+ * cash / 持仓成本 / 净值，落盘时被 JSON 序列化成 null 且不可自愈——账户只能手改文件恢复。
+ */
+function parsePriceMap(
+  raw: unknown,
+  field: string,
+): { ok: true; map: Map<string, number> } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true, map: new Map() };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, error: `${field} 应为对象（形如 {"600519":1680.5}）` };
+  }
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (entries.length > MAX_PRICE_ENTRIES) {
+    return { ok: false, error: `${field} 条目过多（上限 ${MAX_PRICE_ENTRIES} 只）` };
+  }
+  const map = new Map<string, number>();
+  for (const [code, value] of entries) {
+    const key = code.trim();
+    if (!key) return { ok: false, error: `${field} 存在空股票代码` };
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      return { ok: false, error: `${field} 中 ${key} 的价格无效：需为大于 0 的有限数值` };
+    }
+    map.set(key, value);
+  }
+  return { ok: true, map };
+}
+
 router.get('/api/paper/portfolio', (_req, res) => {
   try {
     const acct = getPaperAccount();
@@ -48,20 +80,49 @@ router.get('/api/paper/portfolio', (_req, res) => {
 router.post('/api/paper/order', (req, res) => {
   try {
     const body = req.body ?? {};
+    // 枚举与数值校验前置：非法 side 会被引擎的非卖出分支放过从而绕过 T+1，
+    // 非法 type 会走错误的撮合路径；这里直接拒绝并给出可操作提示。
+    if (body.side !== 'buy' && body.side !== 'sell') {
+      return res.status(400).json({ error: '下单失败', detail: '买卖方向无效（应为 buy / sell）' });
+    }
+    if (body.type !== 'market' && body.type !== 'limit') {
+      return res
+        .status(400)
+        .json({ error: '下单失败', detail: '订单类型无效（应为 market / limit）' });
+    }
+    const quantity = Number(body.quantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return res.status(400).json({ error: '下单失败', detail: '数量必须为正整数' });
+    }
+    if (
+      body.type === 'limit' &&
+      (typeof body.price !== 'number' || !Number.isFinite(body.price) || body.price <= 0)
+    ) {
+      return res.status(400).json({ error: '下单失败', detail: '限价单需提供正价格' });
+    }
     const acct = getPaperAccount();
     if (typeof body.date === 'string') acct.setCurrentDate(body.date);
     const order = acct.placeOrder({
       code: String(body.code ?? ''),
-      side: body.side as 'buy' | 'sell',
-      type: body.type as 'market' | 'limit',
+      side: body.side,
+      type: body.type,
       price: typeof body.price === 'number' ? body.price : undefined,
-      quantity: Number(body.quantity),
+      quantity,
     });
     // 校验失败（非法代码/数量/限价等）placeOrder 返回 rejected 订单而非抛错 → 按 400 拒绝
     if (order.status === 'rejected') {
       return res.status(400).json({ error: '下单失败', detail: order.rejectReason ?? '无效订单' });
     }
-    acct.save();
+    // 落盘失败不能回 400：订单已在内存生效，若报"下单失败"用户会重复下单。
+    try {
+      acct.save();
+    } catch (saveError) {
+      logger.error('Paper order save failed', { route: '/api/paper/order', err: saveError });
+      return res.status(500).json({
+        error: '下单已受理，但落盘失败（重启后可能丢失）',
+        detail: (saveError as Error).message,
+      });
+    }
     res.json({ order });
   } catch (error) {
     logger.warn('Paper order rejected', { route: '/api/paper/order', err: error });
@@ -77,11 +138,15 @@ router.post('/api/paper/settle', (req, res) => {
     }
     const acct = getPaperAccount();
     acct.setCurrentDate(body.date);
-    const closes = new Map<string, number>(Object.entries(body.closePrices ?? {}));
-    const prev = body.prevClosePrices
-      ? new Map<string, number>(Object.entries(body.prevClosePrices))
-      : undefined;
-    acct.settleDay(closes, prev);
+    const closesParsed = parsePriceMap(body.closePrices, 'closePrices');
+    if (!closesParsed.ok) {
+      return res.status(400).json({ error: '结算参数无效', detail: closesParsed.error });
+    }
+    const prevParsed = parsePriceMap(body.prevClosePrices, 'prevClosePrices');
+    if (!prevParsed.ok) {
+      return res.status(400).json({ error: '结算参数无效', detail: prevParsed.error });
+    }
+    acct.settleDay(closesParsed.map, body.prevClosePrices ? prevParsed.map : undefined);
     acct.save();
     const equity = acct.getDailyEquity();
     res.json({ date: body.date, cash: acct.cash, latestEquity: equity.at(-1), history: equity });
