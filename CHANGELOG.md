@@ -33,7 +33,7 @@
 - **本地依赖与 lockfile/CI 对齐**：此前本地装的是 vitest 4.1.11 而 CI 用 5.0.0（8 个包版本滞后），本地绿灯不可迁移。
 - 新增 `.env.example`（75 个变量分组注释）与 README「环境变量」章节；订正 README / ENGINEERING-NOTES 中的过期陈述（启动脚本"自动安装"、覆盖率阈值、lint 覆盖范围、Vitest 版本等）。
 - **新增 SSE 链路测试**：`utils/sse.ts` 9 例 + `/api/analyze/stream` 5 例——此前旗舰流式链路（多事件分帧、断连协作取消、`resume` 契约）零测试。
-- **CI**：`permissions: contents: read`、`npm audit --audit-level=high` 真实门禁（实测 0 漏洞）、构建产物在 job 间传递（省一次全量安装与构建，并加产物存在性校验防止静默重建）、e2e `--retries=1`。
+- **CI**：`permissions: contents: read`、`npm audit --audit-level=high` 真实门禁（实测 0 漏洞）、构建产物在 job 间传递（e2e 省去重复构建，并加产物存在性校验防止 globalSetup 静默兜底重建）、e2e `--retries=1`。
 - lint/format 覆盖 `e2e/` 与 `scripts/`；`scripts/dev.mjs` 退出时杀整棵进程树（此前 Windows 上 tsx/vite 残留占住 3001/5173，已实测确认并修复）。
 
 ## 2026-09-14 — 依赖批量升级：生产组 3 项（764bc51）+ 开发组 9 项（1d54b11）

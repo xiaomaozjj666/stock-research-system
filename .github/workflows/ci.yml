@@ -128,11 +128,18 @@ jobs:
         with:
           node-version: 24
 
-      # 与旧版相比，这里**去掉了** npm ci / npm run build / `npx playwright install chromium`
-      # 三步——依赖安装与构建都已在 quality job 完成，产物经 artifact 传递（见下）。
-      # 可行性依据：playwright.config.mts 只 import @playwright/test 与 node:path，
-      # 不需要项目依赖被安装即可加载；Playwright 浏览器在 hosted runner 上预装，
-      # 仅当需要指定版本时才补 `npx playwright install chromium`。
+      # 依赖仍需安装：Playwright 本体与 playwright.config.mts 的 import（@playwright/test）
+      # 都来自 devDependencies，而 artifact 只传构建产物、不含 node_modules。
+      # （教训：曾为省时间把 npm ci 一并删掉，结果 npx 从 registry 临时取了一个不匹配的
+      #   playwright 包，以 ERR_MODULE_NOT_FOUND 失败。artifact 传递省的是「构建」，
+      #   不是「安装」。）
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --dangerously-allow-all-scripts --no-audit --no-fund
+
+      # 浏览器必须显式安装并与 @playwright/test 版本对齐：runner 预装的是镜像发布时的
+      # 版本，依赖升级后（1.62 → 1.63 需要 chromium v1243）会因可执行文件缺失而启动失败。
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
 
       - name: Download build artifacts
         # download-artifact 的 path 保持仓库相对层级：server/dist/** 与 client/dist/**。
