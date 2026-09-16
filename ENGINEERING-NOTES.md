@@ -5,7 +5,7 @@
 ## 技术栈
 
 - monorepo（npm workspaces）：`server/`（Express5 + TS7, NodeNext, `.js` 扩展名）+ `client/`（React19 + Vite8 + ECharts6 + plugin-react 6）。
-- 测试：Vitest 4 + @vitest/coverage-v8 4（v8 provider），`globals:false`（测试里 `vi`/`expect`/`describe`/`it` 必须显式 import）。
+- 测试：Vitest 5 + @vitest/coverage-v8 5（v8 provider），`globals:false`（测试里 `vi`/`expect`/`describe`/`it` 必须显式 import）。2026-09-14 的 dependabot 开发依赖批量升级把 vitest / @vitest/coverage-v8 由 4.1.11 升到 5.0.0、vite 由 8.2.1 升到 8.3.0（根 `overrides` 同步对齐 8.3.0）。
 
 ## 质量门禁（应全部为 0 失败）
 
@@ -13,16 +13,16 @@
 - `server`: `npx tsc --noEmit` 0。
 - `client`: `npm run build` OK。
 - `npm run test`（vitest run）：截至 2026-08-11 为 **761 passed / 0 failed**（69 个测试文件）。
-- 整体覆盖率 ~80%。
+- 覆盖率门禁（`vitest.config.mts`）：阈值 lines 70 / statements 68 / functions 62 / branches 55；配置注释记录的基线（2026-08-13，793 tests）为 lines 71.99% / statements 70.67% / functions 63.76% / branches 56.55%。`server/src/quant/**` 与 `client/src/**` 均纳入统计（`coverage.include`），排除清单见「测试注意」节。
 
 ## 依赖升级的硬约束（踩过的坑）
 
 1. **TS 7.0.2 ↔ typescript-eslint 不兼容**：registry 里 typescript-eslint 最高 8.65.1-alpha.19，peer `typescript <6.1.0`，不支持 TS 7。→ ESLint 只覆盖 JS/JSON/风格（`eslint.config.mjs` 忽略 `*.ts/*.tsx`）；TS 静态分析用 `tsc --noEmit`（TS7+strict）。
-2. **vite 去重**：root `package.json` 有 `overrides: { "vite": "8.2.0" }`，防止 vitest 把 vite 拉成 6.x 造成 hoist 冲突。改动 overrides 前先想清楚。
+2. **vite 去重**：root `package.json` 有 `overrides: { "vite": "8.3.0" }`（2026-09-14 由 8.2.1 对齐上来），防止 vitest 把 vite 拉成 6.x 造成 hoist 冲突。改动 overrides 前先想清楚；升级 vite 时必须与 `client/package.json` 的 vite 版本同步改。
 3. **react/react-dom 在 root `devDependencies`**：必须 hoist 到 root，否则 echarts-for-react（CJS `require('react')`）构建时 "failed to resolve react"。不要从 root 删掉它们。
 4. **ECharts6/React19 类型桥接**：`client/src/components/ChartsSection.tsx` 把 `ReactEChartsCore` cast 为 `ComponentType<{echarts, option: unknown,...}>`。ECharts6 的 `EChartsOption` 过严，option 用 unknown。
 5. **安装命令**：`npm install --legacy-peer-deps --dangerously-allow-all-scripts`（legacy-peer-deps 绕过 TS7 peer；allow-all-scripts 放行 esbuild postinstall）。
-6. **同伴依赖必须精确 pin**：`@eslint/js` 最新是 **10.0.1**（版本号独立于 eslint）；`@vitejs/plugin-react` **6.0.5**（支持 Vite 8）；`echarts-for-react` **3.0.7**（3.0.6 会拉 react18 嵌套）；`react-markdown` **10.1.0**（peer react>=18）。
+6. **同伴依赖必须精确 pin**：`@eslint/js` 最新是 **10.0.1**（版本号独立于 eslint）；`@vitejs/plugin-react` **6.1.1**（支持 Vite 8；笔记此前写的 6.0.5 已过期）；`echarts-for-react` **3.0.7**（3.0.6 会拉 react18 嵌套）——该依赖已于 2026-08-14 的图表崩溃修复中移除，此处仅作历史约束留档；`react-markdown` **10.1.0**（peer react>=18）。
 
 ## 数据源约束
 
@@ -50,9 +50,9 @@
 
 - vitest.config `globals:false` → 测试里 `vi`/`expect`/`describe`/`it` 必须显式 import。
 - client 组件测试必须 `afterEach(cleanup)`（globals=false 无自动清理），否则 DOM 跨用例累积。
-- `vitest.config.ts` 的 `resolve.extensions` 必须显式含 `.tsx`，否则解析不了 extensionless `.tsx` 导入。
+- `vitest.config.mts` 的 `resolve.extensions` 必须显式含 `.tsx`，否则解析不了 extensionless `.tsx` 导入。
 - `routes.test.ts` 需 `app` 可导入不绑端口：`server/src/index.ts` 把 `app.listen`/优雅关闭包进 `if(process.env.NODE_ENV!=='test')`，vitest.config 设 `env:{NODE_ENV:'test'}`。
-- `server/src/quant/**` 被 vitest.config 排除出覆盖率插桩（测试仍跑且断言），覆盖率因此稳定在 ~80%。
+- 覆盖率排除清单以 `vitest.config.mts` 的 `coverage.exclude` 为准，**只有**：`**/*.test.ts`、`**/*.d.ts`、`server/src/index.ts`（Express 入口）、`server/src/routes/**`（路由模块）、`server/src/middleware.ts`（限流/熔断/安全头）、`server/src/llm/client.ts`、`server/src/llm/mcpClient.ts`、`server/src/llm/expertRunner.ts`、`client/src/main.tsx`、`client/src/vite-env.d.ts`。注意 `server/src/llm/**` 并非整目录排除（rag/prompts/tools/knowledgeGraph 等纯逻辑模块必须纳入，否则门禁形同虚设），`server/src/quant/**` 同样纳入统计（此前笔记写的「quant 被排除、覆盖率稳定在 ~80%」与配置不符，已订正）。
 
 ## 构建/部署注意
 

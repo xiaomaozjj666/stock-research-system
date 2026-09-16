@@ -8,3 +8,5 @@ package-lock.json
 **/cache/**
 # 运行时数据文件（JSON 落盘，非源码，格式由程序控制）
 server/src/data/*.json
+# e2e 运行态产物（e2e/** 已纳入格式门禁，但 .tmp 下是程序写出的运行时 JSON）
+**/.tmp/**

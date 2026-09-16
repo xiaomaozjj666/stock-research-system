@@ -3,6 +3,58 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-16 — 三批优化：正确性 / 体验 / 工程化（新增 96 个测试）
+
+起因是一次系统性体检（5 路并行代码审计 + 真实浏览器运行时实测）。实测同时推翻了三条"看起来严重但实际不成立"的初判：报告悬停每帧序列化大 option（实测 51 步悬停共 14.7ms、无长任务）、换股票会污染 localStorage（有卸载保护，实测未复现）、页面未做代码分割（早已 lazy + echarts 按需）。测试从 1553 → **1653 用例 / 148 文件**；覆盖率 lines 77.7% / statements 76.46% / functions 72.07% / branches 63.48%。
+
+**正确性与可靠性（服务端）**
+
+- **模拟盘入参校验**：`/api/paper/settle` 的收盘价此前未做数值校验，`{"600519":"abc"}` 会经 `NaN` 传染 cash/持仓/净值、落盘序列化成 `null` 且不可自愈 → 现在拒绝非正有限数与超量条目（上限 500）；下单接口补 `side`/`type` 枚举白名单（非法 `side` 曾可绕过 T+1）；落盘失败不再误报 400（避免用户以为没下单而重复下单）。
+- **评级台账并发写保护**：`evaluateOutcomes` 是跨 `await` 的读-改-写，与 `recordAnalysis` 并发时会整份覆盖新记录 → 改为串行队列 + 写前按 id 重读合并。
+- **分析 single-flight + 断点代次**：同代码并发分析（SSE + POST / 多标签页 / 对比）此前会重复付费调用 LLM，且 A 的专家结论可能被 merge 进 B 的断点 → 按代码共享同一轮结果，断点加 `runId` 与代次校验，tmp 名带代次。
+- **两套缓存 pruner 互删**：`DATA_CACHE_DIR` 共用时 24h pruner 会删掉 30 天 TTL 的量化 K 线缓存 → 条目加 `kind` 标记互相跳过、容量只统计本类；`/api/health` 复用同一目录解析且 GET 不再写盘。
+- **搜索关键词上限**（32 字符）：超长关键词会触发全表最长公共子串 DP（实测 1500 汉字约 0.5s）阻塞事件循环。
+- **RAG 语料索引**：由「每条对话同步全量读盘」改为快照 + 目录签名失效 + 异步 IO（新增 `RAG_CORPUS_TTL_MS`，默认 60s）。
+- **时区口径统一**：模拟行情生成此前用 UTC 判周末却用本地取日/月，非 UTC 宿主会产出不同序列（测试假失败）。
+- **默认只监听 `127.0.0.1`**（新增 `HOST`）：系统无鉴权，绑定全网卡会让同局域网任何设备调用写接口。
+- **可观测性**：metrics 路由表改为自动生成（OpenAPI 契约 + 运行时路由发现）、被客户端中断的长请求记 `status="aborted"` 并进耗时直方图、trace span 标记 `http.aborted`。
+
+**体验（前端）**
+
+- **报告时间语境**：结果新增 `generatedAt` / `dataAsOf`，报告头显示「数据截止 … 收盘 · 生成于 …」，超过 5 天提示可能滞后；导出 Markdown 同步带上时间戳。
+- **「加载失败」不再伪装成「暂无数据」**：历史 / 自选股 / 量化页区分加载、成功、空数据、失败四态并给重试入口；量化页错误保留到下次成功或显式关闭，且支持同参数重跑。
+- **tab 面板首次激活后常驻**：切走不再丢失已填参数与已出结果（「历史」例外——它无输入态且需取最新，进入即重新拉取）。
+- **可访问性**：38 个表单控件补标签关联（`htmlFor`/`aria-label`）、tab 栏补 `role="tablist"` 与 ←/→/Home/End 导航、进度条补 `role="progressbar"`、专家观点折叠头由 `div` 改 `button`、移动端目录抽屉补 `Esc` 与焦点管理、分析进度补 live region。
+- **移动端与打印**：修复量化页 390px 下 43px 横向溢出（根因是 grid 项默认 `min-width:auto`）、目录与「回到顶部」按钮重叠；`@media print` 整体重绑为浅色（此前深色主题会打印成白纸浅字）并补打印按钮。
+- **其他**：异动预警落盘 + 自选股页常驻「最近监控」卡片（此前离开页面即失）、历史列表内联评分变化、因子实验室补「已耗时 + 取消」、快捷键（`Ctrl/⌘+K` 搜索、`Ctrl/⌘+Enter` 分析、`1`~`7` 切 tab）、`--text-muted` 对比度 3.56:1 → 4.91:1。
+
+**工程化**
+
+- **本地依赖与 lockfile/CI 对齐**：此前本地装的是 vitest 4.1.11 而 CI 用 5.0.0（8 个包版本滞后），本地绿灯不可迁移。
+- 新增 `.env.example`（75 个变量分组注释）与 README「环境变量」章节；订正 README / ENGINEERING-NOTES 中的过期陈述（启动脚本"自动安装"、覆盖率阈值、lint 覆盖范围、Vitest 版本等）。
+- **新增 SSE 链路测试**：`utils/sse.ts` 9 例 + `/api/analyze/stream` 5 例——此前旗舰流式链路（多事件分帧、断连协作取消、`resume` 契约）零测试。
+- **CI**：`permissions: contents: read`、`npm audit --audit-level=high` 真实门禁（实测 0 漏洞）、构建产物在 job 间传递（省一次全量安装与构建，并加产物存在性校验防止静默重建）、e2e `--retries=1`。
+- lint/format 覆盖 `e2e/` 与 `scripts/`；`scripts/dev.mjs` 退出时杀整棵进程树（此前 Windows 上 tsx/vite 残留占住 3001/5173，已实测确认并修复）。
+
+## 2026-09-14 — 依赖批量升级：生产组 3 项（764bc51）+ 开发组 9 项（1d54b11）
+
+- **生产依赖**（dependabot #15）：`express-rate-limit` 8.6.2 → 8.7.0、`react` / `react-dom` 19.2.8 → 19.3.0。
+- **开发依赖**（dependabot #16）：`vitest` 4.1.11 → 5.0.0、`@vitest/coverage-v8` 4.1.11 → 5.0.0（跨大版本）、`vite` 8.2.1 → 8.3.0、`playwright` / `@playwright/test` 1.62.1 → 1.63.0、`eslint` 10.9.1 → 10.10.0、`oxlint` 1.80.0 → 1.82.0、`globals` 17.11.0 → 17.12.0、`@testing-library/user-event` 14.6.6 → 14.6.7。
+- 合并时同步把根 `package.json` 的 `overrides.vite` 由 8.2.1 对齐到 8.3.0（与 `client` 的 vite 一致，避免 vitest 拉到 6.x 造成 hoist 冲突）。
+- 说明：两个提交本身只改依赖清单与 lockfile；此处如实记录版本变化，未附测试结论（本次编辑按约定不运行 npm/vitest）。
+
+## 2026-09-13 — 文档校准：测试口径统一 + 研究 Agent / MCP 工具数补录（15fe3b7）
+
+- 统一测试用例数口径：README 徽章与正文此前不一致（徽章 1370 / 正文 923），统一为 **1553 用例 / 140 个测试文件**（研究 Agent 批次后的实际数量）。
+- `server/src/research-agent/` 补进 README（核心特性段落 + 代码示例入口），并在 CHANGELOG 补录该批次。
+- MCP 工具数订正：`mcp/server.ts` 实际暴露 **9 个**工具（此前文档写 5 / 8），并补上 `quant_factor_expression_batch`。
+- `client` 的 vite 由浮动版本 pin 回 **8.2.1**，与根 `overrides` 及 lockfile 对齐。
+- `.github/workflows/ci.yml` 注释与根 `package.json` 对齐（根已无 `allowScripts` 字段，`--dangerously-allow-all-scripts` 是唯一放行手段）。
+
+## 2026-09-13 — README 补记 pdfjs-dist 为 PDF 入库的可选依赖（151bef0）
+
+- README 的可选增强说明此前只覆盖 Baostock 侧车，未提 **PDF 抽取依赖 `pdfjs-dist`**（`server/src/quant/pdfExtract.ts` 以动态 import 加载，未安装时不影响构建与其余功能，但该入口会抛出明确错误并提示改用纯文本入口，不静默降级）——本次补上该说明。
+
 ## 2026-09-12 — 多步研究 Agent 规划层：AlphaSense 式四阶段编排
 
 - 新增 `server/src/research-agent/`（19 个文件，含独立 `DESIGN.md`）：把「研究问题 → 结构化研究报告」拆为 **Planner → Retriever → Verifier → Synthesizer → Report** 四阶段可观测编排。`ResearchOrchestrator`（`orchestrator.ts`）持有事件总线（`AgentEvent`）、运行统计（`RunStats`）、终止门与 replan；证据模型强制携带 `SourceRef` + `AcquisitionPath`（轮次 / 查询词 / 适配器 / 尝试次数 / 降级链），可信度 = 来源层级基准分 × 时效衰减，不与 LLM 自评耦合。

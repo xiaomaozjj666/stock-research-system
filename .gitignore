@@ -54,6 +54,8 @@ e2e/.tmp/
 # 运行时数据（watchlist 等）
 server/data/
 server/src/data/watchlist.json
+# 自选股异动监控「最近一次」快照（运行时生成，不入库）
+server/src/data/watchlistAlerts.json
 
 # UI screenshot artifacts (dev only)
 _shots/

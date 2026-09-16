@@ -7,13 +7,19 @@ name: CI
     branches: [main, master]
   pull_request:
 
+# 最小权限：工作流只需读取仓库内容（不写 PR/issue、不动 packages）。
+# 放在工作流级而非 job 级：一次声明即覆盖全部现有 job 与将来新增的 job，
+# 避免新 job 忘记声明时回落到仓库默认（可能可写）的 GITHUB_TOKEN 权限。
+permissions:
+  contents: read
+
 # 同一分支的新提交自动取消旧的运行，节省 Actions 额度
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  ci:
+  quality:
     name: Lint / TypeCheck / Build / Test
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -33,16 +39,34 @@ jobs:
       - name: Install dependencies
         # 参照 ENGINEERING-NOTES 的安装命令（npm ci 按 lockfile 复刻，v3 锁文件）：
         #   --legacy-peer-deps        绕过 TS7 的 peer 约束
-        #   --dangerously-allow-all-scripts  放行 esbuild 等依赖构建脚本
-        #     （根 package.json 已无 allowScripts 字段，该参数为唯一放行手段）
+        #   --dangerously-allow-all-scripts  放行依赖构建脚本（esbuild 的 postinstall）。
+        #     注意：该参数是**覆盖**而非补充——npm 文档明确「bypass the allowScripts
+        #     policy entirely and run every dependency install script regardless of
+        #     whether it was approved or denied」（本机 npm 12.0.2 自带文档
+        #     .../npm/docs/content/using-npm/config.md 第 526-534 行），命令行优先级
+        #     高于 .npmrc，因此它会一并绕过根 .npmrc 里的 allow-scripts 白名单
+        #     （当前为 esbuild@0.28.1 / 0.21.5 / 0.25.12，lockfile 实际只有 0.28.1）。
+        #     保留该参数是因为它覆盖了白名单之外的一切依赖脚本；若只想放行白名单，
+        #     可评估去掉它——本仓库在未安装依赖的前提下无法离线验证，故不擅自改动。
         run: npm ci --legacy-peer-deps --dangerously-allow-all-scripts --no-audit --no-fund
 
+      - name: Dependency security audit
+        # 依赖安全门禁：--audit-level=high 只在 high/critical 时以非 0 退出（实测当前
+        # 仓库 0 漏洞，见下）。不设 continue-on-error —— 真出现 high/critical 就该拦住合并。
+        # 与下方 npm ci 的 --no-audit 互补：安装时跳过审计、这里单独跑一次以便定位。
+        # 需要联网访问 registry 审计端点；若端点不可用会以非 0 退出（视为门禁失败而非静默通过）。
+        run: npm audit --audit-level=high
+
       - name: Lint
-        # eslint 只覆盖 JS/JSON 与代码风格（typescript-eslint 暂不支持 TS7，见 ENGINEERING-NOTES）
+        # eslint 覆盖 JS/MJS（当前仓库内实际被检查的是 scripts/dev.mjs 与 eslint.config.mjs；
+        # 本配置未启用 JSON 插件，`eslint .` 不检查 *.json——原注释"JS/JSON"不准确，已修正），
+        # oxlint 覆盖 TS（server/src、client/src、e2e）。typescript-eslint 暂不支持 TS7，
+        # TS 的深度静态分析由下方 tsc --noEmit 兜底。
         run: npm run lint
 
       - name: Format check (Prettier)
-        # 2026-08-12 起格式门禁归零（.gitattributes 防 CRLF 复发），此处保持门禁
+        # 2026-08-12 起格式门禁归零（.gitattributes 防 CRLF 复发），此处保持门禁；
+        # package.json 的 format:check 已纳入 e2e/**、scripts/**。
         run: npm run format:check
 
       - name: TypeCheck (server)
@@ -56,9 +80,22 @@ jobs:
         # server build = `tsc`（NodeNext 编译产出 dist）
         run: npm run build --workspace=server
 
+      - name: Upload build artifacts
+        # 两端 dist 供 e2e job 复用，消除 e2e job 的重复构建。
+        # 必须保留 server/dist 与 client/dist 的目录层级，否则 e2e 会报
+        # Cannot find module server/dist/index.js（globalSetup 在 dist 存在时跳过构建，
+        # 详见 e2e/global-setup.ts 与 playwright.config.mts 的 webServer 说明）。
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-dist
+          path: |
+            server/dist
+            client/dist
+          retention-days: 7
+
       - name: Test with coverage
         # vitest run 全量测试（globals=false，测试内显式 import vi/expect）+ 覆盖率阈值门禁
-        # （vitest.config.mts thresholds：lines 68 / statements 66 / functions 60 / branches 54）。
+        # （vitest.config.mts thresholds：lines 70 / statements 68 / functions 62 / branches 55）。
         # 平台依赖说明：测试均已 mock 网络（不依赖真实行情/东财接口）；
         #   临时文件用 os.tmpdir() + path.join（跨平台），
         #   child_process 相关在 http.test.ts 中整体 vi.mock，mcpClient.test.ts 用
@@ -75,6 +112,9 @@ jobs:
 
   e2e:
     name: E2E smoke (Playwright)
+    # 复用 quality job 的构建产物：产物缺失/上传失败时直接失败，而不是跑一个
+    # 没被校验过的构建（globalSetup 只在 dist 缺失时才补构建，会掩盖产物传递问题）。
+    needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -82,28 +122,39 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Node.js 24
+        # 保留 setup-node（runner 预装的 Node 版本不保证 ≥24，而 package.json engines 要求
+        # node >=24；显式钉版本也让 e2e 环境与 quality 一致）。代价极小，故不做"删除即优化"。
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
 
-      - name: Install dependencies
-        run: npm ci --legacy-peer-deps --dangerously-allow-all-scripts --no-audit --no-fund
+      # 与旧版相比，这里**去掉了** npm ci / npm run build / `npx playwright install chromium`
+      # 三步——依赖安装与构建都已在 quality job 完成，产物经 artifact 传递（见下）。
+      # 可行性依据：playwright.config.mts 只 import @playwright/test 与 node:path，
+      # 不需要项目依赖被安装即可加载；Playwright 浏览器在 hosted runner 上预装，
+      # 仅当需要指定版本时才补 `npx playwright install chromium`。
 
-      # Chromium 浏览器二进制（版本与 @playwright/test 对应）
-      - name: Install Playwright browsers
-        run: npx playwright install chromium
+      - name: Download build artifacts
+        # download-artifact 的 path 保持仓库相对层级：server/dist/** 与 client/dist/**。
+        uses: actions/download-artifact@v8
+        with:
+          name: build-dist
+          path: .
 
-      # 构建两端产物（关键）：Playwright 的 webServer 作为插件在 globalSetup 之前启动，
-      # 因此 e2e/global-setup.ts 里的"dist 不存在时自动构建"来不及生效（曾导致 CI
-      # 报 Cannot find module server/dist/index.js）。dist 存在时 globalSetup 会跳过。
-      - name: Build (server + client)
-        run: npm run build
+      - name: Verify build artifacts
+        # 显式门禁：确认产物真实落地（而不是让 globalSetup 静默兜底重建，
+        # 否则 artifact 传递失效也不会有任何信号）。
+        run: |
+          test -f server/dist/index.js
+          test -f client/dist/index.html
 
-      # globalSetup 会自动构建 server dist + client dist，
-      # 然后 webServer 以生产模式启动服务（Express 同源托管前端），跑真实浏览器冒烟
+      # globalSetup 在 server/dist/index.js 存在时跳过构建，随后 webServer 以生产模式
+      # 启动 Express（同源托管 client/dist），跑真实浏览器冒烟。
+      # --retries=1：仅在 CI 打开 1 次重试以暴露（而非掩盖）flaky——verbose 的 final
+      # status 会标出 "flaky"；playwright.config.mts 的 retries: 0 是本地默认值，
+      # 该配置不在本次可改清单内，故用 CLI 参数在 CI 侧覆盖（Playwright 优先 CLI）。
       - name: Run E2E smoke tests
-        run: npx playwright test
+        run: npx playwright test --retries=1
 
       - name: Upload Playwright report
         if: failure()

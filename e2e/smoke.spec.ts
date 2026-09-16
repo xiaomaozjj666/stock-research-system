@@ -22,27 +22,27 @@ test.describe('应用加载与导航', () => {
     await expect(page.getByPlaceholder(/输入股票代码或名称/)).toBeVisible();
 
     // 对比分析
-    await page.getByRole('button', { name: '对比分析' }).click();
+    await page.getByRole('tab', { name: '对比分析' }).click();
     await expect(page.getByRole('heading', { name: '股票对比' })).toBeVisible();
 
     // 量化研究（懒加载，Suspense fallback 后出现）
-    await page.getByRole('button', { name: '量化研究' }).click();
+    await page.getByRole('tab', { name: '量化研究' }).click();
     await expect(page.getByText('量化研究', { exact: false })).toBeVisible();
 
     // 自选股
-    await page.getByRole('button', { name: '自选股' }).click();
+    await page.getByRole('tab', { name: '自选股' }).click();
     await expect(page.getByRole('heading', { name: '自选股 / 持仓监控' })).toBeVisible();
 
     // 模拟盘
-    await page.getByRole('button', { name: '模拟盘' }).click();
+    await page.getByRole('tab', { name: '模拟盘' }).click();
     await expect(page.getByRole('heading', { name: '模拟盘' })).toBeVisible();
 
     // 研究助手
-    await page.getByRole('button', { name: '研究助手' }).click();
+    await page.getByRole('tab', { name: '研究助手' }).click();
     await expect(page.getByRole('heading', { name: '研究助手' })).toBeVisible();
 
     // 历史（懒加载）
-    await page.getByRole('button', { name: '历史' }).click();
+    await page.getByRole('tab', { name: '历史' }).click();
     await expect(page.getByRole('heading', { name: '研究历史' })).toBeVisible();
   });
 });
@@ -50,7 +50,7 @@ test.describe('应用加载与导航', () => {
 test.describe('自选股 CRUD（隔离数据）', () => {
   test('添加 → 展示 → 移除自选股', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: '自选股' }).click();
+    await page.getByRole('tab', { name: '自选股' }).click();
     await expect(page.getByRole('heading', { name: '自选股 / 持仓监控' })).toBeVisible();
 
     const input = page.getByLabel('自选股搜索');
@@ -68,7 +68,7 @@ test.describe('自选股 CRUD（隔离数据）', () => {
 
   test('无效查询给出提示且不添加自选股', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: '自选股' }).click();
+    await page.getByRole('tab', { name: '自选股' }).click();
 
     const input = page.getByLabel('自选股搜索');
     await input.fill('zzzz9999');

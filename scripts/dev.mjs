@@ -2,9 +2,11 @@
 /**
  * 零依赖的一键启动器：同时拉起 server (tsx watch, 3001) 与 client (vite, 5173)。
  * 取代 concurrently，避免额外安装；`npm run dev` 即调用本脚本。
- * Ctrl+C 时统一 SIGTERM 杀掉两个子进程。
+ * 退出时杀掉整棵子进程树（Windows 用 taskkill /T /F，POSIX 用进程组 kill），
+ * 而不是只对直接子进程发 SIGTERM——否则 tsx watch / vite 会变成孤儿进程占住
+ * 3001/5173（实测：只 kill 直接子进程后两个端口仍被 LISTENING 占用）。
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const COLORS = {
   server: '\x1b[36m', // cyan
@@ -16,11 +18,39 @@ const COLORS = {
 const procs = [];
 let shuttingDown = false;
 
+/**
+ * 杀掉整棵进程树。
+ * 背景：spawn('npm', ..., { shell: true }) 的进程链是
+ *   node(dev.mjs) → cmd.exe → npm → cmd.exe → tsx watch / vite
+ * 只对直接子进程 p.kill('SIGTERM') 在 Windows 下仅终止 cmd 壳，孙进程会残留并继续
+ * 占用 3001/5173。因此 Windows 走 `taskkill /PID <pid> /T /F`（/T 连子孙一起杀），
+ * POSIX 走进程组 kill(-pid)（子进程以 detached: true 起，自成一个进程组）。
+ */
+function killTree(p) {
+  if (!p || p.pid === undefined || p.exitCode !== null) return;
+  if (process.platform === 'win32') {
+    try {
+      spawnSync('taskkill', ['/PID', String(p.pid), '/T', '/F'], { stdio: 'ignore' });
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+  try {
+    p.kill('SIGTERM');
+    process.kill(-p.pid, 'SIGTERM');
+  } catch {
+    /* ignore */
+  }
+}
+
 function start(name, args) {
   const p = spawn('npm', ['run', ...args], {
     shell: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: process.env,
+    // POSIX：自成进程组，退出时可整组杀；Windows 无此语义（用 taskkill /T 代替）
+    detached: process.platform !== 'win32',
   });
   const tag = `${COLORS[name]}[${name}]${COLORS.reset} `;
   const pipe = (stream, isErr) => {
@@ -48,13 +78,9 @@ function shutdown(code = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   for (const p of procs) {
-    try {
-      p.kill('SIGTERM');
-    } catch {
-      /* ignore */
-    }
+    killTree(p);
   }
-  // 给子进程一点时间退出
+  // 给杀树留一点时间后再硬退（顺序必须是"先杀树、后退出"）
   setTimeout(() => process.exit(code), 300);
 }
 

@@ -14,14 +14,14 @@
     "dev:client": "npm run dev --workspace=client",
     "dev": "node scripts/dev.mjs",
     "build": "npm run build --workspace=server && npm run build --workspace=client",
-    "lint": "eslint . && oxlint server/src client/src",
-    "lint:fix": "eslint . --fix && oxlint server/src client/src --fix",
+    "lint": "eslint . && oxlint server/src client/src e2e",
+    "lint:fix": "eslint . --fix && oxlint server/src client/src e2e --fix",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "mcp:serve": "npx tsx server/src/mcp/cli.ts",
-    "format": "prettier --write \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"*.{json,md,mjs}\"",
-    "format:check": "prettier --check \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"*.{json,md,mjs}\""
+    "format": "prettier --write \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"e2e/**/*.{ts,tsx,js,json}\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs}\"",
+    "format:check": "prettier --check \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"e2e/**/*.{ts,tsx,js,json}\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs}\""
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

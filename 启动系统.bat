@@ -37,10 +37,24 @@ start "Stock-Frontend" cmd /k "npx vite --host"
 echo.
 echo 等待前端服务就绪（Vite 首次启动需预构建依赖，可能需 10 秒左右）...
 echo （就绪后会自动打开浏览器；若迟迟未打开请按 Ctrl+C 后重新运行）
+set /a FRONTEND_WAIT=0
 :wait_frontend
 timeout /t 1 /nobreak >nul
+set /a FRONTEND_WAIT+=1
 curl -s -o nul http://localhost:5173 2>nul
-if errorlevel 1 goto wait_frontend
+if not errorlevel 1 goto frontend_ready
+if %FRONTEND_WAIT% GEQ 90 (
+  echo.
+  echo [警告] 等待 90 秒前端仍未就绪，请检查上方 Stock-Frontend 窗口中的报错信息。
+  echo        前端未就绪时可通过 http://localhost:3001 直接访问后端接口，
+  echo        前端窗口就绪后按 Ctrl+C 后重新运行本脚本即可。
+  echo.
+  goto frontend_timeout
+)
+goto wait_frontend
+:frontend_ready
+echo 前端服务已就绪。
+:frontend_timeout
 
 echo.
 echo ========================================

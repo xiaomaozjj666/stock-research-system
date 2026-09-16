@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-1553%20cases-brightgreen" alt="1553 测试用例" />
+  <img src="https://img.shields.io/badge/tests-1653%20cases-brightgreen" alt="1653 测试用例" />
   <img src="https://img.shields.io/badge/CI-GitHub%20Actions-brightgreen" alt="CI" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -45,6 +45,7 @@ flowchart TB
 - [量化内核](#量化内核)
 - [技术架构](#技术架构)
 - [快速开始](#快速开始)
+- [环境变量](#环境变量)
 - [API 概览](#api-概览)
 - [测试与质量](#测试与质量)
 
@@ -152,12 +153,14 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，1553 用例 / 140 个测试文件）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，1653 用例 / 148 个测试文件）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
 
 ## 快速开始
 
 ```bash
 npm install --legacy-peer-deps --dangerously-allow-all-scripts
+npm run dev           # 一条命令同时拉起前后端（scripts/dev.mjs，日志带 [server]/[client] 前缀，Ctrl+C 一并退出）
+# 也可分开启动：
 npm run dev:server    # 后端 → http://localhost:3001
 npm run dev:client    # 前端 → http://localhost:5173
 ```
@@ -174,7 +177,20 @@ npm run dev:client    # 前端 → http://localhost:5173
 npm run build         # server + client，单端口同源托管
 ```
 
-Windows 一键启动：双击 `启动系统.bat`（零依赖，自动安装并拉起前后端）。
+Windows 一键启动：双击 `启动系统.bat`。该脚本不做任何安装，只负责启动与健康等待：先后在 `server/`（`npx tsx watch src/index.ts`，端口 3001）与 `client/`（`npx vite --host`，端口 5173）各开一个命令行窗口，轮询 `http://localhost:3001/api/health` 等待后端就绪（最长 90 秒，超时只打印警告并继续），随后轮询前端端口并自动打开浏览器。因此**首次使用仍需先执行上面的 `npm install`**，否则 `npx tsx` / `npx vite` 会因依赖缺失而失败。
+
+## 环境变量
+
+环境变量样例见仓库根目录 `.env.example`（按用途分组、每个变量都注明作用、是否必需与默认值）。启用方式：
+
+```bash
+cp .env.example server/.env      # Git Bash / macOS / Linux
+copy .env.example server\.env    # Windows cmd
+```
+
+- **必需项只有 `DEEPSEEK_API_KEY`**（且是"不设置即降级"而非"不设置就启动失败"）：未设置时 `isLLMAvailable()` 为 false，8 位专家的 LLM 研判自动降级为规则引擎、对话走降级应答，其余功能不受影响。
+- 其余变量全部可选，都有代码内默认值；不配置的效果是按默认值运行，或对应增强通道优雅跳过（Tushare Pro 退市股名单、Baostock 指数历史成分、外部 MCP 服务器等）。
+- ⚠️ **注意 dotenv 的查找路径**：`server/src/index.ts:5` 用 `import 'dotenv/config'`，dotenv 按**进程工作目录**（`process.cwd()`）查找 `.env`，而不是按文件位置。所以必须让工作目录是 `server/`——`cd server && npm run dev`、`cd server && node dist/index.js` 都能读到 `server/.env`；而在仓库根目录直接 `node server/dist/index.js`（如 Playwright 的 `webServer` 配置）时，dotenv 会去找**仓库根目录**的 `.env`，`server/.env` 不会被加载，所有变量都会退回默认值。
 
 ## API 概览
 
@@ -247,9 +263,9 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（1553 用例 / 140 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（1653 用例 / 148 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（9 用例，真实浏览器 + 隔离数据）
-npm run lint          # ESLint
+npm run lint          # 代码检查：ESLint（JS/JSON/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src）
 npm run format:check  # Prettier 格式检查
 ```
 
