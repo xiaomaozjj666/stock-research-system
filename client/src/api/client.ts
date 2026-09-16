@@ -144,17 +144,31 @@ export async function runBatchCompositeAlpha(
   }
 }
 
-/** 行业板块列表（截面因子 universe 下拉用） */
-export async function getUniverseBoards() {
-  try {
-    const response = await api.get<{ boards: { code: string; name: string }[] }>(
-      '/quant/universe/boards',
-      { timeout: 20000 },
-    );
-    return response.data;
-  } catch (error: unknown) {
-    throw normalizeApiError(error, '行业板块列表获取失败');
+/**
+ * 行业板块列表（截面因子 universe 下拉用）。
+ * 页面挂载时截面面板与因子实验室会各请求一次，而该端点有 30 req/min 限流；
+ * 这里做 in-flight 去重 + 5 分钟结果缓存，避免同一份低频数据被重复请求。
+ * 失败不缓存（否则一次上游抖动会让下拉在整个会话内永久不可用）。
+ */
+const BOARDS_TTL_MS = 5 * 60_000;
+type UniverseBoards = { boards: { code: string; name: string }[] };
+let boardsCache: { at: number; promise: Promise<UniverseBoards> } | null = null;
+
+export function getUniverseBoards(): Promise<UniverseBoards> {
+  const now = Date.now();
+  if (!boardsCache || now - boardsCache.at > BOARDS_TTL_MS) {
+    boardsCache = {
+      at: now,
+      promise: api
+        .get<UniverseBoards>('/quant/universe/boards', { timeout: 20000 })
+        .then((response) => response.data)
+        .catch((error: unknown) => {
+          boardsCache = null;
+          throw normalizeApiError(error, '行业板块列表获取失败');
+        }),
+    };
   }
+  return boardsCache.promise;
 }
 
 /** 截面因子评估：显式 codes 或行业板块（board+topN）自动拉宽截面 */
@@ -848,16 +862,19 @@ export interface FactorPortfolioBacktest {
   periods: number;
 }
 
-export async function runFactorExpression(payload: {
-  expression: string;
-  board?: string;
-  codes?: string[];
-  topN?: number;
-  horizons?: number[];
-  name?: string;
-  source?: 'expression' | 'hypothesis';
-  portfolio?: { holdDays?: number; topN?: number; costBps?: number };
-}): Promise<{
+export async function runFactorExpression(
+  payload: {
+    expression: string;
+    board?: string;
+    codes?: string[];
+    topN?: number;
+    horizons?: number[];
+    name?: string;
+    source?: 'expression' | 'hypothesis';
+    portfolio?: { holdDays?: number; topN?: number; costBps?: number };
+  },
+  signal?: AbortSignal,
+): Promise<{
   stocksIncluded: string[];
   stocksSkipped: { code: string; reason: string }[];
   factor: {
@@ -879,9 +896,12 @@ export async function runFactorExpression(payload: {
     const response = await api.post('/quant/factor/expression', payload, {
       // 数百只大面板冷启动可能数分钟，与截面评估同量级
       timeout: 600000,
+      signal,
     });
     return response.data;
   } catch (error: unknown) {
+    // 用户主动取消：与截面评估同语义上抛专用类型，调用方据此静默收尾而非当失败渲染
+    if (axios.isCancel(error)) throw new AnalysisCancelledError('因子评估已取消');
     throw normalizeApiError(error, '因子表达式评估失败');
   }
 }
@@ -1001,7 +1021,22 @@ export async function runValuationModelApi(params: {
 }
 
 // === 研究历史记录（分析结果自动入库，前端列表/回看/删除） ===
-export async function fetchHistoryList(limit = 50): Promise<HistorySummary[]> {
+/** 评分/评级时间线单点（与服务端 historyService 的 HistoryTimelinePoint 对齐） */
+export interface HistoryTimelinePoint {
+  /** YYYY-MM-DD */
+  date: string;
+  score: number;
+  rating: string;
+}
+
+/**
+ * 历史列表项 = 摘要 + 精简时间线（由旧到新，含当前这条）。
+ * 该字段按需返回，仅用于回答"观点怎么变的"；不带时间线时字段缺失（旧数据），
+ * 因此是可选的，前端渲染前必须判空。
+ */
+export type HistoryListItem = HistorySummary & { timeline?: HistoryTimelinePoint[] };
+
+export async function fetchHistoryList(limit = 50): Promise<HistoryListItem[]> {
   try {
     const response = await api.get('/history', { params: { limit }, timeout: 15000 });
     return response.data.items;
@@ -1035,5 +1070,23 @@ export async function monitorWatchlist(signal?: AbortSignal): Promise<WatchlistM
   } catch (error: unknown) {
     if (axios.isCancel(error)) throw new AnalysisCancelledError('监控已取消');
     throw normalizeApiError(error, '自选股监控失败');
+  }
+}
+
+/**
+ * 最近一次异动监控快照（服务端落盘，刷新/复访可回看）。
+ * 从未监控过时服务端返回稳定空结构（generatedAt=null、alerts=[]），不会是 404，
+ * 因此 generatedAt 需要放宽为可空——WatchlistMonitorResult 的 generatedAt 是必填字符串。
+ */
+export type WatchlistAlertsSnapshot = Omit<WatchlistMonitorResult, 'generatedAt'> & {
+  generatedAt: string | null;
+};
+
+export async function fetchWatchlistAlerts(): Promise<WatchlistAlertsSnapshot> {
+  try {
+    const response = await api.get('/watchlist/alerts', { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '最近监控记录读取失败');
   }
 }

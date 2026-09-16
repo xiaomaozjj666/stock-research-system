@@ -200,7 +200,9 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
       setActiveIndex(-1);
       return;
     }
-    if (e.key === 'Enter') {
+    // Ctrl/⌘+Enter 是全局「直接分析」快捷键（见 App.tsx）：这里不再顺手选中下拉项，
+    // 否则一次按键既改输入框内容又发起分析，行为不可预期
+    if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       const trimmed = searchQuery.trim();
       if (activeIndex >= 0 && options[activeIndex]) {
@@ -251,6 +253,13 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
             <input
               type="text"
               className="stock-search-input"
+              // 该输入框只有 placeholder 没有可见 label，读屏需靠 aria-label 获得名称
+              aria-label="股票代码或名称搜索"
+              // id 供 App 的全局快捷键（Ctrl+K 聚焦 / Ctrl+Enter 分析）定位，两处需保持一致
+              id="global-stock-search"
+              // 当前「真正可分析的代码」：点选下拉项后输入框里显示的是名称，
+              // 只读 input.value 会取到名称而失效，故把 effectiveCode 暴露给快捷键读
+              data-stock-code={effectiveCode}
               placeholder="输入股票代码或名称，如 600519 / 贵州茅台"
               value={searchQuery}
               onChange={(e) => handleSearch(e.target.value)}
@@ -365,14 +374,22 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
             </div>
           )}
         </div>
-        <button
-          className="btn-primary"
-          onClick={handleAnalyze}
-          disabled={loading || !effectiveCode}
-          title={!effectiveCode ? '请先选择或输入 6 位股票代码' : `分析 ${effectiveCode}`}
-        >
-          {loading ? '分析中...' : '开始分析'}
-        </button>
+        {/* 快捷键提示与按钮同列：该列比左侧搜索列矮，不会撑高 sticky 导航栏
+            （顶栏一旦变高，RevealSection 的 scrollMarginTop: 96 锚点偏移就会失效）。
+            样式内联：本次改动不新增 index.css 规则 */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+          <button
+            className="btn-primary"
+            onClick={handleAnalyze}
+            disabled={loading || !effectiveCode}
+            title={!effectiveCode ? '请先选择或输入 6 位股票代码' : `分析 ${effectiveCode}`}
+          >
+            {loading ? '分析中...' : '开始分析'}
+          </button>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            Ctrl+K 搜索 · Ctrl+Enter 分析
+          </span>
+        </div>
       </div>
     </nav>
   );

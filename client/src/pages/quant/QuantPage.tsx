@@ -116,11 +116,37 @@ function NewsBacktestCompare({
   );
 }
 
+/**
+ * 一次量化研究的完整入参：保存下来才能用"相同参数"重试
+ * （策略配置 + 是否用新闻情绪 + 粘贴的消息原文）
+ */
+type QuantRunParams = {
+  strategy: StrategyConfig;
+  useNews: boolean;
+  newsText: string;
+};
+
+/** 解析用户粘贴的最新消息（每行一条），优先于实时抓取 */
+function parseNewsItems(newsText: string): NewsItem[] | undefined {
+  const trimmed = newsText.trim();
+  if (!trimmed) return undefined;
+  return trimmed
+    .split('\n')
+    .map((line, i) => ({
+      id: `pasted-${i}`,
+      title: line.trim(),
+      publishedAt: new Date().toISOString(),
+    }))
+    .filter((n) => n.title.length > 0);
+}
+
 export default function QuantPage() {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<QuantResearchReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 上一次提交的参数：错误横幅的「重试」用它原样重跑 */
+  const [lastRun, setLastRun] = useState<QuantRunParams | null>(null);
   const [useNews, setUseNews] = useState(false);
   const [newsText, setNewsText] = useState('');
   /** 量化页模式：单股完整研究（回测+审计+优化）| 多股组合 alpha 批量测算 | 行业截面因子评估 */
@@ -152,8 +178,9 @@ export default function QuantPage() {
     quantAbortRef.current?.abort();
   }, []);
 
-  const handleStart = useCallback(
-    async (config: StrategyConfig) => {
+  /** 真正执行一次研究：提交、重试都走这里，保证"重试"与首次提交参数完全一致 */
+  const runWithParams = useCallback(
+    async (params: QuantRunParams) => {
       setLoading(true);
       setError(null);
       setReport(null);
@@ -165,25 +192,14 @@ export default function QuantPage() {
       }, 1000);
 
       try {
-        // 解析用户粘贴的最新消息（每行一条），优先于实时抓取
-        const trimmed = newsText.trim();
-        const newsItems: NewsItem[] | undefined = trimmed
-          ? trimmed
-              .split('\n')
-              .map((line, i) => ({
-                id: `pasted-${i}`,
-                title: line.trim(),
-                publishedAt: new Date().toISOString(),
-              }))
-              .filter((n) => n.title.length > 0)
-          : undefined;
+        const newsItems = parseNewsItems(params.newsText);
 
         const controller = new AbortController();
         quantAbortRef.current = controller;
         const result = await runQuantAnalysis(
           {
-            strategy: config,
-            useNews: useNews || !newsItems,
+            strategy: params.strategy,
+            useNews: params.useNews || !newsItems,
             newsItems,
           },
           controller.signal,
@@ -194,7 +210,8 @@ export default function QuantPage() {
         if (e instanceof AnalysisCancelledError) {
           showToast('已取消本次研究');
         } else {
-          // 透出具体原因（超时 / 网络 / 后端 5xx），而非一句通用失败
+          // 透出具体原因（超时 / 网络 / 后端 5xx），而非一句通用失败；
+          // 错误一直保留到下一次研究成功或用户手动关闭，不因切换子模式而消失
           setError(e instanceof Error ? e.message : '量化研究失败，请检查后端服务是否启动');
         }
       } finally {
@@ -202,11 +219,26 @@ export default function QuantPage() {
         stopTicker();
         setLoading(false);
       }
-      // 依赖 newsText/useNews：此前依赖数组为空，闭包永远捕获首次渲染值，
-      // 用户粘贴的最新消息与"启用情绪叠加"开关被静默忽略
     },
-    [newsText, useNews, showToast, stopTicker],
+    [showToast, stopTicker],
   );
+
+  const handleStart = useCallback(
+    (config: StrategyConfig) => {
+      // 参数快照：此前依赖数组为空导致闭包永远捕获首次渲染的 newsText / useNews，
+      // 用户粘贴的最新消息与"启用情绪叠加"开关被静默忽略
+      const params: QuantRunParams = { strategy: config, useNews, newsText };
+      setLastRun(params);
+      void runWithParams(params);
+    },
+    [newsText, useNews, runWithParams],
+  );
+
+  /** 重试：用上一次提交的相同参数重跑 */
+  const handleRetry = useCallback(() => {
+    if (!lastRun) return;
+    void runWithParams(lastRun);
+  }, [lastRun, runWithParams]);
 
   return (
     <div className="quant-page">
@@ -254,6 +286,8 @@ export default function QuantPage() {
               <p className="quant-news-hint">或粘贴最新消息（每行一条，自动情绪打分）：</p>
               <textarea
                 className="quant-news-textarea"
+                // 上方提示文案不是 <label>，补 aria-label 让读屏知道这个多行输入框的用途
+                aria-label="粘贴最新消息（每行一条，自动情绪打分）"
                 placeholder={
                   '例如：\n公司中标大单，金额超去年营收\n机构下调评级至中性\n新产品量价齐升'
                 }
@@ -286,7 +320,34 @@ export default function QuantPage() {
         </div>
         <ValuationPanel />
         <div className="quant-mode-pane" hidden={mode !== 'single'}>
-          {error && <div className="error-banner">{error}</div>}
+          {/* 错误保留到下一次研究成功，或用户点「关闭」显式消除；
+              不因切换子模式而静默清空，否则用户再也无法复现 / 重跑 */}
+          {error && !loading && (
+            <div className="error-banner" role="alert">
+              <div className="error-banner-body">
+                <span className="error-banner-icon" aria-hidden="true">
+                  !
+                </span>
+                <span className="error-banner-text">
+                  {error}
+                  {lastRun ? '（可点「重试」用相同参数重跑）' : ''}
+                </span>
+              </div>
+              {lastRun && (
+                <button type="button" className="error-banner-retry" onClick={handleRetry}>
+                  重试
+                </button>
+              )}
+              <button
+                type="button"
+                className="error-banner-retry"
+                onClick={() => setError(null)}
+                title="关闭这条错误提示"
+              >
+                关闭
+              </button>
+            </div>
+          )}
 
           {loading && (
             <div className="card quant-panel">
@@ -330,6 +391,8 @@ export default function QuantPage() {
             </>
           )}
 
+          {/* 空态（"尚未开始研究"）只在没有错误时出现：
+              失败后应看到错误横幅与重试，而不是被空态掩盖 */}
           {!loading && !report && !error && (
             <div className="quant-empty">
               <svg

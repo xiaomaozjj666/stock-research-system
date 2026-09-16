@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useId } from 'react';
 import { AnalysisCancelledError, runBatchCompositeAlpha, searchStocks } from '../../api/client';
 import { useToast } from '../../components/Toast';
 import type {
@@ -111,6 +111,13 @@ function exportCsv(result: CompositeAlphaBatchResult) {
 
 export default function CompositeBatchPanel() {
   const { showToast } = useToast();
+  // 表单控件 id：useId 生成保证唯一，供 <label htmlFor> 关联（不改 DOM 层级、不动样式）；
+  // 排序开关为条件渲染（出结果后才出现），各控件独立 id，同一 DOM 中不会重复
+  const codesTextId = useId();
+  const startDateId = useId();
+  const endDateId = useId();
+  const horizonsTextId = useId();
+  const sortByAlphaId = useId();
   // 预填可运行的示例代码：占位符示例曾被误认为已填内容，点击即报「未输入」
   const [codesText, setCodesText] = useState(EXAMPLE_CODES);
   const [startDate, setStartDate] = useState('');
@@ -256,9 +263,10 @@ export default function CompositeBatchPanel() {
       </h3>
 
       <div className="batch-form">
-        <label className="batch-field">
+        <label className="batch-field" htmlFor={codesTextId}>
           <span className="batch-label">股票代码</span>
           <textarea
+            id={codesTextId}
             className="batch-codes"
             rows={5}
             value={codesText}
@@ -275,9 +283,10 @@ export default function CompositeBatchPanel() {
         </label>
 
         <div className="batch-field-row">
-          <label className="batch-field">
+          <label className="batch-field" htmlFor={startDateId}>
             <span className="batch-label">开始日期</span>
             <input
+              id={startDateId}
               type="date"
               className="batch-input"
               value={startDate}
@@ -286,9 +295,10 @@ export default function CompositeBatchPanel() {
             />
             <span className="batch-hint">留空 = 近两年</span>
           </label>
-          <label className="batch-field">
+          <label className="batch-field" htmlFor={endDateId}>
             <span className="batch-label">结束日期</span>
             <input
+              id={endDateId}
               type="date"
               className="batch-input"
               value={endDate}
@@ -297,9 +307,10 @@ export default function CompositeBatchPanel() {
             />
             <span className="batch-hint">留空 = 今天</span>
           </label>
-          <label className="batch-field">
+          <label className="batch-field" htmlFor={horizonsTextId}>
             <span className="batch-label">持有期（交易日）</span>
             <input
+              id={horizonsTextId}
               type="text"
               className="batch-input"
               value={horizonsText}
@@ -319,8 +330,9 @@ export default function CompositeBatchPanel() {
               <button className="btn-ghost" onClick={() => exportCsv(result)}>
                 导出 CSV
               </button>
-              <label className="batch-checkbox">
+              <label className="batch-checkbox" htmlFor={sortByAlphaId}>
                 <input
+                  id={sortByAlphaId}
                   type="checkbox"
                   checked={sortByAlpha}
                   disabled={loading}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react';
 import EChart from '../../components/EChart';
 import {
   getPaperPortfolio,
@@ -127,6 +127,17 @@ function latestTradingDayStr(): string {
 }
 
 export default function PaperTradingPage() {
+  // 表单控件 id：useId 生成保证唯一，供 <label htmlFor> 关联（不改 DOM 层级、不动样式）
+  const orderSideId = useId();
+  const orderTypeId = useId();
+  const orderQtyId = useId();
+  const orderPriceId = useId();
+  const settleDateId = useId();
+  const closePriceLabelId = useId();
+  const intlCodeId = useId();
+  const intlMarketId = useId();
+  const auditLevelId = useId();
+
   const [portfolio, setPortfolio] = useState<PaperPortfolio | null>(null);
   const [stats, setStats] = useState<PaperStats | null>(null);
   const [loading, setLoading] = useState(false);
@@ -398,8 +409,9 @@ export default function PaperTradingPage() {
               />
             </div>
             <div className="paper-field">
-              <label>方向</label>
+              <label htmlFor={orderSideId}>方向</label>
               <select
+                id={orderSideId}
                 value={orderSide}
                 onChange={(e) => setOrderSide(e.target.value as 'buy' | 'sell')}
               >
@@ -408,8 +420,9 @@ export default function PaperTradingPage() {
               </select>
             </div>
             <div className="paper-field">
-              <label>类型</label>
+              <label htmlFor={orderTypeId}>类型</label>
               <select
+                id={orderTypeId}
                 value={orderType}
                 onChange={(e) => setOrderType(e.target.value as 'market' | 'limit')}
               >
@@ -418,8 +431,9 @@ export default function PaperTradingPage() {
               </select>
             </div>
             <div className="paper-field">
-              <label>数量（股）</label>
+              <label htmlFor={orderQtyId}>数量（股）</label>
               <input
+                id={orderQtyId}
                 type="number"
                 value={orderQty}
                 placeholder="100 的整数倍"
@@ -428,8 +442,9 @@ export default function PaperTradingPage() {
             </div>
             {orderType === 'limit' && (
               <div className="paper-field">
-                <label>限价</label>
+                <label htmlFor={orderPriceId}>限价</label>
                 <input
+                  id={orderPriceId}
                   type="number"
                   value={orderPrice}
                   placeholder="申报价"
@@ -448,8 +463,12 @@ export default function PaperTradingPage() {
           <h3 className="paper-card-title">日终结算</h3>
           <div className="paper-form-row">
             <div className="paper-field">
-              <label>结算日期</label>
-              <input value={settleDate} onChange={(e) => setSettleDate(e.target.value)} />
+              <label htmlFor={settleDateId}>结算日期</label>
+              <input
+                id={settleDateId}
+                value={settleDate}
+                onChange={(e) => setSettleDate(e.target.value)}
+              />
               {isWeekendToday() && (
                 <span className="paper-note">今天是非交易日，默认已回退至最近交易日</span>
               )}
@@ -458,13 +477,14 @@ export default function PaperTradingPage() {
           {positions.length === 0 ? (
             <p className="paper-note">当前无持仓，结算仅记录当日净值。</p>
           ) : (
-            <div className="paper-field">
-              <label>持仓收盘价（缺省按停牌处理）</label>
+            <div className="paper-field" role="group" aria-labelledby={closePriceLabelId}>
+              <label id={closePriceLabelId}>持仓收盘价（缺省按停牌处理）</label>
               {positions.map((p) => (
                 <div key={p.code} className="paper-close-row">
                   <span className="mono">{p.code}</span>
                   <input
                     type="number"
+                    aria-label={`${p.code} 收盘价（数量 ${p.quantity} · 成本 ${p.avgCost.toFixed(2)}，缺省按停牌处理）`}
                     placeholder={`数量 ${p.quantity} · 成本 ${p.avgCost.toFixed(2)}`}
                     value={closePrices[p.code] ?? ''}
                     onChange={(e) =>
@@ -623,16 +643,18 @@ export default function PaperTradingPage() {
         <h3 className="paper-card-title">港美股财务估值查询</h3>
         <div className="paper-form-row">
           <div className="paper-field">
-            <label>代码</label>
+            <label htmlFor={intlCodeId}>代码</label>
             <input
+              id={intlCodeId}
               value={intlCode}
               placeholder="港股 5 位 / 美股字母，如 00700 / TSLA"
               onChange={(e) => setIntlCode(e.target.value)}
             />
           </div>
           <div className="paper-field">
-            <label>市场</label>
+            <label htmlFor={intlMarketId}>市场</label>
             <select
+              id={intlMarketId}
               value={intlMarket}
               onChange={(e) => setIntlMarket(e.target.value as '' | 'HK' | 'US')}
             >
@@ -722,8 +744,9 @@ export default function PaperTradingPage() {
         <h3 className="paper-card-title">合规审计日志</h3>
         <div className="paper-form-row">
           <div className="paper-field">
-            <label>风险等级过滤</label>
+            <label htmlFor={auditLevelId}>风险等级过滤</label>
             <select
+              id={auditLevelId}
               value={auditLevel}
               onChange={(e) => setAuditLevel(e.target.value as AuditRiskLevel | '')}
             >

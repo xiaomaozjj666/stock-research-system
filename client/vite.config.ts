@@ -7,7 +7,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        // 固定用 127.0.0.1：后端默认只绑回环地址，而 Node 解析 localhost 时可能优先取
+        // IPv6 的 ::1，届时代理会 ECONNREFUSED（表现为 502）。
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         // SSE 长连接：不能被代理层提前掐断
         timeout: 0,

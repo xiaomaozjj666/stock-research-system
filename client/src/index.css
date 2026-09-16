@@ -14,10 +14,14 @@
   --border-default: #232b37;
   --border-hover: #333f4e;
   --border-focus: #4c8dff;
+  /* 补定义：量化 / 批量测算模块引用过 var(--border-color, #2a2f3a)，此变量此前从未定义，
+     一直静默走兜底值。取值介于 --border-default(#232b37) 与 --border-hover(#333f4e) 之间：
+     这 6 处边框都落在 --bg-card 内部（表格 / 汇总条 / 输入框），用 #232b37 会与卡片底色糊在一起。 */
+  --border-color: #2a3242;
   /* 文本：冷灰阶，阅读层级明确 */
   --text-primary: #e9edf3;
   --text-secondary: #9ba6b4;
-  --text-muted: #657181;
+  --text-muted: #7c8899;
   --text-inverse: #0a0c10;
   /* 主强调色：克制的工程蓝（替代荧光青 #2dd4bf，去除模板感） */
   --accent: #4c8dff;
@@ -263,18 +267,6 @@ body {
   margin-left: 2px;
 }
 
-/* 数据来源标签 */
-.data-source-tags {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: var(--space-sm);
-  overflow-x: auto;
-}
-.data-source-tags .chip {
-  font-size: 10px;
-  white-space: nowrap;
-}
-
 /* ===== Card ===== */
 .card {
   background: var(--bg-card);
@@ -370,20 +362,6 @@ tr:hover td {
   background: var(--bg-input);
 }
 
-/* ===== Score Bar ===== */
-.score-bar {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--border-default);
-  overflow: hidden;
-}
-.score-bar-fill {
-  height: 100%;
-  border-radius: 3px;
-  background: var(--accent);
-  animation: scoreBarGrow var(--duration-slow) var(--ease-out);
-}
-
 /* ===== Navbar / StockSelector ===== */
 .navbar {
   position: sticky;
@@ -455,11 +433,6 @@ tr:hover td {
 .search-item:hover {
   background: var(--bg-card-hover);
 }
-.search-code {
-  font-weight: 600;
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-}
 .search-name {
   color: var(--text-secondary);
 }
@@ -468,21 +441,6 @@ tr:hover td {
   gap: 6px;
   flex-wrap: wrap;
   margin-top: 6px;
-}
-.quick-stock-btn {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-default);
-  color: var(--text-secondary);
-  padding: 2px 10px;
-  border-radius: var(--radius-sm);
-  font-size: var(--text-caption);
-  cursor: pointer;
-  font-family: var(--font-main);
-  transition: all var(--duration-fast) var(--ease-out);
-}
-.quick-stock-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 /* Stock Search */
@@ -1874,6 +1832,48 @@ tr:hover td {
   .mobile-nav {
     display: block;
   }
+  /* 移动端量化页横向溢出修复（390px 视口实测 scrollWidth 433 > 390）：
+     grid 项默认 min-width:auto，会被内部定宽内容撑破容器；这里强制单列、宽度自适应。 */
+  .quant-page,
+  .quant-sidebar,
+  .quant-main {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .quant-sidebar {
+    position: static;
+    top: auto;
+  }
+  .quant-sidebar-title,
+  .quant-mode-switch,
+  .quant-mode,
+  .quant-form,
+  .quant-form-group {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .quant-mode {
+    flex: 1 1 auto;
+  }
+  .quant-form-group input,
+  .quant-form-group select,
+  .quant-form-group textarea {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  /* 移动端两个浮动按钮原本 bottom:20/28 + right:20/24 几乎重合，手指会点错；
+     把"回到顶部"抬到目录按钮上方（84px），并让目录抽屉的层级高于它。 */
+  :root {
+    --back-top-bottom: 84px;
+  }
+  .mobile-nav {
+    z-index: 210;
+  }
 }
 @media (max-width: 768px) {
   .app {
@@ -1926,6 +1926,22 @@ tr:hover td {
   .tab {
     flex-shrink: 0;
     padding: 10px 14px;
+  }
+}
+
+/* 移动端可读性：说明性文字（hint / 次级说明）提到 12px。
+   刻意只覆盖这 9 条：表头紧凑标签、徽标、单位、表格单元格等受版面约束的小字号不动。 */
+@media (max-width: 768px) {
+  .quant-mode-hint,
+  .batch-hint,
+  .factor-footnote,
+  .ic-decay-legend-empty,
+  .composite-foot,
+  .composite-meta,
+  .page-suspense,
+  .quant-selected-stock,
+  .batch-checkbox {
+    font-size: 12px;
   }
 }
 
@@ -2081,7 +2097,9 @@ tr:hover td {
   margin: var(--space-sm) 0;
 }
 .quant-elapsed-time {
-  font-size: var(--text-title);
+  /* 原先写作 var(--text-title)，而该变量从未定义且无兜底 → 整条声明被丢弃、
+     耗时数字回落为继承的 14px，失去了"放大突出"的设计意图。改用既有语义变量。 */
+  font-size: var(--text-h2);
   color: var(--text-primary);
 }
 .quant-elapsed-time b {
@@ -3079,6 +3097,46 @@ tr:hover td {
   .quant-page {
     grid-template-columns: 1fr;
   }
+  /* 与上方 1024px 断点保持一致：量化页单列 + 宽度自适应，消除横向溢出（勿只改单处） */
+  .quant-page,
+  .quant-sidebar,
+  .quant-main {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .quant-sidebar {
+    position: static;
+    top: auto;
+  }
+  .quant-sidebar-title,
+  .quant-mode-switch,
+  .quant-mode,
+  .quant-form,
+  .quant-form-group {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .quant-mode {
+    flex: 1 1 auto;
+  }
+  .quant-form-group input,
+  .quant-form-group select,
+  .quant-form-group textarea {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  /* 两个浮动按钮错位（回到顶部抬到目录按钮上方），目录抽屉层级高于它 */
+  :root {
+    --back-top-bottom: 84px;
+  }
+  .mobile-nav {
+    z-index: 210;
+  }
 }
 @media (min-width: 1025px) {
   .mobile-nav {
@@ -3403,30 +3461,6 @@ tr:hover td {
 
 .comparison-input::placeholder {
   color: var(--text-muted);
-}
-
-.btn-add {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-default);
-  color: var(--accent);
-  padding: 10px 18px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  font-size: var(--text-body);
-  font-weight: 600;
-  font-family: var(--font-main);
-  transition: all var(--duration-fast) var(--ease-out);
-  white-space: nowrap;
-}
-
-.btn-add:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--accent-dim);
-}
-
-.btn-add:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .comparison-tags {
@@ -4942,7 +4976,9 @@ button.comparison-tag-add:disabled {
 .back-top {
   position: fixed;
   right: 24px;
-  bottom: 28px;
+  /* 经自定义属性取值：本规则位于文件后部，移动端断点里同特异性的
+     `.back-top { bottom: 84px }` 会被它反超（后声明者胜），故由变量透传。 */
+  bottom: var(--back-top-bottom, 28px);
   z-index: 200;
   width: 40px;
   height: 40px;
@@ -4970,13 +5006,48 @@ button.comparison-tag-add:disabled {
   font-size: 13px;
 }
 
-/* 打印：研究报告可打印（隐藏交互元素，卡片不拆页） */
+/* 打印 / 存为 PDF：深色主题必须整页翻浅色，否则白纸上印浅灰字，必然不可读。
+   这里把设计变量在打印上下文整体重绑为浅色，全站引用变量的地方自动跟随；
+   少数硬编码深色底纹的容器再单独覆盖。 */
 @media print {
+  :root {
+    --bg-primary: #fff;
+    --bg-secondary: #fff;
+    --bg-card: #fff;
+    --bg-card-hover: #fff;
+    --bg-input: #fff;
+    --border-default: #ddd;
+    --border-hover: #bbb;
+    --border-color: #ddd;
+    --text-primary: #111;
+    --text-secondary: #333;
+    --text-muted: #555;
+    --text-inverse: #fff;
+    --accent: #1a4fa0;
+    --accent-dim: transparent;
+    --accent-hover: #1a4fa0;
+    /* 语义色也必须翻深：原红/绿/橙在白纸上分别只有 3.83 / 2.86 / 2.19:1，
+       涨跌与警告标记会印成一片浅色，下面取值均 >= 4.5:1（白底）。 */
+    --color-positive: #b3261e;
+    --color-negative: #0f7a4d;
+    --color-success: #0f7a4d;
+    --color-danger: #b3261e;
+    --color-warning: #9a5b00;
+    --color-info: #3d5a80;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  /* 隐藏各类交互 / 导航元素（含移动端目录与"回到顶部"，否则会盖在正文上）。
+     注意：这里不写通配 button，否则图表内的交互控件会被整体抹掉；只按类名隐藏。 */
   .navbar,
   .tab-bar,
-  .report-nav,
+  .side-nav,
   .mobile-nav,
   .back-top,
+  .toast-container,
   .chat-input-area,
   .chat-header,
   .chat-enhance-toggle,
@@ -4985,20 +5056,102 @@ button.comparison-tag-add:disabled {
   .history-delete,
   .btn-primary,
   .btn-ghost,
+  .btn,
   .stock-search-area,
-  .search-dropdown {
+  .search-dropdown,
+  .toast,
+  select {
     display: none !important;
   }
-  body {
-    background: #fff;
+  /* 若日后需要"只在打印时出现"的补充信息（如页脚来源说明），加这个类即可 */
+  .print-only {
+    display: block !important;
+  }
+  /* 标题与正文：统一深色，覆盖渐变文字与强调色 */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  .section-title,
+  .report-title,
+  p,
+  li,
+  dd,
+  dt,
+  strong,
+  b,
+  em,
+  span,
+  label,
+  td,
+  th,
+  div {
+    color: #111 !important;
+    background-image: none !important;
+    text-shadow: none !important;
+  }
+  /* 次要说明仍保留层级差，但保证可读 */
+  .quant-mode-hint,
+  .batch-hint,
+  .factor-footnote,
+  .page-suspense,
+  .ic-decay-legend-empty,
+  .composite-foot,
+  .composite-meta {
+    color: #555 !important;
+  }
+  a {
+    color: #1a4fa0 !important;
+    text-decoration: underline;
   }
   .card,
   .report-section,
   .chart-card,
   .scenario-card,
-  .strategy-card {
+  .strategy-card,
+  .quant-sidebar,
+  .quant-metric-card,
+  .composite-summary,
+  .batch-table-wrap {
+    background: #fff !important;
+    border: 1px solid #ddd !important;
     break-inside: avoid;
-    box-shadow: none;
+    box-shadow: none !important;
+  }
+  /* 表格：白底 + 浅灰分隔线 */
+  table {
+    background: #fff !important;
+    border-collapse: collapse;
+  }
+  th,
+  td {
+    border: 1px solid #ddd !important;
+    background: #fff !important;
+  }
+  thead th {
+    background: #f2f2f2 !important;
+    color: #111 !important;
+  }
+  /* 图表：保留容器边界，避免白底上图形失锚 */
+  svg {
+    background: #fff !important;
+  }
+  /* 语义标签底色：原来靠半透明色块区分，打印后几乎不可见；改为浅灰底 + 深色字，
+     信息不丢失（配合上面翻深的 --color-* 变量）。 */
+  .sig-valid,
+  .sig-inverted,
+  .sig-none,
+  .factor-badge,
+  .factor-tag,
+  .batch-dir,
+  .ic-decay-chip,
+  .batch-table th,
+  .quant-mode-switch,
+  .quant-news-textarea,
+  .cs-oos {
+    background: #f2f2f2 !important;
   }
   .charts-grid {
     grid-template-columns: 1fr;
@@ -5242,20 +5395,20 @@ button.comparison-tag-add:disabled {
   font-weight: 600;
 }
 .sig-valid {
-  color: #2f9e6e;
+  color: var(--color-success);
 }
 .sig-valid.factor-badge,
 .factor-badge.sig-valid {
-  background: rgba(47, 158, 110, 0.15);
-  color: #2f9e6e;
+  background: var(--color-success-dim);
+  color: var(--color-success);
 }
 .sig-inverted {
-  color: #d98b1f;
+  color: var(--color-warning);
 }
 .sig-inverted.factor-badge,
 .factor-badge.sig-inverted {
-  background: rgba(217, 139, 31, 0.15);
-  color: #d98b1f;
+  background: var(--color-warning-dim);
+  color: var(--color-warning);
 }
 .sig-none {
   color: var(--text-muted);
@@ -5500,10 +5653,10 @@ button.comparison-tag-add:disabled {
   background: rgba(127, 127, 127, 0.14);
 }
 .batch-dir.sig-valid {
-  background: rgba(47, 158, 110, 0.15);
+  background: var(--color-success-dim);
 }
 .batch-dir.sig-inverted {
-  background: rgba(217, 139, 31, 0.15);
+  background: var(--color-warning-dim);
 }
 .batch-alpha {
   font-weight: 700;
@@ -5604,13 +5757,13 @@ button.comparison-tag-add:disabled {
   stroke-linejoin: round;
 }
 .ic-decay-line-valid {
-  stroke: #2f9e6e;
+  stroke: var(--color-success);
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 .ic-decay-line-inverted {
-  stroke: #d98b1f;
+  stroke: var(--color-warning);
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -5632,12 +5785,12 @@ button.comparison-tag-add:disabled {
   border: 1px solid transparent;
 }
 .ic-decay-chip.sig-valid {
-  color: #2f9e6e;
-  background: rgba(47, 158, 110, 0.15);
+  color: var(--color-success);
+  background: var(--color-success-dim);
 }
 .ic-decay-chip.sig-inverted {
-  color: #d98b1f;
-  background: rgba(217, 139, 31, 0.15);
+  color: var(--color-warning);
+  background: var(--color-warning-dim);
 }
 .ic-decay-empty {
   margin-top: 12px;
@@ -5698,7 +5851,7 @@ button.comparison-tag-add:disabled {
   border: 1px solid currentColor;
 }
 .cs-oos-ok {
-  color: #2f9e6e;
+  color: var(--color-success);
 }
 .cs-oos-no {
   color: var(--text-muted);
@@ -5871,4 +6024,12 @@ button.comparison-tag-add:disabled {
 }
 .valuation-summary .paper-stat-value.pos {
   color: var(--color-positive);
+}
+
+/* === 报告操作区（导出 / 打印并排）===
+   两个按钮同为一个 flex 项，行内排布并收窄间距；按钮自身的 align-self/flex-shrink
+   仍由 .report-export-btn 提供，故此处只需补 display 与 gap */
+.report-actions {
+  display: flex;
+  gap: 8px;
 }

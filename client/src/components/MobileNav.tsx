@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 const navItems = [
   { id: 'summary', label: '核心摘要' },
@@ -19,31 +19,59 @@ const navItems = [
 
 export default function MobileNav({ activeSection }: { activeSection: string }) {
   const [open, setOpen] = useState(false);
+  // 抽屉容器 id（useId 保证唯一）：供切换按钮的 aria-controls 指向
+  const dropdownId = useId();
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const firstItemRef = useRef<HTMLButtonElement>(null);
+
+  /** 关闭抽屉并把焦点交还切换按钮（preventScroll：不打断目录项的平滑滚动定位） */
+  const closeNav = () => {
+    setOpen(false);
+    toggleRef.current?.focus({ preventScroll: true });
+  };
 
   const handleClick = (id: string) => {
-    setOpen(false);
+    closeNav();
     const el = document.getElementById(id);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   };
 
+  // 仅在抽屉打开时绑定：Esc 关闭并归还焦点；打开即把焦点移入抽屉第一项
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        toggleRef.current?.focus({ preventScroll: true });
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    firstItemRef.current?.focus();
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [open]);
+
   return (
     <div className="mobile-nav">
       <button
+        ref={toggleRef}
         className={`mobile-nav-toggle ${open ? 'open' : ''}`}
-        onClick={() => setOpen(!open)}
+        onClick={() => (open ? closeNav() : setOpen(true))}
         aria-label="目录导航"
+        aria-expanded={open}
+        aria-controls={dropdownId}
       >
         <span className="mobile-nav-icon" />
         <span className="mobile-nav-label">目录</span>
       </button>
 
       {open && (
-        <div className="mobile-nav-dropdown">
-          {navItems.map((item) => (
+        <div className="mobile-nav-dropdown" id={dropdownId} role="dialog" aria-label="目录">
+          {navItems.map((item, i) => (
             <button
               key={item.id}
+              ref={i === 0 ? firstItemRef : undefined}
               className={`mobile-nav-item ${activeSection === item.id ? 'active' : ''}`}
               onClick={() => handleClick(item.id)}
             >

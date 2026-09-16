@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AnalysisCancelledError,
   getUniverseBoards,
   getFactorExperiments,
   runFactorExpression,
   type FactorExperiment,
 } from '../../api/client';
+import { useToast } from '../../components/Toast';
 import type { IndustryBoard } from './types';
 import EChart from '../../components/EChart';
 
@@ -89,11 +91,18 @@ function PortfolioCurveChart({
 }
 
 export default function FactorLabPanel() {
+  const { showToast } = useToast();
   const [boards, setBoards] = useState<IndustryBoard[]>([]);
   const [board, setBoard] = useState('');
   const [topN, setTopN] = useState(10);
   const [expression, setExpression] = useState(DEFAULT_EXPRESSION);
   const [running, setRunning] = useState(false);
+  /** 已耗时（秒）：表达式评估是分钟级任务，没有计时用户无法判断是慢还是卡住 */
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const startAtRef = useRef(0);
+  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** 在途评估请求的中止器：分钟级请求应能中途撤回（与截面/组合面板一致） */
+  const abortRef = useRef<AbortController | null>(null);
   /** 组合回测（可选）：从 IC 到 PnL 的最后一问 */
   const [portfolioOn, setPortfolioOn] = useState(false);
   const [portfolioHoldDays, setPortfolioHoldDays] = useState(21);
@@ -113,8 +122,36 @@ export default function FactorLabPanel() {
     aliveRef.current = true;
     return () => {
       aliveRef.current = false;
+      // 卸载时中止在途评估：卸载触发的 abort 不弹「已取消」提示（判据见 handleRun）
+      abortRef.current?.abort();
     };
   }, []);
+
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  // 评估期间真实计时（与 CrossSectionPanel 同写法）
+  useEffect(() => {
+    if (!running) {
+      if (tickerRef.current) {
+        clearInterval(tickerRef.current);
+        tickerRef.current = null;
+      }
+      return;
+    }
+    startAtRef.current = Date.now();
+    setElapsedSec(0);
+    tickerRef.current = setInterval(() => {
+      setElapsedSec(Math.round((Date.now() - startAtRef.current) / 1000));
+    }, 1000);
+    return () => {
+      if (tickerRef.current) {
+        clearInterval(tickerRef.current);
+        tickerRef.current = null;
+      }
+    };
+  }, [running]);
 
   const loadLedger = useCallback(async () => {
     try {
@@ -159,25 +196,46 @@ export default function FactorLabPanel() {
     setRunning(true);
     setError(null);
     setResult(null);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      const data = await runFactorExpression({
-        expression,
-        board,
-        topN,
-        horizons: [21, 63],
-        ...(portfolioOn ? { portfolio: { holdDays: portfolioHoldDays, topN: portfolioTopN } } : {}),
-      });
+      const data = await runFactorExpression(
+        {
+          expression,
+          board,
+          topN,
+          horizons: [21, 63],
+          ...(portfolioOn
+            ? { portfolio: { holdDays: portfolioHoldDays, topN: portfolioTopN } }
+            : {}),
+        },
+        controller.signal,
+      );
       if (!aliveRef.current) return;
       setResult(data);
       await loadLedger();
     } catch (e) {
-      if (aliveRef.current) {
+      if (!aliveRef.current) return; // 卸载触发的中止：不弹提示、不再 setState
+      if (e instanceof AnalysisCancelledError) {
+        showToast('已取消本次评估');
+      } else {
         setError(e instanceof Error ? e.message : '因子表达式评估失败');
       }
     } finally {
+      abortRef.current = null;
       if (aliveRef.current) setRunning(false);
     }
-  }, [canRun, expression, board, topN, loadLedger, portfolioOn, portfolioHoldDays, portfolioTopN]);
+  }, [
+    canRun,
+    expression,
+    board,
+    topN,
+    loadLedger,
+    portfolioOn,
+    portfolioHoldDays,
+    portfolioTopN,
+    showToast,
+  ]);
 
   return (
     <div className="card quant-panel factor-lab">
@@ -288,7 +346,14 @@ export default function FactorLabPanel() {
 
       {error && <div className="error-banner">{error}</div>}
 
-      {running && <p className="batch-loading">正在拉取面板并计算截面 IC…</p>}
+      {running && (
+        <p className="batch-loading">正在拉取面板并计算截面 IC…（已耗时 {elapsedSec} 秒）</p>
+      )}
+      {running && (
+        <button type="button" className="btn-ghost" onClick={handleCancel}>
+          取消评估
+        </button>
+      )}
 
       {result && !running && (
         <div className="batch-summary">

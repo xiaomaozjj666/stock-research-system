@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { AnalysisStage } from '../api/client';
 
 // 阶段顺序与目标进度映射（与后端 AnalysisStage 对齐）
@@ -34,18 +34,22 @@ export default function LoadingScreen({ stage }: Props) {
   }, []);
 
   // 进度条平滑过渡到目标值
+  // 缓动基准值放 ref：到达 targetProgress 后不再 requestAnimationFrame——
+  // 否则 setProgress 返回同值被 React 忽略，回调仍以 60fps 永远排队空转
+  const progressRef = useRef(0);
   useEffect(() => {
-    let rafId: number;
+    let rafId = 0;
     let lastTime = performance.now();
     const tick = (now: number) => {
       const dt = now - lastTime;
       lastTime = now;
-      setProgress((prev) => {
-        if (prev >= targetProgress) return prev;
-        const increment = (targetProgress - prev) * 0.002 * dt;
-        return Math.min(prev + Math.max(increment, 0.05), targetProgress);
-      });
-      rafId = requestAnimationFrame(tick);
+      const prev = progressRef.current;
+      if (prev >= targetProgress) return; // 已到目标：停止再排队
+      const increment = (targetProgress - prev) * 0.002 * dt;
+      const next = Math.min(prev + Math.max(increment, 0.05), targetProgress);
+      progressRef.current = next;
+      setProgress(next);
+      if (next < targetProgress) rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
@@ -69,14 +73,26 @@ export default function LoadingScreen({ stage }: Props) {
                 <div className="loading-stage-dot" />
                 <div className="loading-stage-text">
                   <span className="loading-stage-label">{s.label}</span>
-                  {i === activeIndex && <span className="loading-stage-sub">{stageMessage}</span>}
+                  {/* 阶段文案对读屏可见；aria-live 只挂在这里，下方「已耗时」每秒变化但不播报 */}
+                  {i === activeIndex && (
+                    <span className="loading-stage-sub" role="status" aria-live="polite">
+                      {stageMessage}
+                    </span>
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
 
-        <div className="loading-progress">
+        <div
+          className="loading-progress"
+          role="progressbar"
+          aria-label="分析进度"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(displayProgress)}
+        >
           <div className="loading-progress-bar" style={{ width: `${displayProgress}%` }}>
             <div className="loading-progress-shimmer" />
           </div>

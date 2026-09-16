@@ -160,3 +160,36 @@ describe('ReportHeader 评级事后校准（rating_accuracy）', () => {
     expect(tag.getAttribute('title')).toContain('平均区间收益 4.5%');
   });
 });
+
+describe('ReportHeader 报告时间语境', () => {
+  it('缺 generatedAt / dataAsOf 时不渲染时间信息（兼容改动前保存的历史记录）', () => {
+    render(<ReportHeader data={base} />);
+    expect(screen.queryByText(/数据截止/)).toBeNull();
+    expect(screen.queryByText(/生成于/)).toBeNull();
+  });
+
+  it('渲染数据截止日与生成时间（本地时区 YYYY-MM-DD HH:mm）', () => {
+    render(
+      <ReportHeader data={base} generatedAt="2026-09-16T13:30:00.000Z" dataAsOf="2026-09-15" />,
+    );
+    const cutoff = screen.getByText(/数据截止/).textContent || '';
+    expect(cutoff).toContain('2026-09-15');
+    expect(cutoff).toContain('收盘');
+    // 生成时间用本地时区格式化，只断言格式（避免测试机时区差异导致脆断言）
+    expect(screen.getByText(/生成于/).textContent || '').toMatch(
+      /生成于：\d{4}-\d{2}-\d{2} \d{2}:\d{2}/,
+    );
+  });
+
+  it('数据截止明显滞后（>5 天）时给出"可能滞后"提示', () => {
+    const stale = new Date(Date.now() - 10 * 86_400_000).toISOString().slice(0, 10);
+    render(<ReportHeader data={base} dataAsOf={stale} />);
+    expect(screen.getByText(/数据截止/).textContent || '').toContain('可能滞后');
+  });
+
+  it('数据截止为最近交易日时不给滞后提示（避免天天报警）', () => {
+    const fresh = new Date().toISOString().slice(0, 10);
+    render(<ReportHeader data={base} dataAsOf={fresh} />);
+    expect(screen.getByText(/数据截止/).textContent || '').not.toContain('可能滞后');
+  });
+});

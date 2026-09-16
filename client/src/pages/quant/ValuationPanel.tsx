@@ -97,8 +97,10 @@ export default function ValuationPanel() {
         30%]），折现率 9%、永续 3%、显性期 5 年。模型为 EPS 贴现近似，局限随结果展示。
       </p>
       <div className="valuation-form">
+        {/* 四个输入框均无可见文案（仅靠 placeholder 提示），故用 aria-label 提供可访问名 */}
         <input
           className="batch-input"
+          aria-label="待估值的股票代码（6 位数字）"
           placeholder="股票代码（6 位）"
           value={code}
           onChange={(e) => setCode(e.target.value)}
@@ -106,18 +108,21 @@ export default function ValuationPanel() {
         />
         <input
           className="batch-input"
+          aria-label="显性期 EPS 增速（小数，如 0.12；留空按 EPS 三年复合自动推导）"
           placeholder="显性期增速（如 0.12，留空自动）"
           value={growthRate1}
           onChange={(e) => setGrowthRate1(e.target.value)}
         />
         <input
           className="batch-input"
+          aria-label="折现率（小数，如 0.09；留空取 9%）"
           placeholder="折现率（如 0.09，留空 9%）"
           value={discountRate}
           onChange={(e) => setDiscountRate(e.target.value)}
         />
         <input
           className="batch-input"
+          aria-label="永续期增速（小数，如 0.03；留空取 3%）"
           placeholder="永续增速（如 0.03，留空 3%）"
           value={growthRate2}
           onChange={(e) => setGrowthRate2(e.target.value)}

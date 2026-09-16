@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import { useCallback, useMemo, useState, useEffect, useRef, useId } from 'react';
 import {
   AnalysisCancelledError,
   getUniverseBoards,
@@ -116,6 +116,22 @@ function IcCell({ p }: { p: CrossSectionPeriodReport }) {
 
 export default function CrossSectionPanel({ active = true }: { active?: boolean }) {
   const { showToast } = useToast();
+  // 表单控件 id：useId 生成保证唯一，供 <label htmlFor> 关联（不改 DOM 层级、不动样式）；
+  // board/index/codes 三种 universe 模式与组合回测参数均为条件渲染，每个控件仍各占一个 id——
+  // 任一模式下渲染出的控件都有可访问名，且同一 DOM 中不会出现重复 id
+  const boardId = useId();
+  const topNId = useId();
+  const indexNameId = useId();
+  const indexDateId = useId();
+  const codesTextId = useId();
+  const horizonsTextId = useId();
+  const includeFundamentalId = useId();
+  const includeEventsId = useId();
+  const includeMarginId = useId();
+  const portfolioOnId = useId();
+  const portfolioHoldDaysId = useId();
+  const portfolioTopNId = useId();
+  const portfolioCostBpsId = useId();
   const [source, setSource] = useState<'board' | 'codes' | 'index'>('board');
   /** 指数历史成分源（Baostock sidecar）：指数与可选快照日期 */
   const [indexName, setIndexName] = useState<'hs300' | 'zz500' | 'sz50'>('hs300');
@@ -344,9 +360,10 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
 
         {source === 'board' ? (
           <div className="batch-field-row">
-            <label className="batch-field">
+            <label className="batch-field" htmlFor={boardId}>
               <span className="batch-label">行业板块</span>
               <select
+                id={boardId}
                 className="batch-input"
                 value={board}
                 disabled={loading}
@@ -367,9 +384,10 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                   : `${boards.length} 个行业板块 · 成分股取总市值前 N 只`}
               </span>
             </label>
-            <label className="batch-field">
+            <label className="batch-field" htmlFor={topNId}>
               <span className="batch-label">成分股数量（topN）</span>
               <input
+                id={topNId}
                 type="number"
                 className="batch-input"
                 min={3}
@@ -385,9 +403,10 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
           </div>
         ) : source === 'index' ? (
           <div className="batch-field-row">
-            <label className="batch-field">
+            <label className="batch-field" htmlFor={indexNameId}>
               <span className="batch-label">指数</span>
               <select
+                id={indexNameId}
                 className="batch-input"
                 value={indexName}
                 disabled={loading}
@@ -401,9 +420,10 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                 历史成分快照（Baostock），含其后退市的证券——可正面观察幸存者偏差
               </span>
             </label>
-            <label className="batch-field">
+            <label className="batch-field" htmlFor={indexDateId}>
               <span className="batch-label">快照日期（可选）</span>
               <input
+                id={indexDateId}
                 type="date"
                 className="batch-input"
                 value={indexDate}
@@ -414,9 +434,10 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
             </label>
           </div>
         ) : (
-          <label className="batch-field">
+          <label className="batch-field" htmlFor={codesTextId}>
             <span className="batch-label">股票代码（2-{MAX_CODES} 只）</span>
             <textarea
+              id={codesTextId}
               className="batch-codes"
               rows={4}
               placeholder={'600519\n000858\n603288'}
@@ -429,9 +450,10 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
         )}
 
         <div className="batch-field-row">
-          <label className="batch-field">
+          <label className="batch-field" htmlFor={horizonsTextId}>
             <span className="batch-label">持有期（交易日）</span>
             <input
+              id={horizonsTextId}
               type="text"
               className="batch-input"
               value={horizonsText}
@@ -441,8 +463,9 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
             <span className="batch-hint">默认 21,63</span>
           </label>
           <div className="cs-toggles">
-            <label className="batch-checkbox cs-fundamental-toggle">
+            <label className="batch-checkbox cs-fundamental-toggle" htmlFor={includeFundamentalId}>
               <input
+                id={includeFundamentalId}
                 type="checkbox"
                 checked={includeFundamental}
                 disabled={loading}
@@ -450,8 +473,9 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
               />
               包含基本面因子（拉取财务 + 季度财报）
             </label>
-            <label className="batch-checkbox cs-fundamental-toggle">
+            <label className="batch-checkbox cs-fundamental-toggle" htmlFor={includeEventsId}>
               <input
+                id={includeEventsId}
                 type="checkbox"
                 checked={includeEvents}
                 disabled={loading}
@@ -459,8 +483,9 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
               />
               包含事件因子（分红/回购/解禁 + PEAD）
             </label>
-            <label className="batch-checkbox cs-fundamental-toggle">
+            <label className="batch-checkbox cs-fundamental-toggle" htmlFor={includeMarginId}>
               <input
+                id={includeMarginId}
                 type="checkbox"
                 checked={includeMargin}
                 disabled={loading}
@@ -468,8 +493,9 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
               />
               包含两融因子（融资余额变化率/拥挤度）
             </label>
-            <label className="batch-checkbox cs-fundamental-toggle">
+            <label className="batch-checkbox cs-fundamental-toggle" htmlFor={portfolioOnId}>
               <input
+                id={portfolioOnId}
                 type="checkbox"
                 checked={portfolioOn}
                 disabled={loading}
@@ -479,9 +505,13 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
             </label>
             {portfolioOn && (
               <>
-                <label className="batch-checkbox cs-fundamental-toggle">
+                <label
+                  className="batch-checkbox cs-fundamental-toggle"
+                  htmlFor={portfolioHoldDaysId}
+                >
                   调仓周期
                   <input
+                    id={portfolioHoldDaysId}
                     type="number"
                     min={5}
                     max={250}
@@ -492,9 +522,10 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                   />
                   日
                 </label>
-                <label className="batch-checkbox cs-fundamental-toggle">
+                <label className="batch-checkbox cs-fundamental-toggle" htmlFor={portfolioTopNId}>
                   持仓只数
                   <input
+                    id={portfolioTopNId}
                     type="number"
                     min={1}
                     max={20}
@@ -504,9 +535,13 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                     style={{ width: 56 }}
                   />
                 </label>
-                <label className="batch-checkbox cs-fundamental-toggle">
+                <label
+                  className="batch-checkbox cs-fundamental-toggle"
+                  htmlFor={portfolioCostBpsId}
+                >
                   单边成本
                   <input
+                    id={portfolioCostBpsId}
                     type="number"
                     min={0}
                     max={200}

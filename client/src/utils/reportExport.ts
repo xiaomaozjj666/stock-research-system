@@ -4,6 +4,15 @@ import type { AnalysisResult } from '../types';
  * 研究报告导出：前端生成 Markdown 文本并触发下载（无需后端改动）。
  * 覆盖：核心摘要 / 评分评级 / 估值 / 专家观点 / 争议 / 风险 / 情景 / 策略 / 跟踪指标。
  */
+
+/** 本地时区 YYYY-MM-DD HH:mm（导出文件的时间戳必须稳定可读，不用 toLocaleString） */
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 export function generateReportMarkdown(result: AnalysisResult): string {
   const s = result.stock_pool[0];
   if (!s) return '';
@@ -13,6 +22,11 @@ export function generateReportMarkdown(result: AnalysisResult): string {
   push(`# ${s.stock_name}（${s.stock_code}）研究报告`);
   push('');
   push(`> 行业：${s.industry}｜综合评分：**${s.total_score}**｜评级：**${s.rating}**`);
+  // 时间语境：文件一旦脱离系统，必须自带"数据到哪天、什么时候生成"，否则无法判断新鲜度
+  const timeBits: string[] = [];
+  if (result.dataAsOf) timeBits.push(`数据截止：${result.dataAsOf} 收盘`);
+  if (result.generatedAt) timeBits.push(`生成时间：${formatDateTime(result.generatedAt)}`);
+  if (timeBits.length > 0) push(`> ${timeBits.join('｜')}`);
   // 记忆反思闭环：较上次分析的评分/评级演化（可选）
   if (s.vs_previous) {
     const v = s.vs_previous;

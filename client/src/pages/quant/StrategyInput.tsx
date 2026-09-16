@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useId } from 'react';
 import type { StrategyConfig } from './types';
 import StockSearchInput from '../../components/StockSearchInput';
 
@@ -45,6 +45,16 @@ function getDefaultStartDate(): string {
 }
 
 export default function StrategyInput({ onSubmit, loading }: Props) {
+  // 表单控件 id：useId 生成保证唯一，供 <label htmlFor> 关联（不改 DOM 层级、不动样式）；
+  // 动态参数项以字段 key 作后缀，切换策略时 id 依然稳定
+  const strategyTypeId = useId();
+  const startDateId = useId();
+  const endDateId = useId();
+  const paramIdPrefix = useId();
+  const initialCapitalId = useId();
+  const costModelId = useId();
+  const commissionId = useId();
+
   const [strategyType, setStrategyType] = useState<'ma_cross' | 'momentum' | 'mean_reversion'>(
     'ma_cross',
   );
@@ -96,8 +106,9 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
   return (
     <div className="quant-form">
       <div className="quant-form-group">
-        <label>策略类型</label>
+        <label htmlFor={strategyTypeId}>策略类型</label>
         <select
+          id={strategyTypeId}
           value={strategyType}
           onChange={(e) => handleTypeChange(e.target.value as typeof strategyType)}
         >
@@ -128,21 +139,32 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
       </div>
 
       <div className="quant-form-group">
-        <label>开始日期</label>
-        <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+        <label htmlFor={startDateId}>开始日期</label>
+        <input
+          id={startDateId}
+          type="date"
+          value={startDate}
+          onChange={(e) => setStartDate(e.target.value)}
+        />
       </div>
 
       <div className="quant-form-group">
-        <label>结束日期</label>
-        <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        <label htmlFor={endDateId}>结束日期</label>
+        <input
+          id={endDateId}
+          type="date"
+          value={endDate}
+          onChange={(e) => setEndDate(e.target.value)}
+        />
       </div>
 
       <div className="quant-form-divider" />
 
       {paramFields.map((field) => (
         <div className="quant-form-group" key={field.key}>
-          <label>{field.label}</label>
+          <label htmlFor={`${paramIdPrefix}-${field.key}`}>{field.label}</label>
           <input
+            id={`${paramIdPrefix}-${field.key}`}
             type="number"
             value={params[field.key] ?? field.default}
             step={field.step ?? 1}
@@ -154,8 +176,9 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
       <div className="quant-form-divider" />
 
       <div className="quant-form-group">
-        <label>初始资金（元）</label>
+        <label htmlFor={initialCapitalId}>初始资金（元）</label>
         <input
+          id={initialCapitalId}
           type="number"
           value={initialCapital}
           step={100000}
@@ -164,8 +187,9 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
       </div>
 
       <div className="quant-form-group">
-        <label>成本模型</label>
+        <label htmlFor={costModelId}>成本模型</label>
         <select
+          id={costModelId}
           value={costModel}
           onChange={(e) => setCostModel(e.target.value as 'default' | 'a_share')}
         >
@@ -175,8 +199,9 @@ export default function StrategyInput({ onSubmit, loading }: Props) {
       </div>
 
       <div className="quant-form-group">
-        <label>佣金率（买入费率）</label>
+        <label htmlFor={commissionId}>佣金率（买入费率）</label>
         <input
+          id={commissionId}
           type="number"
           value={commission}
           step={0.0001}

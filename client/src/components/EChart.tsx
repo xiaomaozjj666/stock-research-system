@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import echarts from '../lib/echarts';
 import type { ECharts } from '../lib/echarts';
@@ -22,7 +22,11 @@ interface EChartProps {
  * echarts-for-react 相同：挂载时 init、option 变化时 setOption、ResizeObserver
  * 自适应、卸载时 dispose。完全可控、无额外依赖。
  */
-export default function EChart({ option, style, className, onChartReady }: EChartProps) {
+/**
+ * 内容级比较的成本控制：option 由父组件用 useMemo 稳定引用（依赖不含悬停索引），
+ * 因此 memo 能挡住父组件因悬停/滚动产生的重渲染，避免每帧重复 JSON.parse 级别的工作。
+ */
+function EChart({ option, style, className, onChartReady }: EChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ECharts | null>(null);
 
@@ -64,3 +68,5 @@ export default function EChart({ option, style, className, onChartReady }: EChar
 
   return <div ref={containerRef} className={className} style={style} />;
 }
+
+export default memo(EChart);

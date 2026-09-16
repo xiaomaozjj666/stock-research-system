@@ -42,6 +42,10 @@ interface ReportHeaderProps {
   /** 完整分析结果（导出 Markdown 用） */
   result?: unknown;
   onExport?: () => void;
+  /** 报告生成时间（ISO）；历史快照时为当时生成的时间 */
+  generatedAt?: string;
+  /** 行情数据截止日（YYYY-MM-DD，最后一根 K 线） */
+  dataAsOf?: string;
 }
 
 function getRatingClass(rating: string) {
@@ -130,7 +134,35 @@ function AccuracyTag({ stat }: { stat: RatingAccuracyStat }) {
   return null;
 }
 
-export default function ReportHeader({ data, research_confidence, onExport }: ReportHeaderProps) {
+/** 生成本地时区 YYYY-MM-DD HH:mm（不用 toLocaleString：各浏览器格式不一致，导出/打印不稳定） */
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/**
+ * 数据截止日距今天数（日历日粗判，非交易日精确计算）。
+ * 阈值取宽松值：跨周末/小长假属正常，只有明显滞后才提示，避免天天报警造成狼来了。
+ */
+function daysSince(dateStr: string): number | null {
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.floor((todayStart.getTime() - d.getTime()) / 86_400_000);
+}
+
+export default function ReportHeader({
+  data,
+  research_confidence,
+  onExport,
+  generatedAt,
+  dataAsOf,
+}: ReportHeaderProps) {
+  const staleDays = dataAsOf ? daysSince(dataAsOf) : null;
+  const staleHint = staleDays !== null && staleDays > 5 ? `（距今 ${staleDays} 天，可能滞后）` : '';
   return (
     <div className="card report-header">
       <div className="report-header-top">
@@ -151,6 +183,17 @@ export default function ReportHeader({ data, research_confidence, onExport }: Re
                 市值：<span>{formatMarketCap(data.valuation.marketCap)}</span>
               </div>
             )}
+            {/* 时间语境：没有时间戳的金融结论无法判断新鲜度，导出后更是完全失去时间锚点 */}
+            {dataAsOf && (
+              <div className="header-meta-item">
+                数据截止：<span>{dataAsOf}</span> 收盘{staleHint}
+              </div>
+            )}
+            {generatedAt && (
+              <div className="header-meta-item">
+                生成于：<span>{formatDateTime(generatedAt)}</span>
+              </div>
+            )}
           </div>
         </div>
         <div className="score-block">
@@ -167,15 +210,26 @@ export default function ReportHeader({ data, research_confidence, onExport }: Re
             <div className="confidence-tag">研究置信度：{research_confidence}</div>
           )}
         </div>
-        {onExport && (
+        {/* 导出 / 打印并排：打印样式已在 index.css 的 @media print 里把设计变量整体翻浅色，
+            这里只需要一个入口；两个按钮都用 .btn-ghost，打印时会被 @media print 隐藏 */}
+        <div className="report-actions">
+          {onExport && (
+            <button
+              className="btn-ghost report-export-btn"
+              onClick={onExport}
+              title="导出为 Markdown"
+            >
+              导出报告
+            </button>
+          )}
           <button
             className="btn-ghost report-export-btn"
-            onClick={onExport}
-            title="导出为 Markdown"
+            onClick={() => window.print()}
+            title="打印或另存为 PDF"
           >
-            导出报告
+            打印
           </button>
-        )}
+        </div>
       </div>
     </div>
   );

@@ -190,9 +190,35 @@ export function ComparisonView() {
   const [stockNames, setStockNames] = useState<Record<string, string>>({});
   const [results, setResults] = useState<StockData[] | null>(null);
   const [loading, setLoading] = useState(false);
+  /** 已耗时（秒）：多股对比是 1~3 分钟的纯 POST，只有静态"分析中"无法判断是否卡住 */
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const startAtRef = useRef(0);
+  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** 在途对比请求的中止器：三只股的完整分析约 1-3 分钟，用户应能中途撤回 */
   const abortRef = useRef<AbortController | null>(null);
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // 对比期间真实计时（与量化面板的"已耗时"同写法）
+  useEffect(() => {
+    if (!loading) {
+      if (tickerRef.current) {
+        clearInterval(tickerRef.current);
+        tickerRef.current = null;
+      }
+      return;
+    }
+    startAtRef.current = Date.now();
+    setElapsedSec(0);
+    tickerRef.current = setInterval(() => {
+      setElapsedSec(Math.round((Date.now() - startAtRef.current) / 1000));
+    }, 1000);
+    return () => {
+      if (tickerRef.current) {
+        clearInterval(tickerRef.current);
+        tickerRef.current = null;
+      }
+    };
+  }, [loading]);
   const [error, setError] = useState('');
   /** 搜索框所在行：空占位点击时直接聚焦输入框 */
   const searchRowRef = useRef<HTMLDivElement>(null);
@@ -383,6 +409,9 @@ export function ComparisonView() {
         <button type="button" className="btn-ghost" onClick={cancelCompare}>
           取消对比
         </button>
+      )}
+      {loading && (
+        <p className="batch-loading">正在逐只分析财务、估值与专家观点…（已耗时 {elapsedSec} 秒）</p>
       )}
     </div>
   );
