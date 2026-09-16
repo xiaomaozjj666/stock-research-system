@@ -5,6 +5,7 @@ import {
   runCrossSectionEvaluation,
 } from '../../api/client';
 import { useToast } from '../../components/Toast';
+import { signCls, significanceCls } from '../../lib/colors';
 import type {
   CrossSectionResult,
   CrossSectionFactor,
@@ -97,7 +98,9 @@ function fmtPct(v: number): string {
 function IcCell({ p }: { p: CrossSectionPeriodReport }) {
   const sig = p.ic.pValue < 0.05;
   const stable = p.oos.stable;
-  const cls = sig ? (p.ic.mean > 0 ? 'sig-valid' : 'sig-inverted') : 'sig-none';
+  // 这里是「统计显著性 + 方向」：显著且同向 = 绿、显著但反向 = 琥珀、不显著 = 灰。
+  // 与「收益红绿」是两套语义，走 significanceCls（色板语义不变）。
+  const cls = significanceCls(sig ? (p.ic.mean > 0 ? 'valid' : 'inverted') : 'none');
   return (
     <div className="cs-ic-cell">
       <div className={`cs-ic-mean ${cls}`}>
@@ -651,7 +654,9 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                         <td>
                           {lastPeriod ? (
                             <span
-                              className={`factor-badge ${lastPeriod.verdict.effective ? 'sig-valid' : 'sig-none'}`}
+                              className={`factor-badge ${significanceCls(
+                                lastPeriod.verdict.effective ? 'valid' : 'none',
+                              )}`}
                               title={lastPeriod.verdict.reasons.join('；')}
                             >
                               {lastPeriod.verdict.effective ? '有效' : '未通过'}
@@ -696,7 +701,8 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                         </td>
                         <td>{f.portfolio!.periods}</td>
                         <td
-                          className={f.portfolio!.totalReturn >= 0 ? 'sig-valid' : 'sig-inverted'}
+                          className={signCls(f.portfolio!.totalReturn)}
+                          title="组合累计收益（因子组合回测）：按 A 股红涨绿跌着色"
                         >
                           {f.portfolio!.totalReturn >= 0 ? '+' : ''}
                           {f.portfolio!.totalReturn.toFixed(1)}%

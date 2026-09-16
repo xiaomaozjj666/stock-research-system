@@ -4,6 +4,7 @@ import { memo } from 'react';
 // 导致 "Element type is invalid: got object" 渲染崩溃）
 import EChart from './EChart';
 import PriceTrendChart from './PriceTrendChart';
+import { useReducedMotion } from '../hooks/useReducedMotion';
 import type { PricePoint } from '../types';
 
 interface StockData {
@@ -49,6 +50,18 @@ const transparent = 'transparent';
 const chartTextStyle = { color: textSecondary };
 
 function ChartsSection({ data }: ChartsSectionProps) {
+  const reducedMotion = useReducedMotion();
+
+  // 入场动画配置：系统开启「减少动态效果」时关闭。
+  // ECharts 的动画跑在 canvas 上，index.css 的 @media (prefers-reduced-motion)
+  // 对它无效，必须在这里读同一个偏好；关掉时同时把时长归零，避免残留
+  // animationDuration 影响后续增量更新。
+  const anim = {
+    animation: !reducedMotion,
+    animationDuration: reducedMotion ? 0 : 1500,
+    animationEasing: 'cubicOut' as const,
+  };
+
   const years = data.finance_metrics?.years || [];
   const revenue = data.finance_metrics?.revenue || [];
   const netProfit = data.finance_metrics?.netProfit || [];
@@ -64,9 +77,7 @@ function ChartsSection({ data }: ChartsSectionProps) {
   const revenueChart = {
     backgroundColor: transparent,
     textStyle: chartTextStyle,
-    animation: true,
-    animationDuration: 1500,
-    animationEasing: 'cubicOut' as const,
+    ...anim,
     tooltip: {
       trigger: 'axis' as const,
       // 单位标注：营收/净利润均为亿元（专业图表 tooltip 必带量纲）
@@ -153,9 +164,7 @@ function ChartsSection({ data }: ChartsSectionProps) {
   const profitChart = {
     backgroundColor: transparent,
     textStyle: chartTextStyle,
-    animation: true,
-    animationDuration: 1500,
-    animationEasing: 'cubicOut' as const,
+    ...anim,
     tooltip: {
       trigger: 'axis' as const,
       formatter: (params: { seriesName: string; value: number; marker: string }[]) => {
@@ -228,9 +237,7 @@ function ChartsSection({ data }: ChartsSectionProps) {
   const peerChart = {
     backgroundColor: transparent,
     textStyle: chartTextStyle,
-    animation: true,
-    animationDuration: 1500,
-    animationEasing: 'cubicOut' as const,
+    ...anim,
     tooltip: { trigger: 'axis' as const },
     grid: { left: 50, right: 20, top: 20, bottom: 40 },
     xAxis: {
@@ -270,8 +277,7 @@ function ChartsSection({ data }: ChartsSectionProps) {
   const radarChart = {
     backgroundColor: transparent,
     textStyle: chartTextStyle,
-    animation: true,
-    animationDuration: 1500,
+    ...anim,
     tooltip: {},
     radar: {
       indicator: [
@@ -319,9 +325,7 @@ function ChartsSection({ data }: ChartsSectionProps) {
   const peChart = {
     backgroundColor: transparent,
     textStyle: chartTextStyle,
-    animation: true,
-    animationDuration: 1500,
-    animationEasing: 'cubicOut' as const,
+    ...anim,
     tooltip: { trigger: 'axis' as const },
     grid: { left: 50, right: 20, top: 20, bottom: 30 },
     xAxis: {

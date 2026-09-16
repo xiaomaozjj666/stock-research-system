@@ -3,6 +3,7 @@ import type {
   AnalysisResult,
   AuditEntry,
   AuditQueryFilter,
+  CompareResponse,
   HistoryItem,
   HistorySummary,
   IntlFundamentalsResult,
@@ -205,9 +206,18 @@ export async function runCrossSectionEvaluation(
   }
 }
 
-export async function compareStocks(codes: string[], signal?: AbortSignal) {
+/**
+ * 多股对比（2-3 只，单只 1~3 分钟）。
+ * 返回 { stocks, failures? }：服务端逐只容错，某只失败不再让整批 500，
+ * 成功的进 stocks、失败的在 failures（{ code, error }，error 为可读中文）。
+ * failures 是可选的——旧后端全部成功时不返回该字段，调用方按 `failures ?? []` 处理。
+ */
+export async function compareStocks(
+  codes: string[],
+  signal?: AbortSignal,
+): Promise<CompareResponse> {
   try {
-    const response = await api.post(
+    const response = await api.post<CompareResponse>(
       '/compare',
       { stockCodes: codes },
       {
@@ -742,12 +752,41 @@ export async function getPaperStats(): Promise<PaperStats> {
 }
 
 // === 合规审计查询（金融监管 8 号文）：可按类别/风险等级/时间/会话过滤 ===
+
+/** 审计查询参数：在既有过滤条件上补分页（limit/offset 只在本层切片，见下方说明） */
+export interface AuditLogQuery extends AuditQueryFilter {
+  /** 本页条数；不传 = 全部 */
+  limit?: number;
+  /** 偏移量，从 0 开始；不传 = 0 */
+  offset?: number;
+}
+
 export async function getAuditLog(
-  query?: AuditQueryFilter,
+  query?: AuditLogQuery,
 ): Promise<{ count: number; entries: AuditEntry[] }> {
   try {
-    const response = await api.get('/audit', { params: query ?? {}, timeout: 15000 });
-    return response.data;
+    // 分页能力（server/src/routes/audit.ts 实际实现）：/api/audit 只支持过滤
+    // （category / riskLevel / startTime / endTime / sessionId），既没有 limit 也没有 offset，
+    // 同一份内存日志每次都是全量返回，count 是匹配总数。
+    // 因此这里【不】把 limit/offset 透传给服务端——服务端会静默忽略，
+    // 造成"接口看起来支持分页、实际没生效"的假象；改为在客户端切片：
+    //   count   = 服务端真实匹配总数（供「共 N 条」）
+    //   entries = 请求的那一页（供「加载更多」逐页追加）
+    // 后端将来真加上 limit/offset 时，务必删掉这里的 slice，否则会二次偏移、返回错误的页。
+    const { limit, offset, ...filters } = query ?? {};
+    const response = await api.get('/audit', { params: filters, timeout: 15000 });
+    const data = response.data as { count?: number; entries?: AuditEntry[] };
+    const entries = data.entries ?? [];
+    const start =
+      typeof offset === 'number' && Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0;
+    const take =
+      typeof limit === 'number' && Number.isFinite(limit) && limit >= 0
+        ? Math.floor(limit)
+        : undefined;
+    return {
+      count: typeof data.count === 'number' ? data.count : entries.length,
+      entries: take === undefined ? entries.slice(start) : entries.slice(start, start + take),
+    };
   } catch (error: unknown) {
     throw normalizeApiError(error, '审计查询失败');
   }

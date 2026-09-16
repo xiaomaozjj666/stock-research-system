@@ -36,9 +36,15 @@ interface StockData {
 
 type FormatType = 'score' | 'price' | 'pe' | 'pb' | 'cap' | 'percent' | 'text' | 'sentiment';
 
+/**
+ * 单元格取值：`null` = 因失败而缺值（渲染为「—」）。
+ * 与"字段合法地等于 0"严格区分——0 会被读成真实数值（如 PE=0），必须区别于缺值。
+ */
+type CellValue = number | string | null;
+
 interface RowConfig {
   label: string;
-  accessor: (s: StockData) => number | string;
+  accessor: (s: StockData) => CellValue;
   format: FormatType;
   higherIsBetter?: boolean;
 }
@@ -49,25 +55,27 @@ const COMPARISON_ROWS: RowConfig[] = [
   { label: '行业', accessor: (s) => s.industry, format: 'text' },
   {
     label: '当前价格',
-    accessor: (s) => s.valuation?.currentPrice ?? 0,
+    // 缺值返回 null（渲染「—」）而不是 ?? 0：0 会被误读为"价格 0 元"这样的真实数值。
+    // 注意这里只影响"缺值"路径，数值存在时的格式化逻辑不变。
+    accessor: (s) => s.valuation?.currentPrice ?? null,
     format: 'price',
     higherIsBetter: false,
   },
   {
     label: 'PE（市盈率）',
-    accessor: (s) => s.valuation?.pe ?? 0,
+    accessor: (s) => s.valuation?.pe ?? null,
     format: 'pe',
     higherIsBetter: false,
   },
   {
     label: 'PB（市净率）',
-    accessor: (s) => s.valuation?.pb ?? 0,
+    accessor: (s) => s.valuation?.pb ?? null,
     format: 'pb',
     higherIsBetter: false,
   },
   {
     label: '市值（亿）',
-    accessor: (s) => s.valuation?.marketCap ?? 0,
+    accessor: (s) => s.valuation?.marketCap ?? null,
     format: 'cap',
     higherIsBetter: false,
   },
@@ -75,7 +83,7 @@ const COMPARISON_ROWS: RowConfig[] = [
     label: 'ROE（%）',
     accessor: (s) => {
       const roe = s.finance_metrics?.roe;
-      return roe && roe.length > 0 ? roe[roe.length - 1] : 0;
+      return roe && roe.length > 0 ? roe[roe.length - 1] : null;
     },
     format: 'percent',
     higherIsBetter: true,
@@ -84,7 +92,7 @@ const COMPARISON_ROWS: RowConfig[] = [
     label: '毛利率（%）',
     accessor: (s) => {
       const gm = s.finance_metrics?.grossMargin;
-      return gm && gm.length > 0 ? gm[gm.length - 1] : 0;
+      return gm && gm.length > 0 ? gm[gm.length - 1] : null;
     },
     format: 'percent',
     higherIsBetter: true,
@@ -93,7 +101,7 @@ const COMPARISON_ROWS: RowConfig[] = [
     label: '净利率（%）',
     accessor: (s) => {
       const nm = s.finance_metrics?.netMargin;
-      return nm && nm.length > 0 ? nm[nm.length - 1] : 0;
+      return nm && nm.length > 0 ? nm[nm.length - 1] : null;
     },
     format: 'percent',
     higherIsBetter: true,
@@ -102,7 +110,7 @@ const COMPARISON_ROWS: RowConfig[] = [
     label: '专家情绪',
     accessor: (s) => {
       const opinions = s.expert_opinions ?? [];
-      if (opinions.length === 0) return 'neutral';
+      if (opinions.length === 0) return null;
       const bullishCount = opinions.filter((o) => o.overallSentiment === 'bullish').length;
       const bearishCount = opinions.filter((o) => o.overallSentiment === 'bearish').length;
       if (bullishCount > bearishCount) return 'bullish';
@@ -114,7 +122,9 @@ const COMPARISON_ROWS: RowConfig[] = [
   },
 ];
 
-function formatValue(v: number | string, format: FormatType): string {
+function formatValue(v: CellValue, format: FormatType): string {
+  // 因失败而缺值：显示「—」。0 会被读成真实数值（如 PE 0 倍），必须与缺值区分开。
+  if (v === null) return '—';
   if (format === 'text') return String(v);
   if (format === 'sentiment') {
     const map: Record<string, string> = { bullish: '偏多', neutral: '中性', bearish: '偏空' };
@@ -146,16 +156,17 @@ function ComparisonRow({
   higherIsBetter,
 }: {
   label: string;
-  values: (number | string)[];
+  values: CellValue[];
   format: FormatType;
   higherIsBetter?: boolean;
 }) {
-  const numericValues = values.map((v) => (typeof v === 'number' ? v : 0));
+  // null（因失败缺值）不参与数值比较：既不能出现在 max/min，也不能被标成最优/最差
+  const numericValues = values.filter((v): v is number => typeof v === 'number');
   const positiveValues = numericValues.filter((v) => v > 0);
   const maxVal = positiveValues.length > 0 ? Math.max(...positiveValues) : 0;
   const minVal = positiveValues.length > 0 ? Math.min(...positiveValues) : 0;
 
-  const getCellClass = (v: number | string) => {
+  const getCellClass = (v: CellValue) => {
     if (format === 'text' || format === 'sentiment') return '';
     const num = typeof v === 'number' ? v : 0;
     if (num <= 0) return '';
@@ -174,7 +185,7 @@ function ComparisonRow({
       <td className="cmp-label">{label}</td>
       {values.map((v, i) => (
         <td key={i} className={`cmp-cell ${getCellClass(v)}`}>
-          {format === 'sentiment' ? (
+          {format === 'sentiment' && v !== null && v !== '' ? (
             <span className={`sentiment-tag sentiment-${v}`}>{formatValue(v, format)}</span>
           ) : (
             formatValue(v, format)
@@ -185,13 +196,41 @@ function ComparisonRow({
   );
 }
 
+/** 把失败列表拼成一句可读中文（单只直接给原因，多只带代码前缀） */
+function describeFailures(failures?: { code: string; error: string }[]): string {
+  if (!failures || failures.length === 0) return '';
+  if (failures.length === 1) return failures[0].error;
+  return `部分股票分析失败：${failures.map((f) => `${f.code}（${f.error}）`).join('；')}`;
+}
+
+/**
+ * 单列视图模型：一列对应请求里的一只股票，成功则带结果、失败则带可读原因。
+ * 服务端只回成功项的 stocks（顺序与请求一致），这里按 code 与请求合并回原顺序，
+ * 失败的列因此能留在它原来的位置，而不是被挤到末尾。
+ */
+interface CompareColumnSuccess {
+  code: string;
+  name: string;
+  result: StockData;
+  error?: undefined;
+}
+interface CompareColumnFailure {
+  code: string;
+  name: string;
+  error: string;
+  result?: undefined;
+}
+type CompareColumn = CompareColumnSuccess | CompareColumnFailure;
+
 export function ComparisonView() {
   const [stocks, setStocks] = useState<string[]>([]);
   const [stockNames, setStockNames] = useState<Record<string, string>>({});
-  const [results, setResults] = useState<StockData[] | null>(null);
+  const [results, setResults] = useState<CompareColumn[] | null>(null);
   const [loading, setLoading] = useState(false);
   /** 已耗时（秒）：多股对比是 1~3 分钟的纯 POST，只有静态"分析中"无法判断是否卡住 */
   const [elapsedSec, setElapsedSec] = useState(0);
+  /** 单只重试中的股票代码：用于禁用该列的重试按钮，避免重复发起分钟级分析 */
+  const [retryingCode, setRetryingCode] = useState<string | null>(null);
   const startAtRef = useRef(0);
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** 在途对比请求的中止器：三只股的完整分析约 1-3 分钟，用户应能中途撤回 */
@@ -243,6 +282,41 @@ export function ComparisonView() {
     setStocks((prev) => prev.filter((s) => s !== code));
   };
 
+  /**
+   * 把服务端响应合并回"按请求顺序的列"。
+   * 失败项按 code 就地替换为失败列；服务端没提到的代码（旧后端只回 stocks）保持原样，
+   * 因此旧后端下行为与改动前一致。
+   */
+  const buildColumns = (
+    codes: string[],
+    data: { stocks?: StockData[]; failures?: { code: string; error: string }[] },
+    names: Record<string, string>,
+  ): CompareColumn[] => {
+    const byCode = new Map<string, StockData>();
+    for (const s of data.stocks ?? []) {
+      if (s && typeof s.stock_code === 'string') byCode.set(s.stock_code, s);
+    }
+    // failures 可能一词多报（理论上不会，但按最后一次为准，避免同列渲染两条原因）
+    const errorByCode = new Map<string, string>();
+    for (const f of data.failures ?? []) {
+      if (f && typeof f.code === 'string') errorByCode.set(f.code, String(f.error ?? '分析失败'));
+    }
+
+    const columns: CompareColumn[] = [];
+    for (const code of codes) {
+      const result = byCode.get(code);
+      const error = errorByCode.get(code);
+      const name = names[code] || code;
+      if (result) columns.push({ code, name: result.stock_name || name, result });
+      else if (error) columns.push({ code, name, error });
+    }
+    // 服务端多返回了请求里没有的代码（理论不会）：补在末尾，至少不丢数据
+    for (const [code, result] of byCode) {
+      if (!codes.includes(code)) columns.push({ code, name: result.stock_name || code, result });
+    }
+    return columns;
+  };
+
   const startCompare = async () => {
     if (stocks.length < 2) return;
     setLoading(true);
@@ -251,7 +325,15 @@ export function ComparisonView() {
     abortRef.current = controller;
     try {
       const data = await compareStocks(stocks, controller.signal);
-      setResults(data.stocks);
+      const columns = buildColumns(stocks, data, stockNames);
+      // 一只都没成功：不进入结果视图（不显示空表格），走下方既有错误提示路径
+      if (columns.length === 0) {
+        setError(describeFailures(data.failures) || '对比分析失败');
+        return;
+      }
+      setResults(columns);
+      // 部分失败：结果照常展示，同时把失败原因一并提示（失败列内也会各自标注）
+      if (data.failures && data.failures.length > 0) setError(describeFailures(data.failures));
     } catch (e: unknown) {
       // 取消属用户主动行为：静默收尾（spinner 消失即反馈），不当失败渲染
       if (!(e instanceof AnalysisCancelledError)) {
@@ -260,6 +342,47 @@ export function ComparisonView() {
     } finally {
       abortRef.current = null;
       setLoading(false);
+    }
+  };
+
+  /**
+   * 单只重试：接口要求一次 2-3 只（保留既有 400 校验，不改服务端契约），
+   * 故带上同批一只**已成功**的股票凑数——它在服务端分析去重（inFlightAnalyses 见
+   * analysisPipeline.runAnalysis）下不会重跑，等于只重试失败的那一只。
+   */
+  const retryOne = async (code: string) => {
+    if (!results || retryingCode) return;
+    const partner = results.find(
+      (c): c is CompareColumnSuccess => c.result !== undefined && c.code !== code,
+    );
+    if (!partner) return;
+    setRetryingCode(code);
+    setError('');
+    try {
+      const data = await compareStocks([code, partner.code]);
+      const retried = buildColumns([code, partner.code], data, stockNames)[0];
+      if (retried && retried.result) {
+        // 成功：就地替换该列（其余列与顺序不动）
+        setResults((prev) => (prev ? prev.map((c) => (c.code === code ? retried : c)) : prev));
+        setError('');
+        return;
+      }
+      const reason =
+        (retried && retried.error) || describeFailures(data.failures) || '仍未能完成分析';
+      // 显式构造失败列：不能用 `{...c, error}` —— 当 c 是成功列（带 result）时，
+      // 展开会得到同时含 result 与 error 的对象，不满足 CompareColumn 联合类型的判别式
+      setResults((prev) =>
+        prev
+          ? prev.map((c) => (c.code === code ? { code: c.code, name: c.name, error: reason } : c))
+          : prev,
+      );
+      setError(`「${stockNames[code] || code}」重试失败：${reason}`);
+    } catch (e: unknown) {
+      if (!(e instanceof AnalysisCancelledError)) {
+        setError(e instanceof Error ? e.message : '重试失败');
+      }
+    } finally {
+      setRetryingCode(null);
     }
   };
 
@@ -272,6 +395,7 @@ export function ComparisonView() {
     setStocks([]);
     setStockNames({});
     setError('');
+    setRetryingCode(null);
   };
 
   if (results) {
@@ -285,17 +409,38 @@ export function ComparisonView() {
             </button>
           </div>
 
+          {error && <div className="comparison-error">{error}</div>}
+
           <div className="comparison-table-wrap">
             <table className="comparison-table">
               <thead>
                 <tr>
                   <th>对比指标</th>
-                  {results.map((s) => (
-                    <th key={s.stock_code} className="cmp-stock-header">
-                      <div className="cmp-stock-name">{s.stock_name}</div>
-                      <div className="cmp-stock-code">{s.stock_code}</div>
-                    </th>
-                  ))}
+                  {results.map((col) =>
+                    col.result ? (
+                      <th key={col.code} className="cmp-stock-header">
+                        <div className="cmp-stock-name">{col.result.stock_name}</div>
+                        <div className="cmp-stock-code">{col.result.stock_code}</div>
+                      </th>
+                    ) : (
+                      // 失败列：留在原位置（不挤到末尾），标注「分析失败」+ 可读原因 + 单只重试
+                      <th key={col.code} className="cmp-stock-header cmp-stock-header-failed">
+                        <div className="cmp-stock-name">{col.name}</div>
+                        <div className="cmp-stock-code">{col.code}</div>
+                        <div className="cmp-fail-badge">分析失败</div>
+                        <div className="cmp-fail-reason">{col.error}</div>
+                        <button
+                          type="button"
+                          className="btn-ghost cmp-fail-retry"
+                          onClick={() => void retryOne(col.code)}
+                          disabled={retryingCode !== null || loading}
+                          data-testid={`retry-${col.code}`}
+                        >
+                          {retryingCode === col.code ? '重试中...' : '重试这一只'}
+                        </button>
+                      </th>
+                    ),
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -303,7 +448,8 @@ export function ComparisonView() {
                   <ComparisonRow
                     key={row.label}
                     label={row.label}
-                    values={results.map(row.accessor)}
+                    // 失败列直接给 null：单元格显示「—」，且不参与最优/最差比较
+                    values={results.map((col) => (col.result ? row.accessor(col.result) : null))}
                     format={row.format}
                     higherIsBetter={row.higherIsBetter}
                   />
@@ -313,33 +459,47 @@ export function ComparisonView() {
           </div>
 
           <div className="comparison-summaries">
-            {results.map((s) => (
-              <div key={s.stock_code} className="comparison-summary-card">
-                <div className="comparison-summary-header">
-                  <span className="comparison-summary-name">{s.stock_name}</span>
-                  <span className="comparison-summary-score">{s.total_score}分</span>
-                </div>
-                <p className="comparison-summary-text">{s.core_summary}</p>
-                <div className="comparison-summary-meta">
-                  <div className="comparison-summary-strengths">
-                    <span className="meta-label">核心优势</span>
-                    <ul>
-                      {(s.strengths ?? []).slice(0, 3).map((st, i) => (
-                        <li key={i}>{st}</li>
-                      ))}
-                    </ul>
+            {results.map((col) =>
+              col.result ? (
+                <div key={col.code} className="comparison-summary-card">
+                  <div className="comparison-summary-header">
+                    <span className="comparison-summary-name">{col.result.stock_name}</span>
+                    <span className="comparison-summary-score">{col.result.total_score}分</span>
                   </div>
-                  <div className="comparison-summary-risks">
-                    <span className="meta-label">主要风险</span>
-                    <ul>
-                      {(s.risk_list ?? []).slice(0, 3).map((r, i) => (
-                        <li key={i}>{r}</li>
-                      ))}
-                    </ul>
+                  <p className="comparison-summary-text">{col.result.core_summary}</p>
+                  <div className="comparison-summary-meta">
+                    <div className="comparison-summary-strengths">
+                      <span className="meta-label">核心优势</span>
+                      <ul>
+                        {(col.result.strengths ?? []).slice(0, 3).map((st, i) => (
+                          <li key={i}>{st}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="comparison-summary-risks">
+                      <span className="meta-label">主要风险</span>
+                      <ul>
+                        {(col.result.risk_list ?? []).slice(0, 3).map((r, i) => (
+                          <li key={i}>{r}</li>
+                        ))}
+                      </ul>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ) : (
+                <div key={col.code} className="comparison-summary-card comparison-summary-failed">
+                  <div className="comparison-summary-header">
+                    <span className="comparison-summary-name">{col.name}</span>
+                    <span className="comparison-summary-score">{col.code}</span>
+                  </div>
+                  <p className="comparison-summary-text">
+                    分析失败：{col.error}
+                    <br />
+                    该股未纳入本次对比，可用上方「重试这一只」单独重跑。
+                  </p>
+                </div>
+              ),
+            )}
           </div>
         </div>
       </ErrorBoundary>

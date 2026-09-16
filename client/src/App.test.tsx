@@ -181,4 +181,39 @@ describe('App', () => {
     expect(apiMock.analyzeStockStream).toHaveBeenCalled();
     expect(apiMock.analyzeStockStream.mock.calls.at(-1)?.[0]).toBe('600519');
   });
+
+  it('检测到上次被刷新/关页中断的分析时给出续跑入口，点击后带 resume 续跑', async () => {
+    sessionStorage.setItem(
+      'srs:inflight-analysis',
+      JSON.stringify({ code: '600519', startedAt: Date.now() - 60_000 }),
+    );
+    apiMock.analyzeStockStream.mockReturnValue({
+      done: Promise.resolve(makeResult()),
+      cancel: vi.fn(),
+    });
+    render(<App />);
+
+    const resumeBtn = await screen.findByRole('button', { name: '继续分析' });
+    fireEvent.click(resumeBtn);
+
+    await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
+    // 第三个参数即 SSE 选项：续跑必须走服务端断点，避免重复支付已完成的 LLM 成本
+    expect(apiMock.analyzeStockStream.mock.calls.at(-1)?.[2]).toEqual({ resume: true });
+    // 收尾后清除痕迹，避免下次进入又弹提示
+    expect(sessionStorage.getItem('srs:inflight-analysis')).toBeNull();
+  });
+
+  it('续跑提示可忽略：点击后消失且清除会话痕迹', async () => {
+    sessionStorage.setItem(
+      'srs:inflight-analysis',
+      JSON.stringify({ code: '600519', startedAt: Date.now() - 60_000 }),
+    );
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '忽略' }));
+
+    expect(screen.queryByRole('button', { name: '继续分析' })).toBeNull();
+    expect(sessionStorage.getItem('srs:inflight-analysis')).toBeNull();
+    expect(apiMock.analyzeStockStream).not.toHaveBeenCalled();
+  });
 });

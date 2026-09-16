@@ -32,9 +32,61 @@ const ComparisonView = lazy(() => import('./components/ComparisonView'));
 const PaperTradingPage = lazy(() => import('./pages/paper/PaperTradingPage'));
 const WatchlistPage = lazy(() => import('./pages/watchlist/WatchlistPage'));
 const HistoryPage = lazy(() => import('./pages/history/HistoryPage'));
+// 「今日」聚合页：自选股异动 + 关注股观点变化 + 最近简报（此前三者分散、且无日常入口）
+const TodayPanel = lazy(() => import('./pages/today/TodayPanel'));
 // 图表区懒加载：echarts 运行时（~196KB gzip）不再随首屏预加载，
 // 仅在分析结果出现、真正需要渲染图表时才拉取
 const ChartsSection = lazy(() => import('./components/ChartsSection'));
+
+/* ===== 在途分析的会话暂存：刷新/崩溃后提示续跑 ===== */
+
+/**
+ * sessionStorage 键。分析期间写入、正常收尾即清除——因此**只有非正常中断
+ * （刷新、关标签页、崩溃）才会留下痕迹**，正是需要提示续跑的场景。
+ * 服务端断点已具备（analysisPipeline 的 checkpoint），前端此前缺的只是"入口"。
+ */
+const INFLIGHT_KEY = 'srs:inflight-analysis';
+
+interface Inflight {
+  code: string;
+  startedAt: number;
+}
+
+function readInflight(): Inflight | null {
+  try {
+    const raw = sessionStorage.getItem(INFLIGHT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { code?: unknown; startedAt?: unknown };
+    if (typeof parsed.code !== 'string' || !/^\d{6}$/.test(parsed.code)) return null;
+    return {
+      code: parsed.code,
+      startedAt: typeof parsed.startedAt === 'number' ? parsed.startedAt : Date.now(),
+    };
+  } catch {
+    return null; // 隐私模式 / 存储被禁用：静默降级为"没有在途分析"
+  }
+}
+
+function clearInflight(): void {
+  try {
+    sessionStorage.removeItem(INFLIGHT_KEY);
+  } catch {
+    /* 存储不可用时忽略 */
+  }
+}
+
+/** 中断距今多久（用于提示文案；超过 6 小时后断点已过期，不再提示续跑） */
+function describeInterruption(startedAt: number): { text: string; resumable: boolean } {
+  const minutes = Math.floor((Date.now() - startedAt) / 60_000);
+  const text =
+    minutes < 1
+      ? '刚刚'
+      : minutes < 60
+        ? `${minutes} 分钟前`
+        : `${Math.floor(minutes / 60)} 小时前`;
+  // 服务端断点 TTL 为 6 小时（ANALYSIS_CHECKPOINT_TTL_MS 默认值），过期后只能重新分析
+  return { text, resumable: minutes < 360 };
+}
 
 /* ===== 全局快捷键用的小工具（模块级：不依赖组件闭包，也不必每次渲染重建） ===== */
 
@@ -131,11 +183,13 @@ function DashboardCards({ data }: { data: AnalysisResult['stock_pool'][0] }) {
   );
 }
 
-type TabId = 'research' | 'quant' | 'compare' | 'watchlist' | 'paper' | 'chat' | 'history';
+type TabId =
+  'research' | 'today' | 'quant' | 'compare' | 'watchlist' | 'paper' | 'chat' | 'history';
 
 /** 顶部功能导航：集中定义便于 ARIA tablist 的键盘导航（←/→/Home/End） */
 const TABS: { id: TabId; label: string }[] = [
   { id: 'research', label: '深度研究' },
+  { id: 'today', label: '今日' },
   { id: 'quant', label: '量化研究' },
   { id: 'compare', label: '对比分析' },
   { id: 'watchlist', label: '自选股' },
@@ -151,9 +205,7 @@ function App() {
   const [analysisStage, setAnalysisStage] = useState<AnalysisStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState('');
-  const [activeTab, setActiveTab] = useState<
-    'research' | 'quant' | 'compare' | 'watchlist' | 'paper' | 'chat' | 'history'
-  >('research');
+  const [activeTab, setActiveTab] = useState<TabId>('research');
   /**
    * 已激活过的 tab 集合：首次激活才挂载，之后常驻（非激活时靠 hidden 隐藏）。
    * 原先用 activeTab === 'xxx' && 条件渲染，切走即卸载，导致「对比已选股票」「模拟盘
@@ -174,6 +226,8 @@ function App() {
   const [viewingHistory, setViewingHistory] = useState(false);
   /** 滚动超过阈值时显示"回到顶部"浮动按钮 */
   const [showBackTop, setShowBackTop] = useState(false);
+  /** 上次分析被刷新/关页中断的痕迹（有则提示续跑；正常收尾会清除） */
+  const [interrupted, setInterrupted] = useState<Inflight | null>(() => readInflight());
 
   /** 导出当前报告为 Markdown（前端生成 + 下载） */
   const handleExport = useCallback(() => {
@@ -317,6 +371,16 @@ function App() {
     setError(null);
     setAnalysisStage(null);
     setViewingHistory(false); // 新分析开始：退出历史快照模式
+    // 记录在途标记：正常收尾（成功/失败/取消）会清除，只有刷新或关页才会留下
+    try {
+      sessionStorage.setItem(
+        INFLIGHT_KEY,
+        JSON.stringify({ code: stockCode, startedAt: Date.now() } satisfies Inflight),
+      );
+    } catch {
+      /* 存储不可用时忽略：续跑提示是增强能力 */
+    }
+    setInterrupted(null);
     try {
       const { done, cancel } = analyzeStockStream(
         stockCode,
@@ -341,6 +405,8 @@ function App() {
         setLoading(false);
         setAnalysisStage(null);
       }
+      // 本轮已收尾（成功/失败/取消皆然）：清掉在途标记，避免下次打开误报"可续跑"
+      if (gen === analyzeSeqRef.current) clearInflight();
     }
   }, []);
 
@@ -358,10 +424,23 @@ function App() {
     setError('已取消本次分析');
   }, []);
 
+  /** 忽略"上次中断的分析"提示（同时清掉痕迹，避免下次进入又弹） */
+  const dismissInterrupted = useCallback(() => {
+    clearInflight();
+    setInterrupted(null);
+  }, []);
+
+  /** 续跑上次被刷新/关页打断的分析：复用服务端断点，不重复支付已完成的 LLM 成本 */
+  const handleResumeInterrupted = useCallback(() => {
+    const code = interrupted?.code;
+    dismissInterrupted();
+    if (code) void handleAnalyze(code, { resume: true });
+  }, [interrupted, dismissInterrupted, handleAnalyze]);
+
   // 卸载时中断在途 SSE，避免内存泄漏与无效 setState
   useEffect(() => () => cancelRef.current?.(), []);
 
-  /* ===== 全局快捷键：Ctrl/⌘+K 聚焦搜索、Ctrl/⌘+Enter 直接分析、1~7 切 tab ===== */
+  /* ===== 全局快捷键：Ctrl/⌘+K 聚焦搜索、Ctrl/⌘+Enter 直接分析、数字键切 tab ===== */
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
@@ -488,6 +567,26 @@ function App() {
             </div>
           </>
         )}
+        {/* 刷新/关页中断的分析：提示可续跑（服务端断点已具备，此前前端没有入口） */}
+        {interrupted &&
+          !loading &&
+          (() => {
+            const info = describeInterruption(interrupted.startedAt);
+            return (
+              <div className="history-snapshot-banner" role="status">
+                上次对 <b>{interrupted.code}</b> 的分析在 {info.text}中断（刷新或关闭了页面）。
+                {info.resumable
+                  ? '可从已完成的阶段继续，不重复消耗已完成部分。'
+                  : '断点已过期，继续将重新开始。'}
+                <button className="btn-ghost" onClick={handleResumeInterrupted}>
+                  继续分析
+                </button>
+                <button className="btn-ghost" onClick={dismissInterrupted}>
+                  忽略
+                </button>
+              </div>
+            );
+          })()}
         {!loading && !error && !stockData && (
           <div className="research-empty">
             <div className="research-empty-card">
@@ -781,6 +880,11 @@ function App() {
       </div>
       {/* 懒加载面板：首次激活才挂载，之后常驻 + hidden（未激活过的不渲染，首屏不并发取数）。
           每个面板一个独立 Suspense 边界，见上方 TabPane 注释 */}
+      {shouldRenderTab('today') && (
+        <TabPane active={activeTab === 'today'}>
+          <TodayPanel />
+        </TabPane>
+      )}
       {shouldRenderTab('quant') && (
         <TabPane active={activeTab === 'quant'}>
           <QuantPage />

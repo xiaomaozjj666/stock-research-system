@@ -1067,6 +1067,11 @@ tr:hover td {
 .val-neutral {
   color: var(--text-secondary);
 }
+/* 风险量（如最大回撤）：既不是涨也不是跌，也不是「状态成功/失败」，
+   用琥珀色提示风险，避免借用涨跌色被读成方向 */
+.val-warn {
+  color: var(--color-warning);
+}
 
 /* ===== Valuation ===== */
 .val-cards {
@@ -3233,6 +3238,36 @@ tr:hover td {
   font-size: var(--text-overline);
   color: var(--text-muted);
   font-family: var(--font-mono);
+}
+
+/* 对比表里的「失败列」：部分成功时该列不参与对比，需明显区别于成功列，
+   同时把可读原因与单只重试按钮放在表头，避免用户被迫整批重跑 */
+.cmp-stock-header-failed .cmp-stock-name {
+  color: var(--text-secondary);
+}
+
+.cmp-fail-badge {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-warning);
+  color: var(--color-warning);
+  font-size: var(--text-caption);
+  font-weight: 700;
+}
+
+.cmp-fail-reason {
+  margin-top: 4px;
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.cmp-fail-retry {
+  margin-top: 6px;
+  font-size: var(--text-caption);
 }
 
 .comparison-table tbody td {
@@ -5662,6 +5697,15 @@ button.comparison-tag-add:disabled {
 }
 .batch-dir.sig-inverted {
   background: var(--color-warning-dim);
+}
+/* 方向徽章（看多/看空）：涨跌方向要用 A 股红涨绿跌，而不是显著性色板
+   （.sig-valid 绿曾让「看多」显示成绿色）。底色口径随之补齐，保持与上方一致的
+   「淡色底 + 同色字」观感；.sig-* 的规则保持原样，供显著性判定继续使用。 */
+.batch-dir.val-positive {
+  background: var(--color-positive-dim);
+}
+.batch-dir.val-negative {
+  background: var(--color-negative-dim);
 }
 .batch-alpha {
   font-weight: 700;

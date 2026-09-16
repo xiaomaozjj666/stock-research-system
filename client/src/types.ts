@@ -9,6 +9,26 @@ export interface DataQualityFlags {
   missingFields?: string[];
 }
 
+// === 多股对比（POST /api/compare） ===
+/** 单只标的的失败项：code 是股票代码，error 是服务端给出的可读中文（不含堆栈/上游 URL） */
+export interface CompareFailure {
+  code: string;
+  error: string;
+  /** 机器可读失败原因（如 DATA_UNAVAILABLE / LLM_QUEUE_TIMEOUT）；可缺省 */
+  errorCode?: string;
+}
+
+/**
+ * 对比响应：支持部分成功。
+ * - stocks 只含成功项，顺序与请求一致；
+ * - failures 为可选字段——服务端在"全部成功"时根本不返回该字段（与旧契约逐字兼容），
+ *   因此消费方必须按 `failures ?? []` 处理，不能假定它一定存在。
+ */
+export interface CompareResponse {
+  stocks: StockPoolItem[];
+  failures?: CompareFailure[];
+}
+
 // 财务数据（多年）
 export interface FinancialData {
   years: string[];

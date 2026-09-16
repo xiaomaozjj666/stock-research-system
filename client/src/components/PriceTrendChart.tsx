@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import EChart from './EChart';
+import { useReducedMotion } from '../hooks/useReducedMotion';
 import type { ECharts } from '../lib/echarts';
 import type { PricePoint } from '../types';
 import {
@@ -100,6 +101,8 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
   const [macdOn, setMacdOn] = useState(false);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const chartRef = useRef<ECharts | null>(null);
+  // 系统「减少动态效果」偏好：ECharts 入场动画走 canvas，CSS 媒体查询覆盖不到
+  const reducedMotion = useReducedMotion();
 
   const candles = useMemo<Candle[]>(
     () => aggregateCandles(data as Candle[], period),
@@ -375,7 +378,8 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
 
     return {
       backgroundColor: 'transparent',
-      animation: true,
+      // 减少动态效果时彻底关掉入场/更新动画（含 dataZoom 拖动时的过渡）
+      animation: !reducedMotion,
       animationDuration: 400,
       animationDurationUpdate: 300,
       axisPointer: {
@@ -429,7 +433,7 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
       ],
       series,
     };
-  }, [candles, closes, maValues, boll, maOn, activeMas, bollOn, macdOn]);
+  }, [candles, closes, maValues, boll, maOn, activeMas, bollOn, macdOn, reducedMotion]);
 
   if (!data || data.length === 0) return null;
 

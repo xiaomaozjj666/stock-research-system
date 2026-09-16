@@ -7,6 +7,7 @@ import {
   type FactorExperiment,
 } from '../../api/client';
 import { useToast } from '../../components/Toast';
+import { signCls, significanceCls } from '../../lib/colors';
 import type { IndustryBoard } from './types';
 import EChart from '../../components/EChart';
 
@@ -363,7 +364,8 @@ export default function FactorLabPanel() {
             <span key={p.period} className="factor-lab-period">
               {p.period}日：IC {fmtIc(p.ic.mean)}（p={fmtP(p.ic.pValue)}）·
               {p.oos.stable ? 'OOS稳定' : 'OOS不稳'} ·
-              <b className={p.verdict.effective ? 'sig-valid' : 'sig-none'}>
+              {/* 采信与否 = 统计显著性判定，走 .sig-* 色板 */}
+              <b className={significanceCls(p.verdict.effective ? 'valid' : 'none')}>
                 {p.verdict.effective ? '采信' : '不采信'}
               </b>
             </span>
@@ -376,7 +378,8 @@ export default function FactorLabPanel() {
           <div className="factor-lab-period">
             <b>组合回测</b>（{result.portfolio.periods} 期 · 平均换手{' '}
             {(result.portfolio.avgTurnover * 100).toFixed(0)}%）：总收益{' '}
-            <b className={result.portfolio.totalReturn >= 0 ? 'sig-valid' : 'sig-inverted'}>
+            {/* 总收益是「赚/亏」：走涨跌色（红涨绿跌），不再借显著性色板 */}
+            <b className={signCls(result.portfolio.totalReturn)}>
               {result.portfolio.totalReturn >= 0 ? '+' : ''}
               {result.portfolio.totalReturn.toFixed(1)}%
             </b>{' '}
@@ -442,13 +445,12 @@ export default function FactorLabPanel() {
                     <td title={it.expression ?? it.name}>{it.name}</td>
                     <td>{SOURCE_LABELS[it.source] ?? it.source}</td>
                     <td>{it.horizon}</td>
-                    <td className={it.icMean >= 0 ? 'sig-valid' : 'sig-inverted'}>
-                      {fmtIc(it.icMean)}
-                    </td>
+                    {/* IC 均值是「方向」量（正 = 因子看涨），按涨跌色；显著性另有 OOS/采信列 */}
+                    <td className={signCls(it.icMean)}>{fmtIc(it.icMean)}</td>
                     <td>{fmtP(it.pValue)}</td>
                     <td>{it.oosStable ? '稳定' : '不稳'}</td>
                     <td>
-                      <span className={it.kept ? 'sig-valid' : 'sig-none'}>
+                      <span className={significanceCls(it.kept ? 'valid' : 'none')}>
                         {it.kept ? '采信' : '不采信'}
                       </span>
                     </td>

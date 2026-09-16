@@ -21,6 +21,13 @@ import type {
   IntlFundamentalsResult,
 } from '../../types';
 
+/**
+ * 审计日志每页条数。
+ * 此前固定 `entries.slice(0, 20)` 且不显示总数，超出部分没有任何提示，
+ * 用户会以为"审计日志只有 20 条"（合规查询场景下这是误导）。
+ */
+const AUDIT_PAGE_SIZE = 20;
+
 /** 订单状态 → 徽章样式 */
 function orderBadge(status: PaperOrder['status']): { text: string; cls: string } {
   switch (status) {
@@ -168,6 +175,9 @@ export default function PaperTradingPage() {
   // 审计日志
   const [auditLevel, setAuditLevel] = useState<AuditRiskLevel | ''>('');
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
+  /** 服务端返回的匹配总数（count）：用于「共 N 条」与「加载更多」的剩余量 */
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditLoadingMore, setAuditLoadingMore] = useState(false);
 
   const loadAccount = useCallback(async () => {
     setLoading(true);
@@ -188,13 +198,41 @@ export default function PaperTradingPage() {
     // 请求序守卫：快速切换风险等级时，只采纳最后一次请求的结果（旧响应乱序返回会被丢弃）
     const seq = ++auditSeqRef.current;
     try {
-      const res = await getAuditLog(auditLevel ? { riskLevel: auditLevel } : {});
+      const filter = auditLevel ? { riskLevel: auditLevel } : {};
+      const res = await getAuditLog({ ...filter, limit: AUDIT_PAGE_SIZE, offset: 0 });
       if (seq !== auditSeqRef.current) return;
       setAuditEntries(res.entries);
+      setAuditTotal(res.count);
     } catch {
       /* 审计查询失败不阻塞主流程 */
     }
   }, [auditLevel]);
+
+  /** 「加载更多」：按 offset 取下一页并【追加】（不替换已显示条目） */
+  const loadMoreAudit = useCallback(async () => {
+    const seq = auditSeqRef.current; // 过滤条件已变化 → 本页作废，丢弃响应
+    setAuditLoadingMore(true);
+    try {
+      const filter = auditLevel ? { riskLevel: auditLevel } : {};
+      const res = await getAuditLog({
+        ...filter,
+        limit: AUDIT_PAGE_SIZE,
+        offset: auditEntries.length,
+      });
+      if (seq !== auditSeqRef.current) return;
+      // 追加而非替换；按 id 去重：审计日志持续写入，两次请求之间条目可能变动，
+      // offset 窗口轻微错位时宁可少一行，不要同一行渲染两次（React key 冲突）
+      setAuditEntries((prev) => {
+        const seen = new Set(prev.map((e) => e.id));
+        return [...prev, ...res.entries.filter((e) => !seen.has(e.id))];
+      });
+      setAuditTotal(res.count);
+    } catch {
+      /* 同上：加载更多失败不阻塞主流程 */
+    } finally {
+      setAuditLoadingMore(false);
+    }
+  }, [auditLevel, auditEntries.length]);
 
   useEffect(() => {
     loadAccount();
@@ -759,6 +797,25 @@ export default function PaperTradingPage() {
             </select>
           </div>
         </div>
+        <div className="paper-form-row">
+          <p className="paper-note">
+            共 {auditTotal} 条，当前显示前 {auditEntries.length} 条
+            {/* 审计日志按写入顺序（时间正序）返回，最早的在最前面 */}
+            {auditTotal > auditEntries.length && '（按时间正序，最早在前）'}
+          </p>
+          {auditEntries.length < auditTotal && (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={loadMoreAudit}
+              disabled={auditLoadingMore}
+            >
+              {auditLoadingMore
+                ? '加载中…'
+                : `加载更多（还剩 ${auditTotal - auditEntries.length} 条）`}
+            </button>
+          )}
+        </div>
         <div className="watchlist-table-wrap">
           <table className="watchlist-table">
             <thead>
@@ -778,7 +835,9 @@ export default function PaperTradingPage() {
                   </td>
                 </tr>
               ) : (
-                auditEntries.slice(0, 20).map((e) => {
+                // 已显示的条目全部渲染（不再固定 slice(0,20)）：
+                // 分页由上方「加载更多」控制，避免"取回 20 条又只展示 20 条"的重复截断
+                auditEntries.map((e) => {
                   const badge = riskBadge(e.riskLevel);
                   return (
                     <tr key={e.id}>

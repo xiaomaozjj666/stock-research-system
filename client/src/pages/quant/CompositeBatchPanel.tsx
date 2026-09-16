@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useId } from 'react';
 import { AnalysisCancelledError, runBatchCompositeAlpha, searchStocks } from '../../api/client';
 import { useToast } from '../../components/Toast';
+import { signCls } from '../../lib/colors';
 import type {
   CompositeAlphaBatchResult,
   CompositeAlphaBatchItem,
@@ -18,8 +19,17 @@ const DIRECTION_LABEL: Record<CompositeDirection, string> = {
   neutral: '中性',
 };
 
+/** 方向 → 符号：用于取涨跌色（up = 涨） */
+const DIRECTION_SIGN: Record<CompositeDirection, number> = { up: 1, down: -1, neutral: 0 };
+
+/**
+ * 方向样式（看多/看空/中性）→ 涨跌色。
+ * 这里表达的是「价格方向」而不是「统计显著性」：此前复用 .sig-valid（绿）/
+ * .sig-inverted（琥珀），会把「看多」渲染成绿色，与全站红涨绿跌口径相反。
+ * 显著性判定（显著因子数、OOS 通过）仍走 significanceCls。
+ */
 function dirCls(d: CompositeDirection): string {
-  return d === 'up' ? 'sig-valid' : d === 'down' ? 'sig-inverted' : 'sig-none';
+  return signCls(DIRECTION_SIGN[d]);
 }
 
 /** 解析用户输入的代码串：支持换行 / 逗号 / 空格 / 分号分隔 */
