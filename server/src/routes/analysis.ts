@@ -2,7 +2,13 @@
  * 核心分析：多专家研判 / SSE 流式 / 研究历史。
  */
 import { Router } from 'express';
-import { analyzeLimiter, circuitBreakerGuard } from '../middleware.js';
+import {
+  analyzeLimiter,
+  metaLimiter,
+  circuitBreakerGuard,
+  respondIfQueueTimeout,
+} from '../middleware.js';
+import { isQueueTimeoutError } from '../utils/limitGate.js';
 import { runAnalysis } from '../services/analysisPipeline.js';
 import {
   saveHistoryEntry,
@@ -76,6 +82,8 @@ router.post('/api/analyze', analyzeLimiter, circuitBreakerGuard, async (req, res
       stockCode: req.body?.stockCode,
       err: error,
     });
+    // LLM 排队超时是"系统繁忙可退避"，必须回 429 而不是 500
+    if (respondIfQueueTimeout(res, error, '/api/analyze')) return;
     res.status(500).json({ error: '分析过程出错', detail: (error as Error).message });
   }
 });
@@ -106,7 +114,16 @@ router.get('/api/analyze/stream', analyzeLimiter, circuitBreakerGuard, async (re
         stockCode,
         err: error,
       });
-      sse.trySend({ phase: 'error', message: (error as Error).message || '分析过程出错' });
+      // SSE 已 flushHeaders，状态码无法再改 429：改用带 code 的错误事件，
+      // 让前端能区分"系统繁忙可稍后重试"与真正的分析失败
+      const queueTimeout = isQueueTimeoutError(error);
+      sse.trySend({
+        phase: 'error',
+        message: queueTimeout
+          ? `LLM 调用排队超时（系统繁忙），请约 ${Math.max(1, Math.ceil(error.retryAfterMs / 1000))} 秒后重试`
+          : (error as Error).message || '分析过程出错',
+        ...(queueTimeout ? { code: error.code } : {}),
+      });
     }
   } finally {
     if (!res.writableEnded) res.end();
@@ -114,6 +131,12 @@ router.get('/api/analyze/stream', analyzeLimiter, circuitBreakerGuard, async (re
 });
 
 // === 研究历史记录（分析结果自动入库；列表/详情/删除） ===
+// 历史读接口每次都要读整份落盘 JSON 再切片，属「廉价但非零成本」的只读元数据：
+// 前端列表/详情会连续触发，故用 metaLimiter(30/min) 而不是分析用的 10/min 配额。
+// 用 router.use 挂前缀（而非逐条塞进 router.get）：:id 路由的 params 类型推断会因子
+// 中间件插入而退化，前缀挂载既覆盖三条路由，又不影响各处理函数的类型推断。
+router.use('/api/history', metaLimiter);
+
 router.get('/api/history', (req, res) => {
   const limit = Number(req.query.limit) || 50;
   res.json({ items: listHistory(limit) });

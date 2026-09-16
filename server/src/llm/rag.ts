@@ -132,17 +132,28 @@ function corpusRoots(): string[] {
 }
 
 /**
- * 目录签名（异步，只 stat + readdir，不读文件内容）：
- * 文件新增/删除会改变目录 mtime 或条目数 → 判为「语料变了」。
- * 同名单文件的内容覆盖不改变签名，由 TTL 兜底（见 loadCorpus）。
+ * 语料签名（异步，只 readdir + stat，不读文件内容）：
+ * 逐文件记录 `名称:mtime:大小`，因此**同名单文件的内容覆盖**也会立刻改变签名，
+ * 不必等 TTL 兜底——此前只用「目录 mtime + 条目数」，覆盖同名文件时签名不变，
+ * 最长 RAG_CORPUS_TTL_MS 内检索到的仍是旧内容。
+ * 每文件一次 stat：几百个文件的量级下开销可忽略，且全程异步不阻塞事件循环。
  */
 async function corpusSignature(): Promise<string> {
   const parts: string[] = [];
   for (const root of corpusRoots()) {
     try {
-      const st = await fsp.stat(root);
-      const count = (await fsp.readdir(root)).filter((f) => f.endsWith('.json')).length;
-      parts.push(`${root}:${st.mtimeMs}:${count}`);
+      const files = (await fsp.readdir(root)).filter((f) => f.endsWith('.json')).sort();
+      const entries = await Promise.all(
+        files.map(async (f) => {
+          try {
+            const st = await fsp.stat(path.join(root, f));
+            return `${f}:${Math.round(st.mtimeMs)}:${st.size}`;
+          } catch {
+            return `${f}:stat-failed`;
+          }
+        }),
+      );
+      parts.push(`${root}[${entries.join(',')}]`);
     } catch {
       parts.push(`${root}:missing`);
     }
@@ -225,8 +236,8 @@ function refreshCorpus(): Promise<void> {
 }
 
 /**
- * 异步取语料：每次检索做一次**廉价的**目录签名比对（stat + readdir，异步、不读文件内容），
- * 仅在「目录签名变化（有缓存文件新增/删除）」或「TTL 到期（同名单文件内容被覆盖）」时全量重建。
+ * 异步取语料：每次检索做一次**廉价的**签名比对（readdir + 逐文件 stat，异步、不读文件内容），
+ * 仅在「签名变化（文件新增/删除，或同名单文件被覆盖）」或「TTL 到期」时全量重建。
  */
 async function loadCorpus(): Promise<EvidenceDoc[]> {
   const snapshot = corpusSnapshot;

@@ -152,11 +152,7 @@ function buildPlannerPrompt(
 
 // ---------------------------------------------------------------- 草稿归一化
 
-function normalizeDraft(
-  draft: SubQuestionDraft,
-  fallbackQuestion: string,
-  config: ResearchConfig,
-): SubQuestion | null {
+function normalizeDraft(draft: SubQuestionDraft, fallbackQuestion: string): SubQuestion | null {
   const question = String(draft.question ?? '').trim();
   if (!question) return null;
 
@@ -215,7 +211,7 @@ export async function createPlan(
   const seen = new Set<string>();
   const subQuestions: SubQuestion[] = [];
   for (const draft of result.subQuestions) {
-    const sq = normalizeDraft(draft, question, config);
+    const sq = normalizeDraft(draft, question);
     if (!sq || seen.has(sq.question)) continue;
     seen.add(sq.question);
     subQuestions.push(sq);
@@ -233,7 +229,6 @@ export async function createPlan(
           successCriteria: '获得可交叉印证的相关证据',
         },
         question,
-        config,
       )!,
     );
   }
@@ -349,7 +344,7 @@ export async function revisePlan(
   // add：受总数上限与查重约束（不与现有子问题重复）
   for (const draft of result.add) {
     if (plan.subQuestions.length >= config.maxSubQuestions) break;
-    const sq = normalizeDraft(draft, plan.originalQuestion, config);
+    const sq = normalizeDraft(draft, plan.originalQuestion);
     if (!sq) continue;
     const dup = plan.subQuestions.some(
       (s) => s.question.toLowerCase() === sq.question.toLowerCase(),

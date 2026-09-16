@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import request from 'supertest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { app } from '../index.js';
@@ -202,5 +202,64 @@ describe('POST /api/watchlist/news-backtest —— 端到端（route→service�
     const codes = Array.from({ length: 21 }, (_, i) => String(600000 + i).padStart(6, '0'));
     const res = await request(app).post('/api/watchlist/news-backtest').send({ codes });
     expect(res.status).toBe(400);
+  });
+});
+
+/**
+ * 监控（monitor）的单次上限与「跳过只数」披露 —— 真实链路（route → service 上限裁剪）。
+ * 与 news-backtest 的「>20 直接 400」不同：monitor 是定时/自治循环驱动的唯一预警通道，
+ * 清单超限就整体报错等于关掉预警，故改为「处理前 N 只 + 如实披露跳过只数」。
+ */
+describe('POST /api/watchlist/monitor —— 单次上限与跳过只数（真实链路）', () => {
+  const origAlertsFile = process.env.WATCHLIST_ALERTS_FILE;
+  const origMaxCodes = process.env.WATCHLIST_MAX_CODES;
+  const alertsFile = join(_watchlistTmpDir, 'watchlistAlerts.json');
+
+  beforeAll(() => {
+    // 快照落盘同样重定向到临时目录，避免污染 server/src/data/
+    process.env.WATCHLIST_ALERTS_FILE = alertsFile;
+    process.env.WATCHLIST_MAX_CODES = '2';
+  });
+
+  afterAll(() => {
+    if (origAlertsFile === undefined) delete process.env.WATCHLIST_ALERTS_FILE;
+    else process.env.WATCHLIST_ALERTS_FILE = origAlertsFile;
+    if (origMaxCodes === undefined) delete process.env.WATCHLIST_MAX_CODES;
+    else process.env.WATCHLIST_MAX_CODES = origMaxCodes;
+  });
+
+  function seedWatchlist(codes: string[]): void {
+    writeFileSync(join(_watchlistTmpDir, 'watchlist.json'), JSON.stringify(codes), 'utf-8');
+  }
+
+  it('清单 3 只 > 上限 2：只取数 2 只，并在响应里如实说明跳过 1 只', async () => {
+    seedWatchlist(['600519', '000001', '300750']);
+
+    const res = await request(app).post('/api/watchlist/monitor');
+
+    expect(res.status).toBe(200);
+    expect(res.body.monitored).toBe(2);
+    expect(res.body.requested).toBe(3);
+    expect(res.body.skipped).toBe(1);
+    expect(res.body.alerts).toHaveLength(1); // 600519 命中强看多
+    expect(res.body.alerts[0]).toMatchObject({ code: '600519', level: 'strong-bull' });
+    // 关键：被跳过的第 3 只根本没取数（上限的作用就是不打上游）
+    expect(mocks.fetchOHLCVData).toHaveBeenCalledTimes(2);
+
+    // 落盘与响应共用同一份披露：刷新页面（GET）读到的 skipped 一致
+    const get = await request(app).get('/api/watchlist/alerts');
+    expect(get.body).toEqual(res.body);
+    expect(get.body.skipped).toBe(1);
+  });
+
+  it('未超上限：不含 requested/skipped（无裁剪时响应结构保持既有兼容）', async () => {
+    seedWatchlist(['600519']);
+
+    const res = await request(app).post('/api/watchlist/monitor');
+
+    expect(res.status).toBe(200);
+    expect(res.body.monitored).toBe(1);
+    expect(res.body.requested).toBeUndefined();
+    expect(res.body.skipped).toBeUndefined();
   });
 });

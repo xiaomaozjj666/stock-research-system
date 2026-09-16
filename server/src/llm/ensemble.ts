@@ -22,6 +22,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { chat, type ChatMessage } from './client.js';
 import { getModelRegistry, selectModel, type LLMTask } from './config.js';
+import { clampMaxTokens, clampTemperature, isQueueTimeoutError } from '../utils/limitGate.js';
 
 interface ModelStat {
   correct: number;
@@ -178,6 +179,12 @@ export function answerSimilarity(a: string, b: string): number {
  * 该簇，否则自立新簇；胜出簇 = 累计权重最高，consensus 取簇内权重最高成员的
  * 原文（聚类按权重降序遍历，先入簇者即簇内最高权重）。结构化输出（JSON）
  * 只认逐字相同——枚举值差异会被字符 bigram 的骨架重叠掩盖。
+ *
+ * 并发上限：本函数的 N 路扇出**经由 llm/client.ts 的进程级闸门**排队
+ * （每个模型的 chat 各占一个配额），因此这里刻意不再自己 acquire——同一闸门
+ * 嵌套 acquire 会在 LLM_MAX_CONCURRENCY 较小时自我死锁（外层占 1 个配额后，
+ * 内层 N 个调用永远等不到配额）。"限制扇出宽度"由闸门统一负责，路由层还把
+ * models 数量限制在 5 个以内。
  */
 export async function runEnsemble(
   messages: ChatMessage[],
@@ -194,6 +201,12 @@ export async function runEnsemble(
   const threshold = options.similarityThreshold ?? DEFAULT_SIMILARITY_THRESHOLD;
   const models = options.models?.length ? options.models : candidateModels(task);
   const weights = new Map(models.map((m) => [m, modelWeight(m)]));
+  // 参数夹紧（防御性）：路由层已做严格校验（越界 400 / 夹紧），但 runEnsemble
+  // 也可能被内部调用；上游调用绝不透传越界值——maxTokens 是账单放大的直接入口。
+  const temperature = clampTemperature(options.temperature);
+  const maxTokens = clampMaxTokens(options.maxTokens);
+  /** 保留原始错误对象：全部失败时要向上抛出它，而不是只抛 message（否则错误码丢失） */
+  const failures: unknown[] = [];
 
   const settled = await Promise.all(
     models.map(async (model) => {
@@ -201,11 +214,12 @@ export async function runEnsemble(
         const text = await chat(messages, {
           model,
           task,
-          ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-          ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+          ...(temperature !== undefined ? { temperature } : {}),
+          ...(maxTokens !== undefined ? { maxTokens } : {}),
         });
         return { model, ok: true, text, weight: weights.get(model) ?? 0.5 } as EnsembleAnswer;
       } catch (error) {
+        failures.push(error);
         return {
           model,
           ok: false,
@@ -219,7 +233,13 @@ export async function runEnsemble(
 
   const answers = settled.filter((a) => a.ok);
   if (answers.length === 0) {
-    throw new Error(settled[0]?.error ?? '集成调用失败');
+    // 全部失败时优先抛闸门排队超时（可重试的 429 语义），否则抛第一个原始错误对象：
+    // 原实现只抛 new Error(message)，会把 LLM_QUEUE_TIMEOUT 这类错误码在这一层抹掉，
+    // 路由层便只能返回 502，客户端拿不到 Retry-After。
+    const queueTimeout = failures.find((e) => isQueueTimeoutError(e));
+    if (queueTimeout) throw queueTimeout;
+    const first = failures[0];
+    throw first instanceof Error ? first : new Error(settled[0]?.error ?? '集成调用失败');
   }
 
   // 贪心聚类：权重降序入场，相似则并入既有簇（簇代表 = 簇内最高权重成员原文）

@@ -18,13 +18,28 @@ export function marketOf(code: string): Market {
 }
 
 /**
+ * 允许进入 secid 的字符白名单（数字/字母/点/连字符，长度上限 12）。
+ * 这是**出站 URL 拼接前的最后一道闸**：secid 会被直接插进上游查询串（`secid=${secid}`），
+ * 而 `resolveSecid` 对非港美股形态一律按 A 股拼 `0.${code}`，于是 `1&lmt=99999`
+ * 这种入参能改写上游参数（改 lmt/fs 等）。
+ * 刻意不在此处做严格的「6 位数字」校验：`marketOf` 与既有测试允许 4~7 位等历史形态
+ * （见 dataProvider.extra.test.ts 的 `0.1234567` 用例），严格形态校验已由路由层
+ * `utils/stockCode.ts` 的 normalizeStockCode 承担；这里只堵可改写 URL 的元字符。
+ */
+const SAFE_CODE_RE = /^[A-Za-z0-9.-]{1,12}$/;
+
+/**
  * 把代码解析为东方财富 secid（含港股/美股）。
  * A 股：6 开头→1.（上交所），其余→0.（深交所）——与历史 getSecId 完全一致。
  * 港股：5 位→116.（港股通/港股市场）。
  * 美股：字母→107.（美股市场，大写）。
+ * @throws 代码含可改写 URL 的字符时抛出，调用方据此快速失败而不是发出畸形上游请求
  */
 export function resolveSecid(code: string): string {
   const c = code.trim();
+  if (!SAFE_CODE_RE.test(c)) {
+    throw new Error(`非法股票代码（含不允许的字符）：${c.slice(0, 32)}`);
+  }
   const m = marketOf(c);
   if (m === 'HK') return `116.${c}`;
   if (m === 'US') return `107.${c.toUpperCase()}`;

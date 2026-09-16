@@ -9,10 +9,13 @@ const mocks = vi.hoisted(() => ({
   removeFromWatchlist: vi.fn((): string[] => []),
 }));
 
+// 路由还会用 watchlistMax() 做容量预检（超限回可操作 400），mock 必须一并给出，
+// 否则调用到 undefined 会让 POST /api/watchlist 变成 500。
 vi.mock('../services/watchlistService.js', () => ({
   getWatchlist: mocks.getWatchlist,
   addToWatchlist: mocks.addToWatchlist,
   removeFromWatchlist: mocks.removeFromWatchlist,
+  watchlistMax: () => 200,
 }));
 
 beforeEach(() => {

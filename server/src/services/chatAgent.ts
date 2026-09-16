@@ -22,6 +22,7 @@ import {
 import { retrieveEvidence, type EvidenceDoc, type Embedder } from '../llm/rag.js';
 import { TOOL_DEFINITIONS, executeToolCall, type ToolDeps } from '../llm/tools.js';
 import { routeSkill, type SkillId } from '../llm/skillRouter.js';
+import { clampChatHistory } from '../utils/limitGate.js';
 import { loadHistory, appendTurn } from './chatMemory.js';
 
 export interface ChatTurn {
@@ -486,8 +487,12 @@ export function createChatAgent(deps: ChatAgentDeps) {
         .slice(0, 3000);
 
       // 历史：优先用请求内联 history，否则从持久记忆加载
-      const history =
-        req.history ?? (req.sessionId && deps.loadHistory ? deps.loadHistory(req.sessionId) : []);
+      // 再统一夹紧一次（条数/单条/总字符上限见 utils/limitGate.ts）：路由层已校验
+      // 内联 history，但**持久记忆加载路径不经过路由**，且历史无界增长会直接推高
+      // 每次调用的 prompt 成本与延迟，必须在这一层兜底。
+      const history = clampChatHistory(
+        req.history ?? (req.sessionId && deps.loadHistory ? deps.loadHistory(req.sessionId) : []),
+      );
 
       if (!deps.isLLMAvailable()) {
         const resp = await runFallback(req, deps, evidence);

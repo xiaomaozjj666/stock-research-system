@@ -119,10 +119,14 @@ export function buildOpenApiDocument() {
             required: ['stockCodes'],
           }),
           responses: {
-            200: { description: '各股分析结果数组（stocks）' },
+            200: {
+              description:
+                '各股分析结果（stocks）+ 失败清单（failures: [{code, error}]）；' +
+                '单只失败不影响其余股票出结果，failures 为空时与旧契约一致',
+            },
             400: errorResponse('股票数量或代码无效'),
-            429: errorResponse('触发限流（默认每分钟 3 次）'),
-            500: errorResponse('对比分析失败'),
+            429: errorResponse('触发限流（默认每分钟 3 次），或 LLM 排队超时（带 Retry-After）'),
+            500: errorResponse('对比分析失败（全部股票均失败且响应契约不含失败清单时）'),
             503: errorResponse('合规熔断触发'),
           },
         },
@@ -258,9 +262,9 @@ export function buildOpenApiDocument() {
               description:
                 '组合 alpha 结果（stockCode/market/benchmarkSecid/horizons/compositeAlpha[综合方向·显著因子数·方向一致率]/factorPredictability[逐因子 IC/t/p/显著]/bars/dataRange/benchmarkAvailable）',
             },
-            400: errorResponse('缺少股票代码 stockCode'),
+            400: errorResponse('缺少股票代码 stockCode，或代码形态非法（含可改写上游 URL 的字符）'),
             422: errorResponse('无法获取 K 线数据'),
-            429: errorResponse('触发限流（默认每分钟 5 次）'),
+            429: errorResponse('触发限流（默认每分钟 5 次），或 LLM 排队超时（带 Retry-After）'),
             500: errorResponse('组合 alpha 计算失败'),
             503: errorResponse('合规熔断触发'),
           },
@@ -564,8 +568,12 @@ export function buildOpenApiDocument() {
         post: {
           tags: ['watchlist'],
           summary: '主动监控：批量回测 + 异动预警',
+          description:
+            '对自选股清单跑批量新闻回测并检出异动。单次处理上限默认 20 只（WATCHLIST_MAX_CODES 可调），' +
+            '超出部分被跳过并在响应中如实披露 requested/skipped（不静默截断）；结果落盘，' +
+            '可由 GET /api/watchlist/alerts 回看。',
           responses: {
-            200: { description: '异动预警（alerts）' },
+            200: { description: '异动预警（alerts；超上限时另有 requested/skipped）' },
             400: errorResponse('清单为空'),
             429: errorResponse('触发限流'),
             500: errorResponse('监控失败'),
@@ -672,16 +680,23 @@ export function buildOpenApiDocument() {
         post: {
           tags: ['system'],
           summary: '重置 LLM 成本账本',
-          responses: { 200: { description: 'ok' } },
+          responses: {
+            200: { description: 'ok' },
+            429: errorResponse('触发限流（写操作默认每分钟 10 次）'),
+          },
         },
       },
       '/api/health': {
         get: {
           tags: ['system'],
           summary: '健康检查（外部 API 可达性 + 缓存目录）',
+          description:
+            '外呼探测带 60 秒 memo（HEALTH_PROBE_MEMO_MS 可覆盖，0=关闭）且并发合流；' +
+            '响应中的 cached/checkedAt 如实标注结论来自缓存还是本次探测。GET 只读，不创建目录。',
           responses: {
-            200: { description: 'status=ok' },
-            503: errorResponse('外部数据源不可达或缓存目录异常（降级态）'),
+            200: { description: 'status=ok（缓存目录缺失时 cacheDir.status=missing，仍为 200）' },
+            429: errorResponse('触发限流（健康探针默认每分钟 120 次）'),
+            503: errorResponse('外部数据源不可达或缓存目录不可读写（降级态）'),
           },
         },
       },
@@ -695,6 +710,7 @@ export function buildOpenApiDocument() {
               description: 'Prometheus 文本格式指标',
               content: { 'text/plain; version=0.0.4': { schema: { type: 'string' } } },
             },
+            429: errorResponse('触发限流（与健康探针共享 120 次/分钟配额）'),
           },
         },
       },

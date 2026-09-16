@@ -192,7 +192,7 @@ export async function verifySubQuestion(
   // ---- LLM 一致性分析 ----
   const evidenceLines = evidence
     .map(
-      (e, i) =>
+      (e) =>
         `[${e.id}] (来源: ${SOURCE_TIER[e.source.type].label}${e.source.publisher ? `/${e.source.publisher}` : ''}${e.source.publishedAt ? `/${e.source.publishedAt.slice(0, 10)}` : ''}, 可信度 ${round2(e.credibility)}) ${e.claim}`,
     )
     .join('\n');

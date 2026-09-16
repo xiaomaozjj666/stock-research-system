@@ -2,9 +2,10 @@
  * 对话式助手：自然语言入口（POST + SSE 流式）与持久记忆清空。
  */
 import { Router } from 'express';
-import { chatLimiter, circuitBreakerGuard } from '../middleware.js';
+import { chatLimiter, circuitBreakerGuard, respondIfQueueTimeout } from '../middleware.js';
 import { chatAgent } from '../services/chatAgent.js';
 import { clearHistory } from '../services/chatMemory.js';
+import { validateChatHistory, isQueueTimeoutError } from '../utils/limitGate.js';
 import { createSseChannel } from '../utils/sse.js';
 import logger from '../utils/logger.js';
 
@@ -21,14 +22,24 @@ router.post('/api/chat', chatLimiter, circuitBreakerGuard, async (req, res) => {
     if (message.length > 2000) {
       return res.status(400).json({ error: '对话内容过长（上限 2000 字）' });
     }
+    // history：结构非法（非数组/user-assistant 之外的角色/content 非字符串）→ 400；
+    // 条数与字符超限 → 夹紧（history 由客户端累积，400 会直接打断对话；
+    // 上限值见 utils/limitGate.ts，服务层对持久记忆路径另有同样的兜底）。
+    const history = validateChatHistory(body.history);
+    if (!history.ok) {
+      return res.status(400).json({ error: history.error });
+    }
     const result = await chatAgent.run({
       message,
-      history: Array.isArray(body.history) ? body.history : undefined,
+      // 仅在客户端确实传了数组时才带上 history（空数组也不落回持久记忆，保持既有语义）
+      ...(Array.isArray(body.history) ? { history: history.turns } : {}),
       stockCode: typeof body.stockCode === 'string' ? body.stockCode : undefined,
       sessionId: typeof body.sessionId === 'string' ? body.sessionId : undefined,
     });
     res.json(result);
   } catch (error) {
+    // LLM 闸门排队超时 → 429 + Retry-After，而不是笼统 500
+    if (respondIfQueueTimeout(res, error, '/api/chat')) return;
     logger.error('Chat error', { route: '/api/chat', err: error });
     res.status(500).json({ error: '对话处理失败', detail: (error as Error).message });
   }
@@ -60,6 +71,18 @@ router.get('/api/chat/stream', chatLimiter, circuitBreakerGuard, async (req, res
   } catch (error) {
     if (sse.isClosed()) {
       logger.info('SSE 客户端已断开，对话提前中止', { route: '/api/chat/stream' });
+    } else if (isQueueTimeoutError(error)) {
+      // SSE 已 flushHeaders，状态码无法再改成 429；改为在错误事件里给出可退避的
+      // 明确文案（含建议等待秒数），并 warn 留痕（错误码仍是 LLM_QUEUE_TIMEOUT）
+      logger.warn('[llm-gate] SSE 对话因 LLM 排队超时中止', {
+        route: '/api/chat/stream',
+        code: error.code,
+        retryAfter: error.retryAfterSeconds,
+      });
+      sse.trySend({
+        phase: 'error',
+        message: `系统繁忙（LLM 排队超时），请 ${error.retryAfterSeconds} 秒后重试`,
+      });
     } else {
       logger.error('Chat stream error', { route: '/api/chat/stream', err: error });
       sse.trySend({ phase: 'error', message: (error as Error).message || '对话处理失败' });

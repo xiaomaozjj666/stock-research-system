@@ -11,6 +11,8 @@ import {
   normalizeAlertsSnapshot,
   saveWatchlistAlertsSnapshot,
   MAX_ALERTS_PER_SNAPSHOT,
+  DEFAULT_WATCHLIST_MAX,
+  watchlistMax,
   type WatchlistAlertsSnapshot,
 } from '../watchlistService.js';
 import type { WatchlistAlert } from '../alerts.js';
@@ -195,5 +197,117 @@ describe('watchlistService 异动监控快照', () => {
     expect(back.alerts).toHaveLength(1);
     expect(back.alerts[0].code).toBe('600519');
     expect(back.alerts[0].name).toBeNull(); // 缺失字段收敛为 null，而非 undefined
+  });
+
+  it('requested/skipped 随快照落盘并可读回（上限裁剪如实披露）', () => {
+    saveWatchlistAlertsSnapshot(
+      normalizeAlertsSnapshot({
+        generatedAt: '2026-09-15T10:00:00.000Z',
+        monitored: 20,
+        alerts: [],
+        requested: 200,
+        skipped: 180,
+      }),
+    );
+    const back = getWatchlistAlertsSnapshot();
+    expect(back.monitored).toBe(20);
+    expect(back.requested).toBe(200);
+    expect(back.skipped).toBe(180);
+  });
+
+  it('无裁剪时快照不含 requested/skipped（响应结构保持既有兼容）', () => {
+    const snap = normalizeAlertsSnapshot({
+      generatedAt: '2026-09-15T10:00:00.000Z',
+      monitored: 3,
+      alerts: [],
+      requested: 3,
+      skipped: 0,
+    });
+    expect(snap).not.toHaveProperty('skipped');
+    expect(snap).not.toHaveProperty('requested');
+    // 脏输入自相矛盾（跳过 9 只 / 共 3 只）时，跳过数被夹到请求数以内
+    const clamped = normalizeAlertsSnapshot({
+      generatedAt: null,
+      monitored: 0,
+      alerts: [],
+      requested: 3,
+      skipped: 9,
+    });
+    expect(clamped.skipped).toBe(3);
+  });
+});
+
+/* ============================================================================
+ * 清单容量上限（P1：自选股无上限）
+ * ----------------------------------------------------------------------------
+ * 上限的「可操作 400」在路由层（见 __tests__/watchlistCapacity.routes.test.ts）；
+ * 这里锁定服务层自己的闸门：解析 env、满员不写入、幂等新增不算新增、
+ * 批量设置（无 HTTP 出口）不越限写入。
+ * ==========================================================================*/
+describe('watchlistService 清单容量上限', () => {
+  afterEach(() => {
+    delete process.env.WATCHLIST_MAX;
+  });
+
+  it('默认上限 200；WATCHLIST_MAX 可调', () => {
+    delete process.env.WATCHLIST_MAX;
+    expect(DEFAULT_WATCHLIST_MAX).toBe(200);
+    expect(watchlistMax()).toBe(200);
+
+    process.env.WATCHLIST_MAX = '3';
+    expect(watchlistMax()).toBe(3);
+  });
+
+  it('上限配置非法（NaN / 0 / 负数）回落默认值，不把写入口变成永远拒绝', () => {
+    for (const bad of ['abc', '0', '-5', '']) {
+      process.env.WATCHLIST_MAX = bad;
+      expect(watchlistMax(), `WATCHLIST_MAX=${bad}`).toBe(DEFAULT_WATCHLIST_MAX);
+    }
+  });
+
+  it('达到上限后 addToWatchlist 不再写入（返回原清单，不静默扩容）', () => {
+    process.env.WATCHLIST_MAX = '2';
+    addToWatchlist('600519');
+    addToWatchlist('000001');
+
+    const res = addToWatchlist('300750');
+
+    expect(res).toEqual(['600519', '000001']);
+    expect(getWatchlist()).toEqual(['600519', '000001']); // 磁盘也没有被改写
+  });
+
+  it('满员时重复添加已有代码仍是幂等成功（去重优先于容量）', () => {
+    process.env.WATCHLIST_MAX = '1';
+    addToWatchlist('600519');
+    expect(addToWatchlist('600519')).toEqual(['600519']);
+  });
+
+  it('删掉一只后可以继续新增', () => {
+    process.env.WATCHLIST_MAX = '1';
+    addToWatchlist('600519');
+    expect(addToWatchlist('000001')).toEqual(['600519']);
+
+    removeFromWatchlist('600519');
+    expect(addToWatchlist('000001')).toEqual(['000001']);
+  });
+
+  it('setWatchlist 批量导入不越限写入（保留前 N 只）', () => {
+    process.env.WATCHLIST_MAX = '2';
+    const res = setWatchlist(['600519', '000001', '300750', '600036']);
+    expect(res).toEqual(['600519', '000001']);
+    expect(getWatchlist()).toEqual(['600519', '000001']);
+  });
+
+  it('removeFromWatchlist 复用统一校验：非法代码按「不存在」处理且不写盘', () => {
+    addToWatchlist('600519');
+    expect(removeFromWatchlist('abc')).toEqual(['600519']);
+    expect(removeFromWatchlist('600519&x=1')).toEqual(['600519']);
+    expect(removeFromWatchlist('600519')).toEqual([]);
+  });
+
+  it('addToWatchlist 复用统一校验：含特殊字符/超长的代码被拒绝', () => {
+    expect(addToWatchlist('600519&lmt=99999')).toEqual([]);
+    expect(addToWatchlist('0'.repeat(30))).toEqual([]);
+    expect(getWatchlist()).toEqual([]);
   });
 });

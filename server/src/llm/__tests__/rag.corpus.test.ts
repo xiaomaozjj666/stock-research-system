@@ -82,15 +82,24 @@ describe('RAG 语料索引：目录与异步读取', () => {
     expect(syncMs).toBeLessThan(50);
   });
 
-  it('TTL 内复用快照：同名文件内容被覆盖也不重读（省掉每条消息的全量解析）', async () => {
+  it('同名文件内容被覆盖后立即重新索引（逐文件 mtime/size 判据，无需等 TTL）', async () => {
     const file = join(cacheDir, '600519.json');
     writeCacheFile('600519.json', { stockCode: '600519', text: SENTINEL });
     expect((await retrieveEvidence(SENTINEL)).length).toBe(1);
 
-    // 覆盖为新内容（目录签名不变）：TTL 内应继续用快照
+    // 覆盖为新内容：逐文件签名（mtime/size）变化 → 立刻重读。
+    // 此前只用「目录 mtime + 条目数」，覆盖同名文件签名不变，最长 TTL 内会检索到旧内容。
     fs.writeFileSync(file, JSON.stringify({ stockCode: '600519', text: REPLACED }));
-    expect((await retrieveEvidence(SENTINEL)).length).toBe(1);
-    expect((await retrieveEvidence('yqmarker replaced')).length).toBe(0);
+    // 显式推进 mtime：同毫秒内完成写入时 mtime 可能不变，会让断言随机失败
+    const future = new Date(Date.now() + 2000);
+    fs.utimesSync(file, future, future);
+
+    const hits = await retrieveEvidence('yqmarker replaced');
+    expect(hits).toHaveLength(1);
+    // 用文档内容而非命中数判断新旧：SENTINEL 与 REPLACED 共享 "keyword" 词元，
+    // 只数命中条数无法区分「读到了新内容」还是「旧快照仍被关键词命中」
+    expect(hits[0].text).toContain('yqmarker');
+    expect(hits[0].text).not.toContain('zqmarker');
   });
 
   it('关闭缓存（RAG_CORPUS_TTL_MS=0）时每次检索重扫，新内容可见', async () => {

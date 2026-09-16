@@ -300,4 +300,15 @@ describe('marketOf / resolveSecid — 边界情况', () => {
     expect(marketOf('1234567')).toBe('A');
     expect(resolveSecid('1234567')).toBe('0.1234567');
   });
+
+  it('拒绝可改写上游查询串的代码（secid 注入防护）', () => {
+    // secid 会直接插进上游 URL（secid=...），这些入参能改写 lmt/fs 等参数
+    for (const bad of ['1&lmt=99999', '600519?x=1', '600519 1', 'a"%20b', '600519/../x']) {
+      expect(() => resolveSecid(bad)).toThrow(/非法股票代码/);
+    }
+  });
+
+  it('超长代码同样被拒（长度上限 12）', () => {
+    expect(() => resolveSecid('6'.repeat(13))).toThrow(/非法股票代码/);
+  });
 });

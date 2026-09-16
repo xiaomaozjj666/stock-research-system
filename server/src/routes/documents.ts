@@ -2,7 +2,7 @@
  * 文档入库（研报/财报/公告）：PDF 或纯文本 → 洞察抽取 → 注入 RAG。
  */
 import { Router } from 'express';
-import { chatLimiter } from '../middleware.js';
+import { chatLimiter, metaLimiter } from '../middleware.js';
 import { ingestDocument, getIngestedDocs } from '../llm/rag.js';
 import { extractDocumentInsights } from '../services/documentInsights.js';
 import { extractTextFromPdf } from '../quant/pdfExtract.js';
@@ -38,7 +38,9 @@ router.post('/api/ingest', chatLimiter, async (req, res) => {
   }
 });
 
-router.get('/api/documents', (_req, res) => {
+// 已入库文档列表：纯内存读取的只读元数据，用 metaLimiter(30/min) 挡脚本轮询
+// （入库写接口 /api/ingest 仍走 chatLimiter，因为要跑 LLM 洞察抽取）
+router.get('/api/documents', metaLimiter, (_req, res) => {
   const docs = getIngestedDocs();
   res.json({
     count: docs.length,

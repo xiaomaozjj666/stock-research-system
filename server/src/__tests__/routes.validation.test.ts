@@ -152,3 +152,23 @@ describe('股票搜索入参校验（/api/stocks/search）', () => {
     expect(Array.isArray(res.body)).toBe(true);
   });
 });
+
+describe('量化入参的代码形态校验（出站 URL 注入防护）', () => {
+  // stockCode 最终会经 resolveSecid 拼进上游查询串（secid=...），
+  // 此前只判非空 → `1&lmt=99999` 可改写上游的 lmt/fs 参数。
+  it('POST /api/quant/factor/composite 非法代码 → 400 且给出形态要求', async () => {
+    const res = await request(app)
+      .post('/api/quant/factor/composite')
+      .send({ stockCode: '1&lmt=99999' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('6 位数字');
+  });
+
+  it('POST /api/quant/factor/composite/batch 含非法代码 → 400 并指出具体代码', async () => {
+    const res = await request(app)
+      .post('/api/quant/factor/composite/batch')
+      .send({ stockCodes: ['600519', '600519?x=1'] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('600519?x=1');
+  });
+});

@@ -3,7 +3,14 @@
  * 量价因子（A 股方向校正）与单因子评估 tear sheet。
  */
 import { Router, type Response } from 'express';
-import { quantLimiter, watchlistLimiter, metaLimiter, circuitBreakerGuard } from '../middleware.js';
+import {
+  quantLimiter,
+  watchlistLimiter,
+  metaLimiter,
+  circuitBreakerGuard,
+  respondIfQueueTimeout,
+} from '../middleware.js';
+import { normalizeAShareCode } from '../utils/stockCode.js';
 import { parseStrategyInput, orchestrate, generateSummary } from '../quant/agents/orchestrator.js';
 import type { StrategyConfig, FactorOverlay } from '../quant/types.js';
 import {
@@ -60,6 +67,12 @@ import {
 } from '../quant/baostockBridge.js';
 import { runMarketScreener, readLatestScreenerRun } from '../quant/screener.js';
 import { runEnsemble, recordModelOutcome, getModelWeights } from '../llm/ensemble.js';
+import {
+  validateMessages,
+  normalizeTemperatureInput,
+  normalizeMaxTokensInput,
+  resolveMaxTokensCap,
+} from '../utils/limitGate.js';
 import { routeSkill } from '../llm/skillRouter.js';
 import { buildResearchMemory } from '../llm/researchMemory.js';
 import {
@@ -426,6 +439,12 @@ router.post('/api/quant/factor/composite', quantLimiter, circuitBreakerGuard, as
     if (!stockCode) {
       return res.status(400).json({ error: '请提供股票代码 stockCode' });
     }
+    // 出站 URL 前校验形态：stockCode 最终会经 resolveSecid 拼进上游查询串，
+    // 此前只判非空，`1&lmt=99999` 这类入参可改写上游参数
+    const normalizedCode = normalizeAShareCode(stockCode);
+    if (!normalizedCode) {
+      return res.status(400).json({ error: '股票代码格式无效（应为 6 位数字）' });
+    }
     const startDate = String(
       body.startDate ??
         new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
@@ -437,7 +456,12 @@ router.post('/api/quant/factor/composite', quantLimiter, circuitBreakerGuard, as
           .filter((h: number) => Number.isFinite(h) && h > 0)
       : [21, 63];
 
-    const result = await computeCompositeAlphaForStrategy(stockCode, startDate, endDate, horizons);
+    const result = await computeCompositeAlphaForStrategy(
+      normalizedCode,
+      startDate,
+      endDate,
+      horizons,
+    );
     res.json(result);
   } catch (error) {
     logger.error('Composite alpha error', { route: '/api/quant/factor/composite', err: error });
@@ -468,6 +492,13 @@ router.post(
       const codes = raw.map((c: unknown) => String(c ?? '').trim()).filter(Boolean);
       if (codes.length === 0) {
         return res.status(400).json({ error: 'stockCodes 至少需要一个非空股票代码' });
+      }
+      // 逐个校验形态后再入库（这些代码会经 resolveSecid 拼进上游查询串）
+      const invalid = codes.filter((c: string) => normalizeAShareCode(c) === null);
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          error: `股票代码格式无效（应为 6 位数字）：${invalid.slice(0, 5).join('、')}`,
+        });
       }
       const startDate = String(
         body.startDate ??
@@ -1226,6 +1257,12 @@ router.post(
 // === 多模型集成投票与置信度校准 ===
 // 默认 candidateModels 只取 1 个模型（等价关闭），须显式传 models 或设
 // LLM_ENSEMBLE_SIZE>1 才走投票——既有单模型链路零变更。
+// 入参口径（P1 修复）：
+//  - messages：条数/单条/总字符上限，越界一律 400（显式 prompt 静默截断会改变语义）；
+//  - temperature：非数值/NaN/负数 400，> 2 夹紧到 2；
+//  - maxTokens：非数值/NaN/负数/<1 400，超过 LLM_MAX_TOKENS_CAP（默认 4096）夹紧
+//    ——这是账单放大的直接入口，夹紧比拒绝更可用（"尽量长"的意图仍明确）。
+// 理由统一写在 utils/limitGate.ts 的注释里；夹紧发生时会 warn 留痕。
 router.post('/api/llm/ensemble', quantLimiter, circuitBreakerGuard, async (req, res) => {
   try {
     const body = (req.body ?? {}) as {
@@ -1235,22 +1272,49 @@ router.post('/api/llm/ensemble', quantLimiter, circuitBreakerGuard, async (req, 
       temperature?: unknown;
       maxTokens?: unknown;
     };
-    const messages = Array.isArray(body.messages) ? body.messages : null;
-    if (!messages || messages.length === 0) {
-      return res.status(400).json({ error: '请提供 messages 对话数组' });
+    const parsed = validateMessages(body.messages);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
     }
-    const models = Array.isArray(body.models) ? (body.models as string[]) : undefined;
-    if (models && models.length > 5) {
-      return res.status(400).json({ error: 'models 最多 5 个' });
+    let models: string[] | undefined;
+    if (body.models !== undefined && body.models !== null) {
+      if (!Array.isArray(body.models)) {
+        return res.status(400).json({ error: 'models 必须是字符串数组' });
+      }
+      if (body.models.length > 5) {
+        return res.status(400).json({ error: 'models 最多 5 个' });
+      }
+      if (!body.models.every((m) => typeof m === 'string' && m.trim().length > 0)) {
+        return res.status(400).json({ error: 'models 每一项都必须是非空字符串' });
+      }
+      models = body.models;
     }
-    const result = await runEnsemble(messages as never, {
+    const temperature = normalizeTemperatureInput(body.temperature);
+    if (!temperature.ok) {
+      return res.status(400).json({ error: temperature.error });
+    }
+    const maxTokens = normalizeMaxTokensInput(body.maxTokens);
+    if (!maxTokens.ok) {
+      return res.status(400).json({ error: maxTokens.error });
+    }
+    if (temperature.clampedFrom !== undefined || maxTokens.clampedFrom !== undefined) {
+      logger.warn('LLM 集成参数越界，已夹紧到上限', {
+        route: '/api/llm/ensemble',
+        temperatureFrom: temperature.clampedFrom,
+        maxTokensFrom: maxTokens.clampedFrom,
+        maxTokensCap: resolveMaxTokensCap(),
+      });
+    }
+    const result = await runEnsemble(parsed.messages as never, {
       ...(models ? { models } : {}),
       ...(typeof body.task === 'string' ? { task: body.task as never } : {}),
-      ...(typeof body.temperature === 'number' ? { temperature: body.temperature } : {}),
-      ...(typeof body.maxTokens === 'number' ? { maxTokens: body.maxTokens } : {}),
+      ...(temperature.value !== undefined ? { temperature: temperature.value } : {}),
+      ...(maxTokens.value !== undefined ? { maxTokens: maxTokens.value } : {}),
     });
     res.json(result);
   } catch (error) {
+    // 闸门排队超时 → 429 + Retry-After（此前落到 502，客户端无法据此退避重试）
+    if (respondIfQueueTimeout(res, error, '/api/llm/ensemble')) return;
     logger.error('LLM ensemble error', { route: '/api/llm/ensemble', err: error });
     const message = error instanceof Error ? error.message : '集成调用失败';
     res.status(502).json({ error: '多模型集成调用失败', detail: message });

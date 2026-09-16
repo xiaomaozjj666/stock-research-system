@@ -11,7 +11,6 @@
  */
 import type {
   AgentEventEmitter,
-  ConfidenceLabel,
   Evidence,
   ReportCitation,
   ResearchConfig,
