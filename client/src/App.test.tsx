@@ -165,4 +165,20 @@ describe('App', () => {
     expect(screen.getByText(/网络错误/)).toBeInTheDocument();
     expect(screen.getByText(/重试/)).toBeInTheDocument();
   });
+
+  it('首访空态提供一键试跑入口，点击即以 600519 发起分析', async () => {
+    apiMock.analyzeStockStream.mockReturnValue({
+      done: Promise.resolve(makeResult()),
+      cancel: vi.fn(),
+    });
+    render(<App />);
+
+    const tryBtn = screen.getByRole('button', { name: /试跑一次/ });
+    fireEvent.click(tryBtn);
+
+    // 试跑即发起分析：报告区最终渲染该股票
+    await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
+    expect(apiMock.analyzeStockStream).toHaveBeenCalled();
+    expect(apiMock.analyzeStockStream.mock.calls.at(-1)?.[0]).toBe('600519');
+  });
 });

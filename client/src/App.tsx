@@ -511,6 +511,13 @@ function App() {
               <p className="research-empty-hint">
                 结果会自动存入「历史」，可随时回看与对比；也可以切到「研究助手」用自然语言提问。
               </p>
+              {/* 首次使用只需读文字猜"能干什么"：给一个一键试跑入口，用最快路径看到成果 */}
+              <button
+                className="btn-primary research-empty-try"
+                onClick={() => handleAnalyze('600519')}
+              >
+                用贵州茅台（600519）试跑一次
+              </button>
             </div>
           </div>
         )}

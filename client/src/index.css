@@ -904,6 +904,11 @@ tr:hover td {
   font-size: 13px;
   margin: 0;
 }
+/* 首访一键试跑入口：与提示文案拉开间距，避免看起来像提示的一部分 */
+.research-empty-try {
+  align-self: center;
+  margin-top: 18px;
+}
 
 /* ===== Core Summary V2 ===== */
 .core-summary-v2 {
