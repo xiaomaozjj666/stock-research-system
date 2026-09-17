@@ -220,6 +220,9 @@ export default function PaperTradingPage() {
       const filter = auditLevel ? { riskLevel: auditLevel } : {};
       const res = await getAuditLog({ ...filter, limit: AUDIT_PAGE_SIZE, offset: 0 });
       if (seq !== auditSeqRef.current) return;
+      // ref 是分页的权威来源：同步更新，不能等 effect（否则紧接着的"加载更多"
+      // 会读到上一轮的条数，重复 offset 被去重后一行都加不上）
+      auditEntriesRef.current = res.entries;
       setAuditEntries(res.entries);
       setAuditTotal(res.count);
     } catch {
@@ -244,11 +247,14 @@ export default function PaperTradingPage() {
       });
       if (seq !== auditSeqRef.current) return;
       // 追加而非替换；按 id 去重：审计日志持续写入，两次请求之间条目可能变动，
-      // offset 窗口轻微错位时宁可少一行，不要同一行渲染两次（React key 冲突）
-      setAuditEntries((prev) => {
-        const seen = new Set(prev.map((e) => e.id));
-        return [...prev, ...res.entries.filter((e) => !seen.has(e.id))];
-      });
+      // offset 窗口轻微错位时宁可少一行，不要同一行渲染两次（React key 冲突）。
+      // 以 ref 为基准同步算出新数组并同时写回 ref 与 state：这样"取 offset → 追加"
+      // 不依赖 effect 的提交时机，连点两次也能逐页推进。
+      const prev = auditEntriesRef.current;
+      const seen = new Set(prev.map((e) => e.id));
+      const merged = [...prev, ...res.entries.filter((e) => !seen.has(e.id))];
+      auditEntriesRef.current = merged;
+      setAuditEntries(merged);
       setAuditTotal(res.count);
     } catch {
       /* 同上：加载更多失败不阻塞主流程 */
@@ -258,10 +264,9 @@ export default function PaperTradingPage() {
     }
   }, [auditLevel]);
 
-  // 条数镜像：offset 一律读 ref，避免用到过期的渲染快照
-  useEffect(() => {
-    auditEntriesRef.current = auditEntries;
-  }, [auditEntries]);
+  // 条数镜像已不需要：auditEntriesRef 在两个写入点（loadAudit / loadMoreAudit）
+  // 与 setAuditEntries 同步更新，作为分页 offset 的唯一来源。留一条镜像 effect 反而
+  // 会把"已算好的新数组"用上一轮渲染的 state 覆盖回去。
 
   useEffect(() => {
     loadAccount();

@@ -134,10 +134,11 @@ describe('轮转/写入失败不得静默吞掉留痕', () => {
   });
 
   it('append 本身失败时记 error 日志（不再静默跳过）', () => {
-    // AUDIT_LOG_FILE 指向一个目录：mkdir 父目录成功、appendFileSync 必然 EISDIR
-    const blocked = path.join(tmpDir, 'blocked-as-dir');
-    fs.mkdirSync(blocked, { recursive: true });
-    process.env.AUDIT_LOG_FILE = blocked;
+    // 用一个"父路径是普通文件"的目标：mkdirSync(recursive) 必然抛（Linux ENOTDIR / Windows EEXIST），
+    // 两端都确定性失败。此前把目标指向目录依赖"append 到目录必 EISDIR"，Linux CI 上并未触发。
+    const blocker = path.join(tmpDir, 'blocker-file');
+    fs.writeFileSync(blocker, 'x');
+    process.env.AUDIT_LOG_FILE = path.join(blocker, 'nested', 'audit.log');
 
     const spy = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     try {
