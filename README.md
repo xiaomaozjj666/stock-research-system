@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-1978%20cases-brightgreen" alt="1978 测试用例" />
+  <img src="https://img.shields.io/badge/tests-2419%20cases-brightgreen" alt="2419 测试用例" />
   <img src="https://img.shields.io/badge/CI-GitHub%20Actions-brightgreen" alt="CI" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -153,7 +153,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，1978 用例 / 181 个测试文件）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，2419 用例 / 195 个测试文件，行覆盖 90.6%）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
 
 ## 快速开始
 
@@ -263,13 +263,13 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（1978 用例 / 181 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（2419 用例 / 195 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（9 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/JSON/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src）
 npm run format:check  # Prettier 格式检查
 ```
 
-- **CI 门禁**（GitHub Actions）：lint / 双端 tsc / 双端 build / 全量测试 + 覆盖率阈值（lines ≥ 70%）/ Playwright E2E。
+- **CI 门禁**（GitHub Actions）：lint / 双端 tsc / 双端 build / 全量测试 + 覆盖率阈值（lines ≥ 88% / statements ≥ 86% / functions ≥ 86% / branches ≥ 73%）/ Playwright E2E。
 - **受控评估**：`compareBacktests` 输出 DSR（扣除搜索偏差）与 Bootstrap 置信区间；`quant/cscv.ts` 以组合对称交叉验证计算过拟合概率（PBO）；`walkForward.ts` 以 OOS 夏普 < 70% × IS 夏普判定过拟合。
 - **合规审计**：金融监管 8 号文留痕 + 运行时熔断 + `/api/audit` 查询。
 - **全链路追踪**：`X-Trace-Id` + 模型调用 span / 成本。

@@ -108,7 +108,15 @@ export default function DigestPanel() {
           {loading ? '生成中…' : '生成一份'}
         </button>
       </div>
-      {error && <div className="digest-error">{error}</div>}
+      {error && (
+        <div className="digest-error">
+          {error}
+          {/* 读取失败此前只能刷新整页；补一个就地重试入口 */}
+          <button type="button" className="btn-ghost" onClick={() => void load()}>
+            重试
+          </button>
+        </div>
+      )}
       {items === null && !error && <div className="batch-hint">加载中…</div>}
       {items !== null && items.length === 0 && (
         <div className="batch-hint">还没有简报：点「生成一份」创建第一份</div>

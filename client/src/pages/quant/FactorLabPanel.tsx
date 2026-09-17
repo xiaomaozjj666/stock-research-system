@@ -14,6 +14,19 @@ import EChart from '../../components/EChart';
 /** 默认板块按名称优先级（与截面面板同口径）：列表按市值降序首项过大过杂 */
 const PREFERRED_DEFAULT_BOARDS = ['白酒', '银行'];
 
+/**
+ * 默认板块：按「偏好清单的顺序」取，而不是按服务端返回顺序取首个命中项。
+ * 此前用 list.find(...)，只要「银行」排在列表前面就轮不到更靠前的「白酒」，
+ * 偏好清单等于只有第一个元素有效。
+ */
+function defaultBoardCode(list: IndustryBoard[]): string {
+  for (const name of PREFERRED_DEFAULT_BOARDS) {
+    const hit = list.find((b) => b.name === name);
+    if (hit) return hit.code;
+  }
+  return list[0]?.code ?? '';
+}
+
 const DEFAULT_EXPRESSION = 'close / mean(close, 20) - 1';
 
 function fmtIc(v: number): string {
@@ -21,7 +34,10 @@ function fmtIc(v: number): string {
 }
 function fmtP(v: number): string {
   if (!Number.isFinite(v)) return '—';
-  return v < 1e-4 ? '<1e-4' : v.toFixed(3);
+  // 1e-4 ≤ p < 0.01 时用四位小数：三位会把 0.00012 显示成「0.000」，
+  // 读起来像 p 恰为 0（最强显著），而它其实差一个数量级
+  if (v < 1e-4) return '<1e-4';
+  return v < 0.01 ? v.toFixed(4) : v.toFixed(3);
 }
 function shortDate(iso: string): string {
   return String(iso ?? '')
@@ -95,6 +111,11 @@ export default function FactorLabPanel() {
   const { showToast } = useToast();
   const [boards, setBoards] = useState<IndustryBoard[]>([]);
   const [board, setBoard] = useState('');
+  /** 板块列表加载失败原因（原来被静默吞掉，用户只看到永远的「加载板块中…」） */
+  const [boardsError, setBoardsError] = useState<string | null>(null);
+  /** 是否已成功返回过：区分「还在加载」与「上游返回空列表」 */
+  const [boardsLoaded, setBoardsLoaded] = useState(false);
+  const [boardsAttempt, setBoardsAttempt] = useState(0);
   const [topN, setTopN] = useState(10);
   const [expression, setExpression] = useState(DEFAULT_EXPRESSION);
   const [running, setRunning] = useState(false);
@@ -167,25 +188,25 @@ export default function FactorLabPanel() {
 
   useEffect(() => {
     let alive = true;
+    setBoardsError(null);
     getUniverseBoards()
       .then((d) => {
         if (!alive) return;
         const list = d.boards ?? [];
         setBoards(list);
-        setBoard(
-          (prev) =>
-            prev ||
-            list.find((b) => PREFERRED_DEFAULT_BOARDS.includes(b.name))?.code ||
-            list[0]?.code ||
-            '',
-        );
+        setBoardsLoaded(true);
+        setBoard((prev) => prev || defaultBoardCode(list) || '');
       })
-      .catch(() => undefined);
+      .catch((e: Error) => {
+        // 此前是 .catch(() => undefined)：下拉永久停在「加载板块中…」，
+        // 用户看不出是板块列表挂了，也没有重试入口
+        if (alive) setBoardsError(e.message);
+      });
     loadLedger();
     return () => {
       alive = false;
     };
-  }, [loadLedger]);
+  }, [loadLedger, boardsAttempt]);
 
   const canRun = useMemo(
     () => !!board && expression.trim().length > 0 && !running,
@@ -257,13 +278,29 @@ export default function FactorLabPanel() {
               disabled={running || boards.length === 0}
               onChange={(e) => setBoard(e.target.value)}
             >
-              {boards.length === 0 && <option value="">加载板块中…</option>}
+              {boards.length === 0 && (
+                <option value="">
+                  {boardsError ? '板块列表不可用' : boardsLoaded ? '暂无可选板块' : '加载板块中…'}
+                </option>
+              )}
               {boards.map((b) => (
                 <option key={b.code} value={b.code}>
                   {b.name}（{b.code}）
                 </option>
               ))}
             </select>
+            {boardsError && (
+              <span className="batch-hint batch-hint-error">
+                板块列表加载失败：{boardsError}
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => setBoardsAttempt((n) => n + 1)}
+                >
+                  重试
+                </button>
+              </span>
+            )}
           </label>
           <label className="batch-field">
             <span className="batch-label">成分股数量</span>
@@ -338,7 +375,15 @@ export default function FactorLabPanel() {
             className="btn-primary"
             onClick={handleRun}
             disabled={!canRun}
-            title={canRun ? '评估该因子假设' : '请填写表达式并选择板块'}
+            title={
+              canRun
+                ? '评估该因子假设'
+                : boardsError
+                  ? '行业板块列表未加载成功，请先重试'
+                  : boardsLoaded && boards.length === 0
+                    ? '上游未返回任何行业板块'
+                    : '请填写表达式并选择板块'
+            }
           >
             {running ? '评估中…' : '评估因子假设'}
           </button>

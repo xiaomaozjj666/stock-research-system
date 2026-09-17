@@ -2085,12 +2085,6 @@ tr:hover td {
   font-size: var(--text-display);
   font-weight: 700;
 }
-.quant-metric-value.positive {
-  color: var(--color-positive);
-}
-.quant-metric-value.negative {
-  color: var(--color-negative);
-}
 .quant-metric-label {
   font-size: var(--text-caption);
   color: var(--text-muted);
@@ -4006,12 +4000,6 @@ button.comparison-tag-add:disabled {
 .news-compare-table th {
   color: var(--text-muted);
   font-weight: 600;
-}
-.news-compare-table .positive {
-  color: var(--color-positive);
-}
-.news-compare-table .negative {
-  color: var(--color-negative);
 }
 .news-compare-note {
   font-size: 12px;
@@ -6068,11 +6056,19 @@ button.comparison-tag-add:disabled {
   font-size: 13px;
   line-height: 1.5;
 }
-.valuation-summary .paper-stat-value.neg {
+/* 隐含溢价按数值方向着色（正 = 高于内在价值 = 红，负 = 折价 = 绿），
+   与全站 signCls / 红涨绿跌口径一致。此前正溢价走 .neg（绿）、折价走 .pos（红），
+   且无数据（—）也被染成方向色。
+   选择器必须带 .valuation-summary：.paper-stat-value 定义在本文件更后面，
+   同权重下会盖掉全局 .val-* 的颜色。 */
+.valuation-summary .paper-stat-value.val-positive {
+  color: var(--color-positive);
+}
+.valuation-summary .paper-stat-value.val-negative {
   color: var(--color-negative);
 }
-.valuation-summary .paper-stat-value.pos {
-  color: var(--color-positive);
+.valuation-summary .paper-stat-value.val-neutral {
+  color: var(--text-secondary);
 }
 
 /* === 报告操作区（导出 / 打印并排）===

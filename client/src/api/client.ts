@@ -530,6 +530,9 @@ export function chatWithAgentStream(
     onEvent(evt);
   };
   es.onmessage = (e) => {
+    // 已收尾（done/error/cancel）后不再回调：close() 只能阻止后续事件到达，
+    // 已排进任务队列的那一帧仍会执行——组件已卸载时回调会让调用方在废弃的会话上 setState
+    if (settled) return;
     if (watchdog) {
       clearTimeout(watchdog);
       watchdog = null;

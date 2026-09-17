@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runValuationModelApi, type ValuationModelResult } from '../../api/client';
+import { signCls } from '../../lib/colors';
 
 function fmt(v: number | null | undefined, suffix = ''): string {
   return typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(2)}${suffix}` : '—';
@@ -146,7 +147,7 @@ export default function ValuationPanel() {
             </div>
             <div className="paper-stat-card">
               <div className="paper-stat-label">现价隐含溢价（正=高估）</div>
-              <div className={`paper-stat-value ${upside !== null && upside > 0 ? 'neg' : 'pos'}`}>
+              <div className={`paper-stat-value ${signCls(upside)}`}>
                 {upside !== null ? `${upside.toFixed(1)}%` : '—'}
               </div>
             </div>

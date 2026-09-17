@@ -141,6 +141,10 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
   const [indexDate, setIndexDate] = useState('');
   const [boards, setBoards] = useState<IndustryBoard[]>([]);
   const [boardsError, setBoardsError] = useState<string | null>(null);
+  /** 板块列表是否已成功返回过：用于区分「还在加载」和「上游确实返回空列表」 */
+  const [boardsLoaded, setBoardsLoaded] = useState(false);
+  /** 手动重试计数：失败后不能只剩"刷新整页"一条路 */
+  const [boardsAttempt, setBoardsAttempt] = useState(0);
   // 板块默认留空，列表加载成功后自动选第一个——板块代码会随数据源体系调整
   // （BK0475 曾是白酒、后为银行），硬编码默认值不可靠
   const [board, setBoard] = useState('');
@@ -161,6 +165,12 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CrossSectionResult | null>(null);
+  /** 当前这批结果所用的组合回测口径（表头文案用；不随表单后续改动而变化） */
+  const [ranPortfolio, setRanPortfolio] = useState<{
+    holdDays: number;
+    topN: number;
+    costBps: number;
+  } | null>(null);
   /** 已耗时（秒）：真实计时 */
   const [elapsedSec, setElapsedSec] = useState(0);
   const startAtRef = useRef(0);
@@ -191,10 +201,12 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
   useEffect(() => {
     if (!hasBeenActive) return;
     let alive = true;
+    setBoardsError(null); // 重试时先清掉上一次的错误，避免"加载中"与旧错误同时显示
     getUniverseBoards()
       .then((d) => {
         if (!alive) return;
         setBoards(d.boards ?? []);
+        setBoardsLoaded(true);
         // 未选择过板块时按名称优先级取默认，保证「加载完即可运行」
         setBoard(
           (prev) =>
@@ -210,7 +222,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
     return () => {
       alive = false;
     };
-  }, [hasBeenActive]);
+  }, [hasBeenActive, boardsAttempt]);
 
   // 评估期间真实计时
   useEffect(() => {
@@ -253,20 +265,21 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
     abortRef.current = controller;
     try {
       const horizons = parseHorizons(horizonsText);
+      // 口径只算一次：既用于下发，也留作表头文案（表单随后被改动时，
+      // 表头仍须描述"这批数据是哪次跑的"，否则会出现"40 日调仓"配 21 日数据的错配）
+      const portfolioParams = portfolioOn
+        ? {
+            holdDays: clampInt(portfolioHoldDays, 5, 250, PORTFOLIO_DEFAULTS.holdDays),
+            topN: clampInt(portfolioTopN, 1, 20, PORTFOLIO_DEFAULTS.topN),
+            costBps: clampInt(portfolioCostBps, 0, 200, PORTFOLIO_DEFAULTS.costBps),
+          }
+        : null;
       const common = {
         horizons,
         includeFundamental,
         includeEvents,
         includeMargin,
-        ...(portfolioOn
-          ? {
-              portfolio: {
-                holdDays: clampInt(portfolioHoldDays, 5, 250, PORTFOLIO_DEFAULTS.holdDays),
-                topN: clampInt(portfolioTopN, 1, 20, PORTFOLIO_DEFAULTS.topN),
-                costBps: clampInt(portfolioCostBps, 0, 200, PORTFOLIO_DEFAULTS.costBps),
-              },
-            }
-          : {}),
+        ...(portfolioParams ? { portfolio: portfolioParams } : {}),
       };
       const data = await runCrossSectionEvaluation(
         source === 'board'
@@ -283,6 +296,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
         controller.signal,
       );
       setResult(data);
+      setRanPortfolio(portfolioParams);
     } catch (e) {
       if (unmountedRef.current) return; // 卸载触发的中止：不弹提示、不再 setState
       if (e instanceof AnalysisCancelledError) {
@@ -373,7 +387,9 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                 onChange={(e) => setBoard(e.target.value)}
               >
                 {!boards.length && (
-                  <option value="">{boardsError ? '板块列表不可用' : '加载板块中…'}</option>
+                  <option value="">
+                    {boardsError ? '板块列表不可用' : boardsLoaded ? '暂无可选板块' : '加载板块中…'}
+                  </option>
                 )}
                 {boards.map((b) => (
                   <option key={b.code} value={b.code}>
@@ -382,9 +398,24 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                 ))}
               </select>
               <span className="batch-hint">
-                {boardsError
-                  ? `板块列表加载失败：${boardsError}，可切换「手输代码」模式评估个股组合`
-                  : `${boards.length} 个行业板块 · 成分股取总市值前 N 只`}
+                {boardsError ? (
+                  <>
+                    板块列表加载失败：{boardsError}，可切换「手输代码」模式评估个股组合
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => setBoardsAttempt((n) => n + 1)}
+                    >
+                      重试
+                    </button>
+                  </>
+                ) : !boardsLoaded ? (
+                  '正在加载行业板块…'
+                ) : boards.length === 0 ? (
+                  '行业板块列表为空（上游未返回数据），可切换「手输代码」模式评估个股组合'
+                ) : (
+                  `${boards.length} 个行业板块 · 成分股取总市值前 N 只`
+                )}
               </span>
             </label>
             <label className="batch-field" htmlFor={topNId}>
@@ -590,8 +621,8 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                   }）`
                 : '手输代码'}{' '}
             · 请求 {result.universe.requested} 只 · 入组 <b>{result.stocksIncluded.length}</b> ·
-            跳过{' '}
-            <b className={result.stocksSkipped.length > 0 ? 'negative' : ''}>
+            跳过 {/* 有跳过时用风险琥珀提示（此前是裸 .negative，全站没有这条规则，等于没上色） */}
+            <b className={result.stocksSkipped.length > 0 ? 'val-warn' : ''}>
               {result.stocksSkipped.length}
             </b>{' '}
             · 因子 {result.factors.length} 个 · 持有期 {result.horizons.map(periodLabel).join('/')}
@@ -678,8 +709,9 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                 <thead>
                   <tr>
                     <th>
-                      因子组合回测（{portfolioHoldDays}日调仓 · top-
-                      {portfolioTopN} 等权 · {portfolioCostBps}bps）
+                      因子组合回测（{ranPortfolio?.holdDays ?? PORTFOLIO_DEFAULTS.holdDays}日调仓 ·
+                      top-{ranPortfolio?.topN ?? PORTFOLIO_DEFAULTS.topN} 等权 ·{' '}
+                      {ranPortfolio?.costBps ?? PORTFOLIO_DEFAULTS.costBps}bps）
                     </th>
                     <th>期数</th>
                     <th>总收益</th>

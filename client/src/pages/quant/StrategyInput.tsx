@@ -9,7 +9,9 @@ interface Props {
 
 const STRATEGY_OPTIONS = [
   { value: 'ma_cross', label: '均线交叉' },
-  { value: 'momentum', label: '动量策略' },
+  // 与其它两项同形（名词，不带「策略」后缀）：提交时会统一拼成「XX策略」，
+  // 此前写「动量策略」会拼出「动量策略策略」
+  { value: 'momentum', label: '动量' },
   { value: 'mean_reversion', label: '均值回归' },
 ] as const;
 
@@ -33,15 +35,25 @@ const PARAM_CONFIG: Record<
   ],
 };
 
+/**
+ * 本地时区的 YYYY-MM-DD。
+ * 不用 toISOString().slice(0,10)：那是 UTC 日期，东八区 00:00–08:00 之间会显示成昨天，
+ * 用户点开表单看到「结束日期 = 昨天」，与其认知不符。
+ */
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate(),
+  ).padStart(2, '0')}`;
+}
+
 function getDefaultEndDate(): string {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
+  return localDateStr(new Date());
 }
 
 function getDefaultStartDate(): string {
   const d = new Date();
   d.setFullYear(d.getFullYear() - 2);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 }
 
 export default function StrategyInput({ onSubmit, loading }: Props) {

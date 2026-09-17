@@ -10,4 +10,36 @@ if (typeof document !== 'undefined') {
   afterEach(() => {
     cleanup();
   });
+
+  // jsdom 没有实现 scrollIntoView，而股票搜索类组件在键盘上下键高亮时会调用它
+  // （把高亮项滚进可视区）。缺这个桩会让 ArrowDown 直接抛 TypeError。
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = () => {};
+  }
+
+  // jsdom 也没有 ResizeObserver / matchMedia，而 EChart 的 useEffect 会 new ResizeObserver、
+  // useReducedMotion 会读 matchMedia。用例内自行 stub 再在 afterEach 里 unstub 时，
+  // 若某个被动 effect 被推迟到该 afterEach 之后才冲刷，就会抛
+  // "ResizeObserver is not defined"——表现为跨文件的随机失败。
+  // 这里给整个 jsdom 测试环境兜一层默认实现：用例自己的 vi.stubGlobal 仍然优先生效，
+  // unstub 后回落到这层默认值（matches:false 与常规桌面默认一致）。
+  if (!('ResizeObserver' in globalThis)) {
+    globalThis.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+  }
+  if (!('matchMedia' in globalThis)) {
+    globalThis.matchMedia = ((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof matchMedia;
+  }
 }

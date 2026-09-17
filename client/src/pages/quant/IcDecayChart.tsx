@@ -38,7 +38,7 @@ interface DecayLine {
   /** 每个网格点的 effectiveIc；缺失（null）处断线 */
   values: (number | null)[];
   significant: boolean;
-  /** 全部显著点的方向是否与经济方向一致（着色用） */
+  /** 显著点中方向一致（与经济方向同号）的占多数时为 true，用于着色 */
   valid: boolean;
 }
 
@@ -62,10 +62,12 @@ export default function IcDecayChart({ data }: { data: FactorPredictability[] })
           (v) => v && v.significant && Number.isFinite(v.effectiveIc),
         );
         const significant = sigPts.length > 0;
-        const valid = significant
-          ? sigPts.filter((v) => (v as { effectiveIc: number }).effectiveIc > 0).length >=
-            sigPts.length / 2
-          : false;
+        const positiveCount = sigPts.filter(
+          (v) => (v as { effectiveIc: number }).effectiveIc > 0,
+        ).length;
+        // 严格多数才算「方向一致」：此前判据是 `>= sigPts.length / 2`，
+        // 1 正 1 负的平局也会被画成绿色「方向一致」，与图例语义不符
+        const valid = significant ? positiveCount * 2 > sigPts.length : false;
         return {
           name: f.name,
           label: FACTOR_SHORT_LABELS[f.name] ?? f.name,
@@ -87,7 +89,8 @@ export default function IcDecayChart({ data }: { data: FactorPredictability[] })
 
   const allFinite = lines.flatMap((l) => l.values.filter((v): v is number => v !== null));
   const maxAbs = Math.max(0.1, ...allFinite.map((v) => Math.abs(v)));
-  const yMax = Math.ceil(maxAbs * 10) / 10; // 留 20% 余量向上取整到 0.1
+  // 纵轴上下限：取所有点绝对值上取整到 0.1（下限 0.1），± 对称以便画零轴与参考线
+  const yMax = Math.ceil(maxAbs * 10) / 10;
   const y = (v: number) => PAD_T + (H - PAD_T - PAD_B) * (1 - (v + yMax) / (2 * yMax));
   const x = (i: number) => PAD_L + ((W - PAD_L - PAD_R) * i) / (IC_DECAY_HORIZONS.length - 1);
 

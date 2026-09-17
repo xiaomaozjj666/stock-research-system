@@ -21,11 +21,14 @@ export default defineConfig({
       ],
       // 覆盖率阈值门禁：低于阈值测试失败，防止覆盖率倒退。
       // 基线（2026-08-13，793 tests）：lines 71.99% / statements 70.67% / functions 63.76% / branches 56.55%
+      // 现基线（2026-09-16，2419 tests）：lines 90.57% / statements 88.49% / functions 88.93% / branches 75.66%
+      // 补齐了此前 0 覆盖的量化面板家族、client 端 REST 封装与 App 导航分支；
+      // 阈值留约 2 个点余量，避免与业务无关的小改动动辄失败。
       thresholds: {
-        lines: 70,
-        statements: 68,
-        functions: 62,
-        branches: 55,
+        lines: 88,
+        statements: 86,
+        functions: 86,
+        branches: 73,
       },
       exclude: [
         '**/*.test.ts',

@@ -374,7 +374,8 @@ export default function CompositeBatchPanel() {
         <>
           <p className="batch-summary">
             请求 {result.requested} 只 · 成功 <b>{result.succeeded}</b> · 失败{' '}
-            <b className={result.failed > 0 ? 'negative' : ''}>{result.failed}</b> · 区间{' '}
+            {/* 有失败时用风险琥珀提示（此前是裸 .negative，全站没有这条规则，等于没上色） */}
+            <b className={result.failed > 0 ? 'val-warn' : ''}>{result.failed}</b> · 区间{' '}
             {result.startDate} ~ {result.endDate}
           </p>
           {result.items.length === 0 ? (

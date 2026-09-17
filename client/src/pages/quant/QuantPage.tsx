@@ -13,6 +13,7 @@ import DigestPanel from './DigestPanel';
 import ValuationPanel from './ValuationPanel';
 import NewsSentimentCard from '../../components/NewsSentimentCard';
 import { AnalysisCancelledError, runQuantAnalysis } from '../../api/client';
+import { signCls } from '../../lib/colors';
 import { useToast } from '../../components/Toast';
 import type { StrategyConfig, QuantResearchReport, NewsItem } from './types';
 
@@ -28,42 +29,36 @@ function NewsBacktestCompare({
     label: string;
     aware: number;
     base: number;
-    betterWhenHigher: boolean;
     fmt: (v: number) => string;
   }[] = [
     {
       label: '总收益率',
       aware: aware.totalReturn,
       base: baseline.totalReturn,
-      betterWhenHigher: true,
       fmt: (v) => v.toFixed(2) + '%',
     },
     {
       label: '年化收益',
       aware: aware.annualizedReturn,
       base: baseline.annualizedReturn,
-      betterWhenHigher: true,
       fmt: (v) => (v ?? 0).toFixed(2) + '%',
     },
     {
       label: '夏普比率',
       aware: aware.sharpeRatio,
       base: baseline.sharpeRatio,
-      betterWhenHigher: true,
       fmt: (v) => v.toFixed(2),
     },
     {
       label: '最大回撤',
       aware: aware.maxDrawdown,
       base: baseline.maxDrawdown,
-      betterWhenHigher: false,
       fmt: (v) => v.toFixed(2) + '%',
     },
     {
       label: '胜率',
       aware: aware.winRate,
       base: baseline.winRate,
-      betterWhenHigher: true,
       fmt: (v) => v.toFixed(2) + '%',
     },
   ];
@@ -82,14 +77,15 @@ function NewsBacktestCompare({
         <tbody>
           {rows.map((r) => {
             const delta = r.aware - r.base;
-            const improved = r.betterWhenHigher ? delta > 0 : delta < 0;
-            const deltaCls = Math.abs(delta) < 1e-9 ? '' : improved ? 'positive' : 'negative';
+            // 「变化」列着色只看数值方向（正红负绿，与全站 signCls 口径一致）。
+            // 此前按"越大越好/越小越好"折算成 positive/negative，
+            // 结果最大回撤（存的是负数）整列反色：回撤收窄 5% 显示为绿色。
             return (
               <tr key={r.label}>
                 <td>{r.label}</td>
                 <td>{r.fmt(r.aware)}</td>
                 <td>{r.fmt(r.base)}</td>
-                <td className={deltaCls}>
+                <td className={signCls(delta)}>
                   {delta > 0 ? '+' : ''}
                   {r.fmt(delta)}
                 </td>
@@ -199,7 +195,10 @@ export default function QuantPage() {
         const result = await runQuantAnalysis(
           {
             strategy: params.strategy,
-            useNews: params.useNews || !newsItems,
+            // 勾选框即最终口径：此前写成 `useNews || !newsItems`，
+            // 导致"没粘贴消息"时永远为 true —— 勾选框在四种组合下都不生效（死控件），
+            // 未勾选也会实时抓新闻。粘贴的 newsItems 在服务端优先，无需在这里兜底。
+            useNews: params.useNews,
             newsItems,
           },
           controller.signal,

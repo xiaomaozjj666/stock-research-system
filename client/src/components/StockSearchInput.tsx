@@ -122,6 +122,13 @@ export default function StockSearchInput({
   const commit = useCallback(
     (code: string, name: string) => {
       seqRef.current++; // 作废在途请求，避免选中后又被结果覆盖
+      // 还要撤掉尚未触发的防抖定时器：否则「输入 6 位代码后 250ms 内回车/失焦」
+      // 这条最常见的路径上，选中的同时定时器照旧到点发起检索，
+      // 输入框已清空、下拉却又带着上一轮候选弹回来。
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
       setQuery('');
       setResults([]);
       setShowDropdown(false);
