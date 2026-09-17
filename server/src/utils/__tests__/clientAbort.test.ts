@@ -20,10 +20,10 @@ class FakeResponse extends EventEmitter {
   writableFinished = false;
 }
 
-function fakeResponse(finished = false): Response & { emitClose: () => void } {
+function fakeResponse(finished = false): Response & FakeResponse {
   const res = new FakeResponse();
   res.writableFinished = finished;
-  return res as unknown as Response & { emitClose: () => void };
+  return res as unknown as Response & FakeResponse;
 }
 
 describe('abortOnClientClose（假 res）', () => {
@@ -57,6 +57,53 @@ describe('abortOnClientClose（假 res）', () => {
     });
     res.emit('close');
     await expect(pending).rejects.toThrow('aborted');
+  });
+});
+
+/* ============================================================================
+ * 注册时连接「已经」关闭（P1：close 是一次性事件，事后注册永远等不到）
+ * ----------------------------------------------------------------------------
+ * 客户端若在本函数被调用**之前**就断开（请求刚进来就取消、或前置中间件耗时较久），
+ * 'close' 早已派发完毕：事后注册的监听器永不再触发，signal.aborted 恒为 false，
+ * 在途取数照样全量跑完、白烧上游配额。判据见 clientAbort.ts 的 isConnectionGone。
+ * ==========================================================================*/
+describe('abortOnClientClose（注册时连接已关闭）', () => {
+  function goneResponse(fields: Record<string, unknown>): Response & FakeResponse {
+    const res = fakeResponse(false);
+    for (const [k, v] of Object.entries(fields)) {
+      Object.defineProperty(res, k, { value: v, configurable: true });
+    }
+    return res;
+  }
+
+  it('res.destroyed=true（socket 已销毁）→ 注册即 abort', () => {
+    const controller = abortOnClientClose(goneResponse({ destroyed: true }));
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  it('res.closed=true（close 已经发生过）→ 注册即 abort', () => {
+    const controller = abortOnClientClose(goneResponse({ closed: true }));
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  it('res.socket.destroyed=true（底层连接已断）→ 注册即 abort', () => {
+    const controller = abortOnClientClose(goneResponse({ socket: { destroyed: true } }));
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  it('响应已正常写完（writableFinished）→ 即使 destroyed 也不 abort（保持既有语义）', () => {
+    const controller = abortOnClientClose(
+      goneResponse({ writableFinished: true, destroyed: true }),
+    );
+    expect(controller.signal.aborted).toBe(false);
+  });
+
+  it('连接仍健在（各判据均为假）→ 不 abort，仍靠后续 close 触发', () => {
+    const res = goneResponse({ destroyed: false, closed: false, socket: { destroyed: false } });
+    const controller = abortOnClientClose(res);
+    expect(controller.signal.aborted).toBe(false);
+    res.emit('close');
+    expect(controller.signal.aborted).toBe(true);
   });
 });
 
@@ -140,6 +187,43 @@ describe('abortOnClientClose（真实 HTTP 连接）', () => {
       await new Promise((r) => setTimeout(r, 30));
       expect(finishedCount()).toBe(1);
     });
+  });
+
+  it('客户端先断开、路由事后才注册（close 已发生过）→ signal 立即为 aborted', async () => {
+    const app = express();
+    let seenClose = false;
+    const registered = new Promise<boolean>((resolve) => {
+      app.get('/late', (req, res) => {
+        // 等连接真的关闭之后再注册 helper：正是「调用之前客户端就已断开」的时序
+        req.socket.on('close', () => {
+          seenClose = true;
+          setTimeout(() => resolve(abortOnClientClose(res).signal.aborted), 5);
+        });
+      });
+    });
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      await new Promise<void>((resolve) => {
+        const req = http.get(`http://127.0.0.1:${port}/late`, (res) => res.resume());
+        req.on('error', () => {
+          /* 主动断开时客户端会收到 ECONNRESET：预期现象 */
+        });
+        setTimeout(() => {
+          req.destroy();
+          resolve();
+        }, 20);
+      });
+      const aborted = await Promise.race([
+        registered,
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ]);
+      expect(seenClose).toBe(true); // 前置条件成立：注册时连接确实已经关闭
+      expect(aborted).toBe(true); // 修复前这里是 false（恒不 abort）
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 

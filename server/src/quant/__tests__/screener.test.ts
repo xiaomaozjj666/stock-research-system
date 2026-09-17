@@ -1,10 +1,17 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { loadStockMaster } from '../../services/stockMaster.js';
 import { fetchOHLCVData } from '../../quant/dataProvider.js';
-import { runMarketScreener, readLatestScreenerRun, selectScreenerUniverse } from '../screener.js';
+import {
+  runMarketScreener,
+  readLatestScreenerRun,
+  selectScreenerUniverse,
+  parseScreenerDateRange,
+  ScreenerParamError,
+  MAX_SCREENER_SPAN_DAYS,
+} from '../screener.js';
 import type { OHLCVData } from '../../quant/types.js';
 
 vi.mock('../../services/stockMaster.js', () => ({ loadStockMaster: vi.fn() }));
@@ -189,5 +196,81 @@ describe('runMarketScreener — 宇宙披露与默认上限', () => {
     } finally {
       delete process.env.QUANT_SCREENER_MAX;
     }
+  });
+});
+
+describe('runMarketScreener — maxStocks 不得超过 env 上限', () => {
+  afterEach(() => {
+    delete process.env.QUANT_SCREENER_MAX;
+  });
+
+  it('显式 maxStocks 大于 QUANT_SCREENER_MAX → 被夹到 env 上限（env 是天花板）', async () => {
+    process.env.QUANT_SCREENER_MAX = '2';
+    mockedBars.mockImplementation(async () => flatBars());
+    // 旧行为：显式值优先返回 → 3 只全扫，env 形同虚设
+    const result = await runMarketScreener({ maxStocks: 5000 });
+    expect(result.scanned).toBe(2);
+    expect(result.universe.coverage).toBeCloseTo(2 / 3, 2);
+  });
+
+  it('显式 maxStocks 小于 env 上限 → 以显式值收窄', async () => {
+    process.env.QUANT_SCREENER_MAX = '3';
+    mockedBars.mockImplementation(async () => flatBars());
+    const result = await runMarketScreener({ maxStocks: 1 });
+    expect(result.scanned).toBe(1);
+  });
+
+  it('无 env 上限时显式值照旧生效', async () => {
+    delete process.env.QUANT_SCREENER_MAX;
+    mockedBars.mockImplementation(async () => flatBars());
+    const result = await runMarketScreener({ maxStocks: 2 });
+    expect(result.scanned).toBe(2);
+  });
+});
+
+describe('runMarketScreener — 日期区间校验', () => {
+  it('非法日期（不存在 / 格式错）→ 拒绝且不取任何 K 线', async () => {
+    mockedBars.mockImplementation(async () => flatBars());
+    await expect(runMarketScreener({ startDate: '2026-02-30' })).rejects.toThrow(
+      ScreenerParamError,
+    );
+    await expect(runMarketScreener({ startDate: '2026-13-01' })).rejects.toThrow(
+      ScreenerParamError,
+    );
+    await expect(runMarketScreener({ startDate: '20260101' })).rejects.toThrow(/YYYY-MM-DD/);
+    await expect(runMarketScreener({ endDate: '昨天' })).rejects.toThrow(/endDate/);
+    expect(mockedBars).not.toHaveBeenCalled();
+  });
+
+  it('区间倒置（start > end）→ 拒绝并指明两端', async () => {
+    mockedBars.mockImplementation(async () => flatBars());
+    await expect(
+      runMarketScreener({ startDate: '2026-01-10', endDate: '2026-01-01' }),
+    ).rejects.toThrow(/不得晚于/);
+    expect(mockedBars).not.toHaveBeenCalled();
+  });
+
+  it('跨度过大（超过硬上限）→ 拒绝并给出上限天数', async () => {
+    mockedBars.mockImplementation(async () => flatBars());
+    await expect(
+      runMarketScreener({ startDate: '1900-01-01', endDate: '2100-01-01' }),
+    ).rejects.toThrow(/区间过长/);
+    expect(mockedBars).not.toHaveBeenCalled();
+  });
+
+  it('parseScreenerDateRange：合法区间原样返回，边界跨度恰好等于上限时通过', () => {
+    expect(parseScreenerDateRange('2026-01-01', '2026-01-31')).toEqual({
+      start: '2026-01-01',
+      end: '2026-01-31',
+    });
+    const end = new Date(Date.UTC(2026, 0, 1) + MAX_SCREENER_SPAN_DAYS * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    expect(parseScreenerDateRange('2026-01-01', end).start).toBe('2026-01-01');
+    // 超一天即拒
+    const over = new Date(Date.UTC(2026, 0, 1) + (MAX_SCREENER_SPAN_DAYS + 1) * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    expect(() => parseScreenerDateRange('2026-01-01', over)).toThrow(/区间过长/);
   });
 });

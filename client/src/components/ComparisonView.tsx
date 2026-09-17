@@ -203,6 +203,10 @@ function describeFailures(failures?: { code: string; error: string }[]): string 
   return `部分股票分析失败：${failures.map((f) => `${f.code}（${f.error}）`).join('；')}`;
 }
 
+/** 两列全失败时「重试这一只」不可用的原因（按钮禁用 + 就地写明，不留死按钮） */
+const RETRY_NEEDS_PARTNER_HINT =
+  '需至少一只成功结果才能重试：单只重试要带一只已成功的股票凑够接口要求的 2 只。';
+
 /**
  * 单列视图模型：一列对应请求里的一只股票，成功则带结果、失败则带可读原因。
  * 服务端只回成功项的 stocks（顺序与请求一致），这里按 code 与请求合并回原顺序，
@@ -349,6 +353,10 @@ export function ComparisonView() {
    * 单只重试：接口要求一次 2-3 只（保留既有 400 校验，不改服务端契约），
    * 故带上同批一只**已成功**的股票凑数——它在服务端分析去重（inFlightAnalyses 见
    * analysisPipeline.runAnalysis）下不会重跑，等于只重试失败的那一只。
+   *
+   * 两列全失败时**没有任何可用伙伴**：此时按钮禁用并写明原因（见渲染处），
+   * 不再像以前那样静默 return——点了没反应比按钮禁用更糟。
+   * 重试同样是分钟级请求，接上与主对比一致的中止语义（abortRef + 卸载中止）。
    */
   const retryOne = async (code: string) => {
     if (!results || retryingCode) return;
@@ -358,8 +366,10 @@ export function ComparisonView() {
     if (!partner) return;
     setRetryingCode(code);
     setError('');
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      const data = await compareStocks([code, partner.code]);
+      const data = await compareStocks([code, partner.code], controller.signal);
       const retried = buildColumns([code, partner.code], data, stockNames)[0];
       if (retried && retried.result) {
         // 成功：就地替换该列（其余列与顺序不动）
@@ -382,6 +392,8 @@ export function ComparisonView() {
         setError(e instanceof Error ? e.message : '重试失败');
       }
     } finally {
+      // 只有本次重试仍是在途请求时才清空中止器，避免踩掉后来者的 controller
+      if (abortRef.current === controller) abortRef.current = null;
       setRetryingCode(null);
     }
   };
@@ -416,13 +428,22 @@ export function ComparisonView() {
               <thead>
                 <tr>
                   <th>对比指标</th>
-                  {results.map((col) =>
-                    col.result ? (
-                      <th key={col.code} className="cmp-stock-header">
-                        <div className="cmp-stock-name">{col.result.stock_name}</div>
-                        <div className="cmp-stock-code">{col.result.stock_code}</div>
-                      </th>
-                    ) : (
+                  {results.map((col) => {
+                    if (col.result) {
+                      return (
+                        <th key={col.code} className="cmp-stock-header">
+                          <div className="cmp-stock-name">{col.result.stock_name}</div>
+                          <div className="cmp-stock-code">{col.result.stock_code}</div>
+                        </th>
+                      );
+                    }
+                    // 重试要凑一只已成功的伙伴；全失败时无伙伴可凑 → 禁用并写明原因，
+                    // 而不是留一个点了没反应的死按钮
+                    const hasPartner = results.some(
+                      (c) => c.result !== undefined && c.code !== col.code,
+                    );
+                    const retryHint = hasPartner ? undefined : RETRY_NEEDS_PARTNER_HINT;
+                    return (
                       // 失败列：留在原位置（不挤到末尾），标注「分析失败」+ 可读原因 + 单只重试
                       <th key={col.code} className="cmp-stock-header cmp-stock-header-failed">
                         <div className="cmp-stock-name">{col.name}</div>
@@ -433,14 +454,16 @@ export function ComparisonView() {
                           type="button"
                           className="btn-ghost cmp-fail-retry"
                           onClick={() => void retryOne(col.code)}
-                          disabled={retryingCode !== null || loading}
+                          disabled={retryingCode !== null || loading || !hasPartner}
+                          title={retryHint}
                           data-testid={`retry-${col.code}`}
                         >
                           {retryingCode === col.code ? '重试中...' : '重试这一只'}
                         </button>
+                        {retryHint && <div className="cmp-fail-hint">{retryHint}</div>}
                       </th>
-                    ),
-                  )}
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>

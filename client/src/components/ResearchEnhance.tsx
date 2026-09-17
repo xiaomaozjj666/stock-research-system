@@ -229,8 +229,11 @@ export default function ResearchEnhance({ sessionId }: Props) {
                 </span>
               </div>
               <div className="enhance-row">
-                <span>估算成本</span>
-                <span>${cost.totalCost.toFixed(4)}</span>
+                {/* 币种必须写出来：此前只有一个裸 `$`，用户无法判断是 USD 还是人民币折算值 */}
+                <span>估算成本（USD，按计价汇率折算）</span>
+                <span>
+                  {Number.isFinite(cost.totalCost) ? `$${cost.totalCost.toFixed(4)}` : '—'}
+                </span>
               </div>
               <button className="btn-ghost" onClick={handleResetCost}>
                 重置成本统计

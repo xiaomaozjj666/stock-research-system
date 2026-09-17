@@ -11,10 +11,12 @@ interface Props {
  * 不代表分析时点的历史状态，因此卡片上明示快照属性，避免误读为时点序列。
  */
 function ConsensusCard({ data }: Props) {
-  const hasRatings = data.ratings.buy !== null || data.ratings.add !== null;
+  // 一律用 != null：后端省略字段时是 undefined，`!== null` 会把它当成"有值"，
+  // 于是渲染出「— ~ — 元」这种看着像真实目标价区间的空行
+  const hasRatings = data.ratings.buy != null || data.ratings.add != null;
   const est = data.forecasts.filter((f) => f.mark === 'E');
   const target =
-    data.targetPriceMin !== null || data.targetPriceMax !== null
+    data.targetPriceMin != null || data.targetPriceMax != null
       ? `${data.targetPriceMin ?? '—'} ~ ${data.targetPriceMax ?? '—'} 元`
       : null;
 

@@ -290,7 +290,7 @@ describe('ConsensusCard —— 机构目标价区间', () => {
     expect(screen.getByText('机构目标价区间：0 ~ 0 元')).toBeInTheDocument();
   });
 
-  it('字段为 undefined（后端省略该字段）时仍渲染出「— ~ — 元」空行（现状：判空用 !== null）', () => {
+  it('字段为 undefined（后端省略该字段）时不渲染目标价行（判空用 != null）', () => {
     renderCard(
       makeConsensus({
         targetPriceMin: undefined as unknown as null,
@@ -298,6 +298,7 @@ describe('ConsensusCard —— 机构目标价区间', () => {
       }),
     );
 
-    expect(screen.getByText('机构目标价区间：— ~ — 元')).toBeInTheDocument();
+    // undefined 代表"没有这个数据"，不该渲染成「— ~ — 元」这种看着像真实区间的空行
+    expect(screen.queryByText(/机构目标价区间/)).toBeNull();
   });
 });

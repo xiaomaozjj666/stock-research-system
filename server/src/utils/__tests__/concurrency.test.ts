@@ -113,3 +113,103 @@ describe('mapWithConcurrency', () => {
     expect(started).toBe(2);
   });
 });
+
+/* ============================================================================
+ * 首个失败即整体收手（P1：Promise.all 只保证调用方早返回，不保证后台停手）
+ * ----------------------------------------------------------------------------
+ * 修复前：`await Promise.all(runners)` 在第一个 rejection 后立刻返回，调用方已按失败
+ * 处理（HTTP 已 500），但其余 runner 仍停在 `await worker(...)` 上继续打上游，
+ * 且它们后续的 rejection 无人 await。下面用「放行闸门」精确复刻这个时序。
+ * ==========================================================================*/
+describe('mapWithConcurrency — 首个失败后停止派发', () => {
+  it('首个 worker 失败后不再派发新任务（在途 worker 收手）', async () => {
+    const started: number[] = [];
+    const gates: Array<() => void> = [];
+    const pending = mapWithConcurrency(
+      Array.from({ length: 6 }, (_, i) => i),
+      2,
+      async (_item, i) => {
+        started.push(i);
+        if (i === 0) throw new Error('boom'); // 第 0 个立即失败
+        // 其余任务挂在闸门上（模拟「正在打上游」），等测试放行
+        await new Promise<void>((resolve) => gates.push(resolve));
+        return i;
+      },
+    );
+    await expect(pending).rejects.toThrow('boom');
+    expect(started).toEqual([0, 1]); // 只派发了 2 个
+
+    // 放行在途任务：修复前它们会继续拉取第 2..5 个任务（后台白烧上游），修复后立即收手
+    gates.forEach((g) => g());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(started).toEqual([0, 1]);
+  });
+
+  it('首个失败后，在途 worker 收到的 signal 被置位（可据此提前收手）', async () => {
+    let siblingSignal: AbortSignal | undefined;
+    const started: number[] = [];
+    const pending = mapWithConcurrency([0, 1, 2, 3], 2, async (_item, i, signal) => {
+      started.push(i);
+      if (i === 0) throw new Error('boom');
+      siblingSignal = signal;
+      // 等 signal 置位（或兜底超时，避免用例挂死）
+      await Promise.race([
+        new Promise<void>((resolve) =>
+          signal.addEventListener('abort', () => resolve(), { once: true }),
+        ),
+        new Promise<void>((resolve) => setTimeout(resolve, 500)),
+      ]);
+      return i;
+    });
+
+    await expect(pending).rejects.toThrow('boom');
+    expect(siblingSignal).toBeDefined(); // worker 的第 3 个参数就是取消信号
+    expect(siblingSignal!.aborted).toBe(true);
+    expect(started).toEqual([0, 1]);
+  });
+
+  it('抛出的仍是首个错误本身（不包装、不丢失原始 message）', async () => {
+    const first = new Error('上游 429');
+    const pending = mapWithConcurrency([0, 1], 2, async (_item, i) => {
+      if (i === 0) throw first;
+      await new Promise((r) => setTimeout(r, 5));
+      throw new Error('第二个错误不该被看到');
+    });
+    await expect(pending).rejects.toBe(first);
+  });
+
+  it('不产生无人 await 的 rejection（在途 worker 的后续失败被内部消化）', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await expect(
+        mapWithConcurrency([0, 1, 2, 3], 2, async (_item, i) => {
+          if (i === 0) throw new Error('boom');
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+          if (i === 1) throw new Error('第二个也失败'); // 修复前：无人 await 的 rejection
+          return i;
+        }),
+      ).rejects.toThrow('boom');
+      await new Promise((r) => setTimeout(r, 30));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(unhandled).toEqual([]);
+  });
+
+  it('全部成功时行为不变：结果保序、达到并发上限', async () => {
+    let active = 0;
+    let peak = 0;
+    const out = await mapWithConcurrency([0, 1, 2, 3, 4], 2, async (_item, i, signal) => {
+      active++;
+      peak = Math.max(peak, active);
+      expect(signal.aborted).toBe(false); // 无失败时信号不应被置位
+      await new Promise((r) => setTimeout(r, 5));
+      active--;
+      return i * 2;
+    });
+    expect(out).toEqual([0, 2, 4, 6, 8]);
+    expect(peak).toBe(2);
+  });
+});

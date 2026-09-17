@@ -43,6 +43,11 @@ function headerOf(expert: string): HTMLElement {
   return screen.getByText(expert).closest('.expert-header') as HTMLElement;
 }
 
+/** 按专家名取折叠头的按钮（键盘/读屏入口） */
+function headerButtonOf(expert: string): HTMLElement {
+  return screen.getByRole('button', { name: new RegExp(expert) });
+}
+
 /** 按专家名取该面板的正文容器 */
 function bodyOf(expert: string): HTMLElement {
   return screen
@@ -124,23 +129,36 @@ describe('ExpertOpinions —— 展开与收起', () => {
     vi.unstubAllGlobals();
   });
 
-  it('初始为折叠态：箭头 ▸ + expert-body-closed', () => {
+  it('初始为折叠态：箭头 ▸ + expert-body-closed + aria-expanded=false', () => {
     renderList([makeOpinion()]);
 
     expect(headerOf('张三').querySelector('.expert-arrow')).toHaveTextContent('▸');
     expect(bodyOf('张三')).toHaveClass('expert-body', 'expert-body-closed');
+    expect(headerButtonOf('张三')).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('点击标题行展开：箭头变 ▾ 且正文加 expert-body-open', () => {
+  it('折叠头是真正的 button：键盘/读屏可达，且不提交表单', () => {
+    renderList([makeOpinion()]);
+
+    const btn = headerButtonOf('张三');
+    expect(btn.tagName).toBe('BUTTON');
+    expect(btn).toHaveAttribute('type', 'button');
+    // 用键盘激活（Enter / Space 在原生 button 上都会触发 click）
+    fireEvent.click(btn);
+    expect(bodyOf('张三')).toHaveClass('expert-body-open');
+  });
+
+  it('点击标题行展开：箭头变 ▾、正文加 expert-body-open、aria-expanded=true', () => {
     renderList([makeOpinion()]);
 
     fireEvent.click(headerOf('张三'));
 
     expect(headerOf('张三').querySelector('.expert-arrow')).toHaveTextContent('▾');
     expect(bodyOf('张三')).toHaveClass('expert-body', 'expert-body-open');
+    expect(headerButtonOf('张三')).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('再次点击同一标题行收起', () => {
+  it('再次点击同一标题行收起（aria-expanded 回到 false）', () => {
     renderList([makeOpinion()]);
 
     fireEvent.click(headerOf('张三'));
@@ -148,6 +166,7 @@ describe('ExpertOpinions —— 展开与收起', () => {
 
     expect(headerOf('张三').querySelector('.expert-arrow')).toHaveTextContent('▸');
     expect(bodyOf('张三')).toHaveClass('expert-body-closed');
+    expect(headerButtonOf('张三')).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('同时只展开一位：展开李四会收起张三', () => {

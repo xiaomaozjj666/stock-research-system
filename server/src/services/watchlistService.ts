@@ -15,6 +15,12 @@ import { normalizeAShareCode } from '../utils/stockCode.js';
  *  - **条数有上限**（默认 200，WATCHLIST_MAX 可调，见 watchlistMax）：清单会被下游
  *    批量回测/监控整表消费，无上限等于给「一次请求跑几百只股票」留后门。
  *  - 所有读写失败都降级为内存空表，不抛错（监控功能不应拖垮主进程）。
+ *  - **写入原子**：临时文件 + rename 替换（见 atomicWriteJson）。此前是 fs.writeFileSync
+ *    直接覆盖目标文件：进程若在写盘中途被杀/断电，盘上留下的是**截断的 JSON**，
+ *    读侧 catch 后静默返回 []——用户看到的就是「自选清单被清空了」。
+ *  - **读整表→改→写 串行化**：所有变更都走同一处临界区（见 withWriteSection），
+ *    并配一个模块级写队列（enqueueWatchlistWrite）供异步调用方排队；
+ *    临界区内再重入的写入合并进同一次落盘，杜绝「基于旧快照写回」的丢更新。
  *
  * 本文件同时承担「最近一次异动监控快照」的落盘（见文件下半部分）：
  * 两者同属自选股监控域，合并在一处可避免为一个字段级存储再开模块。
@@ -54,10 +60,104 @@ export function watchlistMax(): number {
   return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_WATCHLIST_MAX;
 }
 
-/** 从磁盘读取清单（文件不存在/损坏 → 返回 []，不抛） */
-export function getWatchlist(): string[] {
+/* ============================================================================
+ * 原子写 + 写队列（读整表 → 改 → 写 的临界区）
+ * ----------------------------------------------------------------------------
+ * 两个真实故障模式：
+ *  1) **非原子全覆盖写**：fs.writeFileSync 直接写目标文件，写盘中途被杀会留下截断
+ *     JSON；读侧 catch 静默返回 []，用户的自选清单看起来被清空。
+ *     → 临时文件写完后 rename 原子替换（与下方快照落盘同一范式），
+ *       临时文件名带 pid + 随机串，避免并发写互相覆盖对方的 .tmp。
+ *  2) **读-改-写丢失更新**：两个并发写入各自读到旧清单，后写的那次把先写的覆盖掉
+ *     （A 加 600519、B 加 000001 → 只剩一个）。→ 变更统一走 withWriteSection
+ *     临界区；临界区内重入的变更合并到同一次落盘（返回的是合并后的清单），
+ *     异步调用方还可经 enqueueWatchlistWrite 排队，保证「入队顺序 = 落盘顺序」。
+ * ==========================================================================*/
+
+/** 单次写入的临时文件名：pid + 随机串（多进程/并发写各自的 .tmp 互不覆盖） */
+function tmpPathFor(file: string): string {
+  return `${file}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * 原子写：先写临时文件，再 rename 替换目标（POSIX 与 Windows 的 rename 都会覆盖已存在文件）。
+ * 返回是否成功；失败必定清理临时文件，不留残留。
+ */
+function atomicWriteJson(file: string, data: unknown): boolean {
+  const tmp = tmpPathFor(file);
   try {
-    const file = storeFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tmp, file); // 原子替换：读侧永远看到完整 JSON，不会看到半截
+    return true;
+  } catch {
+    try {
+      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+    } catch {
+      /* 清理失败也不再抛 */
+    }
+    return false;
+  }
+}
+
+/**
+ * 正在进行的「读整表 → 改 → 写」临界区（重入时复用）。
+ * `dirty` 表示临界区打开期间又被改过：外层写完后需再落一次盘，否则那次改动会丢。
+ */
+let activeSection: { codes: string[]; dirty: boolean } | null = null;
+
+/** 写队列尾：把每段临界区按入队顺序串行化（前一段失败不影响后一段） */
+let writeQueueTail: Promise<unknown> = Promise.resolve();
+
+/**
+ * 把一段「读整表 → 改 → 写」排进模块级写队列。
+ * 供异步调用方使用（保证入队顺序即落盘顺序）；同步调用方直接用 addToWatchlist 等即可。
+ */
+export function enqueueWatchlistWrite<T>(task: () => T | Promise<T>): Promise<T> {
+  const result = writeQueueTail.then(() => task());
+  writeQueueTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+/**
+ * 在临界区内执行一次「读整表 → 改 → 写」。
+ * - 非重入：读盘 → 改 → 原子写；写盘期间若被重入修改（dirty）则再写一次，直到落定；
+ * - 重入（写盘过程中又发起一次写入）：只改内存快照并置 dirty，由外层统一落盘——
+ *   否则内层会基于**旧快照**再写一次，外层随后覆盖，丢更新。
+ * 写盘失败不影响返回值（内存态仍是最新的），与既有「写失败不抛」口径一致。
+ */
+function withWriteSection(mutator: (cur: string[]) => string[]): string[] {
+  if (activeSection) {
+    activeSection.codes = mutator(activeSection.codes);
+    activeSection.dirty = true;
+    return activeSection.codes;
+  }
+  const section = { codes: readCodesFromDisk(), dirty: false };
+  activeSection = section;
+  try {
+    section.codes = mutator(section.codes);
+    do {
+      section.dirty = false;
+      if (!atomicWriteJson(storeFile(), section.codes)) {
+        logger.warn('[watchlist] 清单写盘失败，本次改动仅在内存态生效', {
+          file: storeFile(),
+          codes: section.codes.length,
+        });
+      }
+    } while (section.dirty);
+    return section.codes;
+  } finally {
+    activeSection = null;
+  }
+}
+
+/** 从磁盘读取清单（文件不存在/损坏 → 返回 []，不抛；损坏时留一条 warn 便于排查"清单像被清空"） */
+function readCodesFromDisk(): string[] {
+  const file = storeFile();
+  try {
     if (!fs.existsSync(file)) return [];
     const raw = fs.readFileSync(file, 'utf-8');
     const parsed = JSON.parse(raw);
@@ -72,22 +172,16 @@ export function getWatchlist(): string[] {
       }
     }
     return out;
-  } catch {
+  } catch (err) {
+    // 静默返回 [] 会让「文件损坏/截断」表现得像「用户清单被清空」，这里留痕
+    logger.warn('[watchlist] 清单文件读取失败，本次按空清单处理', { file, err });
     return [];
   }
 }
 
-/** 覆盖式写入完整清单（已校验/去重），返回写入后的清单 */
-function persist(codes: string[]): string[] {
-  try {
-    const file = storeFile();
-    const dir = path.dirname(file);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(codes, null, 2), 'utf-8');
-  } catch {
-    /* 写入失败不影响内存态 */
-  }
-  return codes;
+/** 从磁盘读取清单（文件不存在/损坏 → 返回 []，不抛） */
+export function getWatchlist(): string[] {
+  return readCodesFromDisk();
 }
 
 /**
@@ -99,20 +193,21 @@ function persist(codes: string[]): string[] {
 export function addToWatchlist(code: string): string[] {
   const normalized = normalizeAShareCode(code);
   if (normalized === null) return getWatchlist();
-  const cur = getWatchlist();
-  if (cur.includes(normalized)) return cur;
-  if (cur.length >= watchlistMax()) return cur;
-  return persist([...cur, normalized]);
+  return withWriteSection((cur) => {
+    if (cur.includes(normalized)) return cur;
+    if (cur.length >= watchlistMax()) return cur;
+    return [...cur, normalized];
+  });
 }
 
 /** 移除一只（若不存在也返回原清单，幂等）。非法代码按「不存在」处理，不写入。 */
 export function removeFromWatchlist(code: string): string[] {
   const normalized = normalizeAShareCode(code);
   if (normalized === null) return getWatchlist();
-  const cur = getWatchlist();
-  const next = cur.filter((c) => c !== normalized);
-  if (next.length === cur.length) return cur;
-  return persist(next);
+  return withWriteSection((cur) => {
+    const next = cur.filter((c) => c !== normalized);
+    return next.length === cur.length ? cur : next;
+  });
 }
 
 /**
@@ -121,23 +216,40 @@ export function removeFromWatchlist(code: string): string[] {
  * （本函数没有 HTTP 出口，无法回可操作 400；调用方若需强提示应先自行预检条数）。
  */
 export function setWatchlist(codes: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  const max = watchlistMax();
-  for (const c of codes) {
-    const normalized = normalizeAShareCode(c);
-    if (normalized === null || seen.has(normalized)) continue;
-    if (out.length >= max) {
-      logger.warn('[watchlist] 批量设置超过清单上限，超出部分未写入', {
-        max,
-        requested: codes.length,
-      });
-      break;
+  return withWriteSection(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const max = watchlistMax();
+    for (const c of codes) {
+      const normalized = normalizeAShareCode(c);
+      if (normalized === null || seen.has(normalized)) continue;
+      if (out.length >= max) {
+        logger.warn('[watchlist] 批量设置超过清单上限，超出部分未写入', {
+          max,
+          requested: codes.length,
+        });
+        break;
+      }
+      seen.add(normalized);
+      out.push(normalized);
     }
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  return persist(out);
+    return out;
+  });
+}
+
+/** 异步入队版：读整表→改→写 全程在模块级写队列内完成（并发调用不会丢更新） */
+export function addToWatchlistAsync(code: string): Promise<string[]> {
+  return enqueueWatchlistWrite(() => addToWatchlist(code));
+}
+
+/** 异步入队版：见 addToWatchlistAsync */
+export function removeFromWatchlistAsync(code: string): Promise<string[]> {
+  return enqueueWatchlistWrite(() => removeFromWatchlist(code));
+}
+
+/** 异步入队版：见 addToWatchlistAsync */
+export function setWatchlistAsync(codes: string[]): Promise<string[]> {
+  return enqueueWatchlistWrite(() => setWatchlist(codes));
 }
 
 /* ============================================================================
@@ -273,20 +385,7 @@ export function getWatchlistAlertsSnapshot(): WatchlistAlertsSnapshot {
  * 失败只静默降级——调用方此刻已经把结果返回给用户了，写盘失败不该让监控请求失败。
  */
 export function saveWatchlistAlertsSnapshot(snapshot: WatchlistAlertsSnapshot): boolean {
-  const file = alertsFile();
-  const tmp = `${file}.tmp`;
-  try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify(snapshot, null, 2), 'utf-8');
-    fs.renameSync(tmp, file); // 原子替换：读侧永远看到完整 JSON
-    return true;
-  } catch {
-    // 失败清理临时文件，避免 rename 失败（如目标被占用）时留下 .tmp 残留
-    try {
-      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-    } catch {
-      /* 清理失败也不再抛 */
-    }
-    return false;
-  }
+  // 与自选清单共用同一套「临时文件 + rename」原子写（含 pid + 随机串的 tmp 名）：
+  // 两个并发监控请求各自写自己的 .tmp，不会互相覆盖，也不会留下半截 JSON。
+  return atomicWriteJson(alertsFile(), snapshot);
 }

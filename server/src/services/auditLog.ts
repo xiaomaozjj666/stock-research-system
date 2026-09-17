@@ -13,6 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import logger from '../utils/logger.js';
 
 /** 审计条目类别 */
 export type AuditCategory =
@@ -305,15 +306,35 @@ export class AuditLogger {
 /** 审计日志默认落盘路径（JSON 行追加） */
 const DEFAULT_AUDIT_LOG_FILE = path.join(import.meta.dirname, '..', 'data', 'audit.log');
 
-/** 单文件大小上限（字节，默认 5MB）：超过即轮转，防止 audit.log 无限增长撑爆磁盘 */
-const AUDIT_LOG_MAX_BYTES = Number(process.env.AUDIT_LOG_MAX_BYTES) || 5 * 1024 * 1024;
+/** 单文件大小上限默认值（字节，5MB）：超过即轮转，防止 audit.log 无限增长撑爆磁盘 */
+const AUDIT_LOG_MAX_BYTES_DEFAULT = 5 * 1024 * 1024;
+/**
+ * 轮转阈值下界（字节）：显式设置的小值（如测试里设 1024）仍按原值生效，
+ * 但 <= 0 / 非法值必须夹紧到该下界——此前 `AUDIT_LOG_MAX_BYTES=-1` 会让
+ * `auditFileSize + bytes > -1` 恒真，于是**每写一条都轮转**，历史留痕被一条条冲掉。
+ */
+const AUDIT_LOG_MAX_BYTES_MIN = 1024;
 /** 轮转保留份数：audit.log.1 ~ audit.log.N，更早的删除 */
 const AUDIT_LOG_KEEP = Math.max(1, Number(process.env.AUDIT_LOG_ROTATE_KEEP) || 3);
 /** metadata 中字符串字段落盘截断长度：完整 prompt/response 属用户对话明文，不应无界留存 */
 const AUDIT_METADATA_STR_MAX = 800;
 
+/**
+ * 解析轮转阈值（每次调用读 env，测试可在 beforeAll 重定向）：
+ * 未设置 → 默认 5MB；显式小值保留；<= 0 / 非数字 → 夹紧到下界或回落默认。
+ */
+function resolveMaxBytes(): number {
+  const raw = process.env.AUDIT_LOG_MAX_BYTES;
+  if (raw === undefined || raw === '') return AUDIT_LOG_MAX_BYTES_DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return AUDIT_LOG_MAX_BYTES_DEFAULT;
+  return Math.max(AUDIT_LOG_MAX_BYTES_MIN, Math.floor(parsed));
+}
+
 /** 当前文件大小缓存（字节）；null = 需要重新 stat */
 let auditFileSize: number | null = null;
+/** 大小缓存对应的文件路径：AUDIT_LOG_FILE 变更（测试重定向）后必须重新 stat */
+let auditFileSizePath: string | null = null;
 
 /** 递归截断 metadata 中的字符串字段（保留结构与数字） */
 function truncateStrings(value: unknown, depth = 0): unknown {
@@ -366,32 +387,47 @@ export const AUDIT_LOG_FILE = DEFAULT_AUDIT_LOG_FILE;
 /**
  * 默认落盘持久化钩子：把每条审计条目追加为一行 JSON。
  * - metadata 字符串截断（脱敏：完整 prompt/response 不明文无界落盘）；
- * - 按大小轮转（audit.log.1/.2/.3），防止单文件无限增长。
- * IO 失败静默降级（审计主流程不受影响，条目仍保留在内存中）。
+ * - 按大小轮转（audit.log.1/.2/.3），防止单文件无限增长；
+ * - 轮转失败（如 Windows 上 audit.log.1 被杀软/其他进程占用）**降级为直接追加**，
+ *   先保证这条留痕落地，再记 error 日志——绝不允许"轮转失败 → 整条静默消失"；
+ * - 写入失败记 error 日志（留痕缺口必须可见），审计主流程不受影响。
  */
 export function filePersistenceHook(entry: AuditEntry): void {
+  const file = resolveAuditLogFile();
   try {
-    const file = resolveAuditLogFile();
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const line =
       JSON.stringify({
         ...entry,
         metadata: entry.metadata ? truncateStrings(entry.metadata) : entry.metadata,
       }) + '\n';
+    const bytes = Buffer.byteLength(line, 'utf-8');
 
-    if (auditFileSize === null) {
+    if (auditFileSize === null || auditFileSizePath !== file) {
       auditFileSize = fs.existsSync(file) ? fs.statSync(file).size : 0;
+      auditFileSizePath = file;
     }
-    if (auditFileSize + Buffer.byteLength(line, 'utf-8') > AUDIT_LOG_MAX_BYTES) {
-      rotateAuditFile(file);
-      auditFileSize = 0;
+    if (auditFileSize + bytes > resolveMaxBytes()) {
+      try {
+        rotateAuditFile(file);
+        auditFileSize = 0;
+      } catch (rotateErr) {
+        // 降级：不轮转，直接把这条追加到现有文件（文件暂时超限，但留痕不丢）
+        auditFileSize = fs.existsSync(file) ? fs.statSync(file).size : 0;
+        logger.error('审计日志轮转失败，降级为直接追加（文件可能超出大小上限）', {
+          file,
+          err: rotateErr,
+        });
+      }
     }
     fs.appendFileSync(file, line, 'utf-8');
-    auditFileSize += Buffer.byteLength(line, 'utf-8');
-  } catch {
+    auditFileSize += bytes;
+  } catch (err) {
     // 大小状态不可信（可能轮转中途失败），下次重新 stat
     auditFileSize = null;
-    // 磁盘写入失败：静默降级，审计日志仍保留在内存中
+    auditFileSizePath = null;
+    // 落盘失败必须留痕于应用日志：静默跳过会让金融监管留痕出现无声缺口
+    logger.error('审计日志落盘失败（该条未写入文件，仍保留在内存）', { file, err });
   }
 }
 

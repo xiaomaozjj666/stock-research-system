@@ -9,6 +9,7 @@ import {
   deleteHistoryItem,
   getPreviousAnalysis,
   computeVsPrevious,
+  resetHistoryStoreCache,
   MAX_HISTORY_ITEMS,
   MAX_TIMELINE_POINTS,
   type HistoryEntryInput,
@@ -30,6 +31,15 @@ afterAll(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
+/**
+ * 直接改写落盘文件（绕过服务）后必须让内存 store 缓存失效：
+ * 服务读盘走模块级内存缓存（写后更新），夹具直接写文件时只有重置缓存才会被重读。
+ */
+function seedFile(raw: string): void {
+  writeFileSync(tmpFile, raw, 'utf-8');
+  resetHistoryStoreCache();
+}
+
 function makeEntry(code: string, over: Partial<HistoryEntryInput> = {}): HistoryEntryInput {
   return {
     stockCode: code,
@@ -44,8 +54,8 @@ function makeEntry(code: string, over: Partial<HistoryEntryInput> = {}): History
 
 describe('historyService 研究历史', () => {
   beforeEach(() => {
-    // 每个用例从空历史开始（直接重建文件）
-    writeFileSync(tmpFile, JSON.stringify({ items: [] }), 'utf-8');
+    // 每个用例从空历史开始（直接重建文件 + 重置内存缓存）
+    seedFile(JSON.stringify({ items: [] }));
   });
 
   it('保存新增条目，列表返回摘要（不含 result）', () => {
@@ -65,8 +75,7 @@ describe('historyService 研究历史', () => {
 
   it('列表按 createdAt 倒序（最新在前）', () => {
     // 用明确 createdAt 的 fixture 验证排序，不依赖 saveHistoryEntry 的毫秒精度
-    writeFileSync(
-      tmpFile,
+    seedFile(
       JSON.stringify({
         items: [
           {
@@ -89,7 +98,6 @@ describe('historyService 研究历史', () => {
           },
         ],
       }),
-      'utf-8',
     );
     const list = listHistory();
     expect(list.map((i) => i.id)).toEqual(['new', 'old']);
@@ -217,7 +225,7 @@ describe('historyService 研究历史', () => {
   });
 
   it('文件损坏时安全降级为空历史（不抛错）', () => {
-    writeFileSync(tmpFile, '{ not valid json', 'utf-8');
+    seedFile('{ not valid json');
     expect(listHistory()).toEqual([]);
     // 损坏后仍可正常写入新条目
     const saved = saveHistoryEntry(makeEntry('600519'));
@@ -277,8 +285,7 @@ describe('historyService 研究历史', () => {
   });
 
   it('旧数据兼容：没有 timeline 字段的记录正常列出（不抛、不返回空数组）', () => {
-    writeFileSync(
-      tmpFile,
+    seedFile(
       JSON.stringify({
         items: [
           {
@@ -293,7 +300,6 @@ describe('historyService 研究历史', () => {
           },
         ],
       }),
-      'utf-8',
     );
 
     const list = listHistory();
@@ -305,8 +311,7 @@ describe('historyService 研究历史', () => {
   });
 
   it('旧数据兼容：老记录首次被更新时自动补种起点，立刻可算出变化', () => {
-    writeFileSync(
-      tmpFile,
+    seedFile(
       JSON.stringify({
         items: [
           {
@@ -320,7 +325,6 @@ describe('historyService 研究历史', () => {
           },
         ],
       }),
-      'utf-8',
     );
 
     saveHistoryEntry(makeEntry('600519', { totalScore: 85, rating: '优先跟踪' }));
@@ -331,8 +335,7 @@ describe('historyService 研究历史', () => {
   });
 
   it('脏时间线被净化：非法点丢弃，非法字段收敛（不炸列表接口）', () => {
-    writeFileSync(
-      tmpFile,
+    seedFile(
       JSON.stringify({
         items: [
           {
@@ -352,7 +355,6 @@ describe('historyService 研究历史', () => {
           },
         ],
       }),
-      'utf-8',
     );
 
     const points = listHistory()[0].timeline!;

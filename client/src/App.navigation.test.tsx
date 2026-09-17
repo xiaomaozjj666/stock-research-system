@@ -198,6 +198,30 @@ describe('App —— 标签页导航', () => {
     expect(screen.getByTestId('paper-page')).toBeInTheDocument();
   });
 
+  it('tab 与面板成对关联：aria-controls 指向面板 id，面板 role=tabpanel + aria-labelledby 回指 tab', async () => {
+    const { container } = render(<App />);
+
+    const researchTab = screen.getByRole('tab', { name: '深度研究' });
+    expect(researchTab).toHaveAttribute('aria-controls', 'panel-research');
+
+    // 默认激活的研究面板：role=tabpanel、aria-labelledby 指向 tab 按钮、可程序化聚焦
+    const panel = container.querySelector('#panel-research') as HTMLElement;
+    expect(panel).not.toBeNull();
+    expect(panel).toHaveAttribute('role', 'tabpanel');
+    expect(panel).toHaveAttribute('aria-labelledby', 'tab-research');
+    expect(panel).toHaveAttribute('tabindex', '-1');
+    expect(panel).not.toHaveAttribute('hidden');
+
+    // 懒加载面板首次激活后同样被关联，且 hidden 语义不变
+    fireEvent.click(screen.getByRole('tab', { name: '模拟盘' }));
+    await screen.findByTestId('paper-page');
+    const paperTab = screen.getByRole('tab', { name: '模拟盘' });
+    expect(paperTab).toHaveAttribute('aria-controls', 'panel-paper');
+    const paperPanel = container.querySelector('#panel-paper') as HTMLElement;
+    expect(paperPanel).toHaveAttribute('role', 'tabpanel');
+    expect(paperPanel).toHaveAttribute('aria-labelledby', 'tab-paper');
+  });
+
   it('「历史」是例外：切走即卸载（保证每次进入都取到最新列表）', async () => {
     render(<App />);
     fireEvent.click(screen.getByRole('tab', { name: '历史' }));
@@ -528,6 +552,27 @@ describe('App —— 滚动行为', () => {
     Object.defineProperty(window, 'scrollY', { value: 0, writable: true, configurable: true });
     fireEvent.scroll(window);
     await waitFor(() => expect(screen.queryByRole('button', { name: '回到顶部' })).toBeNull());
+  });
+
+  it('系统开启「减少动态效果」时「回到顶部」不再平滑滚动（behavior: auto）', async () => {
+    const scrollTo = vi.fn();
+    vi.stubGlobal('scrollTo', scrollTo);
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    );
+    render(<App />);
+
+    Object.defineProperty(window, 'scrollY', { value: 900, writable: true, configurable: true });
+    fireEvent.scroll(window);
+
+    const btn = await screen.findByRole('button', { name: '回到顶部' });
+    fireEvent.click(btn);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' });
   });
 
   it('侧栏高亮跟随视口中心线所在区块', async () => {

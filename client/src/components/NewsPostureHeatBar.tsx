@@ -10,8 +10,16 @@ const NEUTRAL = { r: 100, g: 116, b: 139 }; // #64748b
 function postureColor(polarity: number, weightedImpact: number, hasNews: boolean): string {
   if (!hasNews) return `rgba(${NEUTRAL.r},${NEUTRAL.g},${NEUTRAL.b},0.45)`;
   const intensity = 0.4 + 0.6 * Math.min(1, Math.max(0, weightedImpact));
+  // 极性恰为 0 的"中性新闻"必须单独一类：此前 `polarity > 0 ? 红 : 绿` 会把它涂成看空色，
+  // 中性消息看起来像利空。用中性灰（与"无新闻"的灰同色系、但按影响强度取不透明度区分）。
+  if (polarity === 0) return `rgba(${NEUTRAL.r},${NEUTRAL.g},${NEUTRAL.b},${intensity.toFixed(3)})`;
   const c = polarity > 0 ? BULL : BEAR;
   return `rgba(${c.r},${c.g},${c.b},${intensity.toFixed(3)})`;
+}
+
+/** 极性是否为中性（0）：图例与 tooltip 与配色共用同一判定，避免两处口径打架 */
+function isNeutralNews(polarity: number, hasNews: boolean): boolean {
+  return hasNews && polarity === 0;
 }
 
 interface RowVM {
@@ -81,9 +89,12 @@ export default function NewsPostureHeatBar({
         const r = p.data._extra;
         if (!r.hasNews) return `<b>${r.code}</b> ${r.name ?? ''}<br/>无最新消息`;
         const postureTxt = r.posture != null ? `${(r.posture * 100).toFixed(0)}%` : '—';
+        const polarityTxt = isNeutralNews(r.polarity, r.hasNews)
+          ? `${r.polarity.toFixed(2)}（中性）`
+          : r.polarity.toFixed(2);
         return [
           `<b>${r.code}</b> ${r.name ?? ''}`,
-          `新闻极性：${r.polarity.toFixed(2)}`,
+          `新闻极性：${polarityTxt}`,
           `影响强度：${(r.weightedImpact * 100).toFixed(0)}%`,
           `看多占比：${(r.bullishRatio * 100).toFixed(0)}%`,
           `新闻姿态：${postureTxt}`,
@@ -131,11 +142,17 @@ export default function NewsPostureHeatBar({
   return (
     <div className="card watchlist-heatbar">
       <div className="section-title">新闻姿态热力条（自选股批量回测总览）</div>
-      <EChart option={option} style={{ height }} />
+      {/* canvas 对读屏不可见：没有 ariaLabel 时这张图对辅助技术等于不存在 */}
+      <EChart
+        option={option}
+        style={{ height }}
+        ariaLabel="新闻姿态热力条：每行一只自选股，条形长度与颜色表示新闻极性（红=偏多、绿=偏空、灰=中性或无消息），颜色深浅表示影响强度"
+      />
       <div className="watchlist-heatbar-legend">
         <span className="hb-dot hb-bull" /> 偏多（红）
         <span className="hb-dot hb-bear" /> 偏空（绿）
-        <span className="hb-dot hb-neutral" /> 无最新消息（灰）
+        <span className="hb-dot hb-flat" /> 中性·极性为 0（灰）
+        <span className="hb-dot hb-neutral" /> 无最新消息（浅灰）
         <span className="hb-hint">颜色越深＝新闻影响越强；条长按极性，右多左空</span>
       </div>
     </div>

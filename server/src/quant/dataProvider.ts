@@ -348,12 +348,31 @@ export async function fetchBenchmarkReturns(
 
 /** 缓存文件名 token 清洗：只保留字母/数字/下划线/连字符，防 `../` 等路径穿越 */
 /**
+ * 合成 K 线的硬迭代上限（按自然日计，含周末）。
+ *
+ * 为什么要硬上限：本函数是**同步 while + 逐根 push**，循环期间 Node 单线程事件循环
+ * 被完全占满（连健康检查都排不上）。而循环次数完全由 startDate/endDate 决定，
+ * 入参最终来自 HTTP body——`{"startDate":"1900-01-01","endDate":"2100-01-01"}` 就是
+ * 七万三千次迭代的同步阻塞。20000 个自然日 ≈ 76 年，覆盖任意真实研究窗口（默认回看
+ * 2 年），同时把同步阻塞时间钉在毫秒量级。
+ */
+const MAX_SIMULATED_DAYS = 20000;
+
+/**
  * 生成模拟K线数据（当API不可用时降级使用）
+ *
+ * 注意：入参日期由调用方（screener 入口等）负责校验为 `YYYY-MM-DD`；此处再做两层
+ * 防御——非法日期立即返回空数组（不进入循环），循环本身另有 MAX_SIMULATED_DAYS 硬上限。
  */
 function generateSimulatedData(stockCode: string, startDate: string, endDate: string): OHLCVData[] {
   const data: OHLCVData[] = [];
   const start = new Date(startDate);
   const end = new Date(endDate);
+  // 非法日期/倒置区间不进入循环：Invalid Date 的 `current.setDate()` 仍是 Invalid，
+  // 会一路推进到 MAX_SIMULATED_DAYS 才收手（白烧 2 万次迭代），直接短路成空数组
+  // （调用方按「无 K 线」处理，与倒置区间原本「一根都不产出」的语义一致）。
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
+  if (start.getTime() > end.getTime()) return [];
 
   // 基于股票代码生成确定性的"随机"价格：
   // 字母代码（如 AAPL）parseInt 得 NaN 会让整条模拟曲线全是 NaN，先做确定性哈希
@@ -368,7 +387,12 @@ function generateSimulatedData(stockCode: string, startDate: string, endDate: st
   const seed = codeSeed(stockCode.slice(-3));
 
   const current = new Date(start);
+  // visited：迭代次数硬上限（见 MAX_SIMULATED_DAYS）。用独立计数器而不是判断
+  // data.length（周末不 push，data.length 涨得比迭代慢，上限会被周末稀释）；
+  // 循环体内 setDate 一定推进日期，故 visited 保证终止。
+  let visited = 0;
   while (current <= end) {
+    if (visited++ >= MAX_SIMULATED_DAYS) break;
     // 跳过周末：日期标签用 toISOString（UTC），星期判断也必须用 UTC 口径，
     // 否则 UTC 负偏移服务器上周末跳过与日期标签错位
     if (current.getUTCDay() !== 0 && current.getUTCDay() !== 6) {

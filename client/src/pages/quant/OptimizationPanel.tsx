@@ -4,10 +4,15 @@ interface Props {
   data: OptimizationReport;
 }
 
+/**
+ * 影响程度是**状态语义**（高=需要优先处理，低=可选），不是涨跌方向：
+ * .chip-negative 在本项目里是绿色（跌），拿来标"高影响"会渲染成绿色警示。
+ * 这里高→红（.chip-danger）、低→绿（.sig-valid）。
+ */
 function impactCls(impact: 'high' | 'medium' | 'low'): string {
-  if (impact === 'high') return 'chip chip-negative';
+  if (impact === 'high') return 'chip chip-danger';
   if (impact === 'medium') return 'chip chip-neutral';
-  return 'chip chip-positive';
+  return 'chip sig-valid';
 }
 
 function impactLabel(impact: 'high' | 'medium' | 'low'): string {

@@ -65,7 +65,7 @@ import {
   BAOSTOCK_INDEXES,
   type BaostockIndex,
 } from '../quant/baostockBridge.js';
-import { runMarketScreener, readLatestScreenerRun } from '../quant/screener.js';
+import { runMarketScreener, readLatestScreenerRun, ScreenerParamError } from '../quant/screener.js';
 import { runEnsemble, recordModelOutcome, getModelWeights } from '../llm/ensemble.js';
 import {
   validateMessages,
@@ -471,11 +471,14 @@ router.post('/api/quant/factor/composite', quantLimiter, circuitBreakerGuard, as
         new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
     );
     const endDate = String(body.endDate ?? new Date().toISOString().split('T')[0]);
-    const horizons = Array.isArray(body.horizons)
-      ? body.horizons
-          .map((h: unknown) => Number(h))
-          .filter((h: number) => Number.isFinite(h) && h > 0)
-      : [21, 63];
+    // horizons 统一解析：非法（非整数 / <1 / >504 / 档位过多）→ 400，不静默回落默认值
+    const parsedHorizons = horizonsOrReject(body.horizons, res);
+    if (!parsedHorizons.ok) return;
+    const horizons = parsedHorizons.horizons;
+
+    // 模拟数据闸门：行情源不可达时 dataProvider 会返回确定性合成 K 线，
+    // 组合 alpha（IC/t/p + compositeAlpha）绝不能基于合成曲线产出 200
+    if (rejectIfSimulated(await fetchOHLCVData(normalizedCode, startDate, endDate), res)) return;
 
     const result = await computeCompositeAlphaForStrategy(
       normalizedCode,
@@ -525,16 +528,11 @@ router.post(
           new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
       );
       const endDate = String(body.endDate ?? new Date().toISOString().split('T')[0]);
-      const horizons: number[] = Array.isArray(body.horizons)
-        ? [
-            ...new Set(
-              (body.horizons as unknown[])
-                .map((h) => Number(h))
-                .filter((h) => Number.isInteger(h) && h >= 1)
-                .map((h) => Math.min(h, MAX_HORIZON_DAYS)),
-            ),
-          ].slice(0, MAX_HORIZONS)
-        : [21, 63];
+      // horizons 统一解析（同 /composite）：非法即 400，不再「先 floor 再用」——
+      // h=0.5 曾静默变 0 → Math.ceil(m/0)=Infinity → tStat=NaN → 响应字段成 null
+      const parsedHorizons = horizonsOrReject(body.horizons, res);
+      if (!parsedHorizons.ok) return;
+      const horizons = parsedHorizons.horizons;
 
       // 预检：源不可达且无缓存兜底 → 立刻 503，不逐个股票等超时
       const preflight = await runPreflight();
@@ -549,6 +547,11 @@ router.post(
       }
       // 客户端提前断开（取消/关页）→ 级联中止在途取数
       const abort = abortOnClientClose(res);
+      // 模拟数据闸门（批量）：compositeService 的逐股结果不带 isSimulated 标记，
+      // 故先按同一取数口径探测一遍；命中即 422，不进入整批测算
+      const simulatedCodes = await findSimulatedCodes(codes, startDate, endDate, abort.signal);
+      if (abort.signal.aborted) return;
+      if (rejectIfAnySimulated(simulatedCodes, res)) return;
       const result = await computeCompositeAlphaBatch(
         codes,
         startDate,
@@ -660,6 +663,151 @@ function ledgerEntriesFromReport(
 // 504 = 两年交易日，超出已无回看意义。
 const MAX_HORIZON_DAYS = 504;
 const MAX_HORIZONS = 8;
+
+/** horizons 缺省档位：组合/截面/表达式各路由的历史默认值一致 */
+const DEFAULT_HORIZONS: readonly number[] = [21, 63];
+
+/** 持有期参数非法（路由据此回 400 而不是 500）；message 为可直接展示的中文说明 */
+class HorizonParamError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'HorizonParamError';
+  }
+}
+
+/**
+ * horizons 的统一解析（五处路由共用，含 composite / composite-batch / cross-section /
+ * expression / expression-batch）。
+ *
+ * 不合法即**明确拒绝**（抛 HorizonParamError → 路由回 400 + 中文说明），**不静默回落默认值**：
+ * 此前四处口径各不相同（单只 composite 连上界都没有，`h=1e9` 能过；batch 先 floor
+ * 再没复检下界，`h=0.5` 会变成 0 → 后续 `Math.ceil(m/0)` 得 Infinity → tStat 变 NaN
+ * → 响应里字段成 null，静默产出错误的显著性数据；截面/表达式只有单元素值域、无个数上限，
+ * 16000 个整数约 64KB body 就能通过，每档一轮全截面测算）。
+ *
+ * 统一的说法是「传了就必须合法」，只有字段缺失才用默认值：
+ *   - 非数组（含 undefined/null）→ DEFAULT_HORIZONS；
+ *   - 空数组 / 含非整数 / 含 <1 / 含 >MAX_HORIZON_DAYS → 拒绝；
+ *   - 个数超过 MAX_HORIZONS → 拒绝（不静默截断，避免"点了 20 档只算了 8 档"的错觉）；
+ *   - 重复档位去重（同档重复计算没有意义，只浪费 CPU）。
+ */
+function parseHorizons(raw: unknown): number[] {
+  if (raw === undefined || raw === null) return [...DEFAULT_HORIZONS];
+  if (!Array.isArray(raw)) {
+    throw new HorizonParamError('horizons 需为整数数组（如 [21, 63]）');
+  }
+  if (raw.length === 0) {
+    throw new HorizonParamError('horizons 不能为空数组：请给出至少一个持有期（如 21）');
+  }
+  if (raw.length > MAX_HORIZONS) {
+    throw new HorizonParamError(`horizons 档位过多（${raw.length} > ${MAX_HORIZONS}）`);
+  }
+  const out: number[] = [];
+  for (const value of raw) {
+    const h = Math.trunc(Number(value));
+    if (!Number.isInteger(h) || h < 1 || h > MAX_HORIZON_DAYS) {
+      throw new HorizonParamError(
+        `horizons 每档需为 1-${MAX_HORIZON_DAYS} 的整数（当前：${String(value)}）`,
+      );
+    }
+    if (!out.includes(h)) out.push(h);
+  }
+  return out;
+}
+
+/** horizons 解析失败 → 400 + 中文说明（五处路由共用同一响应口径） */
+function horizonsOrReject(
+  raw: unknown,
+  res: { status: (n: number) => { json: (b: unknown) => void } },
+) {
+  try {
+    return { ok: true as const, horizons: parseHorizons(raw) };
+  } catch (error) {
+    if (error instanceof HorizonParamError) {
+      res.status(400).json({ error: error.message });
+      return { ok: false as const };
+    }
+    throw error;
+  }
+}
+
+// === 模拟数据（合成 K 线）不得流入结论 ===
+// dataProvider 在行情源不可达时会返回按代码播种的确定性合成 K 线（isSimulated=true，
+// 见 dataProvider.ts 的「真失败且无历史 → 降级模拟数据」分支）。它只适合演示，
+// 一旦流入 IC/t/p、compositeAlpha、totalReturn/sharpe 这类**看起来像真实结论**的字段，
+// 用户拿到的是 HTTP 200 且无从分辨的伪结果——比报错危险得多。
+//
+// 与既有单只路径的披露口径保持一致（/api/quant/analyze 的 limitations
+// 「当前使用模拟数据，回测结果仅供参考」、fetchBenchmarkReturns 遇模拟指数直接返回
+// null）：回测/组合 alpha 这类**产出可交易结论**的路径必须拒绝，而不是「披露后继续算」；
+// 单只 analyze 的披露逻辑保持原样不动。
+//
+// 统一响应：422 + { error: '行情源不可用，本次未使用模拟数据', degraded: true }
+const SIMULATED_DATA_ERROR = '行情源不可用，本次未使用模拟数据';
+
+/** 单只/单序列取数后的模拟数据检查 */
+function hasSimulatedBars(bars: { isSimulated?: boolean }[] | null | undefined): boolean {
+  return Array.isArray(bars) && bars.some((b) => b?.isSimulated === true);
+}
+
+/** 命中模拟数据 → 422（degraded 标记调用方据此展示降级原因），返回 true 表示响应已写出 */
+function rejectIfSimulated(
+  bars: { isSimulated?: boolean }[] | null | undefined,
+  res: { status: (n: number) => { json: (b: unknown) => void } },
+): boolean {
+  if (!hasSimulatedBars(bars)) return false;
+  res.status(422).json({ error: SIMULATED_DATA_ERROR, degraded: true });
+  return true;
+}
+
+/**
+ * 批量路径的取数预检：逐只探测是否命中模拟数据。
+ *
+ * 为什么要在批量**之前**单独探测：compositeService 的批量结果不携带 isSimulated
+ * 标记（逐股结果里只有 bars 条数），若等它跑完再判断就只能靠猜。预检走同一个
+ * fetchOHLCVData（命中 12h 磁盘缓存时零网络调用），宁可多一次缓存命中，
+ * 也不让合成曲线冒充真实行情混进 IC/t/p。
+ */
+async function findSimulatedCodes(
+  codes: string[],
+  startDate: string,
+  endDate: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const limit = Math.min(4, Math.max(1, codes.length));
+  let cursor = 0;
+  const hits: string[] = [];
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      if (signal?.aborted) return;
+      const i = cursor++;
+      if (i >= codes.length) return;
+      const code = codes[i];
+      try {
+        const bars = await fetchOHLCVData(code, startDate, endDate, signal);
+        if (hasSimulatedBars(bars)) hits.push(code);
+      } catch {
+        // 取数抛错由后续真实路径处理（该项会被标记 ok:false），预检不改变其语义
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: limit }, () => worker()));
+  return hits;
+}
+
+/** 批量路径命中模拟数据 → 422 并列出命中的代码（degraded 标记降级原因） */
+function rejectIfAnySimulated(
+  codes: string[],
+  res: { status: (n: number) => { json: (b: unknown) => void } },
+): boolean {
+  if (codes.length === 0) return false;
+  res.status(422).json({
+    error: SIMULATED_DATA_ERROR,
+    degraded: true,
+    simulatedCodes: codes.slice(0, 10),
+  });
+  return true;
+}
 
 // === 截面 universe 宽度与并发上限（2026-09-05 放开） ===
 // 截面框架的统计功效随横截面宽度增长：板块内 30 只原本够用，但要上全市场多行业
@@ -864,12 +1012,15 @@ async function fetchPanelInputs(
     withEvents?: boolean;
     withMargin?: boolean;
   },
-): Promise<StockPanelInput[]> {
-  return mapWithConcurrency(
+): Promise<{ inputs: StockPanelInput[]; simulatedCodes: string[] }> {
+  const inputs = await mapWithConcurrency(
     codes,
     crossSectionConcurrency(),
     async (code: string) => {
       const bars = await fetchOHLCVData(code, opts.start, opts.end, opts.signal).catch(() => []);
+      // 模拟数据闸门（截面路径）：此前只 `.catch(() => [])`，从不检查 isSimulated，
+      // 于是合成曲线会一路流入逐日截面 IC / t / p（见调用方的 rejectIfAnySimulated）。
+      // 这里只标记，不在此处抛错——由调用方决定整批拒绝的响应形态。
       const financial = opts.withFinancial
         ? await fetchFinancialDataCached(code, opts.signal).catch(() => null)
         : null;
@@ -886,6 +1037,11 @@ async function fetchPanelInputs(
     },
     { signal: opts.signal },
   );
+  // 按输入顺序给出命中代码（mapWithConcurrency 的 results 是按序的，push 顺序受并发影响）
+  return {
+    inputs,
+    simulatedCodes: inputs.filter((i) => hasSimulatedBars(i.bars)).map((i) => i.code),
+  };
 }
 
 /** 组合回测参数解析：范围外的值回落默认（一行内错误笔误的容错口径） */
@@ -991,13 +1147,11 @@ router.post(
         /** 可选：为全部因子附带组合回测（top-N 等权周期调仓，宇宙等权基准） */
         portfolio?: unknown;
       };
-      const horizons =
-        Array.isArray(body.horizons) &&
-        body.horizons.every(
-          (h: unknown) => Number.isInteger(h) && (h as number) >= 1 && (h as number) <= 250,
-        )
-          ? (body.horizons as number[])
-          : [21, 63];
+      // horizons 统一解析（五处共用）：此前只做「every 在 1-250 内」的单元素校验，
+      // 无个数上限——16000 个整数约 64KB body 即可通过，每档一轮全截面测算
+      const parsedHorizons = horizonsOrReject(body.horizons, res);
+      if (!parsedHorizons.ok) return;
+      const horizons = parsedHorizons.horizons;
       const includeFundamental = body.includeFundamental !== false;
       // 事件族开关（分红/回购/解禁 + PEAD）：默认开启；关闭可跳过事件源的网络调用
       const includeEvents = body.includeEvents !== false;
@@ -1055,7 +1209,7 @@ router.post(
       // 客户端提前断开（取消/关页）→ 级联中止在途取数
       abort = abortOnClientClose(res);
       const { signal } = abort;
-      const inputs: StockPanelInput[] = await fetchPanelInputs(codes, {
+      const { inputs, simulatedCodes } = await fetchPanelInputs(codes, {
         start,
         end,
         signal,
@@ -1065,6 +1219,8 @@ router.post(
       });
       // 客户端已不在：跳过整段 CPU 评估，静默终止（socket 已关闭，无需写响应）
       if (abort.signal.aborted) return;
+      // 模拟数据闸门：任一标的是合成 K 线 → 422，不让 IC/t/p 基于合成曲线算出来
+      if (rejectIfAnySimulated(simulatedCodes, res)) return;
 
       const panel = buildCrossSectionPanel(inputs, horizons);
       // 逐持有期附「是否采信」判定（IC 显著 + 分层单调 + 多空价差为正），与
@@ -1388,6 +1544,10 @@ router.post('/api/quant/screener/run', quantLimiter, circuitBreakerGuard, async 
     res.json(result);
   } catch (error) {
     if (abort.signal.aborted) return;
+    // 区间/上限入参非法属调用方问题 → 400 + 中文说明，不是 500
+    if (error instanceof ScreenerParamError) {
+      return res.status(400).json({ error: error.message });
+    }
     logger.error('Market screener error', { route: '/api/quant/screener/run', err: error });
     res.status(500).json({ error: '全市场初筛失败' });
   }
@@ -1651,13 +1811,10 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
         detail: error instanceof Error ? error.message : String(error),
       });
     }
-    const horizons =
-      Array.isArray(body.horizons) &&
-      body.horizons.every(
-        (h: unknown) => Number.isInteger(h) && (h as number) >= 1 && (h as number) <= 250,
-      )
-        ? (body.horizons as number[])
-        : [21, 63];
+    // horizons 统一解析（五处共用）：此前只有「单元素值域」校验且无个数上限
+    const parsedHorizons = horizonsOrReject(body.horizons, res);
+    if (!parsedHorizons.ok) return;
+    const horizons = parsedHorizons.horizons;
     const portfolioOpts = parsePortfolioOpts(body.portfolio);
 
     // 预检 + universe 解析（三路由共用助手；board 门槛 = 板块列表源）
@@ -1670,7 +1827,7 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
     const end = new Date().toISOString().slice(0, 10);
     const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
     abort = abortOnClientClose(res);
-    const inputs = await fetchPanelInputs(codes, {
+    const { inputs, simulatedCodes } = await fetchPanelInputs(codes, {
       start,
       end,
       signal: abort.signal,
@@ -1679,6 +1836,8 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
       withQuarterly: true,
     });
     if (abort.signal.aborted) return;
+    // 模拟数据闸门：表达式评估同样基于逐日取值 + 远期收益，合成曲线不得流入
+    if (rejectIfAnySimulated(simulatedCodes, res)) return;
 
     // 装配观测：表达式逐日取值 + t→t+h 远期收益（single/batch 共用助手）
     const { obs, included, skipped } = assembleExpressionObservations(ast, inputs, horizons);
@@ -1766,13 +1925,10 @@ router.post(
       if (expressions.length > 50) {
         return res.status(413).json({ error: `expressions 过多（${expressions.length} > 50）` });
       }
-      const horizons =
-        Array.isArray(body.horizons) &&
-        body.horizons.every(
-          (h: unknown) => Number.isInteger(h) && (h as number) >= 1 && (h as number) <= 250,
-        )
-          ? (body.horizons as number[])
-          : [21, 63];
+      // horizons 统一解析（五处共用）：此前只有「单元素值域」校验且无个数上限
+      const parsedHorizons = horizonsOrReject(body.horizons, res);
+      if (!parsedHorizons.ok) return;
+      const horizons = parsedHorizons.horizons;
       const portfolioOpts = parsePortfolioOpts(body.portfolio);
 
       // 全部表达式先解析（纯 CPU，毫秒级）：非法项提前标记，不进入取数
@@ -1805,7 +1961,7 @@ router.post(
       const end = new Date().toISOString().slice(0, 10);
       const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
       abort = abortOnClientClose(res);
-      const inputs = await fetchPanelInputs(codes, {
+      const { inputs, simulatedCodes } = await fetchPanelInputs(codes, {
         start,
         end,
         signal: abort.signal,
@@ -1813,6 +1969,8 @@ router.post(
         withQuarterly: true,
       });
       if (abort.signal.aborted) return;
+      // 模拟数据闸门：批量假设验证的面板共享，任一只合成即整批拒绝
+      if (rejectIfAnySimulated(simulatedCodes, res)) return;
 
       // 逐表达式评估：面板（inputs）只取一次，这里是纯 CPU 循环
       const source: FactorExperimentSource =
@@ -1913,6 +2071,8 @@ router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, asy
     if (!ohlcv || ohlcv.length === 0) {
       return res.status(500).json({ error: `无法获取 ${stockCode} 的 K 线数据` });
     }
+    // 模拟数据闸门：否则 totalReturn / sharpe 会基于合成曲线算出并 200 返回
+    if (rejectIfSimulated(ohlcv, res)) return;
 
     // 基线：无新闻叠加
     const baseline = runBacktest(ohlcv, baseCfg);

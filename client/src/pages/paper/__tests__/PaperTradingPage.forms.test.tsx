@@ -90,6 +90,17 @@ async function renderReady(over: Record<string, unknown> = {}) {
   await waitFor(() => expect(screen.getByRole('button', { name: '下单' })).toBeEnabled());
 }
 
+/** 手动 settle 的桩：用于构造「旧请求迟到」这类真实时序 */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 /** 输入 6 位代码后失焦：真实 StockSearchInput 的自动提交路径 */
 function pickOrderCode(code: string) {
   const input = screen.getByLabelText('下单股票代码');
@@ -358,6 +369,49 @@ describe('PaperTradingPage 下单表单校验', () => {
         expect.objectContaining({ code: '600519', quantity: 100 }),
       ),
     );
+  });
+});
+
+describe('PaperTradingPage 下单防重复提交', () => {
+  it('下单在途：按钮变「提交中…」并禁用，同帧连点只发一次请求', async () => {
+    const d = deferred<unknown>();
+    mocks.placePaperOrder.mockReturnValue(d.promise);
+    await renderReady();
+    pickOrderCode('600519');
+    fireEvent.change(screen.getByLabelText('数量（股）'), { target: { value: '100' } });
+
+    const orderBtn = screen.getByRole('button', { name: '下单' });
+    fireEvent.click(orderBtn);
+    // 资金类操作：15s 在途期间每点一次就是一笔内容完全相同的成交
+    expect(screen.getByRole('button', { name: '提交中…' })).toBeDisabled();
+    fireEvent.click(orderBtn);
+    fireEvent.click(screen.getByRole('button', { name: '提交中…' }));
+    expect(mocks.placePaperOrder).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      d.resolve({ order: { id: 'o1' } });
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: '下单' })).toBeEnabled());
+    // 表单已清空：再次点击不会拿旧表单值重复下单（代码为空 → 前端拦下）
+    expect(screen.getByLabelText('数量（股）')).toHaveValue(null);
+    fireEvent.click(screen.getByRole('button', { name: '下单' }));
+    expect(mocks.placePaperOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it('下单失败：提交中标记复位，按钮可再次提交', async () => {
+    const d = deferred<unknown>();
+    mocks.placePaperOrder.mockReturnValue(d.promise);
+    await renderReady();
+    pickOrderCode('600519');
+    fireEvent.change(screen.getByLabelText('数量（股）'), { target: { value: '100' } });
+    fireEvent.click(screen.getByRole('button', { name: '下单' }));
+    expect(screen.getByRole('button', { name: '提交中…' })).toBeDisabled();
+
+    await act(async () => {
+      d.reject({ response: { data: { error: '可用资金不足' } } });
+    });
+    expect(await screen.findByRole('alert')).toHaveTextContent('可用资金不足');
+    expect(screen.getByRole('button', { name: '下单' })).toBeEnabled();
   });
 });
 
@@ -753,8 +807,9 @@ describe('PaperTradingPage 港美股财务估值查询', () => {
       await screen.findByText(/查询降级或未返回数据（eastmoney），请检查代码\/市场后重试。/),
     ).toBeInTheDocument();
     expect(mocks.getIntlFundamentals).toHaveBeenCalledWith('00700', 'HK');
-    // 没有 fundamentals 可依据时，K 线请求回落到用户显式选中的市场
-    expect(mocks.getIntlKlines).toHaveBeenCalledWith(expect.objectContaining({ market: 'HK' }));
+    // 没有 fundamentals 时 K 线渲染不到（只画在 `fundamentals ?` 分支内）：
+    // 降级后再发一次上游请求是白跑，故一次都不该发
+    expect(mocks.getIntlKlines).not.toHaveBeenCalled();
   });
 
   it('查询中：按钮变「查询中…」并禁用，返回后恢复', async () => {
@@ -805,6 +860,87 @@ describe('PaperTradingPage 港美股财务估值查询', () => {
 
     await screen.findByText('腾讯控股');
     expect(within(intlTable()).getAllByText('—')).toHaveLength(5);
+  });
+
+  it('查询在途时改了代码：迟到的旧响应被序号守卫丢弃，不会覆盖新查询的结果', async () => {
+    // 真实时序：第一次查询的 fundamentals 立刻返回、K 线挂在途（按钮此时解禁），
+    // 用户把代码改成 TSLA 再点一次 —— 两次查询因同时在途。
+    // 随后 00700（旧）的 K 线迟到，它绝不能把已经换成 TSLA 的结果改回腾讯。
+    const oldKlines = deferred<unknown>();
+    const newKlines = deferred<unknown>();
+    let klineCall = 0;
+    mocks.getIntlKlines.mockImplementation(() => {
+      klineCall += 1;
+      return klineCall === 1
+        ? oldKlines.promise
+        : klineCall === 2
+          ? newKlines.promise
+          : Promise.resolve({ code: 'TSLA', market: 'US', count: 1, klines: [] });
+    });
+    const oldQuery = deferred<unknown>();
+    mocks.getIntlFundamentals.mockReturnValueOnce(oldQuery.promise).mockResolvedValueOnce({
+      fundamentals: {
+        ...FUNDAMENTALS,
+        code: 'TSLA',
+        name: '特斯拉',
+        market: 'US',
+        currency: 'USD',
+      },
+      degraded: false,
+      source: 'eastmoney',
+      fetchedAt: '2026-09-16T02:00:00.000Z',
+    });
+    await renderReady();
+
+    const codeInput = screen.getByLabelText('代码');
+    fireEvent.change(codeInput, { target: { value: '00700' } });
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
+
+    // 00700 的 fundamentals 返回 → 表格是腾讯，K 线挂起
+    await act(async () => {
+      oldQuery.resolve({
+        fundamentals: FUNDAMENTALS,
+        degraded: false,
+        source: 'eastmoney',
+        fetchedAt: '2026-09-16T02:00:00.000Z',
+      });
+    });
+    expect(screen.getByText('腾讯控股')).toBeInTheDocument();
+    expect(mocks.getIntlKlines).toHaveBeenCalledTimes(1);
+
+    // 输入框改成 TSLA；K 线回来使按钮解禁，用户再点一次 → 第二次查询发出
+    fireEvent.change(codeInput, { target: { value: 'TSLA' } });
+    await act(async () => {
+      oldKlines.resolve({ code: '00700', market: 'HK', count: 1, klines: [] });
+    });
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
+    expect(mocks.getIntlFundamentals).toHaveBeenCalledTimes(2);
+    expect(mocks.getIntlFundamentals).toHaveBeenLastCalledWith('TSLA', undefined);
+    expect(await screen.findByText('特斯拉')).toBeInTheDocument();
+
+    // 00700（旧）的 K 线迟到 → 序号守卫必须丢弃它：表格仍是 TSLA，输入框也是 TSLA
+    await act(async () => {
+      newKlines.resolve({ code: 'TSLA', market: 'US', count: 1, klines: [] });
+    });
+    expect(screen.getByText('特斯拉')).toBeInTheDocument();
+    expect(screen.queryByText('腾讯控股')).toBeNull();
+    expect(codeInput).toHaveValue('TSLA');
+  });
+
+  it('旧查询在途时按钮保持禁用：不会因为旧查询的收尾而被提前解禁', async () => {
+    // fundamentals 永不返回 → 按钮停在「查询中…」；
+    // 旧查询的 finally 若不做同一道序号守卫，就会把此刻的加载态解禁、放进第三个请求
+    mocks.getIntlFundamentals.mockReturnValue(new Promise(() => {}));
+    await renderReady();
+
+    const codeInput = screen.getByLabelText('代码');
+    fireEvent.change(codeInput, { target: { value: '00700' } });
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '查询中…' })).toBeDisabled());
+    expect(mocks.getIntlFundamentals).toHaveBeenCalledTimes(1);
+    expect(mocks.getIntlKlines).not.toHaveBeenCalled();
+    expect(codeInput).toBeEnabled();
   });
 });
 

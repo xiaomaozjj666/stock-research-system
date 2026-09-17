@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import logger from '../logger.js';
 import {
   LimitGate,
   QueueTimeoutError,
@@ -240,6 +241,49 @@ describe('LimitGate — 排队超时（假时钟，零真实等待）', () => {
     expect(Date.now() - start).toBeLessThan(1000);
     release();
     expect(gate.inFlight).toBe(0);
+  });
+});
+
+/* ============================================================================
+ * 派发临界区必须自愈（P1：日志同步抛错会让 waiter 永不 settle + 配额泄漏）
+ * ----------------------------------------------------------------------------
+ * dispatch 在 settled=true 并清掉定时器之后、resolve(release) 之前夹了一次 logger.info：
+ * 日志写入若同步抛错（EPIPE / 磁盘满），异常会从 release() 里冒出去，该 waiter 永不
+ * settle，且已 +1 的配额再没人归还 —— 命中并发上限后闸门**无法自愈**（后续 acquire
+ * 全部排队到超时，服务表现为 LLM 全线 429）。
+ * ==========================================================================*/
+describe('LimitGate — 派发临界区不被日志写入打断', () => {
+  it('派发日志同步抛错：waiter 仍被派发、配额账自洽、闸门可继续服务', async () => {
+    const gate = new LimitGate({ maxConcurrency: 1, queueTimeoutMs: 1000, name: 'test' });
+    const release1 = await gate.acquire();
+    const queued = gate.acquire(); // 排队
+    expect(gate.queued).toBe(1);
+
+    const spy = vi.spyOn(logger, 'info').mockImplementation((msg: string) => {
+      // 只让「派发那一刻」的日志失败：模拟 EPIPE/磁盘满
+      if (String(msg).includes('排队结束')) throw new Error('EPIPE: 日志写入失败');
+    });
+    let released = false;
+    try {
+      // 1) 派发临界区不得把异常抛给 release 的调用方（否则调用方的 finally 也会炸）
+      expect(() => release1()).not.toThrow();
+      released = true;
+      // 2) waiter 必须被 settle（修复前这里会永久挂起直到排队超时/用例超时）
+      const release2 = await queued;
+      expect(gate.inFlight).toBe(1);
+      expect(gate.queued).toBe(0);
+
+      // 3) 闸门自愈：还能继续拿到配额，配额账不会泄漏
+      const queued2 = gate.acquire();
+      release2();
+      const release3 = await queued2;
+      release3();
+      expect(gate.inFlight).toBe(0);
+      expect(gate.snapshot()).toMatchObject({ acquired: 3, timeouts: 0 });
+    } finally {
+      spy.mockRestore();
+      if (!released) release1();
+    }
   });
 });
 

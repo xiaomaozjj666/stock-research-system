@@ -75,16 +75,53 @@ function backoffDelay(attempt: number): number {
 }
 
 /**
+ * 读取响应体，并把读取纳入超时保护。
+ * 为什么需要：fetchWithRetry 在**响应头到达**时就清掉了超时定时器，
+ * 于是 body 读取裸奔——上游在头之后卡住（连接不断、数据不来）时该请求永不结束，
+ * 而它占着的 llmGate 配额只在 finally 归还；累积到并发上限（默认 8）后，
+ * 全站 LLM 调用都会排队超时 429，且必须重启进程才能恢复。
+ * 超时通过 abort 本次尝试的连接生效（abort 后 body 流立即失败 → 调用方 finally 归还配额）。
+ */
+async function readBodyWithTimeout<T>(
+  read: () => Promise<T>,
+  timeoutMs: number,
+  getAttempt: () => AbortController | null,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          getAttempt()?.abort();
+          reject(new Error(`LLM 响应体读取超时（${timeoutMs}ms 未完成）`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * 带超时与重试的 fetch：
  * - 每次尝试独立超时（AbortController），linkSignal（外部取消）联动生效；
  * - 429/5xx/网络错误按指数退避重试，尊重 Retry-After（上限 10s）；
  * - 超时 abort 与外部取消不重试（保持原有立即抛错语义）。
  * 适用于 LLM 这类请求体固定、重发安全的幂等调用。
+ *
+ * `onAttempt` 把本次尝试的 AbortController 交给调用方：响应头到达并不代表请求结束，
+ * 非流式调用还要在同一个超时预算内读完 body（见 readBodyWithTimeout）。
  */
 async function fetchWithRetry(
   url: string,
   init: RequestInit,
-  opts: { timeoutMs: number; linkSignal?: AbortSignal; maxRetries?: number } = {
+  opts: {
+    timeoutMs: number;
+    linkSignal?: AbortSignal;
+    maxRetries?: number;
+    onAttempt?: (controller: AbortController) => void;
+  } = {
     timeoutMs: 60_000,
   },
 ): Promise<Response> {
@@ -92,6 +129,7 @@ async function fetchWithRetry(
   let lastError: unknown = new Error('fetch failed');
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const attemptController = new AbortController();
+    opts.onAttempt?.(attemptController);
     const timer = setTimeout(() => attemptController.abort(), opts.timeoutMs);
     try {
       const signal = opts.linkSignal
@@ -155,6 +193,9 @@ export async function chat(messages: ChatMessage[], options: LLMOptions = {}): P
     // 配额的获取放在单请求超时之前：排队等待不应偷走调用自身的超时预算
     const release = await llmGate.acquire(options.signal);
     try {
+      /** 本次尝试的 AbortController：body 读取超时要靠它真正断掉连接 */
+      let attempt: AbortController | null = null;
+      const timeoutMs = options.timeout ?? 60000;
       const response = await fetchWithRetry(
         `${config.baseUrl}/chat/completions`,
         {
@@ -165,16 +206,27 @@ export async function chat(messages: ChatMessage[], options: LLMOptions = {}): P
           },
           body: JSON.stringify(body),
         },
-        { timeoutMs: options.timeout ?? 60000, linkSignal: options.signal },
+        {
+          timeoutMs,
+          linkSignal: options.signal,
+          onAttempt: (c) => {
+            attempt = c;
+          },
+        },
       );
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
         throw new Error(`LLM 请求失败 (${response.status}): ${errText.slice(0, 300)}`);
       }
-      const data = (await response.json()) as {
-        choices?: { message?: { content?: string } }[];
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-      };
+      const data = await readBodyWithTimeout(
+        () =>
+          response.json() as Promise<{
+            choices?: { message?: { content?: string } }[];
+            usage?: { prompt_tokens?: number; completion_tokens?: number };
+          }>,
+        timeoutMs,
+        () => attempt,
+      );
       recordLLMUsage(model, data.usage, options.task, span);
       const content = data.choices?.[0]?.message?.content || '';
       if (!data.choices) {
@@ -361,6 +413,8 @@ export async function chatWithTools(
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
     try {
+      /** 本次尝试的 AbortController：body 读取超时要靠它真正断掉连接 */
+      let attempt: AbortController | null = null;
       const response = await fetchWithRetry(
         `${config.baseUrl}/chat/completions`,
         {
@@ -371,13 +425,23 @@ export async function chatWithTools(
           },
           body: JSON.stringify(body),
         },
-        { timeoutMs: options.timeout ?? 60000, linkSignal: options.signal },
+        {
+          timeoutMs: options.timeout ?? 60000,
+          linkSignal: options.signal,
+          onAttempt: (c) => {
+            attempt = c;
+          },
+        },
       );
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
         throw new Error(`LLM 工具调用失败 (${response.status}): ${errText.slice(0, 300)}`);
       }
-      data = (await withTimeout(response.json(), 15000)) as typeof data;
+      data = await readBodyWithTimeout(
+        () => response.json() as Promise<typeof data>,
+        15000,
+        () => attempt,
+      );
     } finally {
       release();
     }

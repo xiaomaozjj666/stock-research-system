@@ -8,12 +8,13 @@ import type { AuditReport } from '../types';
 /**
  * AuditPanel 行为测试
  * ----------------------------------------------------------------------------
- * 三条风险维度按 low/medium/high 映射到 chip-positive / chip-neutral / chip-negative
- * 与「低/中/高」；检查项通过与否决定图标（✓ / ⚠ / ✕）与颜色。
+ * 三条风险维度按 low/medium/high 映射到状态色板（低=好 → sig-valid 绿、
+ * 中 → chip-neutral、高 → chip-danger 红）与「低/中/高」；检查项通过与否决定
+ * 图标（✓ / ⚠ / ✕）与颜色。
  *
- * 颜色口径提醒（见下方用例与交付报告）：本组件把「通过/严重程度」映射到了
- * --color-positive（A 股口径为红）/ --color-negative（A 股口径为绿）——
- * 于是「通过的 ✓」是红色、「critical 的 ✕」是绿色，与涨跌语义混用。测试照现状断言。
+ * 颜色口径：涨跌色（--color-positive 红 / --color-negative 绿）只表达数值方向，
+ * 「通过 / 严重程度」是状态语义，不得借用——否则会渲染成「通过的 ✓ 是红色、
+ * critical 的 ✕ 是绿色」。
  */
 
 function makeAudit(over: Partial<AuditReport> = {}): AuditReport {
@@ -83,19 +84,20 @@ describe('AuditPanel —— 三档风险徽标', () => {
     vi.unstubAllGlobals();
   });
 
-  it('low → 「低」+ chip-positive；medium → 「中」+ chip-neutral', () => {
+  it('low → 「低」+ sig-valid（状态绿）；medium → 「中」+ chip-neutral', () => {
     renderPanel(makeAudit());
 
     expect(riskChip('未来函数')).toHaveTextContent('低');
-    expect(riskChip('未来函数')).toHaveClass('chip', 'chip-positive');
+    expect(riskChip('未来函数')).toHaveClass('chip', 'sig-valid');
     expect(riskChip('过拟合')).toHaveTextContent('中');
     expect(riskChip('过拟合')).toHaveClass('chip', 'chip-neutral');
   });
 
-  it('high → 「高」+ chip-negative（现状：绿色，A 股口径 negative=绿）', () => {
+  it('high → 「高」+ chip-danger（警示红，不是涨跌口径的绿）', () => {
     const { unmount } = renderPanel(makeAudit());
     expect(riskChip('幸存者偏差')).toHaveTextContent('高');
-    expect(riskChip('幸存者偏差')).toHaveClass('chip', 'chip-negative');
+    expect(riskChip('幸存者偏差')).toHaveClass('chip', 'chip-danger');
+    expect(riskChip('幸存者偏差')).not.toHaveClass('chip-negative');
     unmount();
 
     // 三条维度互换档位后，徽标跟着走（说明取的是各自字段而不是写死）
@@ -106,8 +108,8 @@ describe('AuditPanel —— 三档风险徽标', () => {
         survivorshipBias: 'medium',
       }),
     );
-    expect(riskChip('未来函数')).toHaveClass('chip-negative');
-    expect(riskChip('过拟合')).toHaveClass('chip-positive');
+    expect(riskChip('未来函数')).toHaveClass('chip-danger');
+    expect(riskChip('过拟合')).toHaveClass('sig-valid');
     expect(riskChip('幸存者偏差')).toHaveClass('chip-neutral');
   });
 });
@@ -117,12 +119,13 @@ describe('AuditPanel —— 检查项列表', () => {
     vi.unstubAllGlobals();
   });
 
-  it('通过项显示 ✓ 并用 --color-positive（红）着色', () => {
+  it('通过项显示 ✓ 并用 --color-success（状态绿）着色，不用涨跌红', () => {
     renderPanel(makeAudit());
 
     const icon = checkIcon('未来函数检查');
     expect(icon).toHaveTextContent('✓');
-    expect(icon.style.color).toBe('var(--color-positive)');
+    expect(icon.style.color).toBe('var(--color-success)');
+    expect(icon.style.color).not.toBe('var(--color-positive)');
     expect(screen.getByText('未发现引用未来数据')).toBeInTheDocument();
   });
 
@@ -135,12 +138,13 @@ describe('AuditPanel —— 检查项列表', () => {
     expect(screen.getByText('参数敏感度过高')).toBeInTheDocument();
   });
 
-  it('未通过且 severity=critical 显示 ✕ 并用 --color-negative（绿）着色', () => {
+  it('未通过且 severity=critical 显示 ✕ 并用 --color-danger（警示红）着色', () => {
     renderPanel(makeAudit());
 
     const icon = checkIcon('数据泄漏');
     expect(icon).toHaveTextContent('✕');
-    expect(icon.style.color).toBe('var(--color-negative)');
+    expect(icon.style.color).toBe('var(--color-danger)');
+    expect(icon.style.color).not.toBe('var(--color-negative)');
     expect(screen.getByText('检出收益序列泄漏')).toBeInTheDocument();
   });
 
@@ -168,7 +172,7 @@ describe('AuditPanel —— 检查项列表', () => {
     const icon = checkIcon('重叠修正');
     expect(icon).toHaveTextContent('✓');
     expect(icon).not.toHaveTextContent('✕');
-    expect(icon.style.color).toBe('var(--color-positive)');
+    expect(icon.style.color).toBe('var(--color-success)');
   });
 
   it('checks 为空数组时不渲染「检查项」小节', () => {

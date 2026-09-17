@@ -70,6 +70,27 @@ describe('PriceTrendChart', () => {
     }).not.toThrow();
   });
 
+  it('周期 / 指标按钮带 aria-pressed，随状态翻转（读屏才知道是否已启用）', () => {
+    const { getByText } = render(<PriceTrendChart data={makeData()} />);
+
+    // 默认日K + 均线开 + MA5 选中 + BOLL/MACD 关
+    expect(getByText('日K')).toHaveAttribute('aria-pressed', 'true');
+    expect(getByText('周K')).toHaveAttribute('aria-pressed', 'false');
+    expect(getByText('均线')).toHaveAttribute('aria-pressed', 'true');
+    expect(getByText('MA5')).toHaveAttribute('aria-pressed', 'true');
+    expect(getByText('BOLL')).toHaveAttribute('aria-pressed', 'false');
+    expect(getByText('MACD')).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(getByText('周K'));
+    fireEvent.click(getByText('BOLL'));
+    fireEvent.click(getByText('MA5'));
+
+    expect(getByText('周K')).toHaveAttribute('aria-pressed', 'true');
+    expect(getByText('日K')).toHaveAttribute('aria-pressed', 'false');
+    expect(getByText('BOLL')).toHaveAttribute('aria-pressed', 'true');
+    expect(getByText('MA5')).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('图表初始化且注册了光标/鼠标事件监听', () => {
     render(<PriceTrendChart data={makeData()} />);
     expect(echartsMock.init).toHaveBeenCalled();

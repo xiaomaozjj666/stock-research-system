@@ -158,6 +158,12 @@ export default function PaperTradingPage() {
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
   const [orderQty, setOrderQty] = useState('');
   const [orderPrice, setOrderPrice] = useState('');
+  /**
+   * 下单在途标记（独立于 loading）：
+   * loading 只由 loadAccount() 驱动，handlePlaceOrder 全程不碰它，
+   * 于是 POST 在途的 15 秒里每点一次就发一次，表单又要等成功后才清空 → 产生多笔完全相同的成交。
+   */
+  const [submitting, setSubmitting] = useState(false);
 
   // 日终结算：日期 + 按持仓代码填收盘价（缺省视为停牌）
   const [settleDate, setSettleDate] = useState(latestTradingDayStr());
@@ -171,6 +177,11 @@ export default function PaperTradingPage() {
   const [intlKlines, setIntlKlines] = useState<IntlKline[] | null>(null);
   const [intlKlineError, setIntlKlineError] = useState<string | null>(null);
   const [intlLoading, setIntlLoading] = useState(false);
+  /**
+   * 港美股查询的请求序号：先查 00700 再查 TSLA 时，00700 后到的响应会让
+   * 「输入框显示 TSLA、表格是腾讯」。两次 setState（含 intlLoading 复位）都要过这道守卫。
+   */
+  const intlSeqRef = useRef(0);
 
   // 审计日志
   const [auditLevel, setAuditLevel] = useState<AuditRiskLevel | ''>('');
@@ -178,6 +189,14 @@ export default function PaperTradingPage() {
   /** 服务端返回的匹配总数（count）：用于「共 N 条」与「加载更多」的剩余量 */
   const [auditTotal, setAuditTotal] = useState(0);
   const [auditLoadingMore, setAuditLoadingMore] = useState(false);
+  /**
+   * 已显示条数的 ref 镜像：offset 必须取「最新条数」，
+   * 不能用渲染快照 auditEntries.length——同帧连点两次都带 offset: 20，去重后追加为空、
+   * 总数又被写回，最后一页永远取不到。
+   */
+  const auditEntriesRef = useRef<AuditEntry[]>([]);
+  /** 入口拦截：按钮 disabled 要等 React 提交才生效，挡不住同帧连点 */
+  const loadingMoreRef = useRef(false);
 
   const loadAccount = useCallback(async () => {
     setLoading(true);
@@ -210,6 +229,9 @@ export default function PaperTradingPage() {
 
   /** 「加载更多」：按 offset 取下一页并【追加】（不替换已显示条目） */
   const loadMoreAudit = useCallback(async () => {
+    // 入口拦截：同帧连点两次时 setState 还没提交，disabled 挡不住第二次
+    if (loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
     const seq = auditSeqRef.current; // 过滤条件已变化 → 本页作废，丢弃响应
     setAuditLoadingMore(true);
     try {
@@ -217,7 +239,8 @@ export default function PaperTradingPage() {
       const res = await getAuditLog({
         ...filter,
         limit: AUDIT_PAGE_SIZE,
-        offset: auditEntries.length,
+        // 最新条数（ref 镜像），不是上一次渲染的 auditEntries.length
+        offset: auditEntriesRef.current.length,
       });
       if (seq !== auditSeqRef.current) return;
       // 追加而非替换；按 id 去重：审计日志持续写入，两次请求之间条目可能变动，
@@ -230,9 +253,15 @@ export default function PaperTradingPage() {
     } catch {
       /* 同上：加载更多失败不阻塞主流程 */
     } finally {
+      loadingMoreRef.current = false;
       setAuditLoadingMore(false);
     }
-  }, [auditLevel, auditEntries.length]);
+  }, [auditLevel]);
+
+  // 条数镜像：offset 一律读 ref，避免用到过期的渲染快照
+  useEffect(() => {
+    auditEntriesRef.current = auditEntries;
+  }, [auditEntries]);
 
   useEffect(() => {
     loadAccount();
@@ -254,6 +283,9 @@ export default function PaperTradingPage() {
   }, [portfolio]);
 
   const handlePlaceOrder = useCallback(async () => {
+    // 入口拦截（不只是靠按钮 disabled）：同一帧内的第二次点击在 React 提交前就到达这里，
+    // 资金类操作重复提交会产生多笔内容完全相同的成交
+    if (submitting) return;
     const code = orderCode.trim();
     if (!/^\d{6}$/.test(code)) {
       setError('股票代码需为 6 位数字');
@@ -274,6 +306,7 @@ export default function PaperTradingPage() {
     }
     setError(null);
     setMessage(null);
+    setSubmitting(true);
     try {
       await placePaperOrder({
         code,
@@ -291,8 +324,10 @@ export default function PaperTradingPage() {
       await loadAccount();
     } catch (err) {
       setError(normalizeApiError(err, '模拟下单失败').message);
+    } finally {
+      setSubmitting(false);
     }
-  }, [orderCode, orderSide, orderType, orderQty, orderPrice, portfolio, loadAccount]);
+  }, [orderCode, orderSide, orderType, orderQty, orderPrice, portfolio, loadAccount, submitting]);
 
   const handleSettle = useCallback(async () => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(settleDate)) {
@@ -326,30 +361,41 @@ export default function PaperTradingPage() {
       setError('请先输入港美股代码');
       return;
     }
+    // 请求序号：串行 await 两次请求期间用户可能已经发起了另一次查询，
+    // 迟到的旧响应不得覆盖新查询的结果（否则输入框与表格各说各话）
+    const seq = ++intlSeqRef.current;
     setError(null);
     setIntlLoading(true);
     try {
       const res = await getIntlFundamentals(code, intlMarket || undefined);
+      if (seq !== intlSeqRef.current) return;
       setIntlResult(res);
       setIntlKlines(null);
       setIntlKlineError(null);
+      // 降级（fundamentals 为 null）时 K 线与错误都渲染不到——K 线只画在
+      // `fundamentals ? …` 分支内，此时发请求既白跑一次上游，结果也不可见
+      if (!res.fundamentals) return;
       try {
         const end = new Date().toISOString().slice(0, 10);
         const start = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
         const k = await getIntlKlines({
           code,
-          market: res.fundamentals?.market ?? intlMarket ?? undefined,
+          market: res.fundamentals.market ?? intlMarket ?? undefined,
           startDate: start,
           endDate: end,
         });
+        if (seq !== intlSeqRef.current) return;
         setIntlKlines(k.klines);
       } catch (err) {
+        if (seq !== intlSeqRef.current) return;
         setIntlKlineError(err instanceof Error ? err.message : String(err));
       }
     } catch (err) {
+      if (seq !== intlSeqRef.current) return;
       setError(normalizeApiError(err, '港美股数据获取失败').message);
     } finally {
-      setIntlLoading(false);
+      // 复合同一守卫：旧请求的收尾不能解禁仍在途的新请求
+      if (seq === intlSeqRef.current) setIntlLoading(false);
     }
   }, [intlCode, intlMarket]);
 
@@ -491,8 +537,12 @@ export default function PaperTradingPage() {
               </div>
             )}
           </div>
-          <button className="btn-primary" onClick={handlePlaceOrder} disabled={loading}>
-            下单
+          <button
+            className="btn-primary"
+            onClick={handlePlaceOrder}
+            disabled={loading || submitting}
+          >
+            {submitting ? '提交中…' : '下单'}
           </button>
         </section>
 

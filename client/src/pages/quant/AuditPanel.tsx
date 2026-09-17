@@ -4,10 +4,16 @@ interface Props {
   data: AuditReport;
 }
 
+/**
+ * 风险等级是**状态语义**（低=好、高=警示），不是数值涨跌方向，
+ * 因此不能用 .chip-positive（本项目为红）/ .chip-negative（绿）——那会渲染成
+ * 「低风险=红、高风险=绿」。改用状态色板：绿系 .sig-valid 表示"好/通过"，
+ * .chip-danger 表示警示（见 index.css .chip-danger 注释）。
+ */
 function riskChipCls(level: 'low' | 'medium' | 'high'): string {
-  if (level === 'low') return 'chip chip-positive';
+  if (level === 'low') return 'chip sig-valid';
   if (level === 'medium') return 'chip chip-neutral';
-  return 'chip chip-negative';
+  return 'chip chip-danger';
 }
 
 function riskLabel(level: 'low' | 'medium' | 'high'): string {
@@ -22,11 +28,15 @@ function severityIcon(severity: 'info' | 'warning' | 'critical'): string {
   return 'ℹ';
 }
 
+/** 严重程度同样是状态语义：critical 用 danger（红），不用涨跌色 --color-negative（绿） */
 function severityColor(severity: 'info' | 'warning' | 'critical'): string {
-  if (severity === 'critical') return 'var(--color-negative)';
+  if (severity === 'critical') return 'var(--color-danger)';
   if (severity === 'warning') return 'var(--color-warning)';
   return 'var(--color-info)';
 }
+
+/** 通过 = 好：用 --color-success（与 .sig-valid 同色），不是涨跌口径的 --color-positive（红） */
+const PASSED_COLOR = 'var(--color-success)';
 
 export default function AuditPanel({ data }: Props) {
   return (
@@ -71,7 +81,7 @@ export default function AuditPanel({ data }: Props) {
                 <span
                   className="quant-check-icon"
                   style={{
-                    color: check.passed ? 'var(--color-positive)' : severityColor(check.severity),
+                    color: check.passed ? PASSED_COLOR : severityColor(check.severity),
                   }}
                 >
                   {check.passed ? '✓' : severityIcon(check.severity)}

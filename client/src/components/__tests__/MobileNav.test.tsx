@@ -126,6 +126,30 @@ describe('MobileNav 移动端目录抽屉', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: '目录导航' }));
   });
 
+  it('系统开启「减少动态效果」时改为瞬时跳转（behavior: auto），不再平滑滚动', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    );
+    const { container } = render(
+      <div>
+        <div id="risk">风险清单区块</div>
+        <MobileNav activeSection="summary" />
+      </div>,
+    );
+    const target = container.querySelector('#risk') as HTMLElement;
+    const scrollSpy = vi.spyOn(target, 'scrollIntoView').mockImplementation(() => {});
+
+    fireEvent.click(screen.getByRole('button', { name: '目录导航' }));
+    fireEvent.click(screen.getByRole('button', { name: '风险清单' }));
+
+    expect(scrollSpy).toHaveBeenCalledWith({ behavior: 'auto', block: 'start' });
+  });
+
   it('目标区块不存在时点击目录项：不抛异常，抽屉照常收起', () => {
     const { container } = render(<MobileNav activeSection="summary" />);
     const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {});

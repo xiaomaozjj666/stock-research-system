@@ -239,13 +239,14 @@ describe('ReportSummary —— 标题与策略类型标签', () => {
     expect(screen.queryByText('动量策略')).toBeNull();
   });
 
-  it('type 为 custom 时仍落到「均值回归」标签（现状：无 custom 分支）', () => {
+  it('type 为 custom 时落到「自定义策略」标签（不再被误标成均值回归）', () => {
     const { container } = renderPanel(
       makeReport({ strategy: { ...strategy, name: '自定义策略', type: 'custom' } }),
     );
 
-    // 源码只有 ma_cross / momentum 两个分支，其余一律当均值回归——自定义策略被误标
-    expect(container.querySelector('.chip')?.textContent).toBe('均值回归');
+    // 三元表达式此前只有 ma_cross / momentum 两支，custom 会落到 else 分支被标成「均值回归」
+    expect(container.querySelector('.chip')?.textContent).toBe('自定义策略');
+    expect(screen.queryByText('均值回归')).toBeNull();
     expect(screen.getByRole('heading', { name: '自定义策略' })).toBeInTheDocument();
   });
 });

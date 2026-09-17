@@ -1249,8 +1249,9 @@ tr:hover td {
   border-left: 1px solid var(--border-default);
 }
 .trend-controls .seg-btn.active {
-  background: var(--accent, #4c8dff);
-  color: #08110f;
+  /* 白字配压深的强调蓝：原先 #08110f on #4c8dff 仅约 2.5:1，低于 4.5:1 */
+  background: #1f5bbf;
+  color: #fff;
   font-weight: 600;
 }
 .trend-controls .chip-btn {
@@ -1265,24 +1266,25 @@ tr:hover td {
   transition: all var(--duration-fast);
 }
 .trend-controls .chip-btn.active {
-  color: #08110f;
+  /* 同上：激活态统一改为「压深底色 + 白字」，保证 >= 4.5:1 */
+  color: #fff;
   font-weight: 600;
   border-color: transparent;
 }
 .trend-controls .chip-btn.ma-5.active {
-  background: #f5c542;
+  background: #8a6a00;
 }
 .trend-controls .chip-btn.ma-10.active {
-  background: #36cfff;
+  background: #0b5f7d;
 }
 .trend-controls .chip-btn.ma-20.active {
-  background: #ff7ad9;
+  background: #9c2f74;
 }
 .trend-controls .chip-btn.ma-60.active {
-  background: #9b6bff;
+  background: #5b3bb0;
 }
 .trend-controls .chip-btn:not(.ma-5):not(.ma-10):not(.ma-20):not(.ma-60).active {
-  background: var(--accent, #4c8dff);
+  background: #1f5bbf;
 }
 
 /* 走势图绘图画布（相对定位容器，承载吸顶实况图例） */
@@ -1364,12 +1366,14 @@ tr:hover td {
     font-size: 13px;
   }
   .trend-controls {
-    gap: 5px;
+    gap: 8px;
   }
+  /* 移动端触控目标：此前 3px/7px 内边距只有 ~20px 高，手指点不准（目标 >= 40px） */
   .trend-controls .seg-btn,
   .trend-controls .chip-btn {
     font-size: 11px;
-    padding: 3px 7px;
+    padding: 8px 12px;
+    min-height: 40px;
   }
   .trend-legend {
     top: 4px;
@@ -1529,6 +1533,14 @@ tr:hover td {
   cursor: pointer;
   user-select: none;
   transition: background var(--duration-fast) var(--ease-out);
+  /* 折叠头是 <button>（键盘/读屏可达），这里把浏览器默认按钮样式复位，
+     使其与原先的 div 外观一致（CSS 类名不变，故无需改其它规则） */
+  width: 100%;
+  background: none;
+  border: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
 }
 .expert-header:hover {
   background: var(--bg-card-hover);
@@ -3085,6 +3097,12 @@ tr:hover td {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+  /* 全局 html{scroll-behavior:smooth} 也属于"动效"：不关掉的话，锚点跳转
+     （侧栏目录 / 移动端目录 / 回到顶部）仍会整页动画滚动 */
+  html,
+  body {
+    scroll-behavior: auto !important;
+  }
 }
 
 /* ===== F4: Responsive Mobile Nav ===== */
@@ -4201,6 +4219,11 @@ button.comparison-tag-add:disabled {
 }
 .hb-neutral {
   background: #64748b;
+  opacity: 0.45;
+}
+/* 中性新闻（极性恰为 0）与「无最新消息」同色系但实心，避免把中性消息误读成看空 */
+.hb-flat {
+  background: #64748b;
 }
 .hb-hint {
   margin-left: 8px;
@@ -5088,12 +5111,34 @@ button.comparison-tag-add:disabled {
   .stock-search-area,
   .search-dropdown,
   .toast,
+  .cmp-fail-retry,
+  .search-history-clear,
+  .delete-btn,
+  .trend-controls,
   select {
+    display: none !important;
+  }
+  /* 通用的"别打印这个"钩子（此前只在注释里承诺过，既没定义也没人用） */
+  .no-print {
     display: none !important;
   }
   /* 若日后需要"只在打印时出现"的补充信息（如页脚来源说明），加这个类即可 */
   .print-only {
     display: block !important;
+  }
+  /* 深色底纹徽标（走势图"模拟数据"、对比失败标记等）在浅色纸上会变成深底深字，
+     这里统一改成浅灰底 + 深色字，信息不丢失 */
+  .trend-badge,
+  .cmp-fail-badge,
+  .chip,
+  .chip-danger,
+  .chip-warn,
+  .chip-positive,
+  .chip-negative,
+  .chip-neutral {
+    background: #f2f2f2 !important;
+    color: #111 !important;
+    border-color: #bbb !important;
   }
   /* 标题与正文：统一深色，覆盖渐变文字与强调色 */
   h1,

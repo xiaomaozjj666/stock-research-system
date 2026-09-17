@@ -5,6 +5,7 @@ import type { AnalysisResult } from './types';
 import StockSelector from './components/StockSelector';
 import LoadingScreen from './components/LoadingScreen';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { useReducedMotion } from './hooks/useReducedMotion';
 import ReportHeader from './components/ReportHeader';
 import CoreSummary from './components/CoreSummary';
 import FinancialSection from './components/FinancialSection';
@@ -117,9 +118,28 @@ function isEditableTarget(el: EventTarget | null): boolean {
  * 隐藏面板）一起切到 fallback；独立边界则互不影响。
  * hidden 不会阻止 lazy 加载：切走后 chunk 仍继续拉取并挂载，切回来直接可显示。
  */
-function TabPane({ active, children }: { active: boolean; children: React.ReactNode }) {
+function TabPane({
+  active,
+  id,
+  tabId,
+  children,
+}: {
+  active: boolean;
+  /** 面板容器 id：与 tab 按钮的 aria-controls 对应（`panel-${TabId}`） */
+  id: string;
+  /** 对应 tab 按钮的 id：供 aria-labelledby 关联，读屏才念得出"这是哪个页签的面板" */
+  tabId: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div hidden={!active}>
+    <div
+      id={id}
+      role="tabpanel"
+      aria-labelledby={tabId}
+      // 面板本身不可 Tab 聚焦，但允许程序化聚焦（切页签后把焦点移进面板是常见做法）
+      tabIndex={-1}
+      hidden={!active}
+    >
       <Suspense fallback={<div className="page-suspense">页面加载中…</div>}>{children}</Suspense>
     </div>
   );
@@ -203,6 +223,9 @@ const TABS: { id: TabId; label: string }[] = [
 
 function App() {
   const { showToast } = useToast();
+  // 「回到顶部」的平滑滚动走 JS（CSS 的 scroll-behavior 管不到 scrollTo 的 behavior 参数），
+  // 因此这里也要读同一个系统偏好，否则开了"减少动态效果"仍会整页滚动
+  const reducedMotion = useReducedMotion();
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [analysisStage, setAnalysisStage] = useState<AnalysisStage | null>(null);
@@ -547,6 +570,8 @@ function App() {
             id={`tab-${t.id}`}
             role="tab"
             aria-selected={activeTab === t.id}
+            // 与下方各面板容器的 id 对应：读屏从页签能直接跳到它控制的面板
+            aria-controls={`panel-${t.id}`}
             // 漫游 tabindex：只有当前 tab 可 Tab 聚焦，其余用方向键切换
             tabIndex={activeTab === t.id ? 0 : -1}
             className={`tab ${activeTab === t.id ? 'active' : ''}`}
@@ -559,7 +584,13 @@ function App() {
 
       {/* 深度研究面板：非 lazy，始终挂载；切走时仅 hidden（保留报告与滚动锚点，
           避免每次切回来都重排整份报告）。普通 div 保证 [hidden] 的 display:none 生效 */}
-      <div hidden={activeTab !== 'research'}>
+      <div
+        id="panel-research"
+        role="tabpanel"
+        aria-labelledby="tab-research"
+        tabIndex={-1}
+        hidden={activeTab !== 'research'}
+      >
         {loading && (
           <>
             <LoadingScreen stage={analysisStage} />
@@ -884,37 +915,37 @@ function App() {
       {/* 懒加载面板：首次激活才挂载，之后常驻 + hidden（未激活过的不渲染，首屏不并发取数）。
           每个面板一个独立 Suspense 边界，见上方 TabPane 注释 */}
       {shouldRenderTab('today') && (
-        <TabPane active={activeTab === 'today'}>
+        <TabPane active={activeTab === 'today'} id="panel-today" tabId="tab-today">
           <TodayPanel />
         </TabPane>
       )}
       {shouldRenderTab('quant') && (
-        <TabPane active={activeTab === 'quant'}>
+        <TabPane active={activeTab === 'quant'} id="panel-quant" tabId="tab-quant">
           <QuantPage />
         </TabPane>
       )}
       {shouldRenderTab('compare') && (
-        <TabPane active={activeTab === 'compare'}>
+        <TabPane active={activeTab === 'compare'} id="panel-compare" tabId="tab-compare">
           <ComparisonView />
         </TabPane>
       )}
       {shouldRenderTab('watchlist') && (
-        <TabPane active={activeTab === 'watchlist'}>
+        <TabPane active={activeTab === 'watchlist'} id="panel-watchlist" tabId="tab-watchlist">
           <WatchlistPage />
         </TabPane>
       )}
       {shouldRenderTab('paper') && (
-        <TabPane active={activeTab === 'paper'}>
+        <TabPane active={activeTab === 'paper'} id="panel-paper" tabId="tab-paper">
           <PaperTradingPage />
         </TabPane>
       )}
       {shouldRenderTab('chat') && (
-        <TabPane active={activeTab === 'chat'}>
+        <TabPane active={activeTab === 'chat'} id="panel-chat" tabId="tab-chat">
           <ChatPanel />
         </TabPane>
       )}
       {shouldRenderTab('history') && (
-        <TabPane active={activeTab === 'history'}>
+        <TabPane active={activeTab === 'history'} id="panel-history" tabId="tab-history">
           <HistoryPage
             onOpenHistory={(result) => {
               // 回看历史：恢复完整分析结果并切回深度研究页渲染
@@ -932,7 +963,7 @@ function App() {
           className="back-top"
           aria-label="回到顶部"
           title="回到顶部"
-          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          onClick={() => window.scrollTo({ top: 0, behavior: reducedMotion ? 'auto' : 'smooth' })}
         >
           ↑
         </button>

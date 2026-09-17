@@ -79,11 +79,80 @@ function saveLatestRun(result: ScreenerRunResult): void {
   }
 }
 
-/** 扫描上限：显式参数 > env > 全市场（undefined = 不设上限） */
+/**
+ * 扫描区间硬上限（自然日）：约 10.5 年。
+ *
+ * 每只股票的 K 线都要按此区间拉取/合成，区间跨度直接决定单次扫描的成本：
+ * 全市场约 5000 只 × 并发 12，跨度过大既放大上游配额消耗，也让 dataProvider
+ * 的模拟降级路径做几万次同步迭代（见 dataProvider 的 MAX_SIMULATED_DAYS）。
+ * 10 年足够覆盖 250 日 RPS 与全部形态窗口（默认区间仅 400 天）。
+ */
+export const MAX_SCREENER_SPAN_DAYS = 3840;
+
+/** 日期形态与真实性校验：`YYYY-MM-DD` 且必须是真实存在的日历日（拒 2026-02-30 / 2026-13-01） */
+export function isValidIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  // Invalid Date 或「被 Date 归一化到别的日子」（如 02-30 → 03-02）都视为非法
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+/** 入参校验失败（路由据此回 400 而不是 500）：message 为可直接展示的中文说明 */
+export class ScreenerParamError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ScreenerParamError';
+  }
+}
+
+/**
+ * 校验并解析初筛区间：非空时必须为 `YYYY-MM-DD` 真实日期、不得倒置、跨度 ≤ MAX_SCREENER_SPAN_DAYS。
+ * 任一不满足直接抛 ScreenerParamError（不静默回落默认值——那会让调用方以为扫的是自己给的区间）。
+ */
+export function parseScreenerDateRange(
+  startDate?: string,
+  endDate?: string,
+): { start: string; end: string } {
+  const end = endDate ?? new Date().toISOString().slice(0, 10);
+  const start =
+    startDate ?? new Date(Date.now() - 400 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  if (!isValidIsoDate(start)) {
+    throw new ScreenerParamError(`startDate 需为 YYYY-MM-DD 的真实日期（当前：${start}）`);
+  }
+  if (!isValidIsoDate(end)) {
+    throw new ScreenerParamError(`endDate 需为 YYYY-MM-DD 的真实日期（当前：${end}）`);
+  }
+  const startMs = Date.parse(`${start}T00:00:00Z`);
+  const endMs = Date.parse(`${end}T00:00:00Z`);
+  if (startMs > endMs) {
+    throw new ScreenerParamError(`startDate（${start}）不得晚于 endDate（${end}）`);
+  }
+  const spanDays = Math.round((endMs - startMs) / 86_400_000);
+  if (spanDays > MAX_SCREENER_SPAN_DAYS) {
+    throw new ScreenerParamError(
+      `扫描区间过长（${spanDays} 天 > ${MAX_SCREENER_SPAN_DAYS} 天），请缩小 startDate/endDate 跨度`,
+    );
+  }
+  return { start, end };
+}
+
+/**
+ * 扫描上限：显式参数与 env 上限**取较小者**。
+ *
+ * 此前是「显式值优先返回」，于是 QUANT_SCREENER_MAX 形同虚设——调用方传
+ * `maxStocks: 999999` 就能让全市场约 5000 只全部入场（配合超大区间更是灾难）。
+ * 现在 env 是天花板：显式值只能往下收窄，不能突破。
+ */
 function maxStocksLimit(explicit?: number): number | undefined {
-  if (Number.isFinite(explicit) && (explicit as number) > 0) return Math.floor(explicit as number);
-  const env = Number(process.env.QUANT_SCREENER_MAX);
-  return Number.isFinite(env) && env > 0 ? Math.floor(env) : undefined;
+  const envRaw = Number(process.env.QUANT_SCREENER_MAX);
+  const envLimit = Number.isFinite(envRaw) && envRaw > 0 ? Math.floor(envRaw) : undefined;
+  const explicitLimit =
+    Number.isFinite(explicit) && (explicit as number) > 0
+      ? Math.floor(explicit as number)
+      : undefined;
+  if (explicitLimit === undefined) return envLimit;
+  if (envLimit === undefined) return explicitLimit;
+  return Math.min(explicitLimit, envLimit);
 }
 
 /**
@@ -117,9 +186,9 @@ export async function runMarketScreener(
   } = {},
 ): Promise<ScreenerRunResult> {
   const startedAt = Date.now();
-  const end = opts.endDate ?? new Date().toISOString().slice(0, 10);
-  const start =
-    opts.startDate ?? new Date(Date.now() - 400 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  // 区间校验在服务入口也做一遍（不只依赖路由）：直接调用本函数的批处理/定时任务
+  // 同样必须被挡在非法日期与超长跨度之外，否则区间原样传进 K 线拉取与模拟降级路径。
+  const { start, end } = parseScreenerDateRange(opts.startDate, opts.endDate);
 
   const master = (await loadStockMaster()).filter((m) => /^\d{6}$/.test(m.code));
   const universe = selectScreenerUniverse(master, maxStocksLimit(opts.maxStocks));

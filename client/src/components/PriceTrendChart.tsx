@@ -464,13 +464,20 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
               <button
                 key={p}
                 className={`seg-btn ${period === p ? 'active' : ''}`}
+                aria-pressed={period === p}
                 onClick={() => setPeriod(p)}
               >
                 {PERIOD_LABELS[p]}
               </button>
             ))}
           </div>
-          <button className={`chip-btn ${maOn ? 'active' : ''}`} onClick={() => setMaOn((v) => !v)}>
+          {/* aria-pressed：这些是切换按钮，读屏靠它播报"已按下/未按下"，
+              否则只念按钮名，用户无从知道当前周期/指标是否开启 */}
+          <button
+            className={`chip-btn ${maOn ? 'active' : ''}`}
+            aria-pressed={maOn}
+            onClick={() => setMaOn((v) => !v)}
+          >
             均线
           </button>
           {maOn &&
@@ -478,6 +485,7 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
               <button
                 key={n}
                 className={`chip-btn ma-${n} ${activeMas.includes(n) ? 'active' : ''}`}
+                aria-pressed={activeMas.includes(n)}
                 onClick={() => toggleMa(n)}
               >
                 MA{n}
@@ -485,12 +493,14 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
             ))}
           <button
             className={`chip-btn ${bollOn ? 'active' : ''}`}
+            aria-pressed={bollOn}
             onClick={() => setBollOn((v) => !v)}
           >
             BOLL
           </button>
           <button
             className={`chip-btn ${macdOn ? 'active' : ''}`}
+            aria-pressed={macdOn}
             onClick={() => setMacdOn((v) => !v)}
           >
             MACD

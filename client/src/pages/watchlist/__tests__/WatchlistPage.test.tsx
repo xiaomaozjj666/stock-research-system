@@ -217,13 +217,16 @@ describe('WatchlistPage 首屏与列表', () => {
     expect(screen.getByRole('button', { name: '监控异动' })).toBeEnabled();
   });
 
-  it('列表加载中显示「加载中…」，不误报「还没有关注的股票」', async () => {
+  it('首屏加载中显示「加载中…」骨架，绝不先闪「还没有关注的股票」', async () => {
     const pending = deferred<{ codes: string[] }>();
     api.getWatchlist.mockReturnValue(pending.promise);
     renderPage();
 
+    // loadingList 初值为 true：第一次提交（请求尚未结算）就必须是加载态，
+    // 空态只能出现在"清单已成功取回且确实为空"之后
     expect(screen.getByText('加载中…')).toBeInTheDocument();
     expect(screen.queryByText('还没有关注的股票')).toBeNull();
+    expect(screen.queryByText(/在上方输入股票代码或名称/)).toBeNull();
     // 加载期间也不能让用户提交添加，避免与首次拉取结果互相覆盖
     expect(screen.getByRole('button', { name: '添加' })).toBeDisabled();
 
@@ -475,11 +478,12 @@ describe('WatchlistPage 批量含最新消息回测', () => {
       screen.getByText('注：部分标的因行情接口不可达，回测使用模拟 K 线，结果仅供参考。'),
     ).toBeInTheDocument();
 
-    // 热力条：图表标题、图例（红=偏多、绿=偏空）与真实数据点
+    // 热力条：图表标题、图例（红=偏多、绿=偏空、灰=中性/无消息）与真实数据点
     expect(screen.getByText('新闻姿态热力条（自选股批量回测总览）')).toBeInTheDocument();
     expect(screen.getByText(/偏多（红）/)).toBeInTheDocument();
     expect(screen.getByText(/偏空（绿）/)).toBeInTheDocument();
-    expect(screen.getByText(/无最新消息（灰）/)).toBeInTheDocument();
+    expect(screen.getByText(/中性·极性为 0（灰）/)).toBeInTheDocument();
+    expect(screen.getByText(/无最新消息（浅灰）/)).toBeInTheDocument();
     // EChart 的 init/setOption 都在 useEffect 里跑：DOM 提交与副作用冲刷之间有一段调度间隙
     // （机器繁忙时会被推迟），所以这里重试等待，避免在副作用落地前读到空调用记录。
     await waitFor(() => {
@@ -498,7 +502,7 @@ describe('WatchlistPage 批量含最新消息回测', () => {
     expect(container.querySelector('.watchlist-report')).not.toBeNull();
   });
 
-  it('收益恰为 0：按「涨」渲染成红色 +0.0%（现状，与 lib/colors 的 0=中性口径冲突，见交付说明）', async () => {
+  it('收益恰为 0：判为中性（val-neutral）且不加 + 前缀，与 lib/colors 的 0=中性口径一致', async () => {
     api.runWatchlistNewsBacktest.mockResolvedValue({
       generatedAt: '2026-09-15T02:00:00.000Z',
       count: 1,
@@ -533,9 +537,10 @@ describe('WatchlistPage 批量含最新消息回测', () => {
     fireEvent.click(screen.getByRole('button', { name: '批量含最新消息回测（1）' }));
 
     await waitFor(() => expect(screen.getByText('共 1 只，命中最新消息 1 只')).toBeInTheDocument());
-    const cell = tableRow('601318').getByText('+0.0%');
-    expect(cell).toHaveClass('val-positive');
-    expect(cell).not.toHaveClass('val-neutral');
+    const cell = tableRow('601318').getByText('0.0%');
+    expect(cell).toHaveClass('val-neutral');
+    expect(cell).not.toHaveClass('val-positive');
+    expect(tableRow('601318').queryByText('+0.0%')).toBeNull();
     expect(tableRow('601318').getByText('0.00')).toBeInTheDocument();
   });
 

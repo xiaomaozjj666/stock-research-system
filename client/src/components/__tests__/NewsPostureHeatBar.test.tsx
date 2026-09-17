@@ -154,13 +154,15 @@ describe('NewsPostureHeatBar —— 标题与图例', () => {
     const legend = box.querySelector('.watchlist-heatbar-legend') as HTMLElement;
     expect(legend.textContent).toContain('偏多（红）');
     expect(legend.textContent).toContain('偏空（绿）');
-    expect(legend.textContent).toContain('无最新消息（灰）');
+    expect(legend.textContent).toContain('中性·极性为 0（灰）');
+    expect(legend.textContent).toContain('无最新消息（浅灰）');
     expect(legend.querySelector('.hb-hint')).toHaveTextContent(
       '颜色越深＝新闻影响越强；条长按极性，右多左空',
     );
-    expect(legend.querySelectorAll('.hb-dot')).toHaveLength(3);
+    expect(legend.querySelectorAll('.hb-dot')).toHaveLength(4);
     expect(legend.querySelector('.hb-bull')).not.toBeNull();
     expect(legend.querySelector('.hb-bear')).not.toBeNull();
+    expect(legend.querySelector('.hb-flat')).not.toBeNull();
     expect(legend.querySelector('.hb-neutral')).not.toBeNull();
   });
 
@@ -318,7 +320,7 @@ describe('NewsPostureHeatBar —— 配色语义', () => {
     ]);
   });
 
-  it('有新闻但极性为 0 时被判成看空的绿色（现状：仅按 polarity > 0 分色）', () => {
+  it('有新闻但极性恰为 0 时按「中性」上色（灰色），不再被涂成看空的绿', () => {
     render(
       <NewsPostureHeatBar
         report={report([
@@ -330,7 +332,10 @@ describe('NewsPostureHeatBar —— 配色语义', () => {
     const datum = captured().series[0].data[0];
     expect(datum._extra.hasNews).toBe(true);
     expect(datum.value).toBe(0);
-    expect(datum.itemStyle.color).toBe('rgba(34,197,94,0.700)');
+    // 中性灰（100,116,139）按影响强度取不透明度 0.4 + 0.6*0.5 = 0.700
+    expect(datum.itemStyle.color).toBe('rgba(100,116,139,0.700)');
+    expect(datum.itemStyle.color).not.toBe('rgba(34,197,94,0.700)');
+    expect(datum.itemStyle.color).not.toBe('rgba(239,68,68,0.700)');
   });
 
   it('hasNews=false 时即便带了极性数值也按「无消息」处理（极性归 0、走灰色）', () => {
@@ -486,9 +491,11 @@ describe('NewsPostureHeatBar —— 坐标轴与中性参考线', () => {
     expect(markLine.label.formatter).toBe('中性');
   });
 
-  it('热力条没有读屏替代文本（EChart 未传 ariaLabel → 不生成 role=img）', () => {
+  it('热力条有读屏替代文本（EChart 传了 ariaLabel → role=img + 中文说明）', () => {
     const { container } = render(<NewsPostureHeatBar report={report([row()])} />);
 
-    expect(container.querySelector('[role="img"]')).toBeNull();
+    const img = container.querySelector('[role="img"]');
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute('aria-label')).toContain('新闻姿态热力条');
   });
 });

@@ -72,10 +72,17 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
   const [error, setError] = useState<string | null>(null);
   /** 原始错误（英文 / 技术细节），只作为 title 提示，不直接展示 */
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(() => new Set());
+  /** 正在拉取详情的 id：「查看」按钮据此显示「打开中…」并禁用，避免同一行被连点 */
+  const [openingId, setOpeningId] = useState<string | null>(null);
   /** 待确认删除的 id（二次点击才真正执行，防误删） */
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * 「查看」的请求序号：先点 A（慢）再点 B，A 的响应后到时不得把 B 的报告顶掉——
+   * 否则用户看到的是 A 的报告却以为是自己刚点的 B。
+   */
+  const openSeqRef = useRef(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -102,11 +109,30 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
     load();
   }, [load]);
 
+  // 卸载时清掉二次确认的定时器：否则切页 3 秒后仍会对已卸载组件 setState
+  // （React 18/19 下表现为 no-op，但定时器本身泄漏，且是"卸载后仍在跑"的隐患）
+  useEffect(
+    () => () => {
+      if (confirmTimerRef.current) {
+        clearTimeout(confirmTimerRef.current);
+        confirmTimerRef.current = null;
+      }
+    },
+    [],
+  );
+
   async function openItem(id: string) {
+    const seq = ++openSeqRef.current;
+    setOpeningId(id);
     try {
       const detail = await fetchHistoryDetail(id);
+      // 迟到响应：期间用户又点了另一行 → 丢弃，绝不用旧报告覆盖新选择
+      if (seq !== openSeqRef.current) return;
       onOpenHistory(detail.result);
+      setError(null);
+      setErrorDetail(null);
     } catch (err) {
+      if (seq !== openSeqRef.current) return;
       const { text, detail: raw } = describeError(
         err,
         '研究报告打不开：',
@@ -114,6 +140,9 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
       );
       setError(text);
       setErrorDetail(raw ?? null);
+    } finally {
+      // 只有最后一次请求有权收起「打开中…」（旧请求的收尾不能解禁新请求的按钮）
+      if (seq === openSeqRef.current) setOpeningId(null);
     }
   }
 
@@ -122,11 +151,16 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
     if (confirmDeleteId !== id) {
       setConfirmDeleteId(id);
       if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
-      confirmTimerRef.current = setTimeout(() => setConfirmDeleteId(null), 3000);
+      confirmTimerRef.current = setTimeout(() => {
+        confirmTimerRef.current = null;
+        setConfirmDeleteId(null);
+      }, 3000);
       return;
     }
     setConfirmDeleteId(null);
-    setDeletingId(id);
+    // 按 id 记录，而不是全局单值 deletingId：并发删除 A、B 时，
+    // A 的 finally 会把 B 的「删除中…」一并清掉（表现为 B 的按钮提前解禁可再点）
+    setDeletingIds((prev) => new Set(prev).add(id));
     try {
       await deleteHistoryItem(id);
       setItems((prev) => prev.filter((it) => it.id !== id));
@@ -135,7 +169,11 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
       setError(text);
       setErrorDetail(detail ?? null);
     } finally {
-      setDeletingId(null);
+      setDeletingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   }
 
@@ -216,15 +254,19 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
                   </div>
                 </div>
                 <div className="history-actions">
-                  <button className="btn-ghost history-open" onClick={() => openItem(it.id)}>
-                    查看
+                  <button
+                    className="btn-ghost history-open"
+                    disabled={openingId === it.id}
+                    onClick={() => openItem(it.id)}
+                  >
+                    {openingId === it.id ? '打开中…' : '查看'}
                   </button>
                   <button
                     className="btn-ghost history-delete"
-                    disabled={deletingId === it.id}
+                    disabled={deletingIds.has(it.id)}
                     onClick={() => removeItem(it.id)}
                   >
-                    {deletingId === it.id
+                    {deletingIds.has(it.id)
                       ? '删除中…'
                       : confirmDeleteId === it.id
                         ? '确认删除？'

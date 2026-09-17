@@ -22,6 +22,29 @@ export const INGEST_PATH = '/api/ingest';
  */
 export const INGEST_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
 
+/**
+ * title 硬上限 200 字符（超长一律截断，不 400）。
+ * ----------------------------------------------------------------------------
+ * 为什么必须有：8MB 的 body 上限只约束了 text/pdfBase64，title 此前**全程没有上限**，
+ * 而它会被四处放大：
+ *   1. 拼进 docText（`【${title}】...`）→ 进 RAG 内存语料，之后**每条** chat 检索
+ *      都要 tokenize 它（单个请求即可把约 8MB 字符串压进语料，长期拖慢所有检索）；
+ *   2. 拼进 source（`doc:${title}`）→ 同样进语料与 /api/documents 列表；
+ *   3. 原样回显在响应里；
+ *   4. 失败时整串进日志（日志体积与磁盘写入都被单个请求放大）。
+ * 取 200：真实研报/财报/公告标题远短于此（中文标题常见 20~60 字），
+ * 200 足以容纳"标题 + 副标题 + 报告期"的长尾，且截断后仍是可读标题而不是报错。
+ * 截断而不是 400：标题超长多半是客户端把正文误填进 title，截断保住入库能力，
+ * 同时把三类放大路径一并钉死（source/回显/日志都由截断后的 title 派生）。
+ */
+export const MAX_TITLE_CHARS = 200;
+
+/** 超长 title 截断：trim 后再截（否则前导空白会吃掉有效配额） */
+function clampTitle(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return raw.trim().slice(0, MAX_TITLE_CHARS);
+}
+
 /** 统一的 413 响应：说清上限、本次体积与两条可操作出路（而不是 express 的通用报错） */
 function respondTooLarge(res: Response, sizeBytes?: number): void {
   const limitMb = INGEST_BODY_LIMIT_BYTES / (1024 * 1024);
@@ -71,7 +94,7 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const body = req.body ?? {};
-      const title = typeof body.title === 'string' ? body.title.trim() : '';
+      const title = clampTitle(body.title);
       if (!title) return res.status(400).json({ error: '请提供文档标题 title' });
       let text = typeof body.text === 'string' ? body.text : '';
       if (!text && typeof body.pdfBase64 === 'string' && body.pdfBase64) {
@@ -88,10 +111,18 @@ router.post(
         text.slice(0, 1500),
       ].join('\n');
       const id = `ingested:${Date.now()}`;
-      ingestDocument({ id, source: `doc:${title}`, text: docText });
+      // source 由 title 派生（doc:<title>）：title 已被硬截断，故 source 长度同样有界
+      const source = `doc:${title}`;
+      ingestDocument({ id, source, text: docText });
       res.json({ id, title, insight, ingested: true });
     } catch (error) {
-      logger.error('Ingest error', { route: INGEST_PATH, title: req.body?.title, err: error });
+      // 只记 title 的**长度**，不记原文：否则单个超大 title 会把日志撑爆（且原文含用户数据）
+      const rawTitle = (req.body as { title?: unknown } | undefined)?.title;
+      logger.error('Ingest error', {
+        route: INGEST_PATH,
+        titleLength: typeof rawTitle === 'string' ? rawTitle.length : 0,
+        err: error,
+      });
       res.status(500).json({ error: '文档入库失败', detail: errorDetail(error) });
     }
   },

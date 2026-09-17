@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import PaperTradingPage from './PaperTradingPage';
 
 /** 审计日志共 25 条，页大小 20 → 首屏 20 条 + 「加载更多」拿剩下 5 条 */
@@ -110,5 +110,36 @@ describe('PaperTradingPage 审计日志分页', () => {
     await waitFor(() => expect(screen.getByText('暂无审计条目')).toBeInTheDocument());
     expect(screen.getByText(/共 0 条，当前显示前 0 条/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /加载更多/ })).toBeNull();
+  });
+
+  it('同帧连点两次「加载更多」：只发一次请求，且 offset 不会重复取同一页', async () => {
+    // 第一次「加载更多」挂在途：按钮的 disabled 要等 React 提交才生效，挡不住同帧第二次点击
+    let resolveMore!: (v: unknown) => void;
+    h.getAuditLog
+      .mockImplementationOnce(async (q?: { limit?: number; offset?: number }) => ({
+        count: h.entries.length,
+        entries: h.entries.slice(q?.offset ?? 0, (q?.offset ?? 0) + (q?.limit ?? 20)),
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveMore = resolve)));
+    render(<PaperTradingPage />);
+    const btn = await screen.findByRole('button', { name: /加载更多/ });
+
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    // 第二次点击必须被入口守卫拦掉（否则 offset 会是上一次渲染的快照 20，取回同一页）
+    expect(h.getAuditLog).toHaveBeenCalledTimes(2); // 首屏 + 唯一一次加载更多
+
+    await act(async () => {
+      resolveMore({ count: h.entries.length, entries: h.entries.slice(20) });
+    });
+
+    // 最后一页真的取到了：总数与条数都到位，按钮消失
+    await waitFor(() => expect(screen.getByText(/共 25 条，当前显示前 25 条/)).toBeInTheDocument());
+    expect(renderedRows()).toBe(25);
+    expect(screen.getByText('detail-24')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /加载更多/ })).toBeNull();
+    expect(h.getAuditLog).toHaveBeenLastCalledWith(
+      expect.objectContaining({ limit: 20, offset: 20 }),
+    );
   });
 });

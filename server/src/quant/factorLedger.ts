@@ -59,6 +59,45 @@ const DEFAULT_LEDGER_FILE = path.join(import.meta.dirname, '..', 'data', 'factor
 /** 台账容量上限：超出后淘汰最旧记录 */
 export const MAX_LEDGER_ITEMS = 500;
 
+/**
+ * 模块级内存 store（单进程单写者）：读走内存、写后更新缓存。
+ * 动机：GET /api/quant/factor/experiments 连续调用 listFactorExperiments() 与
+ * summarizeFactorExperiments()，两者各自 readStore()，台账满额（500 条 / 241KB）时
+ * 每次 ≈ 2.0ms × 2 白花在解析上；现在第二次调用直接命中缓存。
+ * 不做 mtime 校验——本模块是台账文件的唯一写者；测试夹具直接改写落盘文件后
+ * 调用 clearFactorExperiments() 或 resetFactorLedgerCache() 即可重建缓存。
+ */
+let storeCache: { file: string; store: LedgerStore } | null = null;
+
+/** 清空内存缓存（外部直接改写了落盘文件后强制重读；测试隔离用） */
+export function resetFactorLedgerCache(): void {
+  storeCache = null;
+}
+
+/**
+ * 台账写入串行锁（与 services/outcomeTracker.ts 的 withStoreLock 同范式）。
+ * ----------------------------------------------------------------------------
+ * recordFactorExperiments 是「readStore → 改 → writeStore」的读-改-写：writeStore 的
+ * tmp+rename 只防半写，**不防丢更新**。当前实现整段同步（JS 单线程内不会被别的回调打断），
+ * 但它是异步 HTTP 处理器链上的收尾动作，一旦中间出现 await（或将来改成异步 IO），
+ * 并发调用会各自读到同一份旧文件后整体覆盖，最多 MAX_LEDGER_ITEMS 条实验记录静默消失，
+ * 而两边响应都声称写入成功。此队列把「读-改-写」整段排成单进程内串行。
+ */
+let storeLock: Promise<void> = Promise.resolve();
+
+/**
+ * 把一段台账读-改-写排入串行队列（异步调用方可直接使用）。
+ * 无论成功失败都续上队列，避免一次异常让后续写入永久挂起。
+ */
+export function withLedgerStoreLock<T>(fn: () => Promise<T> | T): Promise<T> {
+  const result = storeLock.then(() => fn());
+  storeLock = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
 function getLedgerFile(): string {
   return process.env.FACTOR_LEDGER_FILE && process.env.FACTOR_LEDGER_FILE.length > 0
     ? process.env.FACTOR_LEDGER_FILE
@@ -66,25 +105,36 @@ function getLedgerFile(): string {
 }
 
 function readStore(): LedgerStore {
+  const file = getLedgerFile();
+  if (storeCache && storeCache.file === file) return storeCache.store; // 缓存命中：不读盘
+  let store: LedgerStore;
   try {
-    const file = getLedgerFile();
-    if (!fs.existsSync(file)) return { items: [] };
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as LedgerStore;
-    return parsed && Array.isArray(parsed.items) ? parsed : { items: [] };
+    if (!fs.existsSync(file)) {
+      store = { items: [] };
+    } else {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as LedgerStore;
+      store = parsed && Array.isArray(parsed.items) ? parsed : { items: [] };
+    }
   } catch {
+    // 文件损坏/不可读：视为空台账（不阻断）。不写缓存：一次瞬时读失败不该把「空台账」
+    // 钉在内存里（否则下一次写入会把整份台账覆盖为空），下次调用重试读盘。
     return { items: [] };
   }
+  storeCache = { file, store };
+  return store;
 }
 
 function writeStore(store: LedgerStore): boolean {
+  const file = getLedgerFile();
   try {
-    const file = getLedgerFile();
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf-8');
-    fs.renameSync(tmp, file);
+    fs.renameSync(tmp, file); // 原子替换，避免半写状态（tmp+rename 只防半写，不防丢更新，见上方串行锁）
+    storeCache = { file, store }; // 写后更新缓存：后续读直接命中内存
     return true;
   } catch {
+    storeCache = null; // 写失败：缓存与落盘可能不一致，下次读盘重建
     return false;
   }
 }
@@ -98,9 +148,29 @@ function makeId(): string {
 /**
  * 批量记录实验结果（单次读盘 + 单次写盘，避免逐个因子反复重写文件）。
  * 返回实际写入的条目；写盘失败返回 []（静默，不阻断调用方）。
+ *
+ * 向后兼容：保持同步签名。同步函数体内的读-改-写不会被 JS 单线程打断，
+ * 因此本入口本身即原子；需要与其他 await 交错、或与其他锁定段互斥的异步调用方，
+ * 请用 recordFactorExperimentsAsync()（同一队列）。
  */
 export function recordFactorExperiments(inputs: FactorExperimentInput[]): FactorExperiment[] {
   if (!Array.isArray(inputs) || inputs.length === 0) return [];
+  return recordFactorExperimentsUnsafe(inputs);
+}
+
+/**
+ * 异步记录：把「readStore → 改 → writeStore」整段排入模块级串行队列。
+ * 供异步处理器/脚本使用——并发调用不会各自基于同一份旧台账整体覆盖（见上方锁的说明）。
+ */
+export function recordFactorExperimentsAsync(
+  inputs: FactorExperimentInput[],
+): Promise<FactorExperiment[]> {
+  if (!Array.isArray(inputs) || inputs.length === 0) return Promise.resolve([]);
+  return withLedgerStoreLock(() => recordFactorExperimentsUnsafe(inputs));
+}
+
+/** 读-改-写核心（调用方负责持有锁或保证同步原子性） */
+function recordFactorExperimentsUnsafe(inputs: FactorExperimentInput[]): FactorExperiment[] {
   const store = readStore();
   const createdAt = new Date().toISOString();
   const added = inputs.map((input) => ({ ...input, id: makeId(), createdAt }));
@@ -156,7 +226,7 @@ export function summarizeFactorExperiments(): {
   };
 }
 
-/** 清空台账（供测试隔离） */
+/** 清空台账（供测试隔离）；同时刷新内存缓存（writeStore 成功后缓存即新空台账） */
 export function clearFactorExperiments(): void {
   writeStore({ items: [] });
 }

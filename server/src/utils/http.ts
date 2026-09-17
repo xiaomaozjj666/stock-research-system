@@ -50,7 +50,12 @@ export async function fetchJson(url: string, opts: FetchJsonOptions = {}): Promi
 
     // 2) curl 回退（绕过沙箱 TLS 重置）；execFile 的 signal 选项会在中止时杀死子进程
     try {
-      const args: string[] = ['-s', '-m', String(Math.ceil(timeoutMs / 1000) + 5)];
+      // `-f`（--fail）不可省：没有它时 curl 对 4xx/5xx **退出码仍为 0**，
+      // 上游返回的合法 JSON 错误体（如 {"error":"..."}）会被当成成功解析，
+      // 调用方读成「上游没有数据」→ 不重试、不告警、指标不体现失败；
+      // 而上面 fetch 分支对非 2xx 会 `throw HTTP ${status}` 并重试，两条路径语义必须一致。
+      // `-S`（--show-error）配合 `-s` 把 HTTP 错误写进 stderr，execFile 的 reject 里能带上原因。
+      const args: string[] = ['-s', '-S', '-f', '-m', String(Math.ceil(timeoutMs / 1000) + 5)];
       for (const [k, v] of Object.entries(headers)) {
         args.push('-H', `${k}: ${v}`);
       }

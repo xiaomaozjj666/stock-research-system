@@ -22,7 +22,8 @@ const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** `prototype` 不在 Object.prototype 上（在 Function.prototype 上），需显式拒绝 */
 const RESERVED_KEYS = new Set(['prototype']);
 
-function isValidSessionId(sessionId: string): boolean {
+/** 供路由层做入口校验（清空记忆等写操作此前绕过了这层白名单） */
+export function isValidSessionId(sessionId: string): boolean {
   // `__proto__`/`constructor`/`toString`/`valueOf` 等全部命中 Object.prototype 继承键，
   // 一并拒绝——charset 白名单挡不住全由合法字符组成的原型链键
   return (

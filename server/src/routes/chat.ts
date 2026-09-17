@@ -4,7 +4,7 @@
 import { Router } from 'express';
 import { chatLimiter, circuitBreakerGuard, respondIfQueueTimeout } from '../middleware.js';
 import { chatAgent } from '../services/chatAgent.js';
-import { clearHistory } from '../services/chatMemory.js';
+import { clearHistory, isValidSessionId } from '../services/chatMemory.js';
 import { validateChatHistory, isQueueTimeoutError } from '../utils/limitGate.js';
 import { createSseChannel } from '../utils/sse.js';
 import { errorDetail } from '../utils/errorDetail.js';
@@ -96,9 +96,15 @@ router.get('/api/chat/stream', chatLimiter, circuitBreakerGuard, async (req, res
 });
 
 // === 对话历史清空（持久记忆管理） ===
-router.post('/api/chat/history/clear', (req, res) => {
+// 该端点此前既无限流也不校验 sessionId 形态：清空是"会抹掉状态"的写操作，
+// 且 sessionId 直接用作记忆文件键，任意字符串（含路径分隔符）都能落进来。
+// 与 chatMemory 的 load/append 用同一个校验函数，并挂 chatLimiter（10/min）。
+router.post('/api/chat/history/clear', chatLimiter, (req, res) => {
   const sessionId = String(req.body?.sessionId ?? '').trim();
   if (!sessionId) return res.status(400).json({ error: '请提供 sessionId' });
+  if (!isValidSessionId(sessionId)) {
+    return res.status(400).json({ error: 'sessionId 格式无效' });
+  }
   clearHistory(sessionId);
   res.json({ ok: true });
 });

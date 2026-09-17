@@ -8,6 +8,7 @@ import { renderPrometheus } from '../services/metrics.js';
 import { buildOpenApiDocument } from '../services/openapi.js';
 import { getDataCacheDir } from '../services/dataService.js';
 import { getQuantCacheDir } from '../quant/quantCache.js';
+import { errorDetail } from '../utils/errorDetail.js';
 
 const router = Router();
 
@@ -18,12 +19,14 @@ const router = Router();
  * 目录尚未创建（如全新部署、尚未发生任何分析）只如实报告 'missing'，不算故障。
  */
 function describeCacheDir(dir: string): { status: string; path: string; error?: string } {
+  // 路径如实回绝对路径：健康检查是本地单机（默认只监听回环）的运维探针，
+  // 「哪个目录不可读写」本身就是诊断信息；内部错误信息仍走 errorDetail 收口。
   try {
     if (!fs.existsSync(dir)) return { status: 'missing', path: dir };
     fs.accessSync(dir, fs.constants.R_OK | fs.constants.W_OK);
     return { status: 'ok', path: dir };
   } catch (err) {
-    return { status: 'error', path: dir, error: (err as Error).message };
+    return { status: 'error', path: dir, error: errorDetail(err) ?? '目录不可读写' };
   }
 }
 

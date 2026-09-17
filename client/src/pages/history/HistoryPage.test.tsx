@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import HistoryPage from './HistoryPage';
 
 vi.mock('../../api/client', () => ({
@@ -179,5 +179,176 @@ describe('HistoryPage 评分时间线', () => {
     const badge = container.querySelector('.val-neutral');
     expect(badge).not.toBeNull();
     expect(badge!.textContent).toBe(' — 持平');
+  });
+});
+
+/** 永不 settle / 可手动 settle 的桩 */
+function pending<T = unknown>(): Promise<T> {
+  return new Promise<T>(() => {});
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function detailFor(id: string) {
+  return { id, stockCode: '600519', stockName: '贵州茅台', result: { stock_pool: [{ id }] } };
+}
+
+function openButtons(): HTMLElement[] {
+  return screen.getAllByRole('button', { name: '查看' });
+}
+
+/** 取某只股票所在行的按钮（一次删除确认后按钮文案会变，不能再用全局 name 选择器取第二行） */
+function rowButtons(stockName: string, buttonName: string): HTMLElement {
+  const row = screen.getByText(stockName).closest('li') as HTMLElement;
+  return within(row).getByRole('button', { name: buttonName });
+}
+
+/**
+ * 「查看」的请求序号守卫。
+ * 背景：先点 A（慢）再点 B，A 的响应后到会把 B 的报告顶掉——用户看到的是 A 的报告
+ * 却以为是自己刚点的 B。
+ */
+describe('HistoryPage 查看的请求序号', () => {
+  beforeEach(() => {
+    vi.mocked(fetchHistoryList).mockClear();
+    vi.mocked(fetchHistoryDetail).mockReset();
+    vi.mocked(deleteHistoryItem).mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('先慢后快：只采纳最后一次点击的结果，迟到的旧响应被丢弃', async () => {
+    const slowA = deferred<never>();
+    const slowB = deferred<never>();
+    vi.mocked(fetchHistoryDetail)
+      .mockReturnValueOnce(slowA.promise as never)
+      .mockReturnValueOnce(slowB.promise as never);
+    const onOpen = vi.fn();
+    render(<HistoryPage onOpenHistory={onOpen} />);
+    await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
+
+    fireEvent.click(openButtons()[0]); // h1（慢）
+    expect(fetchHistoryDetail).toHaveBeenCalledWith('h1');
+
+    // h1 的按钮此刻已禁用；直接点另一行的「查看」发第二次请求，
+    // 复现「用户等不及换了另一只」——A 仍在途、B 也发了出去
+    onOpen.mockClear();
+    fireEvent.click(openButtons()[0]); // 此时列表里唯一可点的「查看」是 h2
+    expect(fetchHistoryDetail).toHaveBeenCalledWith('h2');
+
+    // B 先返回 → 采纳
+    await act(async () => {
+      slowB.resolve(detailFor('h2') as never);
+    });
+    expect(onOpen).toHaveBeenLastCalledWith({ stock_pool: [{ id: 'h2' }] });
+
+    // A 迟到 → 必须被序号守卫丢弃，不得覆盖 B 的报告
+    await act(async () => {
+      slowA.resolve(detailFor('h1') as never);
+    });
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onOpen).not.toHaveBeenCalledWith({ stock_pool: [{ id: 'h1' }] });
+  });
+
+  it('拉取途中按钮显示「打开中…」并禁用，防止同一行被连点', async () => {
+    vi.mocked(fetchHistoryDetail).mockReturnValue(pending() as never);
+    render(<HistoryPage onOpenHistory={() => {}} />);
+    await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
+
+    fireEvent.click(openButtons()[0]); // h1 的「查看」：在途，永不返回
+
+    // 该行按钮就地变成「打开中…」并禁用，同一次请求不可能被连点第二次
+    const opening = screen.getByRole('button', { name: '打开中…' });
+    expect(opening).toBeDisabled();
+    fireEvent.click(opening);
+    expect(fetchHistoryDetail).toHaveBeenCalledTimes(1);
+    // 另一行不受影响，仍可正常打开
+    expect(screen.getAllByRole('button', { name: '查看' })).toHaveLength(1);
+  });
+});
+
+/**
+ * 资源与并发删除。
+ * 背景：二次确认的 3 秒 setTimeout 卸载时未清理（切页后仍对已卸载组件 setState）；
+ * 并发删除共用一个 deletingId，A 的 finally 会清掉 B 的「删除中…」。
+ */
+describe('HistoryPage 资源与并发删除', () => {
+  beforeEach(() => {
+    vi.mocked(fetchHistoryList).mockClear();
+    vi.mocked(fetchHistoryDetail).mockClear();
+    vi.mocked(deleteHistoryItem).mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('二次确认的 3 秒定时器在卸载时被清掉：切页后不再对已卸载组件 setState', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { unmount } = render(<HistoryPage onOpenHistory={() => {}} />);
+      await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
+
+      vi.useFakeTimers();
+      fireEvent.click(screen.getAllByRole('button', { name: '删除' })[0]);
+      expect(screen.getByRole('button', { name: '确认删除？' })).toBeInTheDocument();
+
+      unmount();
+      // 卸载后定时器仍会到点：未清理时这里会对已卸载组件 setState 并触发 React 警告
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+
+      const mentionsUnmounted = errSpy.mock.calls.some((args) =>
+        args.some((a) => typeof a === 'string' && /unmounted|not wrapped in act/i.test(a)),
+      );
+      expect(mentionsUnmounted).toBe(false);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it('并发删除两行：A 的收尾不会清掉 B 的「删除中…」', async () => {
+    const a = deferred<never>();
+    const b = deferred<never>();
+    vi.mocked(deleteHistoryItem)
+      .mockReturnValueOnce(a.promise as never)
+      .mockReturnValueOnce(b.promise as never);
+    render(<HistoryPage onOpenHistory={() => {}} />);
+    await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
+
+    // h1：两次点击完成确认 → 真正删除（在途）
+    fireEvent.click(rowButtons('贵州茅台', '删除'));
+    fireEvent.click(rowButtons('贵州茅台', '确认删除？'));
+    expect(vi.mocked(deleteHistoryItem)).toHaveBeenCalledTimes(1);
+
+    // h2：同样进入确认并删除（在途）
+    fireEvent.click(rowButtons('平安银行', '删除'));
+    fireEvent.click(rowButtons('平安银行', '确认删除？'));
+    expect(vi.mocked(deleteHistoryItem)).toHaveBeenCalledTimes(2);
+
+    // h1 先返回 → 只剩 h2 处于删除中；共用一个 deletingId 时 h1 的 finally 会把 h2 也解禁
+    await act(async () => {
+      a.resolve(undefined as never);
+    });
+    expect(screen.queryByText('贵州茅台')).toBeNull();
+    expect(screen.getByRole('button', { name: '删除中…' })).toBeDisabled();
+
+    await act(async () => {
+      b.resolve(undefined as never);
+    });
+    expect(screen.queryByRole('button', { name: '删除中…' })).toBeNull();
+    expect(screen.getByText('暂无研究历史。')).toBeInTheDocument();
   });
 });

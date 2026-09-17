@@ -11,6 +11,7 @@ import {
 import type { WatchlistAlertsSnapshot } from '../../api/client';
 import type { WatchlistNewsBacktestReport, WatchlistAlert } from '../../types';
 import { normalizeApiError } from '../../api/client';
+import { signCls } from '../../lib/colors';
 import NewsPostureHeatBar from '../../components/NewsPostureHeatBar';
 import StockSearchInput from '../../components/StockSearchInput';
 import { useToast } from '../../components/Toast';
@@ -92,7 +93,7 @@ export default function WatchlistPage() {
   const { showToast } = useToast();
   const [codes, setCodes] = useState<string[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
-  const [loadingList, setLoadingList] = useState(false);
+  const [loadingList, setLoadingList] = useState(true);
   const [running, setRunning] = useState(false);
   const [monitoring, setMonitoring] = useState(false);
   const [report, setReport] = useState<WatchlistNewsBacktestReport | null>(null);
@@ -348,19 +349,12 @@ export default function WatchlistPage() {
       )}
 
       <div className="watchlist-list">
-        {loadingList ? (
+        {/* 空态只允许出现在"清单确实已取回且为空"时：
+            初次加载（listKnown=false 且无错误）一律走加载占位，避免首屏闪一句
+            「还没有关注的股票」；读取失败时语义由上方错误横幅表达，这里不再兜底文案。 */}
+        {!listKnown && !error ? (
           <div className="watchlist-empty">加载中…</div>
-        ) : codes.length === 0 &&
-          !listKnown ? null : codes // 语义由上方错误横幅表达，这里不再渲染空态兜底文案 // 列表内容尚不可信（首次加载失败 / 空清单提示）：codes 为空不代表"没有关注股票"，
-          .length === 0 ? (
-          // 只有"加载成功且确实没有关注股票"才渲染空态
-          <div className="watchlist-empty">
-            <p className="watchlist-empty-title">还没有关注的股票</p>
-            <p className="watchlist-empty-hint">
-              在上方输入股票代码或名称（如 600519 / 贵州茅台）添加，即可批量回测与异动监控。
-            </p>
-          </div>
-        ) : (
+        ) : codes.length > 0 ? (
           <ul className="watchlist-items">
             {codes.map((code) => (
               <li key={code} className="watchlist-item">
@@ -382,7 +376,14 @@ export default function WatchlistPage() {
               </li>
             ))}
           </ul>
-        )}
+        ) : listKnown ? (
+          <div className="watchlist-empty">
+            <p className="watchlist-empty-title">还没有关注的股票</p>
+            <p className="watchlist-empty-hint">
+              在上方输入股票代码或名称（如 600519 / 贵州茅台）添加，即可批量回测与异动监控。
+            </p>
+          </div>
+        ) : null}
       </div>
 
       {report && (
@@ -429,17 +430,9 @@ export default function WatchlistPage() {
                         )}
                       </td>
                       <td>{best?.strategyType ?? '—'}</td>
-                      <td
-                        className={
-                          best?.newsAware
-                            ? best.newsAware.totalReturn >= 0
-                              ? 'val-positive'
-                              : 'val-negative'
-                            : ''
-                        }
-                      >
+                      <td className={best?.newsAware ? signCls(best.newsAware.totalReturn) : ''}>
                         {best?.newsAware
-                          ? `${best.newsAware.totalReturn >= 0 ? '+' : ''}${best.newsAware.totalReturn.toFixed(1)}%`
+                          ? `${best.newsAware.totalReturn > 0 ? '+' : ''}${best.newsAware.totalReturn.toFixed(1)}%`
                           : '—'}
                       </td>
                       <td>{best?.newsAware ? best.newsAware.sharpeRatio.toFixed(2) : '—'}</td>

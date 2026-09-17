@@ -53,6 +53,26 @@ function mockCurlEmpty() {
   curlImplRef.impl = async () => ({ stdout: '', stderr: '' });
 }
 
+/**
+ * 复刻真实 curl 的行为（含 `-f/--fail` 语义）：
+ *  - 带 `-f` 且 HTTP ≥ 400 → curl 退出码 22、stdout 为空（execFile reject）；
+ *  - **不带** `-f` → 无论状态码都退出 0，错误响应体照样写到 stdout。
+ * 这正是「上游 500 被当成成功解析」的成因，用它来钉住回退分支的失败语义。
+ */
+function mockCurlHttpStatus(body: string, status: number) {
+  curlImplRef.impl = async (_file, args) => {
+    if (status >= 400) {
+      if (args.includes('-f')) {
+        throw new Error(
+          `Command failed: curl ...\ncurl: (22) The requested URL returned error: ${status}`,
+        );
+      }
+      return { stdout: body, stderr: '' };
+    }
+    return { stdout: body, stderr: '' };
+  };
+}
+
 describe('fetchJson', () => {
   beforeEach(() => {
     callLog.length = 0;
@@ -159,7 +179,7 @@ describe('fetchJson', () => {
     await fetchJson('https://example.com/api', { headers: { 'User-Agent': 'test-agent' } });
     const curlCall = callLog.find((c) => c.file === 'curl');
     expect(curlCall).toBeDefined();
-    // curl 参数形如 ['-s', '-m', '17', '-H', 'User-Agent: test-agent', <url>]
+    // curl 参数形如 ['-s', '-S', '-f', '-m', '17', '-H', 'User-Agent: test-agent', <url>]
     const hIdx = curlCall!.args.indexOf('-H');
     expect(hIdx).toBeGreaterThanOrEqual(0);
     expect(curlCall!.args[hIdx + 1]).toContain('test-agent');
@@ -196,5 +216,61 @@ describe('fetchJson', () => {
     controller.abort();
     await expect(pending).rejects.toThrow(/aborted/);
     expect(callLog.length).toBe(0);
+  });
+});
+
+/* ============================================================================
+ * curl 回退的失败语义必须与 fetch 分支一致（P1：非 2xx 被当成功）
+ * ----------------------------------------------------------------------------
+ * 修复前 curl 参数是 `-s -m <n> <url>`：上游 500 且响应体是合法 JSON 时，curl 退出码
+ * 仍是 0，错误体被 JSON.parse 成功返回 —— 调用方读成「上游没有数据」，
+ * 不重试、不告警、指标不体现失败；而上方的 fetch 分支对非 2xx 会 throw HTTP <status>
+ * 并进入重试。加 `-f` 后两条路径语义一致。
+ * ==========================================================================*/
+describe('fetchJson — curl 回退的失败语义（-f）', () => {
+  beforeEach(() => {
+    callLog.length = 0;
+    vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** fetch 永远失败：强制每次尝试都走 curl 回退 */
+  function stubFetchFail() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('fetch failed');
+      }),
+    );
+  }
+
+  it('上游 500 且响应体是合法 JSON：按失败处理，不把错误体当数据返回', async () => {
+    stubFetchFail();
+    mockCurlHttpStatus(JSON.stringify({ error: 'upstream boom' }), 500);
+
+    await expect(fetchJson('https://example.com/api', { retries: 0 })).rejects.toThrow(/500/);
+    // 举证：确实走了 curl 回退，且带上了 -f（没有它 curl 对 5xx 退出码为 0）
+    const curlCall = callLog.find((c) => c.file === 'curl');
+    expect(curlCall).toBeDefined();
+    expect(curlCall!.args).toContain('-f');
+  });
+
+  it('非 2xx 会像 fetch 分支一样重试（retries 次共 3 次尝试）', async () => {
+    stubFetchFail();
+    mockCurlHttpStatus(JSON.stringify({ error: 'boom' }), 503);
+
+    await expect(fetchJson('https://example.com/api', { retries: 2 })).rejects.toThrow();
+    expect(callLog.filter((c) => c.file === 'curl')).toHaveLength(3);
+  });
+
+  it('-f 不误伤成功路径：2xx 的合法 JSON 照常解析', async () => {
+    stubFetchFail();
+    mockCurlHttpStatus(JSON.stringify({ fromCurl: 1 }), 200);
+
+    await expect(fetchJson('https://example.com/api', { retries: 0 })).resolves.toEqual({
+      fromCurl: 1,
+    });
   });
 });

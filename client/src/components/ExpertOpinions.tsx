@@ -42,16 +42,24 @@ function ExpertOpinions({ data = [] }: ExpertOpinionsProps) {
       <div className="section-title">专家观点</div>
       {data.map((exp, i) => (
         <div className="expert-panel" key={i}>
-          <div className="expert-header" onClick={() => setOpenIndex(openIndex === i ? null : i)}>
+          {/* 折叠头必须是真正的按钮：此前是纯 onClick 的 div，
+              键盘无法聚焦、读屏也读不出"可展开"——整块专家观点等于打不开。
+              aria-expanded 让读屏能播报展开状态。 */}
+          <button
+            type="button"
+            className="expert-header"
+            aria-expanded={openIndex === i}
+            onClick={() => setOpenIndex(openIndex === i ? null : i)}
+          >
             <span className="expert-name">{exp.expert}</span>
-            <div className="expert-header-right">
+            <span className="expert-header-right">
               <span className="confidence-badge">{exp.confidence}%</span>
               <span className={`expert-sentiment ${exp.overallSentiment}`}>
                 {sentimentLabel(exp.overallSentiment)}
               </span>
               <span className="expert-arrow">{openIndex === i ? '▾' : '▸'}</span>
-            </div>
-          </div>
+            </span>
+          </button>
           <div
             className={`expert-body ${openIndex === i ? 'expert-body-open' : 'expert-body-closed'}`}
           >

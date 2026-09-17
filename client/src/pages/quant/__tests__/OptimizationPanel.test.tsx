@@ -126,14 +126,16 @@ describe('OptimizationPanel —— impact 徽标', () => {
     vi.unstubAllGlobals();
   });
 
-  it('高影响 → chip-negative，中影响 → chip-neutral，低影响 → chip-positive', () => {
+  it('高影响 → chip-danger（警示红），中影响 → chip-neutral，低影响 → sig-valid', () => {
     const { container } = renderPanel(makeReport());
 
     const badges = Array.from(container.querySelectorAll('.quant-opt-suggestion-head .chip'));
     expect(badges.map((b) => b.textContent)).toEqual(['高影响', '中影响', '低影响']);
-    expect(badges[0]).toHaveClass('chip', 'chip-negative');
+    expect(badges[0]).toHaveClass('chip', 'chip-danger');
+    expect(badges[0]).not.toHaveClass('chip-negative');
     expect(badges[1]).toHaveClass('chip', 'chip-neutral');
-    expect(badges[2]).toHaveClass('chip', 'chip-positive');
+    expect(badges[2]).toHaveClass('chip', 'sig-valid');
+    expect(badges[2]).not.toHaveClass('chip-positive');
   });
 });
 

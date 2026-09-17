@@ -144,12 +144,17 @@ describe('ComparisonView 部分成功', () => {
     render(<ComparisonView />);
     startCompare();
 
-    // 两只都失败：各自成列（可见原因），并各自提供单只重试——比"整页只有一条报错"更有用
+    // 两只都失败：各自成列（可见原因），并各自提供单只重试入口——比"整页只有一条报错"更有用
     await waitFor(() =>
       expect(screen.getAllByRole('button', { name: '重试这一只' })).toHaveLength(2),
     );
     expect(screen.getAllByText('分析失败')).toHaveLength(2);
     expect(screen.getAllByText(/数据不可用/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/请稍后重试/).length).toBeGreaterThan(0);
+    // 但两只都没成功 → 没有可凑数的伙伴，重试按钮禁用并写明原因（不是死按钮）
+    for (const btn of screen.getAllByRole('button', { name: '重试这一只' })) {
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveAttribute('title', expect.stringContaining('需至少一只成功结果才能重试'));
+    }
   });
 });

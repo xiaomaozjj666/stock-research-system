@@ -11,7 +11,12 @@ function getScoreColor(score: number): string {
 }
 
 export default function DataQualityPanel({ data }: Props) {
-  const scoreColor = getScoreColor(data.overallScore);
+  // 钳制到 0~100：越界分数会让 `${score}%` 变成非法 CSS 长度（-5% / NaN%）而被浏览器
+  // 整条丢弃，进度条退化成满格，出现"数字写着 -5、条形却是 100%"的自相矛盾展示
+  const score = Number.isFinite(data.overallScore)
+    ? Math.min(100, Math.max(0, data.overallScore))
+    : 0;
+  const scoreColor = getScoreColor(score);
 
   return (
     <div className="card quant-panel">
@@ -19,13 +24,13 @@ export default function DataQualityPanel({ data }: Props) {
 
       <div className="quant-quality-header">
         <div className="quant-quality-score" style={{ color: scoreColor }}>
-          {data.overallScore}
+          {score}
           <span className="quant-quality-max">/100</span>
         </div>
         <div className="quant-quality-bar-wrap">
           <div
             className="quant-quality-bar"
-            style={{ width: `${data.overallScore}%`, background: scoreColor }}
+            style={{ width: `${score}%`, background: scoreColor }}
           />
         </div>
       </div>

@@ -301,3 +301,91 @@ describe('并发去重（single-flight）', () => {
     },
   );
 });
+
+describe('并发去重：resume 语义不一致必须显式拒绝（不得静默复用）', () => {
+  beforeEach(() => {
+    vi.mocked(getData).mockClear();
+  });
+
+  it(
+    '在途 {resume:true} + 新的 {resume:false} → 抛 ANALYSIS_IN_FLIGHT（旧行为：静默复用续跑结果）',
+    { timeout: 30000 },
+    async () => {
+      let release: (() => void) | null = null;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      // 第一轮（续跑）卡在取数阶段，保证第二轮请求落下时它确实「在途」
+      vi.mocked(getData).mockImplementation(async () => {
+        await gate;
+        return sampleData;
+      });
+
+      const first = runAnalysis('603288', undefined, { resume: true });
+      first.catch(() => {}); // 断言只看第二轮；第一轮的失败/成功与本次无关
+
+      // 语义冲突：调用方以为是自己要的全新分析，实际会拿到续跑轮次的结果
+      // （可能来自过期断点）。现在必须「同步」抛出可判定的错误。
+      let thrown: unknown;
+      try {
+        runAnalysis('603288', undefined, { resume: false });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error & { code?: string }).code).toBe('ANALYSIS_IN_FLIGHT');
+      expect((thrown as Error).message).toContain('该标的已有一次分析在进行中，请稍后重试');
+      // 明确拒绝而不是复用了结果：第二轮没有拿到任何 AnalysisResult
+      expect(thrown).not.toHaveProperty('stock_pool');
+
+      release!();
+      await first;
+    },
+  );
+
+  it(
+    '在途 {resume:false} + 来的也是 {resume:false} → 照旧复用同一轮（不重复取数）',
+    { timeout: 30000 },
+    async () => {
+      let release: (() => void) | null = null;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.mocked(getData).mockImplementation(async () => {
+        await gate;
+        return sampleData;
+      });
+
+      const first = runAnalysis('600809');
+      const second = runAnalysis('600809');
+      release!();
+
+      const [a, b] = await Promise.all([first, second]);
+      expect(b).toBe(a);
+      expect(vi.mocked(getData)).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it(
+    'resume 一致（两次都是 resume:true）→ 同样复用，不并行跑双倍成本',
+    { timeout: 30000 },
+    async () => {
+      let release: (() => void) | null = null;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.mocked(getData).mockImplementation(async () => {
+        await gate;
+        return sampleData;
+      });
+
+      const first = runAnalysis('000568', undefined, { resume: true });
+      const second = runAnalysis('000568', undefined, { resume: true });
+      release!();
+
+      const [a, b] = await Promise.all([first, second]);
+      expect(b).toBe(a);
+      expect(vi.mocked(getData)).toHaveBeenCalledTimes(1);
+    },
+  );
+});

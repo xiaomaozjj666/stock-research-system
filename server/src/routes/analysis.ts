@@ -26,6 +26,34 @@ import logger from '../utils/logger.js';
 const router = Router();
 
 /**
+ * 在途轮次语义冲突的错误码（与 analysisPipeline 的 ANALYSIS_IN_FLIGHT 同值）。
+ *
+ * 为什么在这里**本地定义**而不是从 analysisPipeline 具名导入：本模块的
+ * `{ runAnalysis }` 在测试里被整模块打桩是常态（analysisStream.routes.test.ts 等
+ * 只导出 runAnalysis）。此时对它做具名导入会让本路由模块的链接/求值失败，
+ * 表现为该路由**静默返回空响应**（响应头 200、body 空），比错误本身更难查。
+ * 同值常量 + 下方 message 标记构成双判据，跨模块只有「字符串契约」这一层耦合。
+ */
+export const ANALYSIS_IN_FLIGHT = 'ANALYSIS_IN_FLIGHT';
+
+/** 可读中文兜底：前端直接展示，不依赖 detail（生产环境不回传内部 message） */
+const ANALYSIS_IN_FLIGHT_MESSAGE = '该标的已有一次分析在进行中，请稍后重试';
+
+/**
+ * 在途分析语义冲突（同一标的已有在途轮次，但 resume 与本次请求不一致）。
+ *
+ * 与「LLM 排队超时」同类：都是**可重试**的并发状态，不是分析失败本身——
+ * 用 409 明确区分于 500，调用方据此退避重试而不是换参数重跑。
+ * 判定不依赖 error.code 单一来源：SSE 生产环境不回传内部 message，故 message
+ * 里也带同一个错误码标记（见 analysisPipeline 的 inFlightConflictError）。
+ */
+function isAnalysisInFlightError(error: unknown): boolean {
+  const e = error as { code?: unknown; message?: unknown };
+  if (e?.code === ANALYSIS_IN_FLIGHT) return true;
+  return typeof e?.message === 'string' && e.message.includes(ANALYSIS_IN_FLIGHT);
+}
+
+/**
  * 分析结果自动写入研究历史（同代码去重；任何失败静默降级，不阻断主流程）。
  * 记忆反思闭环（借鉴 TradingAgents）：保存前读取该股票上一次分析，
  * 把评级/评分变化（vs_previous）附加到结果，随报告一同呈现——
@@ -85,6 +113,11 @@ router.post('/api/analyze', analyzeLimiter, circuitBreakerGuard, async (req, res
     });
     // LLM 排队超时是"系统繁忙可退避"，必须回 429 而不是 500
     if (respondIfQueueTimeout(res, error, '/api/analyze')) return;
+    // 在途轮次 resume 语义冲突 → 409：明确告诉调用方"另有一次分析正在跑"，
+    // 而不是静默复用一份可能来自过期断点的结果（旧行为），也不是笼统的 500
+    if (isAnalysisInFlightError(error)) {
+      return res.status(409).json({ error: ANALYSIS_IN_FLIGHT_MESSAGE, code: ANALYSIS_IN_FLIGHT });
+    }
     // detail 只在非生产环境回传：路由内 catch 不经过 index.ts 的通用错误中间件，
     // 无条件回传 error.message 会把上游 URL / 内部路径泄漏出去（见 utils/errorDetail.ts）
     res.status(500).json({ error: '分析过程出错', detail: errorDetail(error) });
@@ -117,17 +150,21 @@ router.get('/api/analyze/stream', analyzeLimiter, circuitBreakerGuard, async (re
         stockCode,
         err: error,
       });
-      // SSE 已 flushHeaders，状态码无法再改 429：改用带 code 的错误事件，
-      // 让前端能区分"系统繁忙可稍后重试"与真正的分析失败
+      // SSE 已 flushHeaders，状态码无法再改 429/409：改用带 code 的错误事件，
+      // 让前端能区分"系统繁忙可稍后重试"、"另有一次分析在跑"与真正的分析失败
       const queueTimeout = isQueueTimeoutError(error);
+      const inFlight = isAnalysisInFlightError(error);
       sse.trySend({
         phase: 'error',
         // 生产环境不回传原始 message（同 detail 口径），只给稳定中文兜底；
         // 前端 data.message 为空时本就有 '分析过程出错' 的兜底文案
         message: queueTimeout
           ? `LLM 调用排队超时（系统繁忙），请约 ${Math.max(1, Math.ceil(error.retryAfterMs / 1000))} 秒后重试`
-          : errorDetail(error) || '分析过程出错',
+          : inFlight
+            ? ANALYSIS_IN_FLIGHT_MESSAGE
+            : errorDetail(error) || '分析过程出错',
         ...(queueTimeout ? { code: error.code } : {}),
+        ...(inFlight ? { code: ANALYSIS_IN_FLIGHT } : {}),
       });
     }
   } finally {

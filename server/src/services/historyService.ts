@@ -8,6 +8,8 @@
  *
  * 持久化：单 JSON 文件（HISTORY_FILE env 可重定向，与 watchlist/paper/audit 同模式），
  * "临时文件 + 原子 rename"写入；容量超上限时淘汰最旧记录；所有 IO 错误静默降级。
+ * 读取走模块级内存 store（写后更新），同一请求只读一次写一次——历史库满额时
+ * 单次 JSON.parse ≈ 38ms，重复读会在长连接（SSE）场景下阻塞事件循环。
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -52,7 +54,11 @@ export interface HistoryEntryInput {
   result: AnalysisResult;
 }
 
-interface HistoryStore {
+/**
+ * 历史库落盘结构（同时作为「内存快照」形态对外暴露）：
+ * 由 readHistoryStore() 读一次后可作为 saveHistoryEntry() 的第二参数复用。
+ */
+export interface HistoryStore {
   items: HistoryItem[];
 }
 
@@ -72,28 +78,69 @@ function getHistoryFile(): string {
     : DEFAULT_HISTORY_FILE;
 }
 
+/**
+ * 模块级内存 store（单进程单写者）。
+ * ----------------------------------------------------------------------------
+ * 此前每次分析收尾都要「读文件 + JSON.parse 整份历史库」两遍：routes/analysis.ts 先调
+ * getPreviousAnalysis()（读一次），再调 saveHistoryEntry()（内部又读一次）。实测
+ * server/src/data/history.json 达 199KB（单条可达 66KB，因为 result 是整份报告），
+ * 库满（100 条）时约 14.7MB、单次 JSON.parse ≈ 38ms，于是每次收尾白阻塞事件循环
+ * 0.14–0.18s；而 /api/analyze/stream、/api/chat/stream 都是长连接，事件循环一卡全体等。
+ *
+ * 现在：读走内存、写后更新缓存（脏标记即缓存本身是否有效），同一请求只读一次写一次。
+ * 不做 mtime 校验——本模块是 history.json 的唯一写者；外部（测试夹具/运维手工）直接改写
+ * 落盘文件后，调用 resetHistoryStoreCache() 强制重读即可。
+ */
+let storeCache: { file: string; store: HistoryStore } | null = null;
+
+/**
+ * 清空内存缓存：供测试隔离、或外部直接改写了落盘文件后强制重读（生产路径无需调用）。
+ */
+export function resetHistoryStoreCache(): void {
+  storeCache = null;
+}
+
+/**
+ * 读取历史库快照（内存缓存命中则不读盘、不 parse）。
+ * 同一请求内可「读一次、复用给 saveHistoryEntry(input, store)」，让整条链路只读一次写一次。
+ * 注意：返回的是浅拷贝，可自由读；但同一份快照不要跨多次写入复用（后一次会覆盖前一次）。
+ */
+export function readHistoryStore(): HistoryStore {
+  return { items: [...readStore().items] };
+}
+
 function readStore(): HistoryStore {
+  const file = getHistoryFile();
+  if (storeCache && storeCache.file === file) return storeCache.store; // 缓存命中：不读盘
+  let store: HistoryStore;
   try {
-    const file = getHistoryFile();
-    if (!fs.existsSync(file)) return { items: [] };
-    const raw = fs.readFileSync(file, 'utf-8');
-    const parsed = JSON.parse(raw) as HistoryStore;
-    return parsed && Array.isArray(parsed.items) ? parsed : { items: [] };
+    if (!fs.existsSync(file)) {
+      store = { items: [] };
+    } else {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as HistoryStore;
+      store = parsed && Array.isArray(parsed.items) ? parsed : { items: [] };
+    }
   } catch {
-    // 文件损坏/不可读：视为空历史（不阻断）
+    // 文件损坏/不可读：视为空历史（不阻断）。**不写缓存**——一次瞬时读失败不该把
+    // 「空历史」钉在内存里（否则下一次写入会把整份历史覆盖为空），下次调用重试读盘。
     return { items: [] };
   }
+  storeCache = { file, store };
+  return store;
 }
 
 function writeStore(store: HistoryStore): boolean {
+  const file = getHistoryFile();
   try {
-    const file = getHistoryFile();
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf-8');
     fs.renameSync(tmp, file); // 原子替换，避免半写状态
+    storeCache = { file, store }; // 写后更新缓存：后续读直接命中内存
     return true;
   } catch {
+    // 写失败：落盘内容与缓存可能不一致（tmp 残留等），清缓存让下次读盘重建
+    storeCache = null;
     return false;
   }
 }
@@ -168,9 +215,16 @@ function toSummary(item: HistoryItem): HistorySummary {
 /**
  * 保存/更新一条历史记录：同股票代码去重（更新为最新分析，id 保留），
  * 容量超上限时淘汰最旧记录。返回保存后的条目；写盘失败返回 null（不阻断分析主流程）。
+ *
+ * @param reuseStore 复用调用方已读到的 store（可选）：同一请求里先 getPreviousAnalysis()
+ *   再 saveHistoryEntry() 时传入（见 readHistoryStore()），可确保只读一次盘。
+ *   不传时命中模块级内存缓存，效果相同；签名向后兼容（新增可选参数）。
  */
-export function saveHistoryEntry(input: HistoryEntryInput): HistoryItem | null {
-  const store = readStore();
+export function saveHistoryEntry(
+  input: HistoryEntryInput,
+  reuseStore?: HistoryStore,
+): HistoryItem | null {
+  const store = reuseStore && Array.isArray(reuseStore.items) ? reuseStore : readStore();
   const now = monotonicNowIso();
   const existing = store.items.find((it) => it.stockCode === input.stockCode);
 

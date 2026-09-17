@@ -352,13 +352,29 @@ export class LimitGate {
       this.counters.acquired += 1;
       const waitedMs = Math.max(0, this.now() - waiter.enqueuedAt);
       this.counters.totalQueueWaitMs += waitedMs;
-      logger.info('[llm-gate] 排队结束，获得 LLM 并发配额', {
-        gate: this.name,
-        waitedMs,
-        inFlight: this.inFlightCount,
-        queued: this.queue.length,
-      });
-      waiter.resolve(this.makeRelease());
+      // 派发临界区的自愈要求（P1）：这一段里任何一次同步抛错（日志写 EPIPE/磁盘满、
+      // Promise resolve 被劫持）都不能把 waiter 留在「settled=true 但永不 settle」的状态——
+      // 那会让该 waiter 永久挂起，且已 +1 的配额再没人归还，命中并发上限后闸门无法自愈。
+      // 因此：日志失败只吞掉（观测不该影响派发），resolve 失败则回滚这次的配额。
+      try {
+        logger.info('[llm-gate] 排队结束，获得 LLM 并发配额', {
+          gate: this.name,
+          waitedMs,
+          inFlight: this.inFlightCount,
+          queued: this.queue.length,
+        });
+      } catch {
+        /* 日志写入失败（EPIPE/磁盘满）不能影响配额派发 */
+      }
+      try {
+        waiter.resolve(this.makeRelease());
+      } catch {
+        // resolve 抛出：这次的配额没有被任何调用方持有，必须当场归还，否则闸门会永久少一格
+        this.inFlightCount -= 1;
+        this.counters.acquired -= 1;
+        this.counters.totalQueueWaitMs -= waitedMs;
+        this.dropFromQueue(waiter);
+      }
     }
   }
 

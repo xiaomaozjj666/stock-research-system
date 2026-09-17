@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { useReducedMotion } from '../hooks/useReducedMotion';
 
 const navItems = [
   { id: 'summary', label: '核心摘要' },
@@ -19,6 +20,8 @@ const navItems = [
 
 export default function MobileNav({ activeSection }: { activeSection: string }) {
   const [open, setOpen] = useState(false);
+  // 系统「减少动态效果」偏好：平滑滚动是 JS 驱动的，CSS 的 @media 覆盖不到
+  const reducedMotion = useReducedMotion();
   // 抽屉容器 id（useId 保证唯一）：供切换按钮的 aria-controls 指向
   const dropdownId = useId();
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -34,7 +37,7 @@ export default function MobileNav({ activeSection }: { activeSection: string }) 
     closeNav();
     const el = document.getElementById(id);
     if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      el.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
     }
   };
 

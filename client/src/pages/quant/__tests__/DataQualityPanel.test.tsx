@@ -71,22 +71,19 @@ describe('DataQualityPanel —— 总分与进度条', () => {
     expect(scoreEl(container).textContent).toBe('92/100');
   });
 
-  it('总分越界（-5）时宽度声明被丢弃，进度条退化成满格（现状：未做 0~100 钳制）', () => {
+  it('总分越界（-5）时钳制为 0：数字显示 0，进度条宽度 0%（不再出现"数字 -5、条形满格"）', () => {
     const { container } = renderPanel(makeQuality({ overallScore: -5 }));
 
-    // '-5%' 不是合法 CSS 长度，浏览器与 jsdom 都会丢掉这条声明；
-    // .quant-quality-bar 自身没有 width（block 元素），于是整条轨道被填满——
-    // 数字写着 -5，条形却显示 100%，属展示口径不一致。
-    expect(scoreEl(container)).toHaveTextContent('-5');
-    expect(barEl(container).style.width).toBe('');
-    expect(barEl(container).getAttribute('style')).not.toContain('width');
+    expect(scoreEl(container)).toHaveTextContent('0');
+    expect(scoreEl(container).textContent).toBe('0/100');
+    expect(barEl(container).style.width).toBe('0%');
   });
 
-  it('总分超过 100（150）时宽度照写成 150%，不做上限钳制', () => {
+  it('总分超过 100（150）时钳制为 100：数字与进度条同步为 100', () => {
     const { container } = renderPanel(makeQuality({ overallScore: 150 }));
 
-    expect(barEl(container).style.width).toBe('150%');
-    expect(scoreEl(container).textContent).toBe('150/100');
+    expect(barEl(container).style.width).toBe('100%');
+    expect(scoreEl(container).textContent).toBe('100/100');
   });
 });
 

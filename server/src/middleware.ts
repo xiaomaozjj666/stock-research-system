@@ -7,6 +7,7 @@ import type { Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
 import { auditLogger } from './services/auditLog.js';
 import { isQueueTimeoutError } from './utils/limitGate.js';
+import { errorDetail } from './utils/errorDetail.js';
 import logger from './utils/logger.js';
 
 /** 限流窗口（毫秒） */
@@ -130,7 +131,12 @@ export function circuitBreakerGuard(req: Request, res: Response, next: NextFunct
     res
       .status(503)
       .set('Retry-After', String(Math.ceil(cb.windowMs / 1000)))
-      .json({ error: '合规熔断触发：高风险操作数超过阈值，请稍后再试', detail: cb.reason });
+      .json({
+        error: '合规熔断触发：高风险操作数超过阈值，请稍后再试',
+        // cb.reason 形如「时间窗口(300000ms)内 critical 级审计条目 N 条，超过阈值 3」，
+        // 属内部度量口径：与 utils/errorDetail 的「内部细节只进日志」保持同一收口
+        detail: errorDetail(new Error(cb.reason)),
+      });
     return;
   }
   next();

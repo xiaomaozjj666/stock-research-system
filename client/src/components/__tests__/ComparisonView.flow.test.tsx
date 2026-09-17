@@ -595,10 +595,10 @@ describe('ComparisonView 单只重试', () => {
     // 表头与摘要卡各一处，列已就地变成成功列
     expect(screen.getAllByText('五粮液')).toHaveLength(2);
     expect(document.querySelector('.comparison-error')).toBeNull();
-    // 接口要求一次 2-3 只：重试时带上同批一只已成功的股票凑数（不带 signal）
+    // 接口要求一次 2-3 只：重试时带上同批一只已成功的股票凑数，并接上与主路径一致的 AbortSignal
     const retryArgs = api.compareStocks.mock.calls.at(-1) as unknown[];
     expect(retryArgs[0]).toEqual(['000858', '600519']);
-    expect(retryArgs[1]).toBeUndefined();
+    expect(retryArgs[1]).toBeInstanceOf(AbortSignal);
   });
 
   it('重试仍失败：列保留失败并换成新原因，重试期间按钮禁用且文案变「重试中...」', async () => {
@@ -654,7 +654,7 @@ describe('ComparisonView 单只重试', () => {
     expect(screen.getByText('上游数据超时')).toBeInTheDocument();
   });
 
-  it('两列全失败时点「重试这一只」不发任何请求（照现状锁定，报告里单列）', async () => {
+  it('两列全失败时「重试这一只」不可用：按钮禁用 + 就地写明原因，不留点了没反应的死按钮', async () => {
     api.compareStocks.mockResolvedValue({
       stocks: [],
       failures: [
@@ -668,14 +668,41 @@ describe('ComparisonView 单只重试', () => {
     await waitFor(() => expect(screen.getAllByText('分析失败')).toHaveLength(2));
 
     const callsBefore = api.compareStocks.mock.calls.length;
-    const retry = screen.getAllByRole('button', { name: '重试这一只' })[0];
-    expect(retry).toBeEnabled();
-    fireEvent.click(retry);
-    await act(async () => {});
+    const retries = screen.getAllByRole('button', { name: '重试这一只' });
+    expect(retries).toHaveLength(2);
+    // 没有可凑数的成功伙伴 → 禁用而不是"可点但静默 return"
+    for (const btn of retries) {
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveAttribute('title', expect.stringContaining('需至少一只成功结果才能重试'));
+    }
+    // 原因就地写明（不只藏在 title 里），用户知道为什么点不了
+    expect(screen.getAllByText(/需至少一只成功结果才能重试/).length).toBeGreaterThanOrEqual(2);
 
-    // 按钮可点，但既没有请求也没有任何提示：用户会以为点了没反应
+    // 禁用态下即便硬点也不会有请求、也不该悄悄什么都不做
+    fireEvent.click(retries[0]);
+    await act(async () => {});
     expect(api.compareStocks.mock.calls.length).toBe(callsBefore);
-    expect(screen.queryByText(/重试失败/)).toBeNull();
-    expect(screen.getAllByRole('button', { name: '重试这一只' })).toHaveLength(2);
+  });
+
+  it('单只重试带 AbortSignal：重试途中卸载会中止这个分钟级请求', async () => {
+    api.compareStocks
+      .mockResolvedValueOnce(partial())
+      .mockImplementationOnce(rejectOnAbort() as never);
+    const { unmount } = render(<ComparisonView />);
+    addTwo();
+    fireEvent.click(startButton('开始对比分析（2/3）'));
+    await screen.findByText('分析失败');
+
+    fireEvent.click(screen.getByRole('button', { name: '重试这一只' }));
+    await waitFor(() => expect(api.compareStocks).toHaveBeenCalledTimes(2));
+
+    const retrySignal = api.compareStocks.mock.calls[1][1] as AbortSignal;
+    // 主对比路径有 abortRef，重试此前漏传 → 分钟级请求无法取消、卸载也不中止
+    expect(retrySignal).toBeDefined();
+    expect(retrySignal.aborted).toBe(false);
+
+    unmount();
+
+    expect(retrySignal.aborted).toBe(true);
   });
 });

@@ -79,6 +79,8 @@ describe('ResearchEnhance —— 挂载时的并行拉取', () => {
     expect(screen.getByText('7 次')).toBeInTheDocument();
     expect(screen.getByText('1200 / 800')).toBeInTheDocument();
     expect(screen.getByText('$0.1234')).toBeInTheDocument();
+    // 币种必须写明：裸 $ 无法判断是 USD 还是折算后的人民币
+    expect(screen.getByText('估算成本（USD，按计价汇率折算）')).toBeInTheDocument();
   });
 
   it('某一路失败不影响其余三路渲染（allSettled 降级）', async () => {

@@ -9,6 +9,7 @@ import { runWatchlistNewsBacktest } from '../services/watchlistBacktest.js';
 import { getWatchlist } from '../services/watchlistService.js';
 import { auditToolCall } from '../services/auditLog.js';
 import { getReqTraceContext } from '../services/telemetry.js';
+import { errorDetail } from '../utils/errorDetail.js';
 import type { WatchlistAlert } from '../services/alerts.js';
 import logger from '../utils/logger.js';
 
@@ -74,7 +75,7 @@ router.post('/api/autonomous/start', watchlistLimiter, async (req, res) => {
     res.json({ started: true, ...withCoverage(autonomousController.getState()) });
   } catch (error) {
     logger.error('Autonomous start error', { route: '/api/autonomous/start', err: error });
-    res.status(500).json({ error: '启动自治循环失败', detail: (error as Error).message });
+    res.status(500).json({ error: '启动自治循环失败', detail: errorDetail(error) });
   }
 });
 

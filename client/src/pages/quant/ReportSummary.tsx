@@ -67,7 +67,9 @@ export default function ReportSummary({ data }: Props) {
               ? '均线交叉'
               : data.strategy.type === 'momentum'
                 ? '动量策略'
-                : '均值回归'}
+                : data.strategy.type === 'mean_reversion'
+                  ? '均值回归'
+                  : '自定义策略'}
           </span>
         </div>
         <div className="quant-summary-score-block" style={{ color: scoreColor }}>

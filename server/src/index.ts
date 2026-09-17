@@ -242,6 +242,19 @@ app.use(
   ) => {
     const reqId = (req as Request & { reqId?: string }).reqId || '-';
 
+    // 响应头已发出（典型是 SSE：flushHeaders 之后 body 里再抛错）：
+    // 此时任何 res.status().json() 都会抛 ERR_HTTP_HEADERS_SENT，
+    // 错误处理中间件自己变成新的异常源，客户端一直挂到超时。只能收尾断开。
+    if (res.headersSent) {
+      logger.error('响应头已发送后发生错误，连接就地终止', { reqId, err });
+      try {
+        res.end();
+      } catch {
+        /* 连接可能已经断了 */
+      }
+      return;
+    }
+
     // CORS 错误
     if (err.message === 'Not allowed by CORS') {
       logger.warn('CORS blocked', { reqId, origin: req.headers.origin });
@@ -258,6 +271,20 @@ app.use(
     // payload 过大
     if (err.type === 'entity.too.large') {
       res.status(413).json({ error: '请求体过大' });
+      return;
+    }
+
+    // 请求体不是合法 JSON：这是调用方的输入问题（400），不是服务端故障（500）。
+    // body-parser 会带 type='entity.parse.failed' 与 statusCode=400，此前只有 too.large
+    // 被识别，畸形 JSON 全部落到"服务器内部错误"，排查时指向完全错误的方向。
+    if (err.type === 'entity.parse.failed' || err.type === 'entity.verify.failed') {
+      res.status(400).json({ error: '请求体不是合法 JSON' });
+      return;
+    }
+
+    // 其余由 body-parser / 上游中间件标记为 4xx 的错误（如 charset 不支持、请求体缺失）
+    if (typeof err.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 500) {
+      res.status(err.statusCode).json({ error: '请求无效' });
       return;
     }
 

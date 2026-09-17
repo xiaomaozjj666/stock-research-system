@@ -165,14 +165,16 @@ describe('ScenarioSection —— 概率与目标价区间', () => {
     );
   });
 
-  it('目标价非有限值（NaN）时直接渲染出「¥NaN」（现状：未做有限性兜底）', () => {
+  it('目标价非有限值（NaN / Infinity）时显示破折号，不把缺失值印成「¥NaN」', () => {
     renderSection([
       makeScenario({ targetPriceRange: { low: Number.NaN, high: Number.POSITIVE_INFINITY } }),
     ]);
 
     expect(cardOf('乐观').querySelector('.scenario-price-range')).toHaveTextContent(
-      '目标价区间：¥NaN - ¥Infinity',
+      '目标价区间：¥— - ¥—',
     );
+    expect(cardOf('乐观').querySelector('.scenario-price-range')).not.toHaveTextContent('NaN');
+    expect(cardOf('乐观').querySelector('.scenario-price-range')).not.toHaveTextContent('Infinity');
   });
 
   it('整个 targetPriceRange 缺失时两侧都是破折号', () => {

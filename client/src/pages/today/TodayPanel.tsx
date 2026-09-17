@@ -50,6 +50,20 @@ function relativeFrom(iso: string | null | undefined): string {
   return `${Math.floor(diffHour / 24)} 天前`;
 }
 
+/** 统一加载态：请求在途时必须与「确实没有内容」区分开（见下方三块正文的判据顺序） */
+function LoadingLine({ label }: { label: string }) {
+  return (
+    <div className="watchlist-alerts-empty" role="status">
+      {label}加载中…
+    </div>
+  );
+}
+
+/** 失败文案：翻译**真实 reason**（500/超时/404 各给各自的原因），不凭空断言「后端没启动」 */
+function failureText(reason: unknown, subject: string, fallback: string): string {
+  return `${subject}读取失败：${normalizeApiError(reason, fallback).message}`;
+}
+
 export default function TodayPanel() {
   const [alerts, setAlerts] = useState<WatchlistAlertsSnapshot | null>(null);
   const [digests, setDigests] = useState<ResearchDigest[]>([]);
@@ -57,11 +71,17 @@ export default function TodayPanel() {
     { code: string; name: string; delta: number; rating: string; date: string }[]
   >([]);
   const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState<Record<string, boolean>>({});
+  /**
+   * 失败块的**真实 reason**（Promise.allSettled 的 rejected 值）。
+   * 此前只存布尔、把 reason 丢掉，最后用 `normalizeApiError(null, …)` 造文案——
+   * 而 client.ts 对「无 response」恒返回「无法连接后端服务」，于是 500 / 超时 / 404
+   * 全都被报成「后端没启动」，把用户引向完全错误的排查方向。
+   */
+  const [failed, setFailed] = useState<Record<string, unknown>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
-    const failedParts: Record<string, boolean> = {};
+    const failedParts: Record<string, unknown> = {};
 
     // 三块各自独立取数：用 allSettled，避免一个失败拖垮整页
     const [alertsRes, digestsRes, watchlistRes, historyRes] = await Promise.allSettled([
@@ -74,13 +94,13 @@ export default function TodayPanel() {
     if (alertsRes.status === 'fulfilled') setAlerts(alertsRes.value);
     else {
       setAlerts(null);
-      failedParts.alerts = true;
+      failedParts.alerts = alertsRes.reason;
     }
 
     if (digestsRes.status === 'fulfilled') setDigests(digestsRes.value.items ?? []);
     else {
       setDigests([]);
-      failedParts.digest = true;
+      failedParts.digest = digestsRes.reason;
     }
 
     if (watchlistRes.status === 'fulfilled' && historyRes.status === 'fulfilled') {
@@ -108,7 +128,13 @@ export default function TodayPanel() {
       setChanges(rows);
     } else {
       setChanges([]);
-      failedParts.changes = true;
+      // 两块任一失败都算「观点变化」这块失败；优先取真正被拒那条的 reason（axios 原始错误原样保留）
+      failedParts.changes =
+        historyRes.status === 'rejected'
+          ? historyRes.reason
+          : watchlistRes.status === 'rejected'
+            ? watchlistRes.reason
+            : undefined;
     }
 
     setFailed(failedParts);
@@ -138,9 +164,13 @@ export default function TodayPanel() {
 
       {/* 一、自选股异动（最近一次监控快照，已落盘，刷新后仍在） */}
       <div className="section-title">自选股异动</div>
-      {failed.alerts ? (
+      {/* 判据顺序必须是「加载中 → 失败 → 空」：loading 期间数据尚未到达，
+          直接判 `!alerts` 会先渲染「尚未监控过」这个**确定的结论**，用户据此以为今天没事 */}
+      {loading ? (
+        <LoadingLine label="自选股异动" />
+      ) : failed.alerts !== undefined ? (
         <div className="watchlist-alerts-empty">
-          异动数据读取失败：{normalizeApiError(null, '请确认后端服务已启动').message}
+          {failureText(failed.alerts, '异动数据', '异动数据读取失败，请稍后重试')}
         </div>
       ) : !alerts || alerts.generatedAt === null ? (
         <div className="watchlist-alerts-empty">
@@ -173,8 +203,12 @@ export default function TodayPanel() {
       <div className="section-title" style={{ marginTop: 20 }}>
         关注股观点变化
       </div>
-      {failed.changes ? (
-        <div className="watchlist-alerts-empty">观点变化读取失败：请确认后端服务已启动后重试。</div>
+      {loading ? (
+        <LoadingLine label="关注股观点变化" />
+      ) : failed.changes !== undefined ? (
+        <div className="watchlist-alerts-empty">
+          {failureText(failed.changes, '观点变化', '观点变化读取失败，请稍后重试')}
+        </div>
       ) : changes.length === 0 ? (
         <div className="watchlist-alerts-empty">
           自选股暂无明显观点变化（同一标的至少要有两次分析才形成对比）。
@@ -202,8 +236,12 @@ export default function TodayPanel() {
       <div className="section-title" style={{ marginTop: 20 }}>
         最近研究简报
       </div>
-      {failed.digest ? (
-        <div className="watchlist-alerts-empty">简报读取失败：请确认后端服务已启动后重试。</div>
+      {loading ? (
+        <LoadingLine label="最近研究简报" />
+      ) : failed.digest !== undefined ? (
+        <div className="watchlist-alerts-empty">
+          {failureText(failed.digest, '简报', '简报读取失败，请稍后重试')}
+        </div>
       ) : !digest ? (
         <div className="watchlist-alerts-empty">
           还没有简报。可在「量化研究」页手动生成一次，或设置 QUANT_DIGEST_INTERVAL_HOURS

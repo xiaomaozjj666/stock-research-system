@@ -104,6 +104,9 @@ export interface RunAnalysisOptions {
  * 都是共享同一个 producer Promise；② SSE 与 POST 双入口（双标签页）、/api/compare 并行
  * 触发同一代码时，第二个调用方拿到结果比拿到错误更有用（前端无需自行重试）；
  * ③ 真正要解决的痛点是「重复调用 LLM 重复付费」，复用结果即可彻底消除。
+ *
+ * **复用的前提是语义一致**：resume 与在途轮次不一致时必须显式拒绝
+ * （见 InFlightAnalysis.resume 与 ANALYSIS_IN_FLIGHT），不得静默复用。
  */
 interface InFlightAnalysis {
   promise: Promise<AnalysisResult>;
@@ -113,21 +116,56 @@ interface InFlightAnalysis {
   hadListener: boolean;
   /** 无进度回调的等待者数（POST / 工具调用）：只要还有人等结果，就不因订阅者断开而中止整轮 */
   silentWaiters: number;
+  /**
+   * 本轮采用的续跑语义（`options.resume === true`）。
+   * 用于判断后来者能否安全复用：`{resume:true}` 的轮次会读断点、跳过已完成阶段，
+   * 它产出的不一定是「全新分析」；反过来，全新轮次也不满足断点续跑的语义。
+   */
+  resume: boolean;
 }
 
 const inFlightAnalyses = new Map<string, InFlightAnalysis>();
 
 /**
+ * 在途轮次的语义冲突错误码：由 routes/analysis.ts 映射成 HTTP 409（SSE 路径推 error 事件）。
+ * 单独定义常量而非散落字面量，便于路由与测试共用同一个稳定标识。
+ */
+export const ANALYSIS_IN_FLIGHT = 'ANALYSIS_IN_FLIGHT';
+
+/**
+ * 同一标的已有在途分析、且 resume 语义与本次请求不一致时抛出。
+ *
+ * 为什么不把 resume 拼进 single-flight 键：那会让同标的两次分析**并行**跑——LLM 成本
+ * 直接翻倍，而且两代 checkpoint 会互相覆盖/删除对方的产物（runId 代次冲突）。
+ * 显式拒绝则把「语义冲突」变成调用方可见、可重试的 409，而不是静默复用一份
+ * 可能来自过期断点的结果。
+ *
+ * message 自带 `ANALYSIS_IN_FLIGHT` 标记：SSE 路径在生产环境不回传内部 detail，
+ * 标记放进 message，前端与日志才不会丢掉可判定的错误码。
+ */
+function inFlightConflictError(): Error {
+  const err = new Error(`该标的已有一次分析在进行中，请稍后重试（${ANALYSIS_IN_FLIGHT}）`);
+  (err as Error & { code?: string }).code = ANALYSIS_IN_FLIGHT;
+  return err;
+}
+
+/**
  * 运行一次完整分析（按股票代码去重：同代码已有在途分析时挂到同一轮，不重复开跑）。
+ *
+ * @throws 已有在途轮次且 resume 语义与本次不一致时抛 ANALYSIS_IN_FLIGHT（注意是同步抛出）
  */
 export function runAnalysis(
   stockCode: string,
   onProgress?: (stage: AnalysisStage) => void,
   options: RunAnalysisOptions = {},
 ): Promise<AnalysisResult> {
+  const resume = options.resume === true;
   const existing = inFlightAnalyses.get(stockCode);
   if (existing) {
-    // 已有同代码在途分析：复用结果（不重复调用 LLM），进度广播给新订阅者
+    // 语义不一致（在途是续跑、本次要全新分析，或反之）→ 明确拒绝，不静默复用：
+    // 调用方以为跑的是自己那一轮，实际数据来源（是否来自过期断点）完全不同
+    if (existing.resume !== resume) throw inFlightConflictError();
+    // 语义一致：复用结果（不重复调用 LLM），进度广播给新订阅者
     if (onProgress) {
       existing.listeners.add(onProgress);
       existing.hadListener = true;
@@ -142,6 +180,7 @@ export function runAnalysis(
     listeners: new Set(),
     hadListener: false,
     silentWaiters: 0,
+    resume,
   };
   if (onProgress) {
     handle.listeners.add(onProgress);
@@ -475,23 +514,29 @@ async function executeAnalysis(
   }
 
   // === 提前计算公共指标（后续多处引用） ===
-  const revenueGrowthLatest =
-    financial.revenue[n - 2] !== 0
-      ? ((financial.revenue[n - 1] - financial.revenue[n - 2]) /
-          Math.abs(financial.revenue[n - 2])) *
-        100
+  // 单年财务数据（n < 2）时 revenue[n-2] 是 undefined：`undefined !== 0` 成立，
+  // 于是算出 NaN 并写进报告正文（"利润增速NaN%"），还会随 historyService 落盘持久化。
+  // 空数组喂给 Math.max/Math.min 得 -Infinity，同理。这里统一按"有两年以上数据才算增速"处理。
+  const hasPrevYear = n >= 2;
+  const pctChange = (series: number[]): number => {
+    if (!hasPrevYear) return 0;
+    const prev = series[n - 2];
+    const curr = series[n - 1];
+    if (!Number.isFinite(prev) || !Number.isFinite(curr) || prev === 0) return 0;
+    return ((curr - prev) / Math.abs(prev)) * 100;
+  };
+  const revenueGrowthLatest = pctChange(financial.revenue);
+  const profitGrowthLatest = pctChange(financial.netProfit);
+  const cashFlowRatio = (() => {
+    const profit = financial.netProfit[n - 1];
+    const cash = financial.operatingCashFlow[n - 1];
+    if (!Number.isFinite(profit) || !Number.isFinite(cash) || profit === 0) return 0;
+    return cash / profit;
+  })();
+  const grossMarginRange =
+    financial.grossMargin.length > 0
+      ? Math.max(...financial.grossMargin) - Math.min(...financial.grossMargin)
       : 0;
-  const profitGrowthLatest =
-    financial.netProfit[n - 2] !== 0
-      ? ((financial.netProfit[n - 1] - financial.netProfit[n - 2]) /
-          Math.abs(financial.netProfit[n - 2])) *
-        100
-      : 0;
-  const cashFlowRatio =
-    financial.netProfit[n - 1] !== 0
-      ? financial.operatingCashFlow[n - 1] / financial.netProfit[n - 1]
-      : 0;
-  const grossMarginRange = Math.max(...financial.grossMargin) - Math.min(...financial.grossMargin);
 
   // PE 历史分位
   const peValues = valuation.historicalPE.map((h) => h.pe).sort((a, b) => a - b);

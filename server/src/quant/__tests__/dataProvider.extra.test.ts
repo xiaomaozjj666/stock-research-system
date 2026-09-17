@@ -270,6 +270,30 @@ describe('fetchOHLCVData — 网络解析与降级', () => {
     await fetchOHLCVData(code, start, end);
     expect(fs.existsSync(klineCacheFile(code))).toBe(false);
   });
+
+  it('超长区间被迭代上限截断：条数有界、不长时间阻塞事件循环', async () => {
+    // 缺陷：同步 while + 逐根 push，终止条件完全由入参决定，且 start/end 来自
+    // HTTP body。200 年区间 = 七万三千次同步迭代，循环期间事件循环被占满。
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
+    const startedAt = Date.now();
+    const result = await fetchOHLCVData(code, '1900-01-01', '2100-01-01');
+    const elapsedMs = Date.now() - startedAt;
+
+    // 上限 = 20000 个自然日（≈ 14285 个工作日）→ data.length 有界
+    expect(result.length).toBeGreaterThan(0);
+    expect(result.length).toBeLessThanOrEqual(Math.ceil(20000 * (5 / 7)) + 1);
+    // 未截断时最后一个标签会一路走到 2100：截断后必须显著早于 endDate
+    expect(result[result.length - 1].date < '2070-01-01').toBe(true);
+    // 20 万次迭代在 CI 上也就是毫秒级；这里给出宽裕但能抓住回归的预算
+    expect(elapsedMs).toBeLessThan(3000);
+  });
+
+  it('倒置 / 非法区间不产出任何 K 线（不进入循环）', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
+    expect(await fetchOHLCVData(code, '2024-02-01', '2024-01-01')).toEqual([]);
+    expect(await fetchOHLCVData(code, 'not-a-date', '2024-01-01')).toEqual([]);
+    expect(await fetchOHLCVData(code, '2024-01-01', 'not-a-date')).toEqual([]);
+  });
 });
 
 describe('getBenchmarkCurve — 买入持有基准', () => {

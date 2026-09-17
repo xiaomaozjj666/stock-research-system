@@ -18,6 +18,14 @@ function getScenarioClass(name: string): string {
   return 'neutral';
 }
 
+/**
+ * 目标价取整展示。必须显式判有限性：`(NaN).toFixed(0)` 返回字符串 "NaN"（truthy，
+ * `|| '—'` 兜不住），Infinity 同理——缺失值会以「¥NaN」的形式当成真实目标价印出来。
+ */
+function formatTargetPrice(v?: number): string {
+  return v != null && Number.isFinite(v) ? v.toFixed(0) : '—';
+}
+
 function ScenarioSection({ data }: Props) {
   if (!data || data.length === 0) return null;
 
@@ -36,8 +44,8 @@ function ScenarioSection({ data }: Props) {
               {(scenario.probability * 100).toFixed(0)}%
             </div>
             <div className="scenario-price-range">
-              目标价区间：¥{scenario.targetPriceRange?.low?.toFixed(0) || '—'} - ¥
-              {scenario.targetPriceRange?.high?.toFixed(0) || '—'}
+              目标价区间：¥{formatTargetPrice(scenario.targetPriceRange?.low)} - ¥
+              {formatTargetPrice(scenario.targetPriceRange?.high)}
             </div>
 
             {scenario.keyAssumptions.length > 0 && (

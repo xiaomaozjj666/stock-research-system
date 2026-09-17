@@ -1,12 +1,61 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+
+/**
+ * 拦截 writeFileSync：用来复刻两种真实交错（都在「写盘进行中」发生）——
+ *   1) 写盘中途进程被杀/磁盘满：目标路径上只落下前 10 个字符后抛错；
+ *   2) 写盘期间的并发写入（重入）：同一事件循环里又发起一次 addToWatchlist。
+ * 默认 hook 为空 → 完全透传真实 fs，不影响其它用例。
+ */
+const { fsHooks } = vi.hoisted(() => ({
+  fsHooks: {
+    beforeWrite: undefined as undefined | ((file: string, data: string) => void),
+  },
+}));
+
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return {
+    ...actual,
+    default: actual,
+    writeFileSync: (file: unknown, data: unknown, opts?: unknown) => {
+      fsHooks.beforeWrite?.(String(file), String(data));
+      return (actual.writeFileSync as (f: unknown, d: unknown, o?: unknown) => void)(
+        file,
+        data,
+        opts,
+      );
+    },
+  };
+});
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    default: actual,
+    writeFileSync: (file: unknown, data: unknown, opts?: unknown) => {
+      fsHooks.beforeWrite?.(String(file), String(data));
+      return (actual.writeFileSync as (f: unknown, d: unknown, o?: unknown) => void)(
+        file,
+        data,
+        opts,
+      );
+    },
+  };
+});
+
 import {
   getWatchlist,
   addToWatchlist,
   removeFromWatchlist,
   setWatchlist,
+  addToWatchlistAsync,
+  removeFromWatchlistAsync,
+  setWatchlistAsync,
+  enqueueWatchlistWrite,
   getWatchlistAlertsSnapshot,
   normalizeAlertsSnapshot,
   saveWatchlistAlertsSnapshot,
@@ -19,6 +68,13 @@ import type { WatchlistAlert } from '../alerts.js';
 
 let tmpFile: string;
 
+/** 目标文件旁边遗留的临时文件（原子写的 .tmp.<pid>.<rand>）——正常应恒为空 */
+function leftoverTmpFiles(target: string): string[] {
+  const dir = path.dirname(target);
+  const prefix = `${path.basename(target)}.tmp`;
+  return fs.readdirSync(dir).filter((f) => f.startsWith(prefix));
+}
+
 beforeEach(() => {
   tmpFile = path.join(
     os.tmpdir(),
@@ -28,6 +84,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  fsHooks.beforeWrite = undefined; // 交错钩子绝不留到下个用例
   delete process.env.WATCHLIST_FILE;
   try {
     if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
@@ -78,6 +135,85 @@ describe('watchlistService', () => {
   it('损坏的 JSON 文件降级为 []（不抛）', () => {
     fs.writeFileSync(tmpFile, '{ this is not json', 'utf-8');
     expect(getWatchlist()).toEqual([]);
+  });
+});
+
+/* ============================================================================
+ * 原子写 + 写队列（P1：非原子全覆盖写 + 无锁的读-改-写）
+ * ----------------------------------------------------------------------------
+ * 修复前的两个故障：
+ *   1) fs.writeFileSync 直接覆盖目标文件 —— 写盘中途被杀/磁盘满会留下**截断的 JSON**，
+ *      读侧 catch 后静默返回 []，用户看到的是「自选清单被清空了」；
+ *   2) 读整表→改→写 没有临界区 —— 写盘期间发生的并发写入各自基于旧快照写回，
+ *      后写的那次把先写的覆盖掉（丢更新）。
+ * 下面用 fsHooks 精确复刻这两段交错：两个用例在修复前都会失败。
+ * ==========================================================================*/
+describe('watchlistService 原子写与写队列', () => {
+  it('写盘中断（被杀/磁盘满）不会把旧清单毁成空清单：目标文件仍是完整 JSON', async () => {
+    addToWatchlist('600519'); // 先落一份旧清单
+    const actualFs = await vi.importActual<typeof import('fs')>('fs');
+    fsHooks.beforeWrite = (file, data) => {
+      // 无论写的是临时文件还是目标文件（修复前写目标、修复后写 tmp），都复刻「只写了一半」
+      if (file.startsWith(tmpFile)) {
+        actualFs.writeFileSync(file, data.slice(0, 10), 'utf-8');
+        throw new Error('ENOSPC: 写盘中途失败');
+      }
+    };
+    try {
+      expect(addToWatchlist('000001')).toEqual(['600519', '000001']); // 内存态仍返回最新
+    } finally {
+      fsHooks.beforeWrite = undefined;
+    }
+
+    // 关键断言：盘上要么是完整的旧清单，要么是完整的新清单——绝不能是被截断的半个 JSON
+    // （修复前这里会读成 []，即「用户清单被莫名清空」）
+    expect(getWatchlist()).toEqual(['600519']);
+    expect(leftoverTmpFiles(tmpFile)).toEqual([]); // 失败的临时文件已清理
+  });
+
+  it('写盘期间的并发写入不丢更新（临界区内重入，两条都落盘）', () => {
+    let nested: string[] | null = null;
+    let fired = false;
+    fsHooks.beforeWrite = (file) => {
+      if (!fired && file.startsWith(tmpFile)) {
+        fired = true;
+        nested = addToWatchlist('000001'); // 写盘进行中又来了一个并发写入
+      }
+    };
+    try {
+      addToWatchlist('600519');
+    } finally {
+      fsHooks.beforeWrite = undefined;
+    }
+
+    expect(nested).toEqual(['600519', '000001']); // 内层看到的是合并后的清单，不是旧快照
+    expect(getWatchlist()).toEqual(['600519', '000001']); // 盘上两条都在
+    expect(leftoverTmpFiles(tmpFile)).toEqual([]);
+  });
+
+  it('并发两次写入（await Promise.all）后读回两条，不丢更新', async () => {
+    await Promise.all([addToWatchlistAsync('600519'), addToWatchlistAsync('000001')]);
+    expect(getWatchlist()).toEqual(['600519', '000001']);
+  });
+
+  it('写队列保证「入队顺序 = 落盘顺序」（慢任务不会让后入队的写入抢先）', async () => {
+    const slow = enqueueWatchlistWrite(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      return addToWatchlist('600519');
+    });
+    const quick = addToWatchlistAsync('000001'); // 后入队：必须排在慢任务之后
+    await Promise.all([slow, quick]);
+    expect(getWatchlist()).toEqual(['600519', '000001']);
+  });
+
+  it('并发写入 + 删除混合：队列串行化后最终清单一致（无覆盖丢失）', async () => {
+    await setWatchlistAsync(['600519', '000001']);
+    await Promise.all([
+      removeFromWatchlistAsync('600519'),
+      addToWatchlistAsync('300750'),
+      addToWatchlistAsync('600036'),
+    ]);
+    expect(getWatchlist()).toEqual(['000001', '300750', '600036']);
   });
 });
 
@@ -146,7 +282,8 @@ describe('watchlistService 异动监控快照', () => {
   it('原子写：写完不留 .tmp 残留，且覆盖时旧快照不会被写坏', () => {
     fs.writeFileSync(alertsFile, JSON.stringify({ generatedAt: 'old', monitored: 1, alerts: [] }));
     saveWatchlistAlertsSnapshot(snapshotWith([alert('600519')]));
-    expect(fs.existsSync(`${alertsFile}.tmp`)).toBe(false);
+    // tmp 名带 pid + 随机串（并发写各自的 .tmp 不互相覆盖），正常路径下不留残留
+    expect(leftoverTmpFiles(alertsFile)).toEqual([]);
     // 文件始终是完整可解析的 JSON（半写状态在 rename 语义下不可能被读到）
     expect(() => JSON.parse(fs.readFileSync(alertsFile, 'utf-8'))).not.toThrow();
   });
@@ -155,7 +292,7 @@ describe('watchlistService 异动监控快照', () => {
     // 把快照路径指向一个目录：临时文件能写、rename 必失败
     process.env.WATCHLIST_ALERTS_FILE = alertsDir;
     expect(saveWatchlistAlertsSnapshot(snapshotWith([alert('600519')]))).toBe(false);
-    expect(fs.existsSync(`${alertsDir}.tmp`)).toBe(false); // 失败也要清干净
+    expect(leftoverTmpFiles(alertsDir)).toEqual([]); // 失败也要清干净
     expect(getWatchlistAlertsSnapshot()).toEqual({ generatedAt: null, monitored: 0, alerts: [] });
   });
 
