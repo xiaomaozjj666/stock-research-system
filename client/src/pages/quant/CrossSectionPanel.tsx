@@ -651,16 +651,22 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
                     {result.horizons.map((h) => (
                       <th key={h}>{periodLabel(h)}截面IC</th>
                     ))}
-                    <th>单调性</th>
-                    <th>多空价差</th>
-                    <th>多空净值</th>
-                    <th>判定</th>
+                    {/* 末四列取「该因子样本够用的最长持有期」：各因子的 byPeriod 覆盖档位可能不同，
+                        所以表头写明口径而不是假装是用户选的那一档 */}
+                    <th>单调性（最长档）</th>
+                    <th>多空价差（最长档）</th>
+                    <th>多空净值（最长档）</th>
+                    <th>判定（最长档）</th>
                   </tr>
                 </thead>
                 <tbody>
                   {result.factors.map((f) => {
                     const byPeriod = byPeriodMaps.get(f.name)!;
-                    const lastPeriod = f.report.byPeriod[f.report.byPeriod.length - 1];
+                    // 取持有期最长的那一档，而不是数组末元素：服务端返回顺序不构成契约，
+                    // 直接取 [length-1] 会在顺序变化时悄悄换掉「判定」的语义
+                    const lastPeriod = f.report.byPeriod.reduce<
+                      (typeof f.report.byPeriod)[number] | undefined
+                    >((best, p) => (!best || p.period > best.period ? p : best), undefined);
                     return (
                       <tr key={f.name}>
                         <td className="batch-code" title={f.name}>

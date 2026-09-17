@@ -544,10 +544,10 @@ describe('CrossSectionPanel —— 成功结果渲染', () => {
     expect(table.getByRole('columnheader', { name: '类型' })).toBeInTheDocument();
     expect(table.getByRole('columnheader', { name: '1月截面IC' })).toBeInTheDocument();
     expect(table.getByRole('columnheader', { name: '3月截面IC' })).toBeInTheDocument();
-    expect(table.getByRole('columnheader', { name: '单调性' })).toBeInTheDocument();
-    expect(table.getByRole('columnheader', { name: '多空价差' })).toBeInTheDocument();
-    expect(table.getByRole('columnheader', { name: '多空净值' })).toBeInTheDocument();
-    expect(table.getByRole('columnheader', { name: '判定' })).toBeInTheDocument();
+    expect(table.getByRole('columnheader', { name: '单调性（最长档）' })).toBeInTheDocument();
+    expect(table.getByRole('columnheader', { name: '多空价差（最长档）' })).toBeInTheDocument();
+    expect(table.getByRole('columnheader', { name: '多空净值（最长档）' })).toBeInTheDocument();
+    expect(table.getByRole('columnheader', { name: '判定（最长档）' })).toBeInTheDocument();
 
     const row = within(factorRow('1月波动率'));
     expect(row.getByText('量价')).toBeInTheDocument();
@@ -559,7 +559,7 @@ describe('CrossSectionPanel —— 成功结果渲染', () => {
     expect(row.getByText('+0.061')).toHaveClass('cs-ic-mean', 'sig-valid');
     expect(row.getByText('p=0.045 · 100日')).toBeInTheDocument();
     expect(row.getByText('OOS不稳')).toHaveClass('cs-oos-no');
-    // 末四列（单调性/多空价差/多空净值/判定）只取最后一个持有期 = 63 日档
+    // 末四列取该因子样本够用的最长持有期（此处 = 63 日档）
     expect(row.getByText('0.60')).toBeInTheDocument();
     expect(row.getByText('5.1%')).toBeInTheDocument();
     expect(row.getByText('0.184')).toBeInTheDocument();
@@ -618,6 +618,22 @@ describe('CrossSectionPanel —— 成功结果渲染', () => {
     await clickRun();
 
     expect(await screen.findByText('p=<1e-4 · 240日')).toBeInTheDocument();
+  });
+
+  it('末四列取持有期最长的那一档，与 byPeriod 的数组顺序无关', async () => {
+    apiMocks.runCrossSectionEvaluation.mockResolvedValue(
+      makeResult({
+        // 服务端把长档排在前面：若实现按 [length-1] 取末元素，判定就会变成 21 日档
+        factors: [makeFactor('volatility_3m', { byPeriod: [makePeriod63(), makePeriod()] })],
+      }),
+    );
+    await renderWithBoards();
+    await clickRun();
+
+    const row = within(await screen.findByRole('row', { name: /3月波动率/ }));
+    expect(row.getByText('0.60')).toBeInTheDocument(); // 63 日档单调性
+    expect(row.getByText('0.184')).toBeInTheDocument(); // 63 日档多空净值
+    expect(row.queryByText('0.75')).toBeNull(); // 21 日档的单调性没有顶上来
   });
 
   it('某档持有期没有报告时该单元格显示「样本不足」，其余档位照常', async () => {
