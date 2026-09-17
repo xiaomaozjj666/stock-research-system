@@ -146,7 +146,10 @@ describe('股票搜索入参校验（/api/stocks/search）', () => {
     expect(res.body.error).toContain('过长');
   });
 
-  it('正常关键词（≤32 字符）→ 200 且返回数组', async () => {
+  // 真实打到 /api/stocks/search：CI 无外网时它会先等东财 suggest 超时，再回落本地全表
+  // 模糊匹配（5000+ 只的最长公共子串 DP）。CI 机器慢时整条链路会超过默认的 5s，
+  // 与代码无关（同一提交在另一次 CI 上就是通过的）——故给足超时而不是压缩断言。
+  it('正常关键词（≤32 字符）→ 200 且返回数组', { timeout: 30_000 }, async () => {
     const res = await request(app).get('/api/stocks/search').query({ keyword: '茅台' });
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
