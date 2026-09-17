@@ -49,7 +49,8 @@ const SAMPLE: AnalysisResult = {
       scenarios: [
         {
           name: '乐观',
-          probability: 30,
+          // 契约是 0-1（与页面 ScenarioSection 的 ×100 展示一致）
+          probability: 0.3,
           keyAssumptions: ['需求复苏'],
           targetPriceRange: { low: 1800, high: 2200 },
           supportingArguments: [],

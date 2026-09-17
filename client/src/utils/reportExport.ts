@@ -100,7 +100,9 @@ export function generateReportMarkdown(result: AnalysisResult): string {
     push('## 情景推演');
     for (const sc of s.scenarios) {
       push(
-        `- **${sc.name}（概率 ${sc.probability}%）**：目标区间 ${sc.targetPriceRange.low} ~ ${sc.targetPriceRange.high}`,
+        // probability 的契约是 0-1（server/src/types.ts:152），页面上 ScenarioSection 也是 ×100 展示；
+        // 此处此前直接拼小数，导出文件里「乐观 35%」会写成「概率 0.35%」
+        `- **${sc.name}（概率 ${(sc.probability * 100).toFixed(0)}%）**：目标区间 ${sc.targetPriceRange.low} ~ ${sc.targetPriceRange.high}`,
       );
       for (const k of sc.keyAssumptions) push(`  - 假设：${k}`);
       for (const p of sc.preconditions) push(`  - 触发：${p}`);

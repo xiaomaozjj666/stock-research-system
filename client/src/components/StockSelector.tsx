@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useId } from 'react';
 import { searchStocks, getStockList } from '../api/client';
 
 interface StockSelectorProps {
@@ -17,6 +17,9 @@ interface HistoryItem {
   timestamp: number;
 }
 
+/** 下拉 id 必须唯一：历史与搜索结果各是一个 listbox，此前都写死同一个 id
+ * （无效 HTML，且 aria-controls 只解析到文档首个，读屏会把候选列表指向"搜索历史"） */
+const HISTORY_LISTBOX_ID = 'stock-search-history-listbox';
 const HISTORY_KEY = 'stock_search_history';
 const MAX_HISTORY = 20;
 const CODE_RE = /^\d{6}$/;
@@ -34,6 +37,8 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
   /** 键盘导航高亮项索引，-1 表示未选中 */
   const [activeIndex, setActiveIndex] = useState(-1);
   const searchRef = useRef<HTMLDivElement>(null);
+  /** 搜索结果下拉的 id：与历史下拉区分，否则同 id 会让 aria-controls 指向错误的列表 */
+  const resultsListboxId = useId();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 请求序号：只接受最新一次请求的结果，防止乱序响应覆盖 */
   const seqRef = useRef(0);
@@ -267,7 +272,8 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
               onKeyDown={handleKeyDown}
               role="combobox"
               aria-expanded={showDropdown || showHistory}
-              aria-controls="stock-search-listbox"
+              // 两个下拉互斥渲染：aria-controls 指向当前真正可见的那个 listbox
+              aria-controls={showHistory ? HISTORY_LISTBOX_ID : resultsListboxId}
               aria-autocomplete="list"
               autoComplete="off"
               spellCheck={false}
@@ -308,6 +314,9 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
                             e.stopPropagation();
                             removeHistoryItem(item.code);
                           }}
+                          // 可访问名不能取自内容「×」（读屏会念"乘号"，语音控制也喊不中），
+                          // title 在触屏与部分读屏下不播报，必须用 aria-label
+                          aria-label={`删除搜索历史 ${item.name || item.code}`}
                           title="删除"
                         >
                           ×
@@ -324,7 +333,7 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
               <div
                 className="stock-search-dropdown"
                 ref={listRef}
-                id="stock-search-listbox"
+                id={resultsListboxId}
                 role="listbox"
               >
                 {searching && (

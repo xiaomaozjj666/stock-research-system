@@ -145,7 +145,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // === 请求 ID 中间件：便于日志追踪 ===
 app.use((req: Request, res: Response, next: NextFunction) => {
-  const reqId = (req.headers['x-request-id'] as string) || crypto.randomUUID();
+  // 只接受形如 trace id 的短串：该值会被原样回写响应头、写进日志与错误响应，
+  // 若直接信任客户端，可被塞入超长串或控制字符（污染日志、放大响应头）。
+  const raw = String(req.headers['x-request-id'] ?? '');
+  const reqId = /^[A-Za-z0-9_-]{1,64}$/.test(raw) ? raw : crypto.randomUUID();
   res.setHeader('X-Request-ID', reqId);
   (req as Request & { reqId: string }).reqId = reqId;
   next();

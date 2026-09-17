@@ -8,6 +8,12 @@ import {
 } from '../../api/client';
 import { useToast } from '../../components/Toast';
 import { signCls, significanceCls } from '../../lib/colors';
+import {
+  clampInt,
+  PORTFOLIO_HOLD_DAYS,
+  PORTFOLIO_TOP_N,
+  UNIVERSE_TOP_N,
+} from '../../lib/numberInput';
 import type { IndustryBoard } from './types';
 import EChart from '../../components/EChart';
 
@@ -225,10 +231,15 @@ export default function FactorLabPanel() {
         {
           expression,
           board,
-          topN,
+          topN: clampInt(topN, UNIVERSE_TOP_N),
           horizons: [21, 63],
           ...(portfolioOn
-            ? { portfolio: { holdDays: portfolioHoldDays, topN: portfolioTopN } }
+            ? {
+                portfolio: {
+                  holdDays: clampInt(portfolioHoldDays, PORTFOLIO_HOLD_DAYS),
+                  topN: clampInt(portfolioTopN, PORTFOLIO_TOP_N),
+                },
+              }
             : {}),
         },
         controller.signal,

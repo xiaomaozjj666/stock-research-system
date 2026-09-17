@@ -8,7 +8,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
-      time: "06:00"
+      time: '06:00'
     open-pull-requests-limit: 10
     # 分组提 PR，减少噪音；安全更新不受分组限制、单独提
     groups:

@@ -174,9 +174,12 @@ function DashboardCards({ data }: { data: AnalysisResult['stock_pool'][0] }) {
       <div className="dash-card">
         <div className="dash-label">市值</div>
         <div className="dash-value">
-          {(data.valuation?.marketCap ?? 0) >= 10000
-            ? ((data.valuation?.marketCap ?? 0) / 10000).toFixed(1) + ' 万亿'
-            : (data.valuation?.marketCap ?? 0).toFixed(0) + ' 亿'}
+          {/* 缺数据时显示「—」而不是「0 亿」：把缺失值当实测值展示会读成"该公司市值 0" */}
+          {data.valuation?.marketCap == null
+            ? '—'
+            : data.valuation.marketCap >= 10000
+              ? (data.valuation.marketCap / 10000).toFixed(1) + ' 万亿'
+              : data.valuation.marketCap.toFixed(0) + ' 亿'}
         </div>
       </div>
     </div>

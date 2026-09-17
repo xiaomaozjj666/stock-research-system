@@ -12,9 +12,20 @@ import logger from './utils/logger.js';
 /** 限流窗口（毫秒） */
 export const windowMs = Number(process.env.RATE_LIMIT_WINDOW_MS) || 60000;
 
+/**
+ * 限流上限的解析：`Number(env) || dflt` 对「配成负数或 0」完全不设防——
+ * `Number('-5')` 得到 -5（不是 NaN），`||` 不会兜底，而 express-rate-limit
+ * 把 max <= 0 视为「永不放行」，会让该类请求 100% 429，且启动时没有任何提示。
+ * 因此统一要求「≥1 的整数」，否则回落默认值。
+ */
+function rateLimitMax(raw: string | undefined, dflt: number): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : dflt;
+}
+
 export const analyzeLimiter = rateLimit({
   windowMs,
-  max: Number(process.env.RATE_LIMIT_MAX_ANALYZE) || 10,
+  max: rateLimitMax(process.env.RATE_LIMIT_MAX_ANALYZE, 10),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '请求过于频繁，请稍后再试', retryAfter: Math.ceil(windowMs / 1000) },
@@ -22,7 +33,7 @@ export const analyzeLimiter = rateLimit({
 
 export const searchLimiter = rateLimit({
   windowMs,
-  max: Number(process.env.RATE_LIMIT_MAX_SEARCH) || 30,
+  max: rateLimitMax(process.env.RATE_LIMIT_MAX_SEARCH, 30),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '搜索请求过于频繁，请稍后再试', retryAfter: Math.ceil(windowMs / 1000) },
@@ -53,7 +64,7 @@ export const quantLimiter = rateLimit({
  */
 export const metaLimiter = rateLimit({
   windowMs,
-  max: Number(process.env.RATE_LIMIT_MAX_META) || 30,
+  max: rateLimitMax(process.env.RATE_LIMIT_MAX_META, 30),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '元数据请求过于频繁，请稍后再试', retryAfter: Math.ceil(windowMs / 1000) },
@@ -62,7 +73,7 @@ export const metaLimiter = rateLimit({
 /** 自选股批量回测 / 监控（默认 3 req/min） */
 export const watchlistLimiter = rateLimit({
   windowMs: 60000,
-  max: Number(process.env.RATE_LIMIT_MAX_WATCHLIST) || 3,
+  max: rateLimitMax(process.env.RATE_LIMIT_MAX_WATCHLIST, 3),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '自选股批量回测过于频繁（限制：每分钟3次），请稍后再试', retryAfter: 60 },
@@ -71,7 +82,7 @@ export const watchlistLimiter = rateLimit({
 /** 对话（10 req/min） */
 export const chatLimiter = rateLimit({
   windowMs,
-  max: Number(process.env.RATE_LIMIT_MAX_CHAT) || 10,
+  max: rateLimitMax(process.env.RATE_LIMIT_MAX_CHAT, 10),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '对话请求过于频繁（限制：每分钟10次），请稍后再试', retryAfter: 60 },
@@ -89,7 +100,7 @@ export const chatLimiter = rateLimit({
  */
 export const healthLimiter = rateLimit({
   windowMs,
-  max: Number(process.env.RATE_LIMIT_MAX_HEALTH) || 120,
+  max: rateLimitMax(process.env.RATE_LIMIT_MAX_HEALTH, 120),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '健康探针请求过于频繁，请稍后再试', retryAfter: Math.ceil(windowMs / 1000) },
@@ -102,7 +113,7 @@ export const healthLimiter = rateLimit({
  */
 export const writeLimiter = rateLimit({
   windowMs,
-  max: Number(process.env.RATE_LIMIT_MAX_WRITE) || 10,
+  max: rateLimitMax(process.env.RATE_LIMIT_MAX_WRITE, 10),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '写操作过于频繁（限制：每分钟10次），请稍后再试', retryAfter: 60 },

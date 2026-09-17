@@ -81,8 +81,11 @@ export default function ChatPanel() {
   async function send(text: string) {
     const content = text.trim();
     if (!content || loading) return;
-    const next: UIMessage[] = [...messages, { role: 'user', content }];
-    setMessages(next);
+    // 用户消息用函数式追加：此前先快照 [...messages, …] 再整体 setMessages，
+    // 一旦有并发/交错的写入（连发两句、或流式过程中另一次发送），
+    // 后落库的那份快照会把对方连同此前全部对话一起替换掉，界面不留痕迹。
+    const userMsg: UIMessage = { role: 'user', content };
+    setMessages((prev) => [...prev, userMsg]);
     setInput('');
     setLoading(true);
     setStage('连接中…');
@@ -102,8 +105,8 @@ export default function ChatPanel() {
             if (cancelled) return; // 取消后忽略迟到的事件
             if (evt.phase === 'done') {
               streamSettled = true;
-              setMessages([
-                ...next,
+              setMessages((prev) => [
+                ...prev,
                 { role: 'assistant', content: evt.response.answer, meta: evt.response },
               ]);
               resolve();
@@ -135,7 +138,7 @@ export default function ChatPanel() {
             { message: content, history: messages, sessionId },
             controller.signal,
           );
-          setMessages([...next, { role: 'assistant', content: res.answer, meta: res }]);
+          setMessages((prev) => [...prev, { role: 'assistant', content: res.answer, meta: res }]);
         } catch (err) {
           if (err instanceof AnalysisCancelledError) {
             appendNote('已取消本次回答');

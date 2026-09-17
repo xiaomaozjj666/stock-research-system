@@ -34,8 +34,12 @@ test-screenshots/
 test-api-response.txt
 
 # Environment
+# 覆盖全部 .env*（.env.production / .env.development / .env.test / .env.bak …）：
+# 只忽略 .env 与 .env.local 时，按 .env.example 宣传的 NODE_ENV=production 用法
+# 很容易在 server/ 下留一份带密钥的 .env.production 而未被忽略。
 .env
-.env.local
+.env.*
+!.env.example
 
 # IDE
 .vscode/

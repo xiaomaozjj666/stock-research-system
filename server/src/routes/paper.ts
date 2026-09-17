@@ -64,6 +64,21 @@ function parsePriceMap(
   return { ok: true, map };
 }
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 交易日必须是真的 YYYY-MM-DD 且能被解析。
+ * 此前只查 `typeof === 'string'`，`{"date":"hello"}` 或 `"2026-13-45"` 会被写成
+ * 账户的当前交易日并进入订单的 placedDate，污染 T+1 判定与净值序列（按日期做键）。
+ */
+function isValidTradingDate(v: unknown): v is string {
+  if (typeof v !== 'string' || !DATE_RE.test(v)) return false;
+  const t = Date.parse(`${v}T00:00:00Z`);
+  if (Number.isNaN(t)) return false;
+  // 排除 2026-02-31 这类"格式对但日期不存在"的值：Date.parse 会顺延到 3 月
+  return new Date(t).toISOString().slice(0, 10) === v;
+}
+
 router.get('/api/paper/portfolio', (_req, res) => {
   try {
     const acct = getPaperAccount();
@@ -105,6 +120,11 @@ router.post('/api/paper/order', (req, res) => {
       return res.status(400).json({ error: '下单失败', detail: '限价单需提供正价格' });
     }
     const acct = getPaperAccount();
+    if (body.date !== undefined && !isValidTradingDate(body.date)) {
+      return res
+        .status(400)
+        .json({ error: '下单失败', detail: '交易日需为 YYYY-MM-DD 且为真实日期' });
+    }
     if (typeof body.date === 'string') acct.setCurrentDate(body.date);
     const order = acct.placeOrder({
       code: String(body.code ?? ''),
@@ -149,7 +169,7 @@ router.post('/api/paper/order', (req, res) => {
 router.post('/api/paper/settle', (req, res) => {
   try {
     const body = req.body ?? {};
-    if (typeof body.date !== 'string') {
+    if (!isValidTradingDate(body.date)) {
       return res.status(400).json({ error: '缺少结算日期 date（YYYY-MM-DD）' });
     }
     const acct = getPaperAccount();

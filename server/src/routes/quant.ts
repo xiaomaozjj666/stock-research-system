@@ -525,10 +525,15 @@ router.post(
           new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
       );
       const endDate = String(body.endDate ?? new Date().toISOString().split('T')[0]);
-      const horizons = Array.isArray(body.horizons)
-        ? body.horizons
-            .map((h: unknown) => Number(h))
-            .filter((h: number) => Number.isFinite(h) && h > 0)
+      const horizons: number[] = Array.isArray(body.horizons)
+        ? [
+            ...new Set(
+              (body.horizons as unknown[])
+                .map((h) => Number(h))
+                .filter((h) => Number.isInteger(h) && h >= 1)
+                .map((h) => Math.min(h, MAX_HORIZON_DAYS)),
+            ),
+          ].slice(0, MAX_HORIZONS)
         : [21, 63];
 
       // 预检：源不可达且无缓存兜底 → 立刻 503，不逐个股票等超时
@@ -647,6 +652,14 @@ function ledgerEntriesFromReport(
   }
   return out;
 }
+
+// === 持有期档位上限 ===
+// horizons 里每一档都是一轮完整的全截面测算（CPU 与上游配额随档数线性放大），
+// 此前只过滤了"有限且 > 0"，没有上界也没有个数上限：
+// {"horizons":[1,2,3,...×1000]} 能把单次请求放大成千轮同步计算，顶住事件循环。
+// 504 = 两年交易日，超出已无回看意义。
+const MAX_HORIZON_DAYS = 504;
+const MAX_HORIZONS = 8;
 
 // === 截面 universe 宽度与并发上限（2026-09-05 放开） ===
 // 截面框架的统计功效随横截面宽度增长：板块内 30 只原本够用，但要上全市场多行业

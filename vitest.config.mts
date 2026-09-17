@@ -15,23 +15,23 @@ export default defineConfig({
       reportsDirectory: './coverage',
       // json-summary 供 CI 读取整体覆盖率；text-summary 在终端直接打印
       reporter: ['html', 'text-summary', 'json-summary', 'lcov'],
-      include: [
-        'server/src/**/*.ts',
-        'client/src/**/*.{ts,tsx}',
-      ],
+      include: ['server/src/**/*.ts', 'client/src/**/*.{ts,tsx}'],
       // 覆盖率阈值门禁：低于阈值测试失败，防止覆盖率倒退。
       // 基线（2026-08-13，793 tests）：lines 71.99% / statements 70.67% / functions 63.76% / branches 56.55%
-      // 现基线（2026-09-16，2419 tests）：lines 90.57% / statements 88.49% / functions 88.93% / branches 75.66%
-      // 补齐了此前 0 覆盖的量化面板家族、client 端 REST 封装与 App 导航分支；
+      // 现基线（2026-09-17，2890 tests / 212 files）：
+      //   lines 94.39% / statements 92.34% / functions 94.32% / branches 82.51%
+      // 本轮补齐了量化面板家族、客户端 REST 封装、App 导航分支、服务端时序 / MCP / 专家层，
+      // 并把 41 个 .test.tsx 从覆盖率分母里排除（此前只排了 .test.ts）。
       // 阈值留约 2 个点余量，避免与业务无关的小改动动辄失败。
       thresholds: {
-        lines: 88,
-        statements: 86,
-        functions: 86,
-        branches: 73,
+        lines: 92,
+        statements: 90,
+        functions: 92,
+        branches: 80,
       },
       exclude: [
-        '**/*.test.ts',
+        // 测试文件本身不计入覆盖率：此前只写了 .ts，导致 41 个 .test.tsx 被算进分母
+        '**/*.test.{ts,tsx}',
         '**/*.d.ts',
         'server/src/index.ts', // Express 入口，由集成与手动验证覆盖
         'server/src/routes/**', // 路由模块（index.ts 拆分），由 supertest 集成测试覆盖

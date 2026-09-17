@@ -15,5 +15,7 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
+  // 这份配置同时用于 `tsc --noEmit`（含测试文件的类型检查），因此**不排除测试**；
+  // 构建产物不含测试代码由 tsconfig.build.json 负责（build 脚本指向它）。
   "exclude": ["node_modules", "dist"]
 }

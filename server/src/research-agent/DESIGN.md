@@ -8,13 +8,13 @@
 
 将"研究问题 -> 结构化研究报告"的过程拆为四个可观测、可审计、可恢复的阶段，编排器负责多轮迭代与异常兜底。
 
-| 原则 | 落点 |
-| --- | --- |
-| 证据可审计 | 每条证据强制携带 `SourceRef`（来源）+ `AcquisitionPath`（轮次/查询词/适配器/尝试次数/降级链） |
-| 可信度与 LLM 解耦 | `credibility = 来源层级基准分 × 时效衰减`，验证阶段再做强度合成，避免"模型自评循环论证" |
-| 引用不可幻觉 | 结论编排对 `keyEvidenceIds` 做存在性校验，编造 ID 一律剔除并回退到验证采信集合 |
-| 失败不静默 | 检索失败、证据不足、未决冲突全部进入报告 `limitations`，如实声明而非粉饰 |
-| 收敛有保证 | 四重终止条件 + 计划版本化，任何输入下有限轮数内产出结果 |
+| 原则              | 落点                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------------- |
+| 证据可审计        | 每条证据强制携带 `SourceRef`（来源）+ `AcquisitionPath`（轮次/查询词/适配器/尝试次数/降级链） |
+| 可信度与 LLM 解耦 | `credibility = 来源层级基准分 × 时效衰减`，验证阶段再做强度合成，避免"模型自评循环论证"       |
+| 引用不可幻觉      | 结论编排对 `keyEvidenceIds` 做存在性校验，编造 ID 一律剔除并回退到验证采信集合                |
+| 失败不静默        | 检索失败、证据不足、未决冲突全部进入报告 `limitations`，如实声明而非粉饰                      |
+| 收敛有保证        | 四重终止条件 + 计划版本化，任何输入下有限轮数内产出结果                                       |
 
 ## 2. 总体架构
 
@@ -30,9 +30,9 @@
 │  Planner  │->│ Retriever  │-->│  Verifier     │-->│ Synthesizer │->│ Renderer │
 │ 问题拆解   │  │ 按计划取证  │   │ 交叉验证/仲裁  │   │ 结论编排     │  │ Markdown │
 └───────────┘  └────────────┘   └───────────────┘   └─────────────┘  └──────────┘
-      ▲              │                  │                                  
-      │   证据不足 hints ←──────────────┘（自动触发补充检索）                  
-      └──── replan（计划版本化修订）←──── 检索失败 / 持续证据不足               
+      ▲              │                  │
+      │   证据不足 hints ←──────────────┘（自动触发补充检索）
+      └──── replan（计划版本化修订）←──── 检索失败 / 持续证据不足
 ```
 
 ### 运行状态机
@@ -61,23 +61,23 @@ synthesize -> report -> renderMarkdown                          # 阶段四
 
 ## 3. 核心数据模型
 
-| 实体 | 关键字段 | 说明 |
-| --- | --- | --- |
-| `ResearchPlan` | `subQuestions[]` `version` `revisions[]` | 可执行检索计划；修订只增改、版本递增、历史留痕 |
-| `SubQuestion` | `priority(P0/P1/P2)` `keywords` `expectedSources` `successCriteria` `supplementRoundsUsed` `supplementHints` | P0 为结论必需，是终止条件的一部分；**P0 不可被 replan 丢弃** |
-| `Evidence` | `claim` `quote` `source` `path` `credibility` | 事实性陈述 + 原文摘录 + 来源 + 获取路径，全程可回溯 |
-| `Verification` | `consistency` `verdict` `confidence` `conflicts[]` `needsSupplement` `supplementHints[]` | 每轮覆盖写入，最新验证为准 |
-| `EvidenceConflict` | `dimension(数值/时间/因果/事实/口径)` `resolution` `resolutionReason` | 冲突结构化留痕，未决冲突进报告局限性 |
-| `ResearchReport` | `sections[]` `overallConfidence` `methodology` `conflicts[]` `limitations[]` | 结构化报告，经 `renderReportMarkdown` 渲染 |
+| 实体               | 关键字段                                                                                                     | 说明                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `ResearchPlan`     | `subQuestions[]` `version` `revisions[]`                                                                     | 可执行检索计划；修订只增改、版本递增、历史留痕               |
+| `SubQuestion`      | `priority(P0/P1/P2)` `keywords` `expectedSources` `successCriteria` `supplementRoundsUsed` `supplementHints` | P0 为结论必需，是终止条件的一部分；**P0 不可被 replan 丢弃** |
+| `Evidence`         | `claim` `quote` `source` `path` `credibility`                                                                | 事实性陈述 + 原文摘录 + 来源 + 获取路径，全程可回溯          |
+| `Verification`     | `consistency` `verdict` `confidence` `conflicts[]` `needsSupplement` `supplementHints[]`                     | 每轮覆盖写入，最新验证为准                                   |
+| `EvidenceConflict` | `dimension(数值/时间/因果/事实/口径)` `resolution` `resolutionReason`                                        | 冲突结构化留痕，未决冲突进报告局限性                         |
+| `ResearchReport`   | `sections[]` `overallConfidence` `methodology` `conflicts[]` `limitations[]`                                 | 结构化报告，经 `renderReportMarkdown` 渲染                   |
 
 来源层级表 `SOURCE_TIER`（冲突仲裁与可信度基准）：
 
-| 层级 | 类型 | 基准分 |
-| --- | --- | --- |
-| T1 | 监管备案 / 公司官方披露 / 金融数据库 / 学术文献 | 0.95 / 0.92 / 0.88 / 0.85 |
-| T2 | 内部资料 / 研究机构报告 / 权威媒体 / 行业数据平台 | 0.75 / 0.72 / 0.70 / 0.68 |
-| T3 | 行业博客/聚合 | 0.45 |
-| T4 | 社交媒体 UGC / 未知来源 | 0.30 / 0.25 |
+| 层级 | 类型                                              | 基准分                    |
+| ---- | ------------------------------------------------- | ------------------------- |
+| T1   | 监管备案 / 公司官方披露 / 金融数据库 / 学术文献   | 0.95 / 0.92 / 0.88 / 0.85 |
+| T2   | 内部资料 / 研究机构报告 / 权威媒体 / 行业数据平台 | 0.75 / 0.72 / 0.70 / 0.68 |
+| T3   | 行业博客/聚合                                     | 0.45                      |
+| T4   | 社交媒体 UGC / 未知来源                           | 0.30 / 0.25               |
 
 时效衰减：`decay = max(0.3, 0.5^(ageDays/730))`，缺失日期不惩罚（由层级兜底）。
 
@@ -116,16 +116,16 @@ synthesize -> report -> renderMarkdown                          # 阶段四
 
 ## 5. 异常处理矩阵
 
-| 异常 | 检测点 | 处理策略 |
-| --- | --- | --- |
-| 检索工具报错/超时 | Retriever | 指数退避重试（`retryBackoffMs × attempt`，每适配器独立预算）-> 降级备用适配器 -> 记 `failedTask`；全过程写入事件流 |
-| 来源不可达（fetch 失败） | Retriever | 仅跳过该条命中，不计任务失败；URL 去重避免反复抓取 |
-| 证据不足 | Verifier | 确定性门槛（数量/来源独立性）+ LLM 复核双通道；needsSupplement（含未决冲突、低置信度）统一触发补充检索；超 `maxSupplementRoundsPerSubQuestion`（默认 2）判 blocked |
-| 来源冲突 | Verifier | 层级仲裁（T1 优先）+ 时效 + 交叉印证；无法仲裁标 unresolved，进报告"数据与口径差异"与局限性，并触发针对性补充检索 |
-| LLM 输出不合规 | 各阶段 | `completeJson`：宽松解析（剥围栏）+ Schema 校验 + 错误反馈重试（默认 2 次）；仍失败抛 `LLMOutputError`，run() 发出 `run_error` 事件后向上传播 |
-| 计划假设失效 / 任务受阻 | Orchestrator | 终止门处先尝试 replan 复活：add（查重 + 上限）/ adjust（重置补充预算）/ drop（P0 保护），版本递增留痕；复活失败才 `no_pending_work` 终止 |
-| 子问题饥饿 | Retriever | 按 `supplementRoundsUsed` 升序调度，预算截断时最久未获证据者优先 |
-| 无限循环风险 | Orchestrator | 终止门：P0 达标 / 连续 N 轮无新证据（硬停止）/ 轮次上限 / replan 复活失败，四重保证收敛 |
+| 异常                     | 检测点       | 处理策略                                                                                                                                                           |
+| ------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 检索工具报错/超时        | Retriever    | 指数退避重试（`retryBackoffMs × attempt`，每适配器独立预算）-> 降级备用适配器 -> 记 `failedTask`；全过程写入事件流                                                 |
+| 来源不可达（fetch 失败） | Retriever    | 仅跳过该条命中，不计任务失败；URL 去重避免反复抓取                                                                                                                 |
+| 证据不足                 | Verifier     | 确定性门槛（数量/来源独立性）+ LLM 复核双通道；needsSupplement（含未决冲突、低置信度）统一触发补充检索；超 `maxSupplementRoundsPerSubQuestion`（默认 2）判 blocked |
+| 来源冲突                 | Verifier     | 层级仲裁（T1 优先）+ 时效 + 交叉印证；无法仲裁标 unresolved，进报告"数据与口径差异"与局限性，并触发针对性补充检索                                                  |
+| LLM 输出不合规           | 各阶段       | `completeJson`：宽松解析（剥围栏）+ Schema 校验 + 错误反馈重试（默认 2 次）；仍失败抛 `LLMOutputError`，run() 发出 `run_error` 事件后向上传播                      |
+| 计划假设失效 / 任务受阻  | Orchestrator | 终止门处先尝试 replan 复活：add（查重 + 上限）/ adjust（重置补充预算）/ drop（P0 保护），版本递增留痕；复活失败才 `no_pending_work` 终止                           |
+| 子问题饥饿               | Retriever    | 按 `supplementRoundsUsed` 升序调度，预算截断时最久未获证据者优先                                                                                                   |
+| 无限循环风险             | Orchestrator | 终止门：P0 达标 / 连续 N 轮无新证据（硬停止）/ 轮次上限 / replan 复活失败，四重保证收敛                                                                            |
 
 ## 6. 可观测性
 
@@ -137,15 +137,15 @@ synthesize -> report -> renderMarkdown                          # 阶段四
 
 ```ts
 const agent = new ResearchOrchestrator({
-  llm: myLlmAdapter,            // LLMAdapter: complete(req) => string
-  adapters: [primary, backup],  // SearchAdapter: search() + fetch()，首为主通道其余降级
-  config: { maxRounds: 3 },     // ResearchConfig 覆盖默认值
-  onEvent: (e) => ui.push(e),   // 事件旁路
+  llm: myLlmAdapter, // LLMAdapter: complete(req) => string
+  adapters: [primary, backup], // SearchAdapter: search() + fetch()，首为主通道其余降级
+  config: { maxRounds: 3 }, // ResearchConfig 覆盖默认值
+  onEvent: (e) => ui.push(e), // 事件旁路
 });
 const result = await agent.run('研究问题', { region: '中国', industry: '消费电子' });
-result.report            // 结构化报告
-result.reportMarkdown    // Markdown 渲染
-result.events / result.stats / result.plan / result.evidence / result.verifications
+result.report; // 结构化报告
+result.reportMarkdown; // Markdown 渲染
+result.events / result.stats / result.plan / result.evidence / result.verifications;
 ```
 
 接入真实渠道时：实现 `SearchAdapter` 对接搜索/数据库/内部知识库（`sourceType` 标注越准，可信度模型越有效）；实现 `LLMAdapter` 桥接 OpenAI 兼容客户端（如 `server/src/llm/client.ts`）。

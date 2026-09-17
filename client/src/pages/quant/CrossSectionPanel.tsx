@@ -6,6 +6,7 @@ import {
 } from '../../api/client';
 import { useToast } from '../../components/Toast';
 import { signCls, significanceCls } from '../../lib/colors';
+import { clampInt, UNIVERSE_TOP_N } from '../../lib/numberInput';
 import type {
   CrossSectionResult,
   CrossSectionFactor,
@@ -23,6 +24,11 @@ const PREFERRED_DEFAULT_BOARDS = ['白酒', '银行'];
 
 /** 组合回测默认参数：请求体与界面文案共用一处定义，改这里即可同步 */
 const PORTFOLIO_DEFAULTS = { holdDays: 21, topN: 5, costBps: 30 } as const;
+
+/** 组合回测输入框的可选范围（比服务端更窄：界面上不给没意义的档位） */
+const PORTFOLIO_HOLD_DAYS_UI = { min: 5, max: 250, dflt: PORTFOLIO_DEFAULTS.holdDays } as const;
+const PORTFOLIO_TOP_N_UI = { min: 1, max: 20, dflt: PORTFOLIO_DEFAULTS.topN } as const;
+const PORTFOLIO_COST_BPS_UI = { min: 0, max: 200, dflt: PORTFOLIO_DEFAULTS.costBps } as const;
 
 /** 因子中文显示名：量价（与 FactorPanel 一致）+ 基本面/事件 */
 const FACTOR_LABELS: Record<string, string> = {
@@ -63,12 +69,7 @@ const TYPE_LABELS: Record<CrossSectionFactor['type'], string> = {
   margin: '两融',
 };
 
-/** 整数入参钳制：非法值回退默认，范围 [min,max] */
-function clampInt(v: number, min: number, max: number, dflt: number): number {
-  const n = Math.floor(Number.isFinite(v) ? v : dflt);
-  return Math.min(max, Math.max(min, n));
-}
-
+/** 整数入参钳制：非法值回退默认，范围 [min,max]（与服务端校验边界一致，见 lib/numberInput） */
 function parseCodes(text: string): string[] {
   return text
     .split(/[\n,，;；\s]+/)
@@ -269,9 +270,9 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
       // 表头仍须描述"这批数据是哪次跑的"，否则会出现"40 日调仓"配 21 日数据的错配）
       const portfolioParams = portfolioOn
         ? {
-            holdDays: clampInt(portfolioHoldDays, 5, 250, PORTFOLIO_DEFAULTS.holdDays),
-            topN: clampInt(portfolioTopN, 1, 20, PORTFOLIO_DEFAULTS.topN),
-            costBps: clampInt(portfolioCostBps, 0, 200, PORTFOLIO_DEFAULTS.costBps),
+            holdDays: clampInt(portfolioHoldDays, PORTFOLIO_HOLD_DAYS_UI),
+            topN: clampInt(portfolioTopN, PORTFOLIO_TOP_N_UI),
+            costBps: clampInt(portfolioCostBps, PORTFOLIO_COST_BPS_UI),
           }
         : null;
       const common = {
@@ -283,7 +284,7 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
       };
       const data = await runCrossSectionEvaluation(
         source === 'board'
-          ? { board, topN, ...common }
+          ? { board, topN: clampInt(topN, UNIVERSE_TOP_N), ...common }
           : source === 'index'
             ? {
                 indexUniverse: {

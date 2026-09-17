@@ -2,7 +2,7 @@
 # 触发：push 到 main/master 分支 + 任意 PR
 name: CI
 
-"on":
+'on':
   push:
     branches: [main, master]
   pull_request:
@@ -95,7 +95,7 @@ jobs:
 
       - name: Test with coverage
         # vitest run 全量测试（globals=false，测试内显式 import vi/expect）+ 覆盖率阈值门禁
-        # （vitest.config.mts thresholds：lines 70 / statements 68 / functions 62 / branches 55）。
+        # （vitest.config.mts thresholds：lines 88 / statements 86 / functions 86 / branches 73）。
         # 平台依赖说明：测试均已 mock 网络（不依赖真实行情/东财接口）；
         #   临时文件用 os.tmpdir() + path.join（跨平台），
         #   child_process 相关在 http.test.ts 中整体 vi.mock，mcpClient.test.ts 用

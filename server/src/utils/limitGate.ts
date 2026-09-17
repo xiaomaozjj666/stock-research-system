@@ -50,6 +50,21 @@ export const DEFAULT_QUEUE_TIMEOUT_MS = 30_000;
 /** 排队超时硬上界（10 分钟）：超过这个等待时间没有任何客户端还在等 */
 export const MAX_QUEUE_TIMEOUT_MS = 600_000;
 
+/**
+ * 队列长度上限。等待者各自持有一个定时器与一个 abort 监听，
+ * 无上限时「闸门满并发 + 大量灌入」会让内存随等待者数量线性增长；
+ * 且这些请求本来也要等很久，不如直接以 429 让调用方退避重试。
+ */
+export const DEFAULT_MAX_QUEUE = 200;
+export const MAX_QUEUE_LIMIT = 5_000;
+
+/** 解析队列上限：非法值回退默认，超过硬上界则夹紧 */
+export function resolveMaxQueue(raw: string | undefined = process.env.LLM_MAX_QUEUE): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_MAX_QUEUE;
+  return Math.min(Math.floor(n), MAX_QUEUE_LIMIT);
+}
+
 /** 解析并发上限：非法值（NaN/空串/负数/0）回退默认，超过硬上界则夹紧 */
 export function resolveMaxConcurrency(
   raw: string | undefined = process.env.LLM_MAX_CONCURRENCY,
@@ -115,6 +130,8 @@ export interface LimitGateOptions {
   maxConcurrency: number | (() => number);
   /** 排队超时毫秒；同样支持函数形式 */
   queueTimeoutMs: number | (() => number);
+  /** 等待队列长度上限；不传则读 LLM_MAX_QUEUE（默认 200）。装满后新调用立即 429 */
+  maxQueue?: number | (() => number);
   /** 闸门名，仅用于日志与错误文案 */
   name?: string;
   /** 可注入时钟与定时器：测试用假时钟即可断言排队超时，无需真的 sleep */
@@ -166,6 +183,7 @@ export class LimitGate {
   private readonly name: string;
   private readonly readMax: () => number;
   private readonly readTimeout: () => number;
+  private readonly readMaxQueue: () => number;
   private readonly now: () => number;
   private readonly setTimer: (fn: () => void, ms: number) => TimerHandle;
   private readonly clearTimer: (handle: TimerHandle) => void;
@@ -189,6 +207,9 @@ export class LimitGate {
       typeof options.queueTimeoutMs === 'function'
         ? options.queueTimeoutMs
         : () => options.queueTimeoutMs as number;
+    const mq = options.maxQueue;
+    this.readMaxQueue =
+      typeof mq === 'function' ? mq : typeof mq === 'number' ? () => mq : () => resolveMaxQueue();
     this.now = options.now ?? (() => Date.now());
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
@@ -219,6 +240,18 @@ export class LimitGate {
 
     const timeoutMs = this.readTimeout();
     return new Promise<() => void>((resolve, reject) => {
+      // 队列已满：立即以 429 语义拒绝，不为一个注定久等的请求再挂定时器与监听
+      if (this.queue.length >= this.readMaxQueue()) {
+        this.counters.timeouts += 1;
+        logger.warn('[llm-gate] 等待队列已满，拒绝本次 LLM 调用（429 语义）', {
+          gate: this.name,
+          queued: this.queue.length,
+          maxQueue: this.readMaxQueue(),
+          inFlight: this.inFlightCount,
+        });
+        reject(new QueueTimeoutError(this.name, 0, timeoutMs));
+        return;
+      }
       const waiter: Waiter = { settled: false, enqueuedAt: this.now(), resolve, reject };
       this.queue.push(waiter);
       this.counters.queueWaits += 1;

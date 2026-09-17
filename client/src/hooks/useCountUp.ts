@@ -8,7 +8,10 @@ export function useCountUp(target: number, duration = 1200, decimals = 0) {
   useEffect(() => {
     // 系统开启「减少动态效果」时不做补间：数字滚动属于纯粹的装饰性动画，
     // 且 index.css 的 @media (prefers-reduced-motion) 管不到 rAF 驱动的 JS 动画
-    if (reduced || target === 0) return;
+    if (reduced) return;
+    // 注意 target === 0 不能短路：依赖变化是合法的（如换到没有 PE 的标的、
+    // 或同一只重跑后估值字段缺失），短路会让 state 永久停在上一轮的数字，
+    // 把别的标的的 PE/PB 显示在当前标的上。target=0 时补间首帧即落到 0，无动画代价。
     let rafId = 0;
     const start = performance.now();
     const animate = (now: number) => {

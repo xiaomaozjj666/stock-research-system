@@ -112,7 +112,13 @@ export function writeCacheEntry<T>(key: string, data: T, ttlMs: number): void {
     const dir = getQuantCacheDir();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const payload: CacheFile<T> = { kind: QUANT_KIND, data, timestamp: Date.now(), ttlMs };
-    fs.writeFileSync(cacheFilePath(key), JSON.stringify(payload));
+    // 先写临时文件再 rename（同分区原子替换）：同 key 并发写时，
+    // 直接 writeFileSync 会让读者读到半截 JSON，缓存静默失效并反复全量重拉。
+    // 与 services/historyService.ts 的落盘方式一致。
+    const file = cacheFilePath(key);
+    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(payload));
+    fs.renameSync(tmp, file);
   } catch (error) {
     logger.warn('写入量化缓存失败', { key, err: error });
   }

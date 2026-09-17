@@ -120,14 +120,28 @@ describe('useCountUp —— reduced-motion 覆盖 JS 动画', () => {
     expect(result.current).toBe(100);
   });
 
-  it('目标值为 0 时不启动动画（保持既有短路逻辑）', () => {
+  it('目标值由非零变为 0 时落到 0（不得停在上一轮的数字）', () => {
     stubMatchMedia(false);
-    const raf = vi.fn(() => 1);
-    vi.stubGlobal('requestAnimationFrame', raf);
+    const frames: ((t: number) => void)[] = [];
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((cb: (t: number) => void) => {
+        frames.push(cb);
+        return frames.length;
+      }),
+    );
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
 
-    const { result } = renderHook(() => useCountUp(0, 1200, 0));
+    const { result, rerender } = renderHook(({ t }) => useCountUp(t, 1200, 0), {
+      initialProps: { t: 85 },
+    });
+    act(() => frames.at(-1)?.(performance.now() + 2000)); // 动画走完 → 85
+    expect(result.current).toBe(85);
+
+    // 换到没有该字段的标的：target 变 0 是合法依赖变化，
+    // 此前 `target === 0` 短路会让 state 永久停在 85（把上一只股票的数字留在界面上）
+    rerender({ t: 0 });
+    act(() => frames.at(-1)?.(performance.now() + 2000));
     expect(result.current).toBe(0);
-    expect(raf).not.toHaveBeenCalled();
   });
 });

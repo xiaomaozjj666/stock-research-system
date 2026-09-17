@@ -18,10 +18,12 @@
     "lint:fix": "eslint . --fix && oxlint server/src client/src e2e --fix",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p client/tsconfig.json",
     "test:e2e": "playwright test",
     "mcp:serve": "npx tsx server/src/mcp/cli.ts",
-    "format": "prettier --write \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"e2e/**/*.{ts,tsx,js,json}\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs}\"",
-    "format:check": "prettier --check \"server/src/**/*.{ts,tsx,js,json}\" \"client/src/**/*.{ts,tsx,js,json}\" \"e2e/**/*.{ts,tsx,js,json}\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs}\""
+    "format": "prettier --write \"server/src/**/*.{ts,tsx,js,json,md}\" \"client/src/**/*.{ts,tsx,js,json,md}\" \"e2e/**/*.{ts,tsx,js,json}\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs,mts}\" \".github/**/*.yml\"",
+    "format:check": "prettier --check \"server/src/**/*.{ts,tsx,js,json,md}\" \"client/src/**/*.{ts,tsx,js,json,md}\" \"e2e/**/*.{ts,tsx,js,json}\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs,mts}\" \".github/**/*.yml\""
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

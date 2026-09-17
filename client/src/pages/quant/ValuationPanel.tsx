@@ -16,7 +16,10 @@ function SensitivityTable({ r }: { r: NonNullable<ValuationModelResult['sensitiv
       <table className="watchlist-table">
         <thead>
           <tr>
-            <th>公允价值（元）</th>
+            {/* 左上角是「行轴 \ 列轴」的角标：行是折现率（下表首列 r=…），列是显性期增速。
+                此前写「公允价值（元）」，把行轴标签安到了不存在的第三维上，
+                想按"折现率调到 11%"查表的用户找不到入口 */}
+            <th>折现率 \ 显性期增速</th>
             {r.growthRates1.map((g) => (
               <th key={g}>{(g * 100).toFixed(1)}%</th>
             ))}
