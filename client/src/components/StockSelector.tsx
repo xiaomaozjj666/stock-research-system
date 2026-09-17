@@ -291,7 +291,8 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
                 <div className="search-history">
                   <div className="search-history-header">
                     <span>搜索历史</span>
-                    <button className="search-history-clear" onClick={clearHistory}>
+                    {/* 历史管理动作只在屏幕上做；打印时「清空全部」会被当成报告上的按钮 → .no-print */}
+                    <button className="search-history-clear no-print" onClick={clearHistory}>
                       清空全部
                     </button>
                   </div>
@@ -309,7 +310,7 @@ export default function StockSelector({ onAnalyze, loading }: StockSelectorProps
                         <span className="stock-name">{item.name}</span>
                         <span className="stock-code">{item.code}</span>
                         <button
-                          className="delete-btn"
+                          className="delete-btn no-print"
                           onClick={(e) => {
                             e.stopPropagation();
                             removeHistoryItem(item.code);

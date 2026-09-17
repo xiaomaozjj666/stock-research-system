@@ -44,12 +44,38 @@ const CACHE_TTL = CACHE_TTL_HOURS * 60 * 60 * 1000;
 
 // 内存 LRU 缓存：避免热股票反复触发文件 I/O + JSON 解析。
 // 容量上限后淘汰最久未用；与文件缓存共用同一 TTL（CACHE_TTL）。
+//
+// ⚠️ 不变量（H-06 缓存污染修复）：缓存里存放的对象**只增不改**，任何对外返回都必须
+// 经过 cloneStockDataSet()。原因：调用方（services/analysisPipeline.ts）会就地改写
+// 返回值——修正 PE/PB、写入估算的 historicalPE。修复前 getData 直接返回缓存对象引用，
+// 于是那份「从未由 API 提供过」的修正结果被写回内存 LRU 甚至落盘 JSON，
+// 之后 /api/quant/valuation/model 等拿到的 PE 取决于「谁先跑过」，同一份数据在不同
+// 请求间口径不一致。
 interface MemCacheEntry {
   data: StockDataSet;
   timestamp: number;
 }
 const memCache = new Map<string, MemCacheEntry>();
 const MEM_CACHE_MAX = Number(process.env.MEM_CACHE_MAX) || 500;
+
+/**
+ * 返回缓存对象的独立副本（结构化深拷贝）。
+ *
+ * 为什么用「读时深拷贝」而不是「Object.freeze + 写前深拷贝」：
+ *   - freeze 只拦得住**严格模式**下的属性赋值，改不到嵌套对象（data.financial.years[0]）
+ *     仍会污染；要彻底拦住得递归冻结整棵对象树，成本与深拷贝相当，却把「调用方就地
+ *     改写」从静默污染变成运行时抛错——analysisPipeline 的既有写法（直接改 valuation.pe）
+ *     会当场 500，等于用线上可用性换一个能在测试里表达的不变量；
+ *   - 深拷贝把语义收敛在一处（唯一出口），调用方读写自由，且缓存里的对象永远干净；
+ *   - 取舍：只在**返回边界**做一次结构化拷贝，数据规模是单只股票的行情 + 财务
+ *     （十几个定长数组，KB 级），相对随之而来的磁盘 I/O / JSON 解析可忽略；
+ *     拷贝本身不进任何循环或热点路径（每只股票每次取数一次）。
+ */
+function cloneStockDataSet(data: StockDataSet): StockDataSet {
+  // structuredClone 为 Node 17+ 内置的结构化克隆：比 JSON round-trip 快，
+  // 且不丢 undefined/NaN。本模块的数据全部是纯 JSON 值，两者语义等价。
+  return structuredClone(data);
+}
 
 function memCacheGet(code: string): StockDataSet | null {
   const entry = memCache.get(code);
@@ -65,7 +91,8 @@ function memCacheGet(code: string): StockDataSet | null {
 }
 
 function memCacheSet(code: string, data: StockDataSet): void {
-  memCache.set(code, { data, timestamp: Date.now() });
+  // 存副本：即便调用方拿到了本函数的入参对象，也改不到缓存里的那一份
+  memCache.set(code, { data: cloneStockDataSet(data), timestamp: Date.now() });
   // 容量超限：淘汰最久未用（Map 头部为最旧）
   while (memCache.size > MEM_CACHE_MAX) {
     const oldestKey = memCache.keys().next().value;
@@ -160,18 +187,20 @@ const inFlight = new Map<string, Promise<StockDataSet>>();
 
 export function getData(stockCode: string): Promise<StockDataSet> {
   // 0. 内存 LRU 缓存（最热路径，避免文件 I/O）
+  //    命中必须返回副本：缓存里的那一份是「唯一真相」，任何调用方都无权改写
+  //    （见本文件顶部 memCache 的缓存污染不变量说明）
   const memHit = memCacheGet(stockCode);
-  if (memHit) return Promise.resolve(memHit);
+  if (memHit) return Promise.resolve(cloneStockDataSet(memHit));
 
   // 并发去重：同代码已有在途抓取时复用同一个 Promise
   const pending = inFlight.get(stockCode);
-  if (pending) return pending;
+  if (pending) return pending.then((data) => cloneStockDataSet(data));
 
   const promise = fetchDataAndCache(stockCode).finally(() => {
     inFlight.delete(stockCode);
   });
   inFlight.set(stockCode, promise);
-  return promise;
+  return promise.then((data) => cloneStockDataSet(data));
 }
 
 async function fetchDataAndCache(stockCode: string): Promise<StockDataSet> {
@@ -227,7 +256,8 @@ async function fetchDataAndCache(stockCode: string): Promise<StockDataSet> {
 
     const dataSet: StockDataSet = { info, financial, valuation };
 
-    // 写入缓存（内存 LRU + 异步文件）
+    // 写入缓存（内存 LRU + 异步文件）。memCacheSet 内部另存副本，
+    // 因此这里 return 出去的对象被调用方就地改写也不会污染缓存与磁盘内容。
     memCacheSet(stockCode, dataSet);
     try {
       // 目录按需创建（原先在模块加载时同步创建一次；改为惰性解析后，创建挪到真正的写入方，
@@ -246,11 +276,12 @@ async function fetchDataAndCache(stockCode: string): Promise<StockDataSet> {
     // 3. 降级到 sampleData（仅茅台）
     if (stockCode === '600519') {
       logger.warn('API 获取失败，使用内置样本数据', { stockCode, err: error as Error });
-      return {
+      // 同样返回副本：sampleData 是模块级常量，被就地改写会污染所有后续降级请求
+      return cloneStockDataSet({
         info: MOUTAI_INFO,
         financial: MOUTAI_FINANCIAL,
         valuation: MOUTAI_VALUATION,
-      };
+      });
     }
     throw new Error(`无法获取股票数据: ${stockCode}，${(error as Error).message}`);
   }

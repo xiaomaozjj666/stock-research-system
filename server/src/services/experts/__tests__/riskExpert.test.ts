@@ -546,24 +546,29 @@ describe('LLM 路径：真 runExpertWithLLM + 真 normalizeExpertOpinion', () =>
     expect(promptsMock.formatContext).toHaveBeenCalledWith(financial, valuation, info, undefined);
   });
 
-  it('isLLMAvailable=false → 不调用 chatJSON，直接规则引擎', async () => {
+  it('isLLMAvailable=false → 不调用 chatJSON，直接规则引擎（并标记降级原因）', async () => {
     llmMock.isLLMAvailable.mockReturnValue(false);
     const op = await riskExpert(makeFinancial(), makeValuation(), info);
     expect(llmMock.chatJSON).not.toHaveBeenCalled();
     expect(op.expert).toBe(EXPERT_NAME);
     expect(op.arguments).toHaveLength(5);
+    // 规则引擎结论必须可被上层识别（报告层据此如实披露结论来源）
+    expect(op._degraded).toBe(true);
+    expect(op._degradeReason).toBe('llm_unavailable');
   });
 });
 
 describe('LLM 路径：调用失败降级', () => {
-  it('chatJSON 抛错 → 记 warn 且结果与规则引擎完全一致', async () => {
+  it('chatJSON 抛错 → 记 warn 且结果与规则引擎完全一致（只多降级标记）', async () => {
     const ruleResult = await runRule();
     llmMock.isLLMAvailable.mockReturnValue(true);
     llmMock.chatJSON.mockRejectedValue(new Error('upstream 500'));
     const fallback = await riskExpert(makeFinancial(), makeValuation(), info);
-    expect(fallback).toEqual(ruleResult);
+    // 规则内容与 runRule 完全一致；差异仅在降级标记（原因由 llm_unavailable 变为 llm_error）
+    expect(fallback).toEqual({ ...ruleResult, _degraded: true, _degradeReason: 'llm_error' });
     expect(warnSpy).toHaveBeenCalledWith('[LLM] 降级规则引擎', {
       expertName: EXPERT_NAME,
+      reason: 'llm_error',
       err: expect.any(Error),
     });
   });
@@ -572,9 +577,12 @@ describe('LLM 路径：调用失败降级', () => {
     llmMock.isLLMAvailable.mockReturnValue(true);
     const timeout = new Error('LLM timeout after 45000ms');
     llmMock.chatJSON.mockRejectedValue(timeout);
-    await riskExpert(makeFinancial(), makeValuation(), info);
+    const op = await riskExpert(makeFinancial(), makeValuation(), info);
+    expect(op._degraded).toBe(true);
+    expect(op._degradeReason).toBe('llm_error');
     expect(warnSpy).toHaveBeenCalledWith('[LLM] 降级规则引擎', {
       expertName: EXPERT_NAME,
+      reason: 'llm_error',
       err: timeout,
     });
   });

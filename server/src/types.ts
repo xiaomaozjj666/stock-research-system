@@ -89,7 +89,27 @@ export interface ExpertOpinion {
   overallSentiment: 'bullish' | 'neutral' | 'bearish';
   confidence: number;
   keyPoints: string[];
+  /**
+   * 内部标记（下划线前缀 = 不参与对外报告字段契约，与 prompts.ts 的 `_incomplete` 同风格）：
+   * LLM 返回缺失 support/oppose 之一时置 true，表示该观点结构不完整。
+   */
+  _incomplete?: boolean;
+  /**
+   * 内部标记：本条观点**不是 LLM 研判**，而是 LLM 不可用/失败时由本地规则引擎生成的降级产物。
+   * 报告层据此如实披露"哪些结论出自规则引擎"，避免把规则结论当成专家研判呈现。
+   */
+  _degraded?: boolean;
+  /** 降级原因（仅当 `_degraded === true` 时有意义）：未配置 LLM / 闸门排队超时（429 语义）/ 其它 LLM 错误 */
+  _degradeReason?: ExpertDegradeReason;
 }
+
+/**
+ * 专家结论的来源降级原因：
+ *  - `llm_unavailable`：未配置 LLM（`isLLMAvailable()` 为 false）；
+ *  - `queue_timeout`：并发闸门排队超时（`QueueTimeoutError`，语义是 429「系统繁忙」）；
+ *  - `llm_error`：其它 LLM 调用错误（上游 5xx、超时、返回结构不合法等）。
+ */
+export type ExpertDegradeReason = 'llm_unavailable' | 'queue_timeout' | 'llm_error';
 
 /**
  * 评级命中率统计（决策-结果闭环）。

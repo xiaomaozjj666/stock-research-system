@@ -5491,6 +5491,34 @@ button.comparison-tag-add:disabled {
   background: rgba(138, 143, 152, 0.15);
   color: var(--text-muted);
 }
+/* 分数 / 评级档位（状态语义，与涨跌色解耦）
+   由 lib/colors.ts 的 scoreCls() / scoreBarCls() 产出。高分是「状态好」而不是「涨」，
+   所以走 --color-success（绿），低分走 --color-danger（红）——与 --color-positive（红涨）/
+   --color-negative（绿跌）的字面颜色相近但语义无关，禁止互相借用；涨跌方向用 signCls()。 */
+.score-excellent {
+  color: var(--color-success);
+}
+.score-good {
+  color: var(--accent);
+}
+.score-fair {
+  color: var(--color-warning);
+}
+.score-poor {
+  color: var(--color-danger);
+}
+.score-bar-excellent {
+  background: var(--color-success);
+}
+.score-bar-good {
+  background: var(--accent);
+}
+.score-bar-fair {
+  background: var(--color-warning);
+}
+.score-bar-poor {
+  background: var(--color-danger);
+}
 .factor-evidence {
   max-width: 280px;
   color: var(--text-secondary);

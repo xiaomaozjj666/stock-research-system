@@ -113,7 +113,8 @@ interface ScoreCase {
   quality: number;
   score: number;
   label: string;
-  color: string;
+  /** 期望的状态语义色类名（不是涨跌色） */
+  cls: string;
 }
 
 const SCORE_CASES: ScoreCase[] = [
@@ -123,7 +124,7 @@ const SCORE_CASES: ScoreCase[] = [
     quality: 80,
     score: 100,
     label: '优秀',
-    color: 'var(--color-positive)',
+    cls: 'score-excellent',
   },
   {
     title: '夏普 2 / 收益 35 / 回撤 25 / 胜率 55 / 质量 70 → 恰好 80（优秀下限）',
@@ -131,7 +132,7 @@ const SCORE_CASES: ScoreCase[] = [
     quality: 70,
     score: 80,
     label: '优秀',
-    color: 'var(--color-positive)',
+    cls: 'score-excellent',
   },
   {
     title: '夏普 1.5 / 收益 30 / 回撤 20 / 胜率 49 / 质量 59 → 78（差 2 分落到良好）',
@@ -139,7 +140,7 @@ const SCORE_CASES: ScoreCase[] = [
     quality: 59,
     score: 78,
     label: '良好',
-    color: 'var(--accent)',
+    cls: 'score-good',
   },
   {
     title: '夏普 1.49 / 收益 14.9 / 回撤 10.1 / 胜率 59.9 / 质量 79.9 → 67（各档均差一点点）',
@@ -147,7 +148,7 @@ const SCORE_CASES: ScoreCase[] = [
     quality: 79.9,
     score: 67,
     label: '良好',
-    color: 'var(--accent)',
+    cls: 'score-good',
   },
   {
     title: '夏普 1 / 收益 15 / 回撤 20 / 胜率 50 / 质量 60 → 77（各档下沿刚好命中）',
@@ -155,7 +156,7 @@ const SCORE_CASES: ScoreCase[] = [
     quality: 60,
     score: 77,
     label: '良好',
-    color: 'var(--accent)',
+    cls: 'score-good',
   },
   {
     title: '夏普 0.5 / 收益 0 / 回撤 30 / 胜率 49 / 质量 59 → 41（一般）',
@@ -163,7 +164,7 @@ const SCORE_CASES: ScoreCase[] = [
     quality: 59,
     score: 41,
     label: '一般',
-    color: 'var(--color-warning)',
+    cls: 'score-fair',
   },
   {
     title: '夏普 0.49 / 收益 0 / 回撤 30.1 / 胜率 60 / 质量 100 → 恰好 40（一般下限）',
@@ -171,7 +172,7 @@ const SCORE_CASES: ScoreCase[] = [
     quality: 100,
     score: 40,
     label: '一般',
-    color: 'var(--color-warning)',
+    cls: 'score-fair',
   },
   {
     title: '夏普 0.49 / 收益 -1 / 回撤 31 / 胜率 49 / 质量 0 → 13（理论最低）',
@@ -179,7 +180,7 @@ const SCORE_CASES: ScoreCase[] = [
     quality: 0,
     score: 13,
     label: '较差',
-    color: 'var(--color-negative)',
+    cls: 'score-poor',
   },
   {
     title: '夏普 0.99 / 收益 -0.1 / 回撤 20.1 / 胜率 49.9 / 质量 59.9 → 31（较差）',
@@ -187,7 +188,7 @@ const SCORE_CASES: ScoreCase[] = [
     quality: 59.9,
     score: 31,
     label: '较差',
-    color: 'var(--color-negative)',
+    cls: 'score-poor',
   },
   {
     title: '全部非有限值（NaN）时落到最低档而不是算出 NaN：5+0+0+5+3 = 13',
@@ -200,7 +201,7 @@ const SCORE_CASES: ScoreCase[] = [
     quality: Number.NaN,
     score: 13,
     label: '较差',
-    color: 'var(--color-negative)',
+    cls: 'score-poor',
   },
   {
     title: '极大值（夏普 999 / 收益 1e9 / 回撤 -5 / 胜率 100）仍封顶 100',
@@ -208,7 +209,7 @@ const SCORE_CASES: ScoreCase[] = [
     quality: 100,
     score: 100,
     label: '优秀',
-    color: 'var(--color-positive)',
+    cls: 'score-excellent',
   },
 ];
 
@@ -277,13 +278,13 @@ describe('ReportSummary —— 综合评分分档计算', () => {
   }
 });
 
-describe('ReportSummary —— 评分档位标签与配色', () => {
+describe('ReportSummary —— 评分档位标签与状态语义配色', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   for (const c of SCORE_CASES) {
-    it(`${c.score} 分显示「${c.label}」并用 ${c.color} 着色`, () => {
+    it(`${c.score} 分显示「${c.label}」并用状态色 ${c.cls} 着色`, () => {
       const { container } = renderPanel(
         makeReport({
           backtest: makeBacktest(c.backtest),
@@ -293,9 +294,39 @@ describe('ReportSummary —— 评分档位标签与配色', () => {
 
       const block = scoreBlock(container);
       expect(block.querySelector('.quant-summary-score-label')).toHaveTextContent(c.label);
-      expect(block.style.color).toBe(c.color);
+      expect(block.className.split(/\s+/)).toContain(c.cls);
     });
   }
+
+  it('不再借用涨跌色：整个面板不出现 val-positive / val-negative / --color-positive', () => {
+    const { container } = renderPanel(makeReport());
+
+    const html = container.innerHTML;
+    expect(html).not.toContain('val-positive');
+    expect(html).not.toContain('val-negative');
+    expect(html).not.toContain('--color-positive');
+    expect(html).not.toContain('--color-negative');
+    // 旧实现是内联 color，改造后配色只在类里，内联样式不该再出现
+    expect(scoreBlock(container).style.color).toBe('');
+  });
+
+  it('高分=状态绿、低分=危险红（不再把「优秀」画成涨红）', () => {
+    const { container: good } = renderPanel(
+      makeReport({
+        backtest: makeBacktest({ sharpeRatio: 2, totalReturn: 35, maxDrawdown: 10, winRate: 60 }),
+        dataQuality: makeQuality({ overallScore: 90 }),
+      }),
+    );
+    expect(scoreBlock(good).className).toContain('score-excellent');
+
+    const { container: bad } = renderPanel(
+      makeReport({
+        backtest: makeBacktest({ sharpeRatio: 0.2, totalReturn: -5, maxDrawdown: 45, winRate: 40 }),
+        dataQuality: makeQuality({ overallScore: 0 }),
+      }),
+    );
+    expect(scoreBlock(bad).className).toContain('score-poor');
+  });
 });
 
 describe('ReportSummary —— 可选文案与元信息', () => {

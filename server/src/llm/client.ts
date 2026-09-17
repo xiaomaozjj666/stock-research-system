@@ -512,7 +512,11 @@ export async function embed(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
   const config = getLLMConfig();
   const body = { model: getEmbedModel(), input: texts };
-  // 与其他 API 调用一致的超时与重试：此前完全无超时，端点 stall 会永久挂起
+  // 与其他 API 调用一致的超时与重试：此前完全无超时，端点 stall 会永久挂起。
+  // attempt 记下本次尝试的 AbortController：fetchWithRetry 在响应头到达时就清掉了它自己的
+  // 超时定时器，body 读取仍需独立兜底；把 controller 的 signal 交给 withTimeout，
+  // 超时才能真正 abort 连接（只 race 不取消的话，body 会照旧读到底）。
+  let attempt: AbortController | null = null;
   const response = await fetchWithRetry(
     `${getEmbedBaseUrl()}/embeddings`,
     {
@@ -523,13 +527,21 @@ export async function embed(texts: string[]): Promise<number[][]> {
       },
       body: JSON.stringify(body),
     },
-    { timeoutMs: 30000 },
+    {
+      timeoutMs: 30000,
+      onAttempt: (c) => {
+        attempt = c;
+      },
+    },
   );
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
     throw new Error(`LLM 嵌入失败 (${response.status}): ${errText.slice(0, 300)}`);
   }
-  const data = (await withTimeout(response.json(), 15000)) as {
+  // 闭包取值：TS 会把 `attempt` 直接读到的地方窄化成 null（赋值发生在回调里），
+  // 而这里要的是「回调此刻写入的最新 controller」（与 chatWithTools 的 () => attempt 同因）。
+  const currentAttempt = (): AbortController | undefined => attempt ?? undefined;
+  const data = (await withTimeout(response.json(), 15000, { controller: currentAttempt() })) as {
     data?: { embedding: number[] }[];
   };
   if (!data.data || data.data.length !== texts.length) {

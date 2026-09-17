@@ -8,8 +8,8 @@ import type { DataQualityReport } from '../types';
 /**
  * DataQualityPanel 行为测试
  * ----------------------------------------------------------------------------
- * 关注三件事：总分档位配色（>=80 绿?不——本项目 --color-positive 为红）、
- * 进度条宽度与颜色是否与总分同源，以及「问题/建议」两块的显示条件。
+ * 关注三件事：总分档位配色（状态语义，**不是**涨跌色：>=80 状态绿 / >=60 强调蓝 /
+ * 其余危险红）、进度条宽度与颜色是否与总分同源，以及「问题/建议」两块的显示条件。
  */
 
 function makeQuality(over: Partial<DataQualityReport> = {}): DataQualityReport {
@@ -38,14 +38,14 @@ function barEl(container: HTMLElement): HTMLElement {
   return container.querySelector('.quant-quality-bar') as HTMLElement;
 }
 
-/** 总分 → 颜色档位（>=80 / >=60 / 其余） */
-const COLOR_CASES: { score: number; color: string; note: string }[] = [
-  { score: 100, color: 'var(--color-positive)', note: '满分' },
-  { score: 80, color: 'var(--color-positive)', note: '80 为高档下限' },
-  { score: 79.9, color: 'var(--color-warning)', note: '79.9 掉到中档' },
-  { score: 60, color: 'var(--color-warning)', note: '60 为中档下限' },
-  { score: 59.9, color: 'var(--color-negative)', note: '59.9 掉到低档' },
-  { score: 0, color: 'var(--color-negative)', note: '0 分仍走低档色' },
+/** 总分 → 状态语义色档位（>=80 优秀 / >=60 良好 / 其余较差） */
+const COLOR_CASES: { score: number; cls: string; note: string }[] = [
+  { score: 100, cls: 'score-excellent', note: '满分' },
+  { score: 80, cls: 'score-excellent', note: '80 为高档下限' },
+  { score: 79.9, cls: 'score-good', note: '79.9 掉到中档' },
+  { score: 60, cls: 'score-good', note: '60 为中档下限' },
+  { score: 59.9, cls: 'score-poor', note: '59.9 掉到低档' },
+  { score: 0, cls: 'score-poor', note: '0 分仍走低档色' },
 ];
 
 describe('DataQualityPanel —— 总分与进度条', () => {
@@ -54,15 +54,28 @@ describe('DataQualityPanel —— 总分与进度条', () => {
   });
 
   for (const c of COLOR_CASES) {
-    it(`${c.note}（${c.score}）用 ${c.color} 着色，进度条宽度同步为 ${c.score}%`, () => {
+    it(`${c.note}（${c.score}）用状态色 ${c.cls} 着色，进度条宽度同步为 ${c.score}%`, () => {
       const { container } = renderPanel(makeQuality({ overallScore: c.score }));
 
       expect(scoreEl(container)).toHaveTextContent(String(c.score));
-      expect(scoreEl(container).style.color).toBe(c.color);
+      expect(scoreEl(container).className.split(/\s+/)).toContain(c.cls);
+      expect(barEl(container).className.split(/\s+/)).toContain(`score-bar-${c.cls.slice(6)}`);
       expect(barEl(container).style.width).toBe(`${c.score}%`);
-      expect(barEl(container).style.background).toBe(c.color);
     });
   }
+
+  it('不再借用涨跌色：不出现 val-positive / val-negative / --color-positive', () => {
+    const { container } = renderPanel(makeQuality({ overallScore: 95 }));
+
+    const html = container.innerHTML;
+    expect(html).not.toContain('val-positive');
+    expect(html).not.toContain('val-negative');
+    expect(html).not.toContain('--color-positive');
+    expect(html).not.toContain('--color-negative');
+    // 配色只在类里，内联样式不该再带颜色
+    expect(scoreEl(container).style.color).toBe('');
+    expect(barEl(container).style.background).toBe('');
+  });
 
   it('标题与满分口径固定为「数据质量报告」+ /100', () => {
     const { container } = renderPanel(makeQuality());

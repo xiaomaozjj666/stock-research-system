@@ -35,6 +35,63 @@ export function significanceCls(kind: SignificanceKind): string {
 }
 
 /**
+ * 分数 / 评级好坏 → 状态语义色类名（**不是**涨跌方向）
+ * ----------------------------------------------------------------------------
+ * 「优秀 / 良好 / 一般 / 较差」是状态判定而不是数值方向：此前 DataQualityPanel 与
+ * ReportSummary 用 --color-positive（红）表示高分，等于把「好成绩」画成「涨停」，
+ * 与同页面的 .val-positive（红涨）语义直接冲突。
+ * 这里改用与涨跌解耦的状态色板（--color-success / --accent / --color-warning /
+ * --color-danger），类定义在 index.css；页面上的收益 / alpha 方向一律继续用 signCls()。
+ */
+export interface ScoreThresholds {
+  /** >= excellent 为「优秀 / 高分」 */
+  excellent: number;
+  /** >= good 为「良好」 */
+  good: number;
+  /** >= fair 为「一般 / 需注意」；低于 fair 为「较差」 */
+  fair: number;
+}
+
+/** 综合评分默认口径：80 优秀 / 60 良好 / 40 一般 */
+export const DEFAULT_SCORE_THRESHOLDS: ScoreThresholds = { excellent: 80, good: 60, fair: 40 };
+
+/**
+ * 数据质量面板口径：只有三档（>=80 优秀 / >=60 良好 / 其余较差）。
+ * fair 与 good 同值 = 不设「一般」档，语义见 scoreGrade 的注释。
+ */
+export const DATA_QUALITY_SCORE_THRESHOLDS: ScoreThresholds = { excellent: 80, good: 60, fair: 60 };
+
+export type ScoreGrade = 'excellent' | 'good' | 'fair' | 'poor';
+
+/** 分数 → 档位（非有限值一律算「较差」，避免 NaN 落进高分档） */
+export function scoreGrade(
+  score: number,
+  thresholds: ScoreThresholds = DEFAULT_SCORE_THRESHOLDS,
+): ScoreGrade {
+  if (!Number.isFinite(score)) return 'poor';
+  if (score >= thresholds.excellent) return 'excellent';
+  if (score >= thresholds.good) return 'good';
+  if (score >= thresholds.fair) return 'fair';
+  return 'poor';
+}
+
+/** 分数文字的配色类名（状态语义，不是涨跌色） */
+export function scoreCls(
+  score: number,
+  thresholds: ScoreThresholds = DEFAULT_SCORE_THRESHOLDS,
+): string {
+  return `score-${scoreGrade(score, thresholds)}`;
+}
+
+/** 分数进度条 / 色块的配色类名（与 scoreCls 同档，供 background 使用） */
+export function scoreBarCls(
+  score: number,
+  thresholds: ScoreThresholds = DEFAULT_SCORE_THRESHOLDS,
+): string {
+  return `score-bar-${scoreGrade(score, thresholds)}`;
+}
+
+/**
  * 图表取色：与 index.css :root 的设计令牌一一对应
  * ----------------------------------------------------------------------------
  * ECharts 画在 canvas 上，`fillStyle = 'var(--accent)'` 是无效值（canvas 解析不了

@@ -1,13 +1,8 @@
 import type { DataQualityReport } from './types';
+import { DATA_QUALITY_SCORE_THRESHOLDS, scoreBarCls, scoreCls } from '../../lib/colors';
 
 interface Props {
   data: DataQualityReport;
-}
-
-function getScoreColor(score: number): string {
-  if (score >= 80) return 'var(--color-positive)';
-  if (score >= 60) return 'var(--color-warning)';
-  return 'var(--color-negative)';
 }
 
 export default function DataQualityPanel({ data }: Props) {
@@ -16,22 +11,21 @@ export default function DataQualityPanel({ data }: Props) {
   const score = Number.isFinite(data.overallScore)
     ? Math.min(100, Math.max(0, data.overallScore))
     : 0;
-  const scoreColor = getScoreColor(score);
+  // 分数好坏是状态语义（绿=好 / 红=差），不再借用 --color-positive（红涨）
+  const scoreClass = scoreCls(score, DATA_QUALITY_SCORE_THRESHOLDS);
+  const barClass = scoreBarCls(score, DATA_QUALITY_SCORE_THRESHOLDS);
 
   return (
     <div className="card quant-panel">
       <h3 className="quant-panel-title">数据质量报告</h3>
 
       <div className="quant-quality-header">
-        <div className="quant-quality-score" style={{ color: scoreColor }}>
+        <div className={`quant-quality-score ${scoreClass}`}>
           {score}
           <span className="quant-quality-max">/100</span>
         </div>
         <div className="quant-quality-bar-wrap">
-          <div
-            className="quant-quality-bar"
-            style={{ width: `${score}%`, background: scoreColor }}
-          />
+          <div className={`quant-quality-bar ${barClass}`} style={{ width: `${score}%` }} />
         </div>
       </div>
 

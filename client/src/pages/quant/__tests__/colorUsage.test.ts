@@ -78,3 +78,58 @@ describe('量化面板着色口径（signCls / significanceCls）', () => {
     expect(src).toContain('signCls(data.totalReturn)');
   });
 });
+
+/**
+ * 分数着色口径防回归（源码级）
+ * ----------------------------------------------------------------------------
+ * 「优秀 / 良好 / 一般 / 较差」是状态判定，不是涨跌方向：这两个面板曾用
+ * --color-positive（红）表示高分，等于把好成绩画成涨停。改造后必须走
+ * lib/colors.ts 的 scoreCls()/scoreBarCls()（.score-* 状态色板），
+ * 且不得再出现 val-* / --color-positive / --color-negative。
+ * DOM 侧断言见 ReportSummary.test.tsx / DataQualityPanel.test.tsx。
+ */
+const SCORE_PANELS = {
+  ReportSummary: '../ReportSummary.tsx',
+  DataQualityPanel: '../DataQualityPanel.tsx',
+} as const;
+
+describe('分数着色口径（scoreCls 状态色，禁止借用涨跌色）', () => {
+  for (const name of Object.keys(SCORE_PANELS) as (keyof typeof SCORE_PANELS)[]) {
+    it(`${name}：分数色走 scoreCls，源码里不再出现 val-positive/val-negative 与 --color-positive/--color-negative`, () => {
+      const src = code(
+        readFileSync(fileURLToPath(new URL(SCORE_PANELS[name], import.meta.url)), 'utf-8'),
+      );
+
+      expect(src).toContain('scoreCls(');
+      expect(src).toContain("from '../../lib/colors'");
+      expect(src).not.toContain('val-positive');
+      expect(src).not.toContain('val-negative');
+      expect(src).not.toContain('--color-positive');
+      expect(src).not.toContain('--color-negative');
+    });
+  }
+
+  it('DataQualityPanel：进度条底色用 scoreBarCls（与文字同档）而不是内联 background', () => {
+    const src = code(
+      readFileSync(fileURLToPath(new URL('../DataQualityPanel.tsx', import.meta.url)), 'utf-8'),
+    );
+
+    expect(src).toContain('scoreBarCls(');
+    expect(src).not.toMatch(/background:\s*(scoreColor|scoreCls)/);
+  });
+
+  it('收益 / alpha 方向仍走 signCls（涨跌方向没有被一起改成状态色）', () => {
+    const backtest = code(
+      readFileSync(fileURLToPath(new URL('../BacktestChart.tsx', import.meta.url)), 'utf-8'),
+    );
+    expect(backtest).toContain('signCls(data.totalReturn)');
+    expect(backtest).toContain('signCls(data.annualizedReturn)');
+
+    // alpha 方向（方向性组合 alpha 的总方向 + 各期方向）同样是涨跌方向，保持 val-*
+    const factor = code(
+      readFileSync(fileURLToPath(new URL('../FactorPanel.tsx', import.meta.url)), 'utf-8'),
+    );
+    expect(factor).toContain('signCls(directionSign[alpha.overallDirection])');
+    expect(factor).not.toContain('scoreCls(');
+  });
+});

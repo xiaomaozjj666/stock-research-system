@@ -63,6 +63,19 @@ describe('computeCompositeAlphaForStrategy — 结构与降级', () => {
     expect(r.benchmarkAvailable).toBe(true);
     expect(['up', 'down', 'neutral']).toContain(r.compositeAlpha.overallDirection);
     expect(typeof r.compositeAlpha.hasSignal).toBe('boolean');
+    // 真实行情（无 isSimulated 标记）→ 非模拟
+    expect(r.isSimulated).toBe(false);
+  });
+
+  it('模拟降级 K 线 → 结果带 isSimulated=true（批量闸门据此判定，无需预先探测）', async () => {
+    // dataProvider 在行情源不可达且无历史缓存时返回合成曲线（逐根带 isSimulated）
+    vi.spyOn(global, 'fetch').mockRejectedValue(new Error('upstream down'));
+
+    const r = await computeCompositeAlphaForStrategy('600519', '2024-01-01', '2025-03-01');
+    expect(r.isSimulated).toBe(true);
+    expect(r.bars).toBeGreaterThan(0);
+    // 基准同样不可用：模拟曲线不得与「真实基准」拼出结论
+    expect(r.benchmarkAvailable).toBe(false);
   });
 
   it('美股代码 → market=US、基准=100.SPX', async () => {

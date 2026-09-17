@@ -46,6 +46,15 @@ export interface CompositeAlphaResult {
   dataRange: { start: string; end: string };
   /** 市场基准收益是否成功获取（false 时 Beta 类因子未参与加权） */
   benchmarkAvailable: boolean;
+  /**
+   * 本次使用的 K 线是否来自模拟降级（dataProvider 在行情源不可达且无历史时返回的
+   * 确定性合成曲线，逐根带 isSimulated）。
+   *
+   * 单只路由据此 422 拒答；批量路由此前**没有**这个标记，只能靠 findSimulatedCodes()
+   * 先按同一取数口径预检一遍——冷缓存时整批多一轮上游拉取。透出该标记后批量路径
+   * 改为跑完后据结果判定，取数次数减半且语义不变（见 routes/quant.ts）。
+   */
+  isSimulated: boolean;
 }
 
 /**
@@ -64,6 +73,9 @@ export async function computeCompositeAlphaForStrategy(
   if (!ohlcv || ohlcv.length === 0) {
     throw new Error(`无法获取股票 ${stockCode} 的K线数据`);
   }
+  // 模拟数据闸门的判据（与 routes/quant.ts 的 hasSimulatedBars 同一口径）：
+  // provider 的合成降级是整条序列逐根打标，任一为真即整条不可信
+  const isSimulated = ohlcv.some((b) => b?.isSimulated === true);
   const market = marketOf(stockCode);
   const benchmarkSecid = benchmarkSecidForMarket(market);
 
@@ -107,6 +119,7 @@ export async function computeCompositeAlphaForStrategy(
     bars: ohlcv.length,
     dataRange: { start: ohlcv[0].date, end: ohlcv[ohlcv.length - 1].date },
     benchmarkAvailable,
+    isSimulated,
   };
 }
 

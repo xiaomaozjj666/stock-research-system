@@ -157,4 +157,22 @@ describe('ComparisonView 部分成功', () => {
       expect(btn).toHaveAttribute('title', expect.stringContaining('需至少一只成功结果才能重试'));
     }
   });
+
+  it('失败列的重试按钮带 no-print（纸上点不动，且会让人以为报告还能重跑）', async () => {
+    api.compareStocks.mockResolvedValue({
+      stocks: [stock('600519', '贵州茅台')],
+      failures: [{ code: '000858', error: '行情或财务数据不可用（可能已停牌或数据源异常）' }],
+    });
+
+    render(<ComparisonView />);
+    startCompare();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '重试这一只' })).toBeInTheDocument(),
+    );
+
+    const retry = screen.getByTestId('retry-000858');
+    expect(retry.className.split(/\s+/)).toContain('no-print');
+    // 失败原因（信息本身）仍要印出来
+    expect(screen.getByText('分析失败').className.split(/\s+/)).not.toContain('no-print');
+  });
 });

@@ -458,7 +458,8 @@ export default function PriceTrendChart({ data, stockName }: PriceTrendChartProp
           {stockName ? ` · ${stockName}` : ''}
           {isSimulated && <span className="trend-badge">模拟数据</span>}
         </h4>
-        <div className="trend-controls">
+        {/* 周期 / 均线工具条是纯交互控件：印在纸上既无法操作也没有信息量，加 .no-print */}
+        <div className="trend-controls no-print">
           <div className="seg">
             {PERIODS.map((p) => (
               <button

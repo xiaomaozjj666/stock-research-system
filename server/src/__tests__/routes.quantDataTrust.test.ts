@@ -8,6 +8,9 @@
  *      backtest-evaluate / batch 四条路径取数后从不检查该标记，用户拿到的是基于
  *      合成曲线算出的 IC/t/p、compositeAlpha、totalReturn/sharpe，且 HTTP 200，
  *      无从分辨。现在统一 422 + degraded，不返回任何指标。
+ *      注：批量路径的闸门已从「先按同一取数口径预检一遍」改为「跑完后据逐股结果的
+ *      isSimulated 判定」（#3，冷缓存时去掉一整轮多余上游拉取）——响应语义
+ *      （422 + degraded + 命中代码）不变，本文件相应断言改为「路由层零取数」。
  *   2. **horizons 解析口径四处不一致**：单只 composite 连上界都没有（h=1e9 可通过）；
  *      截面/表达式只有单元素值域、无个数上限（16000 个整数约 64KB body 即可通过，
  *      每档一轮全截面测算）；batch 先 floor 再没复检下界（h=0.5 → 0 →
@@ -193,10 +196,23 @@ describe('模拟行情闸门：合成 K 线不得流入结论', () => {
     expect(res.body.stockCode).toBe('600519');
   });
 
-  it('batch composite 任一只命中模拟数据 → 422 + 列出命中代码，不跑整批', async () => {
+  it('batch composite 任一只命中模拟数据 → 422 + 列出命中代码，不返回任何指标', async () => {
     mockedBars.mockImplementation((code: string) =>
       Promise.resolve(code === '000858' ? simulatedBars() : realBars()),
     );
+    // 批量闸门改为「跑完后据逐股结果判定」：结果里带 isSimulated 标记（见 #3）
+    mockedBatch.mockResolvedValue({
+      requested: 2,
+      succeeded: 2,
+      failed: 0,
+      items: [
+        { stockCode: '600519', ok: true, result: { isSimulated: false, bars: 300 } },
+        { stockCode: '000858', ok: true, result: { isSimulated: true, bars: 300 } },
+      ],
+      startDate: '2024-01-01',
+      endDate: '2025-03-01',
+      horizons: [21, 63],
+    } as never);
 
     const res = await request(app)
       .post('/api/quant/factor/composite/batch')
@@ -206,8 +222,8 @@ describe('模拟行情闸门：合成 K 线不得流入结论', () => {
     expect(res.body.degraded).toBe(true);
     expect(res.body.simulatedCodes).toEqual(['000858']);
     expectNoMetrics(res.body);
-    // 批量结果不携带 isSimulated 标记，必须在调用批量服务**之前**拦下
-    expect(mockedBatch).not.toHaveBeenCalled();
+    // 改为跑完判定后不允许再预检取数：路由层一次 fetchOHLCVData 都不该发起
+    expect(mockedBars).not.toHaveBeenCalled();
   });
 
   it('截面路径命中模拟数据 → 422，不产出任何因子报告', async () => {

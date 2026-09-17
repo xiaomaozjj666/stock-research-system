@@ -416,9 +416,27 @@ export function buildOpenApiDocument() {
             },
             { name: 'endTime', in: 'query', schema: { type: 'number', description: '毫秒时间戳' } },
             { name: 'sessionId', in: 'query', schema: { type: 'string' } },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0 },
+              description: '本页条数上限（>= 0 的整数）；不传则返回全部分页',
+            },
+            {
+              name: 'offset',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0 },
+              description: '起始偏移（>= 0 的整数）；不传则从第一条开始，与 limit 均不传时返回全部',
+            },
           ],
           responses: {
-            200: { description: '审计条目（count/entries）' },
+            200: {
+              description:
+                '审计条目：count 为**匹配总数**（不是本页条数，供「共 N 条 / 加载更多」），entries 为本页条目',
+            },
+            400: errorResponse(
+              '查询参数非法（时间戳需为 epoch 毫秒，limit/offset 需为 >= 0 的整数）',
+            ),
             500: errorResponse('审计查询失败'),
           },
         },

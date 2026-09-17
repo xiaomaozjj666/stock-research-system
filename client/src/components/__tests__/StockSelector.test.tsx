@@ -142,6 +142,22 @@ describe('StockSelector —— 搜索历史', () => {
     expect(localStorage.getItem(HISTORY_KEY)).toBeNull();
   });
 
+  it('历史管理动作带 no-print（打印报告时「清空全部」与「×」不该出现在纸面上）', () => {
+    localStorage.setItem(
+      HISTORY_KEY,
+      JSON.stringify([{ code: '600519', name: '贵州茅台', timestamp: 1 }]),
+    );
+    render(<StockSelector onAnalyze={vi.fn()} loading={false} />);
+    fireEvent.focus(input());
+
+    expect(screen.getByRole('button', { name: '清空全部' }).className.split(/\s+/)).toContain(
+      'no-print',
+    );
+    for (const btn of screen.getAllByTitle('删除')) {
+      expect(btn.className.split(/\s+/)).toContain('no-print');
+    }
+  });
+
   it('点击历史项即选中该标的', () => {
     localStorage.setItem(
       HISTORY_KEY,

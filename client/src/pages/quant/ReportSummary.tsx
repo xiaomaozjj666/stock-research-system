@@ -1,4 +1,5 @@
 import type { QuantResearchReport } from './types';
+import { scoreCls } from '../../lib/colors';
 
 interface Props {
   data: QuantResearchReport;
@@ -46,16 +47,16 @@ function getScoreLabel(score: number): string {
   return '较差';
 }
 
-function getScoreColor(score: number): string {
-  if (score >= 80) return 'var(--color-positive)';
-  if (score >= 60) return 'var(--accent)';
-  if (score >= 40) return 'var(--color-warning)';
-  return 'var(--color-negative)';
+function getScoreClass(score: number): string {
+  // 分数好坏是**状态**判定，不是涨跌方向：这里返回 lib/colors.ts 的状态色类名
+  // （80+ 优秀=状态绿 / 60+ 良好=强调蓝 / 40+ 一般=警示琥珀 / 其余较差=危险红）。
+  // 此前用 --color-positive（红）表示「优秀」，等于把高分画成涨停，与 .val-positive 冲突。
+  return scoreCls(score);
 }
 
 export default function ReportSummary({ data }: Props) {
   const score = getOverallScore(data);
-  const scoreColor = getScoreColor(score);
+  const scoreClsName = getScoreClass(score);
 
   return (
     <div className="card quant-panel quant-summary-panel">
@@ -72,7 +73,7 @@ export default function ReportSummary({ data }: Props) {
                   : '自定义策略'}
           </span>
         </div>
-        <div className="quant-summary-score-block" style={{ color: scoreColor }}>
+        <div className={`quant-summary-score-block ${scoreClsName}`}>
           <div className="quant-summary-score">{score}</div>
           <div className="quant-summary-score-label">{getScoreLabel(score)}</div>
         </div>

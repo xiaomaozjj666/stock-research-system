@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import ReportHeader from '../ReportHeader';
 
@@ -191,5 +191,38 @@ describe('ReportHeader 报告时间语境', () => {
     const fresh = new Date().toISOString().slice(0, 10);
     render(<ReportHeader data={base} dataAsOf={fresh} />);
     expect(screen.getByText(/数据截止/).textContent || '').not.toContain('可能滞后');
+  });
+});
+
+describe('ReportHeader 打印友好（.no-print）', () => {
+  it('导出 / 打印按钮带 no-print：按钮不该被印进报告纸面', () => {
+    render(<ReportHeader data={base} onExport={vi.fn()} />);
+
+    const buttons = [
+      screen.getByRole('button', { name: '导出报告' }),
+      screen.getByRole('button', { name: '打印' }),
+    ];
+    for (const btn of buttons) {
+      expect(btn.className.split(/\s+/)).toContain('no-print');
+    }
+    // 容器本身也带，避免两个按钮都被改成其它类名时整块动作区又出现在纸上
+    expect(buttons[0].parentElement?.className.split(/\s+/)).toContain('no-print');
+  });
+
+  it('未传 onExport 时只剩打印按钮，且同样带 no-print', () => {
+    render(<ReportHeader data={base} />);
+
+    expect(screen.queryByRole('button', { name: '导出报告' })).toBeNull();
+    expect(screen.getByRole('button', { name: '打印' }).className.split(/\s+/)).toContain(
+      'no-print',
+    );
+  });
+
+  it('报告正文（股票名 / 评分 / 评级）不带 no-print，仍会印出来', () => {
+    render(<ReportHeader data={base} />);
+
+    expect(screen.getByText('贵州茅台').className.split(/\s+/)).not.toContain('no-print');
+    expect(screen.getByText('85').className.split(/\s+/)).not.toContain('no-print');
+    expect(screen.getByText('优先跟踪').className.split(/\s+/)).not.toContain('no-print');
   });
 });

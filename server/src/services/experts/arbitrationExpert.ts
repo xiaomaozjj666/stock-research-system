@@ -8,6 +8,9 @@ import type {
 import { safeDiv } from '../safeDiv.js';
 import { isLLMAvailable, chatJSON, type ChatMessage } from '../../llm/index.js';
 import { formatContext } from '../../llm/prompts.js';
+import { markDegraded } from '../../llm/expertRunner.js';
+import { isQueueTimeoutError } from '../../utils/limitGate.js';
+import type { ExpertDegradeReason } from '../../types.js';
 import logger from '../../utils/logger.js';
 
 export interface ArbitrationInput {
@@ -385,7 +388,12 @@ export async function arbitrationExpert(input: ArbitrationInput): Promise<{
   controversies: ControversyPoint[];
   finalOpinion: ExpertOpinion;
 }> {
-  if (!isLLMAvailable()) return arbitrationExpertRule(input);
+  // 降级也要可被上层看见：规则引擎的仲裁结论若不加标记，报告会把它当成 LLM 仲裁呈现
+  // （标记约定与 8 位专家一致，见 llm/expertRunner.ts 的 markDegraded）。
+  if (!isLLMAvailable()) {
+    const ruled = arbitrationExpertRule(input);
+    return { ...ruled, finalOpinion: markDegraded(ruled.finalOpinion, 'llm_unavailable') };
+  }
 
   // 构建专家意见摘要供 LLM 仲裁
   const opinionsBrief = input.opinions
@@ -416,8 +424,10 @@ export async function arbitrationExpert(input: ArbitrationInput): Promise<{
     });
     return normalizeArbitration(raw);
   } catch (err) {
-    logger.warn('[LLM] 仲裁专家降级规则引擎', { err: err as Error });
-    return arbitrationExpertRule(input);
+    const reason: ExpertDegradeReason = isQueueTimeoutError(err) ? 'queue_timeout' : 'llm_error';
+    logger.warn('[LLM] 仲裁专家降级规则引擎', { err: err as Error, reason });
+    const ruled = arbitrationExpertRule(input);
+    return { ...ruled, finalOpinion: markDegraded(ruled.finalOpinion, reason) };
   }
 }
 

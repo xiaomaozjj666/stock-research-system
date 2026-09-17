@@ -70,6 +70,19 @@ describe('PriceTrendChart', () => {
     }).not.toThrow();
   });
 
+  it('周期 / 均线工具条带 no-print：纸面上点不动的控件不该出现', () => {
+    const { container, getByText } = render(<PriceTrendChart data={makeData()} />);
+
+    const controls = container.querySelector('.trend-controls') as HTMLElement;
+    expect(controls).not.toBeNull();
+    expect(controls.className.split(/\s+/)).toContain('no-print');
+    // 图表本体（标题 + 画布）仍要印出来
+    expect(container.querySelector('.trend-chart-head h4')?.className.split(/\s+/)).not.toContain(
+      'no-print',
+    );
+    expect(getByText(/行情走势/)).toBeInTheDocument();
+  });
+
   it('周期 / 指标按钮带 aria-pressed，随状态翻转（读屏才知道是否已启用）', () => {
     const { getByText } = render(<PriceTrendChart data={makeData()} />);
 

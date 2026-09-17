@@ -66,6 +66,12 @@ import {
   type BaostockIndex,
 } from '../quant/baostockBridge.js';
 import { runMarketScreener, readLatestScreenerRun, ScreenerParamError } from '../quant/screener.js';
+import {
+  DateRangeParamError,
+  DEFAULT_FACTOR_WINDOW_DAYS,
+  resolveDateRange,
+  type ResolveDateRangeSpec,
+} from '../utils/dateRange.js';
 import { runEnsemble, recordModelOutcome, getModelWeights } from '../llm/ensemble.js';
 import {
   validateMessages,
@@ -466,11 +472,11 @@ router.post('/api/quant/factor/composite', quantLimiter, circuitBreakerGuard, as
     if (!normalizedCode) {
       return res.status(400).json({ error: '股票代码格式无效（应为 6 位数字）' });
     }
-    const startDate = String(
-      body.startDate ??
-        new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
-    );
-    const endDate = String(body.endDate ?? new Date().toISOString().split('T')[0]);
+    // 区间校验（#2）：非法日期 / 倒置 / 超长跨度 → 400 + 中文原因，且一次 K 线都不取。
+    // 未传时沿用既有默认区间（约 2 年 → 今天），正常路径行为不变。
+    const parsedDates = datesOrReject(body.startDate, body.endDate, res);
+    if (!parsedDates.ok) return;
+    const { start: startDate, end: endDate } = parsedDates;
     // horizons 统一解析：非法（非整数 / <1 / >504 / 档位过多）→ 400，不静默回落默认值
     const parsedHorizons = horizonsOrReject(body.horizons, res);
     if (!parsedHorizons.ok) return;
@@ -523,11 +529,10 @@ router.post(
           error: `股票代码格式无效（应为 6 位数字）：${invalid.slice(0, 5).join('、')}`,
         });
       }
-      const startDate = String(
-        body.startDate ??
-          new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
-      );
-      const endDate = String(body.endDate ?? new Date().toISOString().split('T')[0]);
+      // 区间校验（#2，同 /composite）：非法日期/倒置/超长跨度 → 400，且整批一次都不取数
+      const parsedDates = datesOrReject(body.startDate, body.endDate, res);
+      if (!parsedDates.ok) return;
+      const { start: startDate, end: endDate } = parsedDates;
       // horizons 统一解析（同 /composite）：非法即 400，不再「先 floor 再用」——
       // h=0.5 曾静默变 0 → Math.ceil(m/0)=Infinity → tStat=NaN → 响应字段成 null
       const parsedHorizons = horizonsOrReject(body.horizons, res);
@@ -547,11 +552,6 @@ router.post(
       }
       // 客户端提前断开（取消/关页）→ 级联中止在途取数
       const abort = abortOnClientClose(res);
-      // 模拟数据闸门（批量）：compositeService 的逐股结果不带 isSimulated 标记，
-      // 故先按同一取数口径探测一遍；命中即 422，不进入整批测算
-      const simulatedCodes = await findSimulatedCodes(codes, startDate, endDate, abort.signal);
-      if (abort.signal.aborted) return;
-      if (rejectIfAnySimulated(simulatedCodes, res)) return;
       const result = await computeCompositeAlphaBatch(
         codes,
         startDate,
@@ -561,6 +561,11 @@ router.post(
         abort.signal,
       );
       if (abort.signal.aborted) return; // 客户端已不在：静默终止，不写响应
+      // 模拟数据闸门（批量）：改用**跑完后**的逐股结果判定（compositeService 现已透出
+      // isSimulated），不再先按同一取数口径预检一遍——冷缓存时那等于整批多一轮上游拉取。
+      // 响应语义与预检版完全一致：422 + degraded + 命中代码，且不返回任何指标。
+      const simulatedCodes = simulatedCodesFromBatch(result);
+      if (rejectIfAnySimulated(simulatedCodes, res)) return;
       res.json({
         ...result,
         run: runSnapshot({
@@ -731,6 +736,41 @@ function horizonsOrReject(
   }
 }
 
+/**
+ * 取数区间统一解析（composite / composite-batch / expression / expression-batch 四处共用）。
+ *
+ * 此前这四处只对 startDate/endDate 做 `String()` 强转（expression 两条甚至完全忽略入参、
+ * 固定 730 天窗口）：非法日期 / 倒置区间 / 十年以上的超长跨度会原样落到「每只股票按同一
+ * 区间拉一遍 K 线」上，截面宽度 × 区间长度直接乘出上游成本。现在与全市场初筛共用
+ * utils/dateRange 的同一套规则（真实日历日 / 顺序 / 跨度上限），非法即 400 + 中文原因，
+ * **不静默回落默认值**（回落会让调用方以为跑的是自己给的区间）。
+ *
+ * 未传时沿用各路由既有默认区间（defaultSpanDays），正常路径行为不变。
+ */
+function datesOrReject(
+  startDate: unknown,
+  endDate: unknown,
+  res: { status: (n: number) => { json: (b: unknown) => void } },
+  spec: ResolveDateRangeSpec = { defaultSpanDays: DEFAULT_FACTOR_WINDOW_DAYS },
+) {
+  try {
+    return {
+      ok: true as const,
+      ...resolveDateRange(
+        startDate === undefined || startDate === null ? undefined : String(startDate),
+        endDate === undefined || endDate === null ? undefined : String(endDate),
+        spec,
+      ),
+    };
+  } catch (error) {
+    if (error instanceof DateRangeParamError) {
+      res.status(400).json({ error: error.message });
+      return { ok: false as const };
+    }
+    throw error;
+  }
+}
+
 // === 模拟数据（合成 K 线）不得流入结论 ===
 // dataProvider 在行情源不可达时会返回按代码播种的确定性合成 K 线（isSimulated=true，
 // 见 dataProvider.ts 的「真失败且无历史 → 降级模拟数据」分支）。它只适合演示，
@@ -761,37 +801,26 @@ function rejectIfSimulated(
 }
 
 /**
- * 批量路径的取数预检：逐只探测是否命中模拟数据。
+ * 批量路径的模拟数据命中代码（**跑完后**判定，不再预先探测）。
  *
- * 为什么要在批量**之前**单独探测：compositeService 的批量结果不携带 isSimulated
- * 标记（逐股结果里只有 bars 条数），若等它跑完再判断就只能靠猜。预检走同一个
- * fetchOHLCVData（命中 12h 磁盘缓存时零网络调用），宁可多一次缓存命中，
- * 也不让合成曲线冒充真实行情混进 IC/t/p。
+ * 历史：compositeService 的批量结果原先不携带 isSimulated 标记，只能靠
+ * findSimulatedCodes() 在批量之前按同一取数口径把每只再拉一遍——冷缓存时整批
+ * 多一轮上游拉取（成本翻倍），热缓存时也白跑一遍。现在逐股结果透出 isSimulated，
+ * 这里直接从结果里取命中代码：取数次数减半，闸门语义（422 + degraded + 代码列表）
+ * 与判定口径（合成曲线不得流入 IC/t/p）完全不变。
+ *
+ * 失败项（ok:false）不计入：它压根没产出任何指标，与预检版「取数抛错不改变语义」一致。
  */
-async function findSimulatedCodes(
-  codes: string[],
-  startDate: string,
-  endDate: string,
-  signal?: AbortSignal,
-): Promise<string[]> {
-  const limit = Math.min(4, Math.max(1, codes.length));
-  let cursor = 0;
+function simulatedCodesFromBatch(result: {
+  items?: { stockCode?: unknown; ok?: unknown; result?: { isSimulated?: unknown } }[];
+}): string[] {
+  if (!Array.isArray(result?.items)) return [];
   const hits: string[] = [];
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      if (signal?.aborted) return;
-      const i = cursor++;
-      if (i >= codes.length) return;
-      const code = codes[i];
-      try {
-        const bars = await fetchOHLCVData(code, startDate, endDate, signal);
-        if (hasSimulatedBars(bars)) hits.push(code);
-      } catch {
-        // 取数抛错由后续真实路径处理（该项会被标记 ok:false），预检不改变其语义
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: limit }, () => worker()));
+  for (const item of result.items) {
+    if (item?.ok !== true) continue;
+    if (item.result?.isSimulated !== true) continue;
+    if (typeof item.stockCode === 'string') hits.push(item.stockCode);
+  }
   return hits;
 }
 
@@ -1797,6 +1826,9 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
       source?: unknown;
       /** 可选：因子组合回测（top-N 等权、周期调仓、A 股成本）——从 IC 到 PnL 的最后一问 */
       portfolio?: unknown;
+      /** 取数区间（#2）：未传时沿用 730 天默认窗口；传了必须为真实日历日且跨度受限 */
+      startDate?: unknown;
+      endDate?: unknown;
     };
     const expression = String(body.expression ?? '').trim();
     if (!expression) return res.status(400).json({ error: '请提供因子表达式 expression' });
@@ -1816,6 +1848,11 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
     if (!parsedHorizons.ok) return;
     const horizons = parsedHorizons.horizons;
     const portfolioOpts = parsePortfolioOpts(body.portfolio);
+    // 区间校验（#2）：这两条路由此前**完全忽略** startDate/endDate、固定 730 天窗口，
+    // 传了非法/超长区间既不生效也不报错。现在入参被真正采用，且非法即 400 且零取数；
+    // 未传时默认窗口（730 天 → 今天）与旧行为逐日一致。
+    const parsedDates = datesOrReject(body.startDate, body.endDate, res);
+    if (!parsedDates.ok) return;
 
     // 预检 + universe 解析（三路由共用助手；board 门槛 = 板块列表源）
     const preflight = await runPreflight();
@@ -1824,8 +1861,7 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
     const codes = resolved.codes;
     const universe = resolved.universe;
 
-    const end = new Date().toISOString().slice(0, 10);
-    const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    const { start, end } = parsedDates;
     abort = abortOnClientClose(res);
     const { inputs, simulatedCodes } = await fetchPanelInputs(codes, {
       start,
@@ -1914,6 +1950,9 @@ router.post(
         source?: unknown;
         /** 可选：逐条做因子组合回测（共享同一取数面板） */
         portfolio?: unknown;
+        /** 取数区间（#2）：未传时沿用 730 天默认窗口；传了必须为真实日历日且跨度受限 */
+        startDate?: unknown;
+        endDate?: unknown;
       };
       const raw = Array.isArray(body.expressions) ? body.expressions : [];
       const expressions = raw
@@ -1950,6 +1989,9 @@ router.post(
           details: parsed.map((p) => ({ expression: p.expression, error: p.error })),
         });
       }
+      // 区间校验（#2，同 single）：此前完全忽略 startDate/endDate、固定 730 天窗口
+      const parsedDates = datesOrReject(body.startDate, body.endDate, res);
+      if (!parsedDates.ok) return;
 
       // 预检 + universe 解析（与 single/cross-section 共用助手）
       const preflight = await runPreflight();
@@ -1958,8 +2000,7 @@ router.post(
       const codes = resolved.codes;
       const universe = resolved.universe;
 
-      const end = new Date().toISOString().slice(0, 10);
-      const start = new Date(Date.now() - 730 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const { start, end } = parsedDates;
       abort = abortOnClientClose(res);
       const { inputs, simulatedCodes } = await fetchPanelInputs(codes, {
         start,

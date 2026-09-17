@@ -19,6 +19,12 @@ import { loadStockMaster, type SecurityMasterEntry } from '../services/stockMast
 import { fetchOHLCVData } from './dataProvider.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 import { detectPatternEvents, PATTERN_NAMES } from './patternEvents.js';
+import {
+  DateRangeParamError,
+  DEFAULT_SCREENER_WINDOW_DAYS,
+  MAX_DATE_RANGE_SPAN_DAYS,
+  resolveDateRange,
+} from '../utils/dateRange.js';
 
 export interface ScreenerHit {
   code: string;
@@ -86,19 +92,17 @@ function saveLatestRun(result: ScreenerRunResult): void {
  * 全市场约 5000 只 × 并发 12，跨度过大既放大上游配额消耗，也让 dataProvider
  * 的模拟降级路径做几万次同步迭代（见 dataProvider 的 MAX_SIMULATED_DAYS）。
  * 10 年足够覆盖 250 日 RPS 与全部形态窗口（默认区间仅 400 天）。
+ *
+ * 数值与校验实现已抽到 utils/dateRange（#2：因子测量路由需同一口径），此处保留
+ * 别名以兼容既有引用与文档表述。
  */
-export const MAX_SCREENER_SPAN_DAYS = 3840;
+export const MAX_SCREENER_SPAN_DAYS = MAX_DATE_RANGE_SPAN_DAYS;
 
-/** 日期形态与真实性校验：`YYYY-MM-DD` 且必须是真实存在的日历日（拒 2026-02-30 / 2026-13-01） */
-export function isValidIsoDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const d = new Date(`${value}T00:00:00Z`);
-  // Invalid Date 或「被 Date 归一化到别的日子」（如 02-30 → 03-02）都视为非法
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
-}
+/** 日期形态与真实性校验：见 utils/dateRange（抽取后供初筛与因子路由共用同一实现） */
+export { isValidIsoDate } from '../utils/dateRange.js';
 
 /** 入参校验失败（路由据此回 400 而不是 500）：message 为可直接展示的中文说明 */
-export class ScreenerParamError extends Error {
+export class ScreenerParamError extends DateRangeParamError {
   constructor(message: string) {
     super(message);
     this.name = 'ScreenerParamError';
@@ -113,27 +117,16 @@ export function parseScreenerDateRange(
   startDate?: string,
   endDate?: string,
 ): { start: string; end: string } {
-  const end = endDate ?? new Date().toISOString().slice(0, 10);
-  const start =
-    startDate ?? new Date(Date.now() - 400 * 24 * 3600 * 1000).toISOString().slice(0, 10);
-  if (!isValidIsoDate(start)) {
-    throw new ScreenerParamError(`startDate 需为 YYYY-MM-DD 的真实日期（当前：${start}）`);
+  try {
+    return resolveDateRange(startDate, endDate, {
+      defaultSpanDays: DEFAULT_SCREENER_WINDOW_DAYS,
+      maxSpanDays: MAX_SCREENER_SPAN_DAYS,
+    });
+  } catch (error) {
+    // 统一成初筛自己的错误类型：路由按 ScreenerParamError 映射 400
+    if (error instanceof DateRangeParamError) throw new ScreenerParamError(error.message);
+    throw error;
   }
-  if (!isValidIsoDate(end)) {
-    throw new ScreenerParamError(`endDate 需为 YYYY-MM-DD 的真实日期（当前：${end}）`);
-  }
-  const startMs = Date.parse(`${start}T00:00:00Z`);
-  const endMs = Date.parse(`${end}T00:00:00Z`);
-  if (startMs > endMs) {
-    throw new ScreenerParamError(`startDate（${start}）不得晚于 endDate（${end}）`);
-  }
-  const spanDays = Math.round((endMs - startMs) / 86_400_000);
-  if (spanDays > MAX_SCREENER_SPAN_DAYS) {
-    throw new ScreenerParamError(
-      `扫描区间过长（${spanDays} 天 > ${MAX_SCREENER_SPAN_DAYS} 天），请缩小 startDate/endDate 跨度`,
-    );
-  }
-  return { start, end };
 }
 
 /**

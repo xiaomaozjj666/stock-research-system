@@ -211,11 +211,12 @@ export default function ReportHeader({
           )}
         </div>
         {/* 导出 / 打印并排：打印样式已在 index.css 的 @media print 里把设计变量整体翻浅色，
-            这里只需要一个入口；两个按钮都用 .btn-ghost，打印时会被 @media print 隐藏 */}
-        <div className="report-actions">
+            这里只需要一个入口；两个按钮都用 .btn-ghost + .no-print，打印时必定隐藏
+            （.no-print 是通用钩子，不依赖 @media print 里那份按类名列举的清单）。 */}
+        <div className="report-actions no-print">
           {onExport && (
             <button
-              className="btn-ghost report-export-btn"
+              className="btn-ghost report-export-btn no-print"
               onClick={onExport}
               title="导出为 Markdown"
             >
@@ -223,7 +224,7 @@ export default function ReportHeader({
             </button>
           )}
           <button
-            className="btn-ghost report-export-btn"
+            className="btn-ghost report-export-btn no-print"
             onClick={() => window.print()}
             title="打印或另存为 PDF"
           >

@@ -450,9 +450,11 @@ export function ComparisonView() {
                         <div className="cmp-stock-code">{col.code}</div>
                         <div className="cmp-fail-badge">分析失败</div>
                         <div className="cmp-fail-reason">{col.error}</div>
+                        {/* 重试是屏幕上的补救动作：印在纸上只会让人以为报告还能点，
+                            且「重试这一只」对纸质读者毫无信息量 → .no-print */}
                         <button
                           type="button"
-                          className="btn-ghost cmp-fail-retry"
+                          className="btn-ghost cmp-fail-retry no-print"
                           onClick={() => void retryOne(col.code)}
                           disabled={retryingCode !== null || loading || !hasPartner}
                           title={retryHint}
@@ -460,7 +462,7 @@ export function ComparisonView() {
                         >
                           {retryingCode === col.code ? '重试中...' : '重试这一只'}
                         </button>
-                        {retryHint && <div className="cmp-fail-hint">{retryHint}</div>}
+                        {retryHint && <div className="cmp-fail-hint no-print">{retryHint}</div>}
                       </th>
                     );
                   })}

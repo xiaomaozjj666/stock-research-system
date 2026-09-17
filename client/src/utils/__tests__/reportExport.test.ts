@@ -188,4 +188,25 @@ describe('generateReportMarkdown 报告导出', () => {
     expect(md).toContain('▼ -18 分');
     expect(md).toContain('评级演化：优先跟踪 → 持续观察');
   });
+
+  it('导出「研究局限性」，含后端专家降级的如实披露（规则引擎结论不得被当成专家研判）', () => {
+    const disclosure =
+      '本分析基于公开财务数据和行业信息……' +
+      '【专家结论来源】本次有 3 位专家（共 8 位：估值建模专家、资金筹码分析师、游资分析师）' +
+      '的结论由本地规则引擎生成、并非 LLM 研判，原因：排队超时（上游繁忙，429 语义）；' +
+      '本次结论可信度低于全 LLM 研判，请相应调低采信程度。';
+    const md = generateReportMarkdown({ ...SAMPLE, limitation_explain: disclosure });
+
+    expect(md).toContain('## 研究局限性');
+    expect(md).toContain('本次有 3 位专家');
+    expect(md).toContain('规则引擎生成、并非 LLM 研判');
+    expect(md).toContain('低于全 LLM 研判');
+    // 披露必须落在分隔线之前（正文内），而不是被追加到文件末尾提示语之后
+    expect(md.indexOf('本次有 3 位专家')).toBeLessThan(md.indexOf('\n---'));
+  });
+
+  it('limitation_explain 为空时不输出「研究局限性」标题（保持既有空值行为）', () => {
+    const md = generateReportMarkdown({ ...SAMPLE, limitation_explain: '' });
+    expect(md).not.toContain('## 研究局限性');
+  });
 });

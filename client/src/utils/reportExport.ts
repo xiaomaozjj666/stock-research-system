@@ -2,7 +2,7 @@ import type { AnalysisResult } from '../types';
 
 /**
  * 研究报告导出：前端生成 Markdown 文本并触发下载（无需后端改动）。
- * 覆盖：核心摘要 / 评分评级 / 估值 / 专家观点 / 争议 / 风险 / 情景 / 策略 / 跟踪指标。
+ * 覆盖：核心摘要 / 评分评级 / 估值 / 专家观点 / 争议 / 风险 / 情景 / 策略 / 跟踪指标 / 研究局限性。
  */
 
 /** 本地时区 YYYY-MM-DD HH:mm（导出文件的时间戳必须稳定可读，不用 toLocaleString） */
@@ -125,6 +125,16 @@ export function generateReportMarkdown(result: AnalysisResult): string {
   if ((s.follow_up_indicators ?? []).length > 0) {
     push('## 后续跟踪指标');
     s.follow_up_indicators.forEach((x) => push(`- [ ] ${x}`));
+    push('');
+  }
+
+  // 研究局限性：与页面「研究局限性」区块同源（同一个 limitation_explain 字段）。
+  // 后端在专家降级（未配置 LLM / 排队超时 / 调用失败）时会在这里如实披露
+  // "哪些结论出自本地规则引擎"；导出文件脱离系统后，这条披露是唯一能判断
+  // 结论可信度来源的依据，因此必须随文件导出，不能被前端截断。
+  if (result.limitation_explain) {
+    push('## 研究局限性');
+    push(result.limitation_explain);
     push('');
   }
 

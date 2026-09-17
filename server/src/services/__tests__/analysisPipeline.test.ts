@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runAnalysis } from '../analysisPipeline.js';
@@ -78,8 +78,16 @@ vi.mock('../../quant/sectorRotation.js', () => ({
   calculateSectorRotation: vi.fn(),
 }));
 
+// 专家 LLM 运行器包一层 spy：默认委托真实实现（本文件已清空 key → 全部走规则引擎降级），
+// "部分专家降级"用例按专家名覆写实现，验证披露口径。替身不发任何真实网络请求。
+vi.mock('../../llm/expertRunner.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../llm/expertRunner.js')>();
+  return { ...actual, runExpertWithLLM: vi.fn(actual.runExpertWithLLM) };
+});
+
 // 静态取 mock 的 getData（vi.mock hoisted），供 beforeEach 重置默认返回值
 import { getData } from '../dataService.js';
+import { runExpertWithLLM } from '../../llm/expertRunner.js';
 
 // 强制 LLM 不可用：宿主若带有 OPENAI_API_KEY 会让 runExpertWithLLM 走真实网络（超时且结果不可控）。
 // 清空双 key 后 isLLMAvailable()=false，所有专家/仲裁自动降级到确定性的规则引擎，保证离线可跑、结果稳定。
@@ -388,4 +396,127 @@ describe('并发去重：resume 语义不一致必须显式拒绝（不得静默
       expect(vi.mocked(getData)).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+describe('专家降级披露：规则引擎结论不得被当成"专家研判"呈现', () => {
+  /** 恢复被 spy 包裹的真实实现（默认 = 环境无 key → 全部 llm_unavailable） */
+  afterEach(async () => {
+    const actual = await vi.importActual<typeof import('../../llm/expertRunner.js')>(
+      '../../llm/expertRunner.js',
+    );
+    vi.mocked(runExpertWithLLM).mockImplementation(actual.runExpertWithLLM);
+  });
+
+  it(
+    '全部专家降级（未配置 LLM）→ limitation_explain 如实披露人数、名单与原因',
+    { timeout: 30000 },
+    async () => {
+      const result = await runAnalysis('600001');
+      const text = result.limitation_explain;
+
+      // 复用既有字段：原有局限性文案不被替换（不是新造第二套披露机制）
+      expect(text).toContain('不构成投资建议');
+      // 如实披露：8 位专家全部由本地规则引擎生成，不是 LLM 研判
+      expect(text).toContain('本次有 8 位专家');
+      expect(text).toContain('规则引擎');
+      expect(text).toContain('并非 LLM 研判');
+      expect(text).toContain('未配置 LLM');
+      expect(text).toContain('低于全 LLM 研判');
+      // 名单可核对：读者能知道具体哪些结论来自规则
+      expect(text).toContain('基本面财务专家');
+      expect(text).toContain('解禁分析师');
+    },
+  );
+
+  it(
+    '部分专家降级（3/8 排队超时）→ 只披露这 3 位及其原因，人数准确',
+    { timeout: 30000 },
+    async () => {
+      const degradedNames = ['估值建模专家', '资金筹码分析师', '游资分析师'];
+      vi.mocked(runExpertWithLLM).mockImplementation(async (options) => {
+        if (degradedNames.includes(options.expertName)) {
+          // 与本模块真实降级路径等价：规则引擎结论 + 内部降级标记
+          return {
+            ...options.ruleFallback(),
+            _degraded: true as const,
+            _degradeReason: 'queue_timeout' as const,
+          };
+        }
+        return {
+          expert: options.expertName,
+          arguments: [
+            {
+              text: `${options.expertName}：LLM 支持论点`,
+              confidence: 70,
+              type: 'support' as const,
+              evidenceType: 'fact' as const,
+            },
+            {
+              text: `${options.expertName}：LLM 反对论点`,
+              confidence: 60,
+              type: 'oppose' as const,
+              evidenceType: 'inference' as const,
+            },
+          ],
+          overallSentiment: 'neutral' as const,
+          confidence: 65,
+          keyPoints: [`${options.expertName}要点`],
+        };
+      });
+
+      const result = await runAnalysis('600002');
+      const text = result.limitation_explain;
+      const opinions = result.stock_pool[0].expert_opinions;
+
+      // 统计口径与披露一致：恰好 3 位带降级标记。
+      // 注意 finalOpinion（仲裁层）也在 expert_opinions 里，测试环境下 LLM 未配置 →
+      // 仲裁同样是规则引擎产物并带标记，所以这里按"非仲裁专家"统计。
+      const expertOnly = opinions.filter((o) => !o.expert.startsWith('数据仲裁官'));
+      expect(expertOnly.filter((o) => o._degraded === true)).toHaveLength(3);
+      expect(text).toContain('本次有 3 位专家');
+      expect(text).toContain('排队超时');
+      for (const name of degradedNames) expect(text).toContain(name);
+      // 未降级的专家不得被误报进专家名单
+      expect(text).not.toContain('基本面财务专家');
+      // 仲裁层单独披露（它不属于那 8 位，但同样不能让读者误以为是 LLM 仲裁）
+      expect(text).toContain('【仲裁结论来源】');
+      expect(text).toContain('并非 LLM 仲裁');
+    },
+  );
+
+  it('反断言：全 LLM 成功时 limitation_explain 不出现降级披露', { timeout: 30000 }, async () => {
+    vi.mocked(runExpertWithLLM).mockImplementation(async (options) => ({
+      expert: options.expertName,
+      arguments: [
+        {
+          text: `${options.expertName}：LLM 支持论点`,
+          confidence: 70,
+          type: 'support' as const,
+          evidenceType: 'fact' as const,
+        },
+        {
+          text: `${options.expertName}：LLM 反对论点`,
+          confidence: 60,
+          type: 'oppose' as const,
+          evidenceType: 'inference' as const,
+        },
+      ],
+      overallSentiment: 'neutral' as const,
+      confidence: 65,
+      keyPoints: [`${options.expertName}要点`],
+    }));
+
+    const result = await runAnalysis('600003');
+    const text = result.limitation_explain;
+
+    expect(text).toContain('不构成投资建议');
+    // 8 位专家全部走 LLM：不得出现"专家结论来源"披露。
+    // （测试环境未配置 LLM，仲裁层仍会降级并单独披露，故不整串排除"规则引擎生成"。）
+    expect(text).not.toContain('【专家结论来源】');
+    expect(text).not.toContain('低于全 LLM 研判');
+    const expertOnly = result.stock_pool[0].expert_opinions.filter(
+      (o) => !o.expert.startsWith('数据仲裁官'),
+    );
+    expect(expertOnly.some((o) => o._degraded === true)).toBe(false);
+  });
 });

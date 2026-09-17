@@ -1,6 +1,7 @@
 import type {
   AnalysisResult,
   ExpertOpinion,
+  ExpertDegradeReason,
   DataSource,
   SectorRotationSignal,
   PriceHistoryPoint,
@@ -17,6 +18,7 @@ import { hotMoneyExpert } from './experts/hotMoneyExpert.js';
 import { unlockExpert } from './experts/unlockExpert.js';
 import { arbitrationExpert } from './experts/arbitrationExpert.js';
 import { runExpertsWithDegradation } from './expertRunner.js';
+import { isDegradedOpinion, getDegradeReason } from '../llm/expertRunner.js';
 import {
   loadCheckpoint,
   saveCheckpoint,
@@ -49,6 +51,69 @@ const SPECIFIC_RISK_BASELINE = 25;
 
 /** 参与研判的专家总数（用于覆盖度披露；与实际并发任务数保持一致） */
 const EXPERT_TOTAL = 8;
+
+/** 降级原因的中文口径（仅用于报告披露文案；机器可读原因见 ExpertDegradeReason） */
+const DEGRADE_REASON_LABEL: Record<ExpertDegradeReason, string> = {
+  llm_unavailable: '未配置 LLM',
+  queue_timeout: '排队超时（上游繁忙，429 语义）',
+  llm_error: 'LLM 调用失败',
+};
+
+interface ExpertDegradationSummary {
+  /** 结论出自本地规则引擎的专家人数 */
+  count: number;
+  /** 参考总人数（口径与 EXPERT_TOTAL 一致，续跑复用结论时同样适用） */
+  total: number;
+  /** 降级专家名单（按专家结论顺序） */
+  experts: string[];
+  /** 命中的降级原因（去重，保持稳定顺序） */
+  reasons: ExpertDegradeReason[];
+  /** 仲裁层是否也降级为规则引擎（有值即为降级原因）；与专家层分开披露 */
+  arbitration?: ExpertDegradeReason;
+}
+
+/**
+ * 统计"用了规则引擎结论"的专家（LLM 未配置 / 闸门排队超时 / LLM 调用失败）。
+ *
+ * 与 `degradedExperts`（专家**完全失败**被剔除、报告里另行披露）是两件事：
+ * 这里统计的是"仍然给出了结论、但结论并非 LLM 研判"的专家。若不披露，读者会把
+ * 规则引擎的结论当成专家研判，无从分辨哪些结论有 LLM 参与。
+ */
+function summarizeExpertDegradation(opinions: ExpertOpinion[]): ExpertDegradationSummary {
+  const experts: string[] = [];
+  const reasons: ExpertDegradeReason[] = [];
+  for (const opinion of opinions) {
+    if (!isDegradedOpinion(opinion)) continue;
+    if (!experts.includes(opinion.expert)) experts.push(opinion.expert);
+    const reason = getDegradeReason(opinion);
+    if (reason && !reasons.includes(reason)) reasons.push(reason);
+  }
+  return { count: experts.length, total: EXPERT_TOTAL, experts, reasons };
+}
+
+/**
+ * 组装报告既有字段 `limitation_explain`（局限性说明）。
+ * 无降级时保持原文案；有降级时追加如实披露：人数、名单、原因，并明确说明
+ * 本次结论可信度低于全 LLM 研判（不用"部分数据缺失"之类的模糊措辞掩盖结论来源）。
+ */
+function buildLimitationExplain(degradation: ExpertDegradationSummary): string {
+  const base =
+    '本分析基于公开财务数据和行业信息，未包含非公开信息、实地调研、管理层访谈等。数据截止至最近年报，可能存在滞后性。分析模型为定性+定量结合，不构成投资建议。';
+  const parts = [base];
+  if (degradation.count > 0) {
+    const reasons =
+      degradation.reasons.map((r) => DEGRADE_REASON_LABEL[r]).join('、') || '原因未记录';
+    parts.push(
+      `【专家结论来源】本次有 ${degradation.count} 位专家（共 ${degradation.total} 位：${degradation.experts.join('、')}）的结论由本地规则引擎生成、并非 LLM 研判，原因：${reasons}；本次结论可信度低于全 LLM 研判，请相应调低采信程度。`,
+    );
+  }
+  if (degradation.arbitration) {
+    parts.push(
+      `【仲裁结论来源】本次多专家辩论仲裁由本地规则引擎生成、并非 LLM 仲裁（原因：${DEGRADE_REASON_LABEL[degradation.arbitration]}）；争议焦点与最终意见的综合性弱于 LLM 仲裁。`,
+    );
+  }
+  return parts.join('');
+}
 
 /**
  * 拉取近 2 年日K线，映射为前端走势图可用的 PriceHistoryPoint。
@@ -497,6 +562,15 @@ async function executeAnalysis(
   }
 
   const allOpinions = [...expertOpinions, finalOpinion];
+
+  // 专家结论来源统计：LLM 未配置/排队超时/调用失败时，专家层会静默降级到规则引擎
+  // （见 llm/expertRunner.ts 的 _degraded 标记）。这里统计人数与原因，
+  // 稍后写入报告既有的 limitation_explain 字段——不新造第二套披露机制。
+  const expertDegradation = summarizeExpertDegradation(expertOpinions);
+  // 仲裁层单独判定：它不在 8 位专家之列，但「专家全 LLM 成功、仲裁却降级」同样会让
+  // 读者把规则引擎的仲裁结论当成 LLM 仲裁，必须一并披露。
+  const arbitrationReason = isDegradedOpinion(finalOpinion) ? getDegradeReason(finalOpinion) : null;
+  if (arbitrationReason) expertDegradation.arbitration = arbitrationReason;
 
   // 审计：LLM 专家调用完成（合规留痕；以专家名单与仲裁结论概要作为调用记录）
   try {
@@ -1025,7 +1099,6 @@ async function executeAnalysis(
     ],
     data_sources: dataSources,
     research_confidence: `基于${expertOpinions.length}位专家独立研判+仲裁综合，整体置信度${Math.round(allOpinions.reduce((s, o) => s + o.confidence, 0) / allOpinions.length)}%。财务数据置信度高（上市公司年报审计），行业判断置信度中等（存在政策不确定性）。`,
-    limitation_explain:
-      '本分析基于公开财务数据和行业信息，未包含非公开信息、实地调研、管理层访谈等。数据截止至最近年报，可能存在滞后性。分析模型为定性+定量结合，不构成投资建议。',
+    limitation_explain: buildLimitationExplain(expertDegradation),
   };
 }

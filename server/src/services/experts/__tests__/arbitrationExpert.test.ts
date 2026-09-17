@@ -999,12 +999,18 @@ describe('LLM 路径：失败与非法结构一律降级规则引擎', () => {
     llmMock.isLLMAvailable.mockReturnValue(true);
   });
 
-  it('chatJSON 抛错 → 记 warn 并返回规则引擎结果', async () => {
+  it('chatJSON 抛错 → 记 warn 并返回规则引擎结果（带降级标记）', async () => {
     llmMock.chatJSON.mockRejectedValue(new Error('LLM timeout'));
     const res = await arbitrationExpert(buildInput());
     expect(res.controversies).toHaveLength(4);
     expect(res.finalOpinion.keyPoints[0]).toContain('专家共识');
-    expect(warnSpy).toHaveBeenCalledWith('[LLM] 仲裁专家降级规则引擎', { err: expect.any(Error) });
+    expect(warnSpy).toHaveBeenCalledWith('[LLM] 仲裁专家降级规则引擎', {
+      err: expect.any(Error),
+      reason: 'llm_error',
+    });
+    // 降级必须可被上层看见，否则报告会把规则引擎结论当成 LLM 仲裁呈现
+    expect(res.finalOpinion._degraded).toBe(true);
+    expect(res.finalOpinion._degradeReason).toBe('llm_error');
   });
 
   it('LLM 返回数组里含 null → 规范化抛错被捕获 → 同样降级', async () => {
