@@ -125,7 +125,7 @@ import {
   benchmarkSecidForMarket,
 } from '../quant/dataProvider.js';
 import { runBacktest } from '../quant/backtestEngine.js';
-import { withTimeout } from '../utils/timeout.js';
+import { withAbortableTimeout } from '../utils/timeout.js';
 import { auditToolCall } from '../services/auditLog.js';
 import { getReqTraceContext } from '../services/telemetry.js';
 import { abortOnClientClose } from '../utils/clientAbort.js';
@@ -177,7 +177,12 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
       if (newsItems && newsItems.length > 0) {
         newsSignal = aggregateNewsSentiment(newsItems);
       } else if (useNews) {
-        const fetched = await withTimeout(extractNewsSignal(strategyConfig.stockCode), 5000);
+        // 限时 5s，且超时真正取消新闻抓取：逐端点 8s + LLM 打分 30s，
+        // 只 race 不取消的话这趟请求会继续跑满，占着限流窗口与上游配额。
+        const fetched = await withAbortableTimeout(
+          (signal) => extractNewsSignal(strategyConfig.stockCode, { signal }),
+          5000,
+        );
         newsSignal = fetched.signal;
       }
     } catch {
@@ -2120,8 +2125,12 @@ router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, asy
     // 实验组：叠加新闻情绪信号
     let expCfg: StrategyConfig = { ...baseCfg };
     try {
-      // 与 /api/quant/analyze 一致：限时 5s，防止新闻抓取（逐端点 8s + LLM 评分 30s）挂住限流窗口
-      const ns = await withTimeout(extractNewsSignal(stockCode), 5000);
+      // 与 /api/quant/analyze 一致：限时 5s，防止新闻抓取（逐端点 8s + LLM 评分 30s）挂住限流窗口；
+      // 超时经 withAbortableTimeout 真正取消在途抓取，而不是让它在后台跑满
+      const ns = await withAbortableTimeout(
+        (signal) => extractNewsSignal(stockCode, { signal }),
+        5000,
+      );
       if (ns.signal.hasNews) {
         expCfg = {
           ...expCfg,

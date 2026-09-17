@@ -88,6 +88,8 @@ vi.mock('../../llm/expertRunner.js', async (importOriginal) => {
 // 静态取 mock 的 getData（vi.mock hoisted），供 beforeEach 重置默认返回值
 import { getData } from '../dataService.js';
 import { runExpertWithLLM } from '../../llm/expertRunner.js';
+import { extractNewsSignal } from '../../quant/newsSignal.js';
+import { fetchOHLCVData } from '../../quant/dataProvider.js';
 
 // 强制 LLM 不可用：宿主若带有 OPENAI_API_KEY 会让 runExpertWithLLM 走真实网络（超时且结果不可控）。
 // 清空双 key 后 isLLMAvailable()=false，所有专家/仲裁自动降级到确定性的规则引擎，保证离线可跑、结果稳定。
@@ -157,6 +159,29 @@ describe('runAnalysis 流水线', () => {
     expect(result.stock_pool[0].core_summary).toContain('贵州茅台');
     expect(result.stock_pool[0].core_summary).toContain(result.stock_pool[0].rating);
   });
+
+  it(
+    '取数阶段把可取消 signal 交给新闻与行情上游（超时才真正断开，而非只让管线提前失败）',
+    {
+      timeout: 30000,
+    },
+    async () => {
+      await runAnalysis('600519');
+
+      // 新闻：extractNewsSignal(code, { signal })——逐端点 8s + LLM 打分 30s，
+      // 3s 限时若不把 signal 交出去，这趟请求会继续跑满
+      const newsCall = vi.mocked(extractNewsSignal).mock.calls.at(-1);
+      expect(newsCall?.[0]).toBe('600519');
+      expect(newsCall?.[1]?.signal).toBeInstanceOf(AbortSignal);
+
+      // 行情：fetchOHLCVData(code, start, end, signal)（第 4 个参数）。
+      // 取第 0 次调用：它是取数阶段那条 12s 限时的走势图请求；
+      // 第 13 步策略回测还会再调一次（不套限时，故不带 signal，属另一处语义）。
+      const priceCall = vi.mocked(fetchOHLCVData).mock.calls[0];
+      expect(priceCall?.[0]).toBe('600519');
+      expect(priceCall?.[3]).toBeInstanceOf(AbortSignal);
+    },
+  );
 
   it('不同财务特征产生不同评分（高杠杆低毛利得分更低）', { timeout: 30000 }, async () => {
     const weakData: StockDataSet = {

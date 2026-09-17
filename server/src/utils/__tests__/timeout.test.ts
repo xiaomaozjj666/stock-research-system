@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { withTimeout } from '../timeout.js';
+import { withTimeout, withAbortableTimeout } from '../timeout.js';
 
 /**
  * withTimeout 行为测试
@@ -210,5 +210,130 @@ describe('withTimeout —— 未超时 / 已取消', () => {
     // 没有可 abort 的句柄，超时仍以超时错误 reject（会不会真的断开上游由调用方负责）
     expect((result as { error: Error }).error.message).toMatch(/timeout: 400ms/);
     expect(controller.signal.aborted).toBe(false);
+  });
+
+  it('message 选项覆盖默认超时文案（默认文案仍含毫秒数）', async () => {
+    vi.useFakeTimers();
+
+    const settled = outcome(
+      withTimeout(never(), 250, { message: 'LLM 响应体读取超时（250ms 未完成）' }),
+    );
+    vi.advanceTimersByTime(250);
+    const result = await settled;
+
+    expect((result as { error: Error }).error.message).toBe('LLM 响应体读取超时（250ms 未完成）');
+  });
+});
+
+/**
+ * withAbortableTimeout —— 把 signal 交出去的可取消限时
+ * ----------------------------------------------------------------------------
+ * 与 withTimeout 的关键差别：run 是**惰性工厂**，所以「调用方已取消」时能直接不出发。
+ * 这三条不变量（超时→取消上游 / 取消→透传原因 / 已取消→不调 run）是 7 处调用点的共同前提。
+ */
+describe('withAbortableTimeout —— 超时与取消都级联到上游', () => {
+  it('未超时：把未置位的 signal 交给 run，返回其值，且不残留定时器', async () => {
+    vi.useFakeTimers();
+    let got: AbortSignal | null = null;
+
+    const result = outcome(
+      withAbortableTimeout(async (signal) => {
+        got = signal;
+        return 'ok';
+      }, 5000),
+    );
+
+    expect((await result).ok).toBe(true);
+    expect(got).not.toBeNull();
+    expect((got as unknown as AbortSignal).aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('超时：交给 run 的 signal 被 abort（上游连接真正断开），并以超时错误 reject', async () => {
+    vi.useFakeTimers();
+    let upstream: AbortSignal | null = null;
+    // 模拟 fetch：signal abort 时以 AbortError 失败
+    const run = (signal: AbortSignal): Promise<never> => {
+      upstream = signal;
+      return new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason as Error), { once: true });
+      });
+    };
+
+    const settled = outcome(withAbortableTimeout(run, 5000));
+    vi.advanceTimersByTime(4999);
+    expect((upstream as unknown as AbortSignal).aborted).toBe(false);
+
+    vi.advanceTimersByTime(1);
+    const result = await settled;
+
+    expect((upstream as unknown as AbortSignal).aborted).toBe(true);
+    expect((result as { error: Error }).error.message).toMatch(/timeout: 5000ms/);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('外部取消：上游 signal 一并 abort，并以调用方的 reason 拒绝（不误报成超时）', async () => {
+    vi.useFakeTimers();
+    const outer = new AbortController();
+    let upstream: AbortSignal | null = null;
+
+    const settled = outcome(
+      withAbortableTimeout(
+        (signal) => {
+          upstream = signal;
+          return never<never>();
+        },
+        10_000,
+        { signal: outer.signal },
+      ),
+    );
+
+    vi.advanceTimersByTime(100);
+    outer.abort(new Error('批量回测已中止'));
+    const result = await settled;
+
+    expect((upstream as unknown as AbortSignal).aborted).toBe(true);
+    expect((result as { error: Error }).error.message).toBe('批量回测已中止');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('调用前就已取消：根本不调用 run（省掉一次注定白烧的上游），以取消原因拒绝', async () => {
+    vi.useFakeTimers();
+    const outer = new AbortController();
+    outer.abort(new Error('客户端连接已关闭'));
+    const run = vi.fn(async () => 'ok');
+
+    const result = await outcome(withAbortableTimeout(run, 5000, { signal: outer.signal }));
+
+    expect(run).not.toHaveBeenCalled();
+    expect((result as { error: Error }).error.message).toBe('客户端连接已关闭');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('run 同步抛错时以 rejected promise 收场（不把异常抛到调用栈上）', async () => {
+    const result = await outcome(
+      withAbortableTimeout(() => {
+        throw new Error('构造请求即失败');
+      }, 5000),
+    );
+
+    expect((result as { error: Error }).error.message).toBe('构造请求即失败');
+  });
+
+  it('message / onTimeout 与 withTimeout 同语义', async () => {
+    vi.useFakeTimers();
+    const onTimeout = vi.fn();
+
+    const settled = outcome(
+      withAbortableTimeout(() => never<never>(), 300, {
+        message: '新闻抓取超时（300ms）',
+        onTimeout,
+      }),
+    );
+    vi.advanceTimersByTime(300);
+    const result = await settled;
+
+    expect((result as { error: Error }).error.message).toBe('新闻抓取超时（300ms）');
+    expect(onTimeout).toHaveBeenCalledTimes(1);
   });
 });

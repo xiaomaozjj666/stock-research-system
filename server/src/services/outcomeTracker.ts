@@ -116,11 +116,15 @@ function daysSince(iso: string): number {
  * 取某标的最新收盘价；数据不可得或为模拟数据时返回 null。
  * 模拟数据是行情 API 不可达时的合成价格，绝不能用于事后校准（会污染结论）。
  */
-async function latestClose(code: string, sinceIso?: string): Promise<number | null> {
+async function latestClose(
+  code: string,
+  sinceIso?: string,
+  signal?: AbortSignal,
+): Promise<number | null> {
   const end = new Date();
   const start = sinceIso ? new Date(sinceIso) : new Date(end.getTime() - 15 * 24 * 3600 * 1000);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
-  const rows = await fetchOHLCVData(code, fmt(start), fmt(end));
+  const rows = await fetchOHLCVData(code, fmt(start), fmt(end), signal);
   if (!rows || rows.length === 0) return null;
   if (rows.some((r) => r.isSimulated)) return null;
   const last = rows[rows.length - 1];
@@ -171,12 +175,14 @@ export function recordAnalysis(input: {
 /**
  * 回填到期评级的实际结果（每次最多处理 limit 条，控制耗时）。
  * 单条失败不影响其他条目；返回本次成功评估的条数。
+ * signal 置位（上层限时超时）时停止向剩余条目取数：已完成条目仍会落盘，
+ * 未完成的留待下一轮——回填是幂等的，中途收手不会留下半条脏记录。
  */
-export async function evaluateOutcomes(limit = 3): Promise<number> {
-  return withStoreLock(() => evaluateOutcomesLocked(limit));
+export async function evaluateOutcomes(limit = 3, signal?: AbortSignal): Promise<number> {
+  return withStoreLock(() => evaluateOutcomesLocked(limit, signal));
 }
 
-async function evaluateOutcomesLocked(limit: number): Promise<number> {
+async function evaluateOutcomesLocked(limit: number, signal?: AbortSignal): Promise<number> {
   let done = 0;
   try {
     const store = readStore();
@@ -187,14 +193,16 @@ async function evaluateOutcomesLocked(limit: number): Promise<number> {
       .slice(0, Math.max(1, limit));
 
     for (const item of pending) {
+      if (signal?.aborted) break; // 已取消：不再为剩余条目打行情上游
       try {
         // 个体区间收益与基准区间收益并行取，起点统一为评级发出日
         const [exitPrice, benchRows] = await Promise.all([
-          latestClose(item.stockCode),
+          latestClose(item.stockCode, undefined, signal),
           fetchOHLCVData(
             BENCHMARK_CODE,
             item.createdAt.slice(0, 10),
             new Date().toISOString().slice(0, 10),
+            signal,
           ).catch(() => []),
         ]);
         if (exitPrice === null) continue; // 行情不可得，留待下次
@@ -218,6 +226,8 @@ async function evaluateOutcomesLocked(limit: number): Promise<number> {
         item.holdingDays = Math.round(daysSince(item.createdAt));
         done += 1;
       } catch (err) {
+        // 本轮取数被取消：不是「回填失败」，不必为剩余条目重复报同一个原因
+        if (signal?.aborted) break;
         logger.warn('单条评级结果回填失败', { stockCode: item.stockCode, err: err as Error });
       }
     }

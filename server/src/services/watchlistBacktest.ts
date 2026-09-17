@@ -3,7 +3,7 @@ import { earliestNewsDate, extractNewsSignal } from '../quant/newsSignal.js';
 import { generateStrategyList } from './strategyListEngine.js';
 import { loadStockMaster } from './stockMaster.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
-import { withTimeout } from '../utils/timeout.js';
+import { withAbortableTimeout } from '../utils/timeout.js';
 import { normalizeAShareCode } from '../utils/stockCode.js';
 import type {
   StrategyRecommendation,
@@ -166,9 +166,18 @@ async function processCode(
 
     let newsSignal: WatchlistNewsBacktestRow['newsSentiment'] = null;
     try {
-      const fetched = await withTimeout(extractNewsSignal(code), 5000);
+      // 限时 5s（逐端点 8s + LLM 打分 30s，只 race 不取消会白跑满）；
+      // signal 同时接批次信号：客户端断开时连在途新闻抓取一起断，而不是等它自己跑完。
+      const fetched = await withAbortableTimeout(
+        (s) => extractNewsSignal(code, { signal: s }),
+        5000,
+        { signal },
+      );
       newsSignal = fetched.signal;
-    } catch {
+    } catch (err) {
+      // 批次取消交给外层统一按「整批停车」处理（见下方 catch），
+      // 否则会把取消吞成「这只股票没有新闻」，剩余每只都继续跑完。
+      if (signal?.aborted) throw err;
       newsSignal = null;
     }
 

@@ -21,10 +21,13 @@
  *    - 新鲜度 freshness = Σw_i / N ∈ (0, 1]（=1 表示全部为当日，越接近 0 越陈旧）；
  *    - 影响强度 weightedImpact = |p| · freshness ∈ [0, 1]（用于报告与排序）。
  *
- * 3) 实时抓取 fetchLatestNews(code)：尽力而为（best-effort）
+ * 3) 实时抓取 fetchLatestNews(code, opts)：尽力而为（best-effort）
  *    - 依次尝试若干公开新闻/公告端点；任一网络或解析失败均被吞掉，返回 []（绝不抛错）；
  *    - 抓取到的原始新闻用 lexiconPolarity 自动打分；
  *    - 在受限/离线环境（如沙箱）下优雅降级为 []，模型本身与单测不依赖网络。
+ *    - **例外：调用方取消（opts.signal 置位）不算「失败」**，原样上抛取消原因——
+ *      否则批量作业取消后，每一只股票都会把取消吞成「没有新闻」继续跑完剩下的流程，
+ *      客户端早已断开还在白烧上游（见 watchlistBacktest 的整批停车语义）。
  */
 
 // LLM 语义抽取（可选增强）：LLM 可用时用语义打分替代硬编码词表，失败回退词典法
@@ -111,6 +114,15 @@ const BEARISH_WORDS: string[] = [
   '债务危机',
   '质押平仓',
 ];
+
+/**
+ * 新闻取数的取消选项。
+ * signal 置位（批次中止 / 上层限时超时 / 客户端断开）时：不再打新端点，并在途请求立即
+ * abort；取消不是「没有新闻」，因此以取消原因上抛而不降级为中性信号。
+ */
+export interface NewsFetchOptions {
+  signal?: AbortSignal;
+}
 
 export interface NewsItem {
   id: string;
@@ -279,11 +291,17 @@ export function aggregateNewsSentiment(items: NewsItem[], opts: AggregateOptions
 }
 
 /**
- * 实时抓取最新新闻（尽力而为，绝不抛错）。
+ * 实时抓取最新新闻（尽力而为，绝不抛错）——**唯一例外是调用方取消**（见 NewsFetchOptions）。
  * 依次尝试若干公开端点，解析出 {title, summary, publishedAt, source} 后自动词典打分。
  * 任何网络/解析失败都被吞掉，返回 []（调用方应以 [] 表示"暂无可用的实时新闻"）。
  */
-export async function fetchLatestNews(code: string): Promise<NewsItem[]> {
+export async function fetchLatestNews(
+  code: string,
+  opts: NewsFetchOptions = {},
+): Promise<NewsItem[]> {
+  const outer = opts.signal;
+  // 已取消：连第一个端点都不打（调用方可能已断开，这一趟注定是白烧配额）
+  outer?.throwIfAborted();
   // 候选端点：个股公告/新闻（东方财富系）。沙箱仅放行部分子域，失败即降级。
   const secucode = code.startsWith('6') ? `${code}.SH` : `${code}.SZ`;
   const endpoints: { url: string; parse: (json: any) => NewsItem[] }[] = [
@@ -317,17 +335,26 @@ export async function fetchLatestNews(code: string): Promise<NewsItem[]> {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 8000);
-      const resp = await fetch(ep.url, {
-        signal: ctrl.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      });
-      clearTimeout(timer);
-      if (!resp.ok) continue;
-      const json = await resp.json();
-      const list = ep.parse(json).filter((n) => n.title && n.title.length > 0);
-      if (list.length > 0) return list;
+      try {
+        // 端点自身 8s 预算与调用方取消合并：任一置位都断开连接
+        const signal = outer ? AbortSignal.any([outer, ctrl.signal]) : ctrl.signal;
+        const resp = await fetch(ep.url, {
+          signal,
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+        });
+        if (!resp.ok) continue;
+        const json = await resp.json();
+        const list = ep.parse(json).filter((n) => n.title && n.title.length > 0);
+        if (list.length > 0) return list;
+      } finally {
+        // 原先只在成功路径 clearTimeout：!resp.ok 走 continue 时定时器仍挂 8s 并触发一次
+        // 无人关心的 abort（还拖住事件循环的最后一段）。放 finally 里对三条出口一致。
+        clearTimeout(timer);
+      }
     } catch {
-      // 忽略：尝试下一个端点
+      // 调用方取消不是「这个端点不可用」：立刻上抛，别把它吞成「无新闻」后继续跑完整个批量
+      outer?.throwIfAborted();
+      // 其余失败忽略：尝试下一个端点
     }
   }
   return [];
@@ -338,7 +365,10 @@ export async function fetchLatestNews(code: string): Promise<NewsItem[]> {
  * 模型对每条新闻返回 polarity∈[−1,1] 与 impact∈[0,1]，写回 NewsItem.polarity，
  * 下游 aggregateNewsSentiment 会优先采用预标注极性，从而与词典法同构、可测。
  */
-export async function scoreNewsWithLLM(items: NewsItem[]): Promise<NewsItem[] | null> {
+export async function scoreNewsWithLLM(
+  items: NewsItem[],
+  opts: NewsFetchOptions = {},
+): Promise<NewsItem[] | null> {
   if (!isLLMAvailable() || items.length === 0) return null;
   try {
     const payload = items.map((it, i) => ({
@@ -359,7 +389,8 @@ export async function scoreNewsWithLLM(items: NewsItem[]): Promise<NewsItem[] | 
           content: `请分析以下新闻，返回 {"scores":[{"i":序号,"polarity":数值,"impact":数值}]}。\n${JSON.stringify(payload)}`,
         },
       ],
-      { temperature: 0.2, maxTokens: 1200, timeout: 30000 },
+      // signal 交给 LLM 客户端：排队中取消会立刻让出闸门配额、在途调用会真正断开连接
+      { temperature: 0.2, maxTokens: 1200, timeout: 30000, signal: opts.signal },
     );
 
     if (!Array.isArray(raw.scores)) return null;
@@ -371,6 +402,8 @@ export async function scoreNewsWithLLM(items: NewsItem[]): Promise<NewsItem[] | 
       return { ...it, polarity };
     });
   } catch {
+    // 调用方取消不算「LLM 打分失败」：回退词典法会带着已取消的语义继续算下去
+    opts.signal?.throwIfAborted();
     return null; // 回退词典法
   }
 }
@@ -379,21 +412,24 @@ export async function scoreNewsWithLLM(items: NewsItem[]): Promise<NewsItem[] | 
  * 便捷封装：抓取最新新闻并聚合为 NewsSignal。
  * LLM 可用时先用语义抽取增强极性，否则/失败时回退词典法。
  * 返回 { signal, source }；source 为 'live'（抓到新闻）或 'none'（无可用新闻）。
+ * 调用方取消时（opts.signal 置位）上抛取消原因，不返回中性信号——见 NewsFetchOptions。
  */
 export async function extractNewsSignal(
   code: string,
+  opts: NewsFetchOptions = {},
 ): Promise<{ signal: NewsSignal; source: 'live' | 'none' }> {
-  const items = await fetchLatestNews(code);
+  const items = await fetchLatestNews(code, opts);
   if (items.length === 0) {
     return { signal: aggregateNewsSentiment([]), source: 'none' };
   }
   let scored = items;
   if (isLLMAvailable()) {
     try {
-      const enriched = await scoreNewsWithLLM(items);
+      const enriched = await scoreNewsWithLLM(items, opts);
       if (enriched) scored = enriched;
     } catch {
-      // 回退词典法
+      // 取消：上抛；其余失败回退词典法
+      opts.signal?.throwIfAborted();
     }
   }
   const signal = aggregateNewsSentiment(scored);

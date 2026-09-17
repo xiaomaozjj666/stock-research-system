@@ -43,7 +43,7 @@ import {
 } from '../quant/consensusProvider.js';
 import { buildAnnouncementBrief } from '../quant/announcementProvider.js';
 import { styleFactorExposures, decomposeRisk } from '../quant/riskAttribution.js';
-import { withTimeout } from '../utils/timeout.js';
+import { withTimeout, withAbortableTimeout } from '../utils/timeout.js';
 import logger from '../utils/logger.js';
 
 /** 特异波动经验基准（%）：无残差收益序列时使用（A 股中位单股波动水平） */
@@ -119,14 +119,18 @@ function buildLimitationExplain(degradation: ExpertDegradationSummary): string {
  * 拉取近 2 年日K线，映射为前端走势图可用的 PriceHistoryPoint。
  * fetchOHLCVData 自带 12h 磁盘缓存与"网络失败→模拟数据"降级；
  * 此处再套一层兜底，任何异常都返回空数组（前端据此隐藏走势图，而非报错）。
+ * signal 用于「外层限时超时」：超时后底层 K 线请求真正断开，而不是白跑到它自己的 15s 上限。
  */
-async function fetchPriceHistory(stockCode: string): Promise<PriceHistoryPoint[]> {
+async function fetchPriceHistory(
+  stockCode: string,
+  signal?: AbortSignal,
+): Promise<PriceHistoryPoint[]> {
   const end = new Date();
   const beg = new Date(end);
   beg.setFullYear(beg.getFullYear() - 2);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
   try {
-    const raw = await fetchOHLCVData(stockCode, fmt(beg), fmt(end));
+    const raw = await fetchOHLCVData(stockCode, fmt(beg), fmt(end), signal);
     if (!raw || raw.length === 0) return [];
     return raw.map((d) => ({
       date: d.date,
@@ -335,13 +339,19 @@ async function executeAnalysis(
     emit({ phase: 'data', message: '正在获取行情/财务/新闻数据...' });
     const [fetchedData, newsResult, fetchedPrices] = await Promise.all([
       getData(stockCode),
-      // 新闻情绪尽力而为：限时 3s，失败/超时视为无新闻（不阻塞主流程）
-      withTimeout(extractNewsSignal(stockCode), 3000).catch(() => ({
-        signal: null as NewsSignal | null,
-        source: 'none' as const,
-      })),
+      // 新闻情绪尽力而为：限时 3s，失败/超时视为无新闻（不阻塞主流程）。
+      // 用 withAbortableTimeout 而非 withTimeout：超时后要真正断开新闻抓取
+      // （逐端点 8s + LLM 打分 30s，只 race 不取消的话这趟请求会继续跑满）。
+      withAbortableTimeout((signal) => extractNewsSignal(stockCode, { signal }), 3000).catch(
+        () => ({
+          signal: null as NewsSignal | null,
+          source: 'none' as const,
+        }),
+      ),
       // 行情历史（日K）：近 2 年，限时 12s，失败/超时降级为模拟数据（不阻塞主流程）
-      withTimeout(fetchPriceHistory(stockCode), 12000).catch(() => [] as PriceHistoryPoint[]),
+      withAbortableTimeout((signal) => fetchPriceHistory(stockCode, signal), 12000).catch(
+        () => [] as PriceHistoryPoint[],
+      ),
     ]);
     dataResult = fetchedData;
     newsSignal = newsResult.signal;
@@ -437,6 +447,10 @@ async function executeAnalysis(
   let consensusBrief: string | null = null;
   try {
     // 超时/失败在这里统一落日志（原来外层 .catch 吞掉异常后，下面的 catch 是死代码）
+    // 刻意不传 controller：fetchConsensusSnapshot 的 producer 由 withQuantCache 在并发调用方
+    // 之间共享（同一代码可能同时被本管线与单票接口请求）。abort 会连带打断别人的那次取数，
+    // 而「超时后让它跑完」反而是对的——结果会写进缓存，白烧变成预热。
+    // 该 provider 自身有硬上限（eventProvider 的 AbortSignal.timeout(15000)），不会无限挂住。
     consensus = await withTimeout(fetchConsensusSnapshot(stockCode), 6000);
     consensusBrief = consensus ? formatConsensusBrief(consensus) : null;
   } catch (err) {
@@ -447,6 +461,8 @@ async function executeAnalysis(
   //     只呈现公告原文（截断标注），专家研判可回指原文，不做摘要改写。
   let announcementBrief: string | null = null;
   try {
+    // 同上一节：公告 provider 也是 withQuantCache 共享 producer，不传 controller。
+    // 它自带 AbortSignal.timeout(12_000)（announcementProvider.fetchJson），不会无限挂住。
     announcementBrief = await withTimeout(buildAnnouncementBrief(stockCode), 6000);
   } catch (err) {
     logger.warn('最近公告获取失败，降级跳过', { stockCode, err: err as Error });
@@ -542,7 +558,9 @@ async function executeAnalysis(
     emit({ phase: 'arbitration', message: '复用上次仲裁结论' });
   } else {
     try {
-      await withTimeout(evaluateOutcomes(3), 8000).catch(() => 0);
+      // 回填要向行情上游逐条取数（每条自带 15s 上限），8s 到点必须真正收手：
+      // 取消会传到 evaluateOutcomes → fetchOHLCVData，已完成条目照常落盘，剩余留待下轮
+      await withAbortableTimeout((signal) => evaluateOutcomes(3, signal), 8000).catch(() => 0);
       accuracySummary = getRatingAccuracy(stockCode);
       ratingAccuracyHint = formatAccuracyHint(stockCode);
     } catch {

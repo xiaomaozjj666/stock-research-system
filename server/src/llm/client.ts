@@ -81,26 +81,22 @@ function backoffDelay(attempt: number): number {
  * 而它占着的 llmGate 配额只在 finally 归还；累积到并发上限（默认 8）后，
  * 全站 LLM 调用都会排队超时 429，且必须重启进程才能恢复。
  * 超时通过 abort 本次尝试的连接生效（abort 后 body 流立即失败 → 调用方 finally 归还配额）。
+ *
+ * 实现直接复用 utils/timeout 的 withTimeout：这里早先自写过一份等价的 race 实现，
+ * 与后者语义完全重叠（都是「超时即 abort 再 reject」），两套并存只会分叉。
+ * 保留本薄封装的两个理由：① 错误信息带「响应体」字样（既有用例与线上排障都按它检索）；
+ * ② getAttempt 是**惰性取值**——attempt 由 fetchWithRetry 的回调写入，直接读会被
+ * TS 的控制流窄化成 null（见 embed 里的 () => attempt 注释），延迟到调用点取值才拿得到最新值。
  */
-async function readBodyWithTimeout<T>(
+function readBodyWithTimeout<T>(
   read: () => Promise<T>,
   timeoutMs: number,
   getAttempt: () => AbortController | null,
 ): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      read(),
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          getAttempt()?.abort();
-          reject(new Error(`LLM 响应体读取超时（${timeoutMs}ms 未完成）`));
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  return withTimeout(read(), timeoutMs, {
+    controller: getAttempt() ?? undefined,
+    message: `LLM 响应体读取超时（${timeoutMs}ms 未完成）`,
+  });
 }
 
 /**

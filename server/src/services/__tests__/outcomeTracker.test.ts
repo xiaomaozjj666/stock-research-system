@@ -13,6 +13,8 @@ import {
 
 // 行情数据源打桩：个体最新价 120（评级发出时 100 → +20%），基准 100 → 110（+10%）
 let simulated = false;
+/** 每次取数收到的 signal（第 4 个参数）：用于断言取消是否沿调用链下传 */
+const fetchSignals: (AbortSignal | undefined)[] = [];
 const fetchMock = vi.fn(async (code: string) => {
   if (code === '000300') {
     return [
@@ -24,7 +26,12 @@ const fetchMock = vi.fn(async (code: string) => {
 });
 
 vi.mock('../../quant/dataProvider.js', () => ({
-  fetchOHLCVData: (...args: unknown[]) => fetchMock(args[0] as string),
+  // 注意：只在**返回的箭头函数内部**引用 fetchSignals / fetchMock——vi.mock 工厂被提升，
+  // 工厂体自身引用顶层 const 会命中 TDZ；内部函数要到用例执行时才取值，安全。
+  fetchOHLCVData: (...args: unknown[]) => {
+    fetchSignals.push(args[3] as AbortSignal | undefined);
+    return fetchMock(args[0] as string);
+  },
 }));
 
 const tmpDir = mkdtempSync(join(tmpdir(), 'outcome-'));
@@ -35,6 +42,16 @@ beforeEach(() => {
   process.env.OUTCOME_FILE = tmpFile;
   simulated = false;
   fetchMock.mockClear();
+  fetchMock.mockImplementation(async (code: string) => {
+    if (code === '000300') {
+      return [
+        { close: 100, isSimulated: simulated },
+        { close: 110, isSimulated: simulated },
+      ] as never[];
+    }
+    return [{ close: 120, isSimulated: simulated }] as never[];
+  });
+  fetchSignals.length = 0;
   writeFileSync(tmpFile, JSON.stringify({ items: [] }));
 });
 
@@ -133,6 +150,43 @@ describe('outcomeTracker 决策-结果闭环', () => {
         },
       ]);
       expect(await evaluateOutcomes(3)).toBe(0);
+    });
+
+    it('signal 透传到行情取数（第 4 个参数），取消可级联到 socket 级', async () => {
+      seed([{ stockCode: '600519', rating: '优先跟踪', entryPrice: 100 }]);
+      const ac = new AbortController();
+
+      await evaluateOutcomes(3, ac.signal);
+
+      expect(fetchSignals.length).toBeGreaterThan(0);
+      expect(fetchSignals.every((s) => s === ac.signal)).toBe(true);
+    });
+
+    it('取数期间被取消：不再为剩余条目取数（已完成条目照常落盘，回填幂等）', async () => {
+      seed([
+        { stockCode: '600519', rating: '优先跟踪', entryPrice: 100 },
+        { stockCode: '000001', rating: '优先跟踪', entryPrice: 100 },
+      ]);
+      const ac = new AbortController();
+      // 模拟「上层 8s 限时到点」：取消信号置位后取数立即失败
+      fetchMock.mockImplementation(async () => {
+        ac.abort(new Error('timeout: 8000ms 未完成'));
+        throw ac.signal.reason;
+      });
+
+      await evaluateOutcomes(3, ac.signal);
+
+      // 第 1 条的两个来源各打一次（个体 + 基准）后即收手；不取消的话第 2 条还会再打两次
+      expect(fetchSignals.length).toBe(2);
+    });
+
+    it('调用前就已取消：一条都不取数', async () => {
+      seed([{ stockCode: '600519', rating: '优先跟踪', entryPrice: 100 }]);
+      const ac = new AbortController();
+      ac.abort();
+
+      expect(await evaluateOutcomes(3, ac.signal)).toBe(0);
+      expect(fetchSignals.length).toBe(0);
     });
   });
 

@@ -246,4 +246,48 @@ describe('runWatchlistNewsBacktest 取消（AbortSignal）', () => {
     // 故这里只断言「没跑完 3 只」，重点是中止被向上抛出而不是被吞成 error 行）
     expect(vi.mocked(fetchOHLCVData).mock.calls.length).toBeLessThanOrEqual(3);
   });
+
+  it('批次 signal 透传给新闻抓取（客户端断开 → 在途新闻请求立即断，而非等端点 8s 上限）', async () => {
+    const ac = new AbortController();
+    await runWatchlistNewsBacktest(['600519'], { signal: ac.signal });
+
+    const opts = vi.mocked(extractNewsSignal).mock.calls[0][1];
+    expect(opts?.signal).toBeInstanceOf(AbortSignal);
+    expect(opts?.signal?.aborted).toBe(false);
+  });
+
+  it('新闻抓取限时 5s 到点 → 真正取消在途抓取（交出去的 signal 置位）', async () => {
+    vi.useFakeTimers();
+    try {
+      let handed: AbortSignal | undefined;
+      vi.mocked(extractNewsSignal).mockImplementation((_code, opts) => {
+        handed = opts?.signal;
+        return new Promise(() => {}); // 永不返回：只有取消能让它结束
+      });
+
+      const pending = runWatchlistNewsBacktest(['600519']);
+      await vi.advanceTimersByTimeAsync(5000);
+      const report = await pending;
+
+      // 只 race 不取消的话，这里会是 false，且底层抓取会继续跑满 8s/30s
+      expect(handed?.aborted).toBe(true);
+      expect(report.results[0].newsSentiment).toBeNull(); // 仍旧降级，不阻断该只标的
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('批次中止时新闻抓取一并取消，并按「整批停车」上抛（不吞成「这只没有新闻」继续跑回测）', async () => {
+    const ac = new AbortController();
+    vi.mocked(extractNewsSignal).mockImplementation(async (_code, opts) => {
+      ac.abort(new Error('客户端连接已关闭'));
+      throw opts?.signal?.reason ?? new Error('aborted');
+    });
+
+    await expect(runWatchlistNewsBacktest(['600001'], { signal: ac.signal })).rejects.toThrow(
+      '客户端连接已关闭',
+    );
+    // 取消若被吞成「无新闻」，这里会照常跑到策略回测（白烧上游）
+    expect(vi.mocked(generateStrategyList)).not.toHaveBeenCalled();
+  });
 });
