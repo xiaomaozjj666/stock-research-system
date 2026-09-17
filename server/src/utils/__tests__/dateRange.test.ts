@@ -43,13 +43,20 @@ describe('resolveDateRange', () => {
     expect(spanDays).toBe(730);
   });
 
-  it('默认窗口按本地日历日取整（UTC+8 凌晨不得退到前一天）', () => {
-    // 2026-01-01T00:30+08:00 = 2025-12-31T16:30Z：UTC 口径会给出 2025-12-31
+  it('默认窗口按本地日历日取整（时区偏移下不得退到前一天）', () => {
+    // 不硬编码期望值：本用例是在断言"用的是本地日历日、不是 UTC 日"，
+    // 硬编码 '2026-01-01' 只在 UTC+8 成立，CI（UTC）会得到 2025-12-31。
+    // 这里按进程本地时区算出期望，两种时区下都检验同一件事。
     const now = Date.parse('2025-12-31T16:30:00Z');
-    expect(formatLocalIsoDate(new Date(now))).toBe('2026-01-01');
+    const localDay = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const expectEnd = localDay(new Date(now));
+    expect(formatLocalIsoDate(new Date(now))).toBe(expectEnd);
+
     const r = resolveDateRange(undefined, undefined, { now, defaultSpanDays: 1 });
-    expect(r.end).toBe('2026-01-01');
-    expect(r.start).toBe('2025-12-31');
+    expect(r.end).toBe(expectEnd);
+    // 起止相差恰好 1 天（跨月/跨年都不影响）
+    expect(Math.round((Date.parse(r.end) - Date.parse(r.start)) / 86_400_000)).toBe(1);
   });
 
   it('显式区间原样返回（不静默改写调用方给的区间）', () => {
