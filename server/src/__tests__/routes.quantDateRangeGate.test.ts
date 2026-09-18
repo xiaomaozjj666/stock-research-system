@@ -234,7 +234,12 @@ describe('#2 区间参数闸门：非法日期 / 倒置 / 超长跨度 → 400 �
 
     expect(res.status).toBe(200);
     const [, start, end] = mockedComposite.mock.calls[0] as unknown as [string, string, string];
-    expect(end).toBe(new Date().toISOString().slice(0, 10));
+    // 默认右端点是「本地日历日的今天」，不是 UTC 日（见 utils/dateRange.formatLocalIsoDate）。
+    // 拿 toISOString() 当期望只在本地日期与 UTC 日期重合时成立：UTC+8 的 00:00-08:00
+    // 断言必挂，而 CI 跑在 UTC 永远看不到。按进程本地时区算期望。
+    const now = new Date();
+    const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    expect(end).toBe(localToday);
     const spanDays = Math.round((Date.parse(end) - Date.parse(start)) / 86_400_000);
     expect(spanDays).toBe(730);
     // 默认区间不额外取数
