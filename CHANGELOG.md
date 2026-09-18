@@ -3,6 +3,104 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
 
+## 2026-09-19 — 补修：区间闸门用例的时区脆弱断言（9/17 那轮的同类漏网）
+
+`routes.quantDateRangeGate.test.ts` 的「composite 缺省日期」用例拿
+`new Date().toISOString().slice(0,10)`（UTC 日）当期望，而 `resolveDateRange` 刻意返回
+**本地日历日**（见 `utils/dateRange.formatLocalIsoDate` 的注释：UTC 口径会让东八区凌晨的
+"今天"退到昨天）。两者只在本地日期与 UTC 日期重合时相等——东八区 00:00–08:00 必挂，
+而 CI 跑在 UTC 所以从未暴露。9/17 那轮只修了 `utils/__tests__/dateRange.test.ts` 的同类
+断言，漏了这个文件。
+
+改为按进程本地时区算期望。本地（UTC+8）与 `TZ=UTC` 均复验通过；并做了突变验证——
+把 `formatLocalIsoDate` 换回 UTC 口径时该用例确实失败（`expected '2026-09-18' to be
+'2026-09-19'`），断言不是恒真。
+
+## 2026-09-17 — 第四轮：覆盖率推进、审计清零与超时取消收口（新增 1154 个测试）
+
+这一轮不新增功能，主线是「补测 → 暴露缺陷 → 当轮修掉 → 收紧门禁」，外加把上一轮明确记为
+"有意不做"的超时取消做完。测试 1978 → **3132 用例 / 230 文件**；覆盖率 lines 79.77% →
+94.8% / statements 92.75% / functions 94.61% / branches 83.05%，阈值同步提到 92 / 90 / 92 / 80。
+
+**覆盖率推进（三轮，每轮暴露的缺陷当轮修完，不是只记 TODO）**
+
+- **第一轮（f48608b）**：新增 14 个测试文件 / 441 条用例 → 195 文件 / 2419 用例。此前 19 个客户端源文件为 0 覆盖（量化面板家族、REST 封装、App 导航分支），服务端时序计量入口也无测试。行覆盖 79.77% → 90.57%，语句 78.48% → 88.49%，函数 75% → 88.93%，分支 66.02% → 75.66%；阈值 lines 70 → 88 / statements 68 → 86 / functions 62 → 86 / branches 55 → 73。`client/src/test/setup.ts` 为 jsdom 补 `ResizeObserver` / `matchMedia` / `scrollIntoView` 兜底，消除「被动 effect 冲刷晚于 `unstubAllGlobals`」造成的跨文件随机失败。
+- **第二轮（7b150d0）**：212 文件 / 2890 用例。行覆盖 → 94.39%，语句 → 92.34%，函数 → 94.32%，分支 → 82.51%；阈值提到 92 / 90 / 92 / 80。覆盖率分母排除 `.test.tsx`（此前只排了 `.test.ts`，41 个测试文件被算进分母）；server 构建改用 `tsconfig.build.json`，dist 不再含 151 个 `*.test.js`；`.gitignore` 覆盖 `.env.*`（保留 `.env.example`）；补录 9 个代码在读取但 `.env.example` 缺失的变量（含 `SSE_HEARTBEAT_MS`、`PAPER_MAX_ORDERS`、`LLM_MAX_QUEUE`、`EXPOSE_ERROR_DETAIL`）。
+- **第三、四轮（e10a426 / dc30660 / 96c7ef9）**：221 → 228 → 230 文件，3018 → 3049 → 3132 用例；行覆盖 94.39% → 94.57% → 94.69% → 94.8%。
+
+**补测暴露并修复的缺陷（择要）**
+
+显示与数据：
+
+- `useCountUp`：target 变 0 时短路不写回 state，换到估值字段缺失的标的会继续显示上一只的 PE/PB。
+- 导出 Markdown 的情景概率少了 100 倍（页面「35%」→ 文件「0.35%」）：`probability` 契约是 0-1，`ScenarioSection` 已 ×100，导出漏了。
+- `ValuationPanel` 敏感性表把行轴（折现率）标成「公允价值（元）」；隐含溢价正溢价染绿、折价染红，且「—」（无法计算）也被染成方向色，与全站红涨绿跌口径相反。
+- `App` 仪表盘市值字段缺失时显示「0 亿」（缺失被当成实测值）。
+- `FactorLabPanel` 的 `fmtP` 把 0.00012 显示成「0.000」，读起来像 p 恰为 0（最强显著）。
+- `ReportSummary` 把 custom 策略标成「均值回归」；`NewsPostureHeatBar` 把极性 0 的中性新闻涂成看空绿。
+
+交互与竞态：
+
+- `ChatPanel` 发消息用 messages 快照整体替换数组，并发/交错写入会吞掉对话 → 改函数式追加。
+- `QuantPage`：`useNews || !newsItems` 让「启用最新消息情绪叠加」勾选框在四种组合下都不生效（未勾选也会实时抓取新闻）；对比表「变化」列按"越大越好"折算颜色，导致最大回撤（存负数）整列反色。
+- `CrossSectionPanel` 组合回测表头读当前表单 state 而非本次运行参数，改「调仓周期」后表头宣称 40 日、表内仍是 21 日那次的数据。
+- `PaperTradingPage`「下单」在途期间未禁用 → 资金类操作可重复提交；审计「加载更多」用渲染快照算 offset，同帧连点两次永远取不到最后一页。
+- `HistoryPage`「查看」无序号守卫，慢响应会顶掉用户最后点的那份报告；并发删除共用 `deletingId` 会让 A 清掉 B 的状态。
+- `api/client.ts`：`chatWithAgentStream` 收尾（done/error/cancel）后，已排进任务队列的那一帧仍会回调调用方。
+
+服务端健壮性与数据可信：
+
+- `llm/client`：响应头到达即清超时、body 读取裸奔——上游在头之后卡住时该请求永不结束，而它占着的 `llmGate` 配额只在 finally 归还，累积到并发上限全站 LLM 调用排队超时且必须重启才能恢复。
+- `quant/dataProvider`：`generateSimulatedData` 的 while 无迭代上限且入口无校验（同步循环占满事件循环）→ 加 20000 次硬上限。
+- 4 条量化路径（composite / backtest evaluate / 截面与表达式取数 / batch）此前会把「行情源不可达时生成的合成 K 线」算成真实结论并返回 200 → 统一改为 422 + `degraded` + 命中代码。
+- `horizons` 解析五处不一致（单只路径连元素上界都没有，`h=1e9` 可过；batch 先 floor 后不复检下界，`h=0.5` → 0 → `tStat=NaN` 静默产出错误显著性）→ 抽 `parseHorizons` 统一 1..504、最多 8 档、去重。
+- `dataService.getData` 把缓存对象**引用**直接返回，`analysisPipeline` 就地改写它，于是"从未由 API 提供过"的修正值被写进内存甚至落盘，同一份数据的口径取决于谁先跑过 → 全部出口返回深拷贝。
+- `errorDetail` 由 fail-open 反转为 fail-safe：本仓库 `npm start` 与 `启动系统.bat` 都不设 `NODE_ENV`，原判据在生产部署下永不生效，20+ 处 `detail` 会把上游 URL 与本机路径直接回给调用方；新增 `EXPOSE_ERROR_DETAIL=1` 供本地排障。
+- `X-Request-ID` 只接受 `[A-Za-z0-9_-]{1,64}`：此前客户端可注入 16KB 或控制字符，并被原样回写响应头、写进日志与错误响应。
+- 限流上限解析统一收口：`Number(env) || N` 对负数不设防（`Number('-5')` 是 -5），而 max<=0 会被 express-rate-limit 视为「永不放行」，该类请求 100% 429。
+- `watchlistService` 非原子全覆盖写 + 无锁 → tmp+rename 与写临界区（写盘中断会留下截断 JSON，读侧静默返回空清单，用户看起来像"自选股被清空"）；`quantCache` 写缓存同样改 tmp+rename（并发写会让读者读到半截 JSON）。
+- `paper` 接单/结算校验交易日必须是真的 `YYYY-MM-DD`（含 2026-02-31 这类「格式对但不存在」），此前脏日期会被写成当前交易日并进入 T+1 判定。
+- `limitGate`：派发段日志同步抛错会让 waiter 永不 settle、配额无人归还（命中上限后闸门无法自愈）。
+- `concurrency`：首个 worker 失败后其余 worker 仍在跑（白烧上游配额、rejection 无人 await）→ 首个失败即中止。
+- `index.ts`：畸形 JSON 请求体此前返回 500「服务器内部错误」（把所有 POST 路由的输入问题说成服务端故障）→ 按 body-parser 的 `entity.parse.failed` 返回 400；补 `headersSent` 守卫（SSE 头已发出后再写响应会抛 `ERR_HTTP_HEADERS_SENT`）。
+- `chat`：`/api/chat/history/clear` 此前无限流也不校验 sessionId（会抹状态的写操作）→ 挂 `chatLimiter` 并复用 chatMemory 的白名单（含 `__proto__` 等原型链键）。
+- `historyService` / `factorLedger`：同步读+解析整份 JSON 且同请求读两遍（库满时约 0.14-0.18s 阻塞事件循环，SSE 长连接会一起等）→ 内存 store + 脏标记 + 写锁。
+- `routes/audit`：无分页（满额时下发约 3.5MB 而客户端只用 20 条）→ 支持 limit/offset，非法时间参数由静默 NaN 过滤改为 400。
+
+结论来源披露（防止规则引擎结论被当成 LLM 研判）：
+
+- 专家层降级分三类（未配置 / 排队超时 / 调用失败）并打标记，人数、名单、原因写进既有 `limitation_explain`。
+- 仲裁层此前**完全静默**降级——"8 位专家全 LLM 成功、仲裁却是规则引擎"时报告不会披露 → 同样打标记并单独披露来源。
+- 导出补齐「## 研究局限性」段落（页面已渲染，导出此前完全缺失）。
+
+口径与可访问性：
+
+- 分数着色不再借用涨跌色：`lib/colors` 新增 `scoreCls` / `scoreBarCls` / `scoreGrade` 与 `.score-*` 色板（优秀档由红改绿、较差档由绿改红），并加源码级守卫断言"这两个面板不得出现涨跌色"。
+- `.no-print` 真正落地（报告动作区与导出/打印按钮、图表工具条、失败列重试、搜索历史清空/删除），并补测试确认该规则只在 `@media print` 生效。
+- `ExpertOpinions` 折叠头由纯 `onClick` 的 div 改为 button + `aria-expanded`（键盘与读屏此前完全打不开）；App 的 tab 补 `aria-controls` 与 panel 的 `role=tabpanel`；`PriceTrendChart` 切换按钮补 `aria-pressed` 并把激活态对比度提到 ≥4.5:1；`prefers-reduced-motion` 补 `scroll-behavior:auto`。
+- `StockSelector` / `StockSearchInput`：在途检索返回后下拉会自己弹回来盖住用户目标 → 补请求序号守卫；历史项删除按钮补可读名称（此前读屏读成「乘号」）。
+
+**超时取消语义收口（96c7ef9）**
+
+上一轮记为「有意不做」的两项，这一轮做完：
+
+- 新增 `utils/timeout.ts` 的 `withAbortableTimeout(run, ms, opts)`：收惰性工厂而不是已创建的 Promise，把「本次超时」与「调用方取消」合并成一个 signal 交给上游，超时能真正级联到 socket 级；调用方 signal 已置位时不调用 run（少打一次注定白烧的上游）。
+- 接入 6 处：`analysisPipeline` 的新闻 3s / K线 12s / 评级回填 8s；`watchlistBacktest` 的新闻 5s（同时接批次信号）；`routes/quant` 的 `/api/quant/analyze` 与 `/api/backtest/evaluate` 各 5s。`outcomeTracker` 取消后不再为剩余条目取数，已完成条目照常落盘。
+- **调用方取消不算「尽力而为」里的失败**：原样上抛取消原因，不再吞成「没有新闻」——否则批量作业取消后每只股票都会继续跑完剩余流程。
+- 刻意保留 `withTimeout` 的 2 处（一致预期 6s / 公告 6s）：这两个 provider 由 `withQuantCache` 在并发调用方之间共享，abort 会连带打断别人那次取数，而超时后让它跑完反而把结果写进缓存（白烧变预热）。例外前提（eventProvider 15s / announcementProvider 12s 硬上限）已加不变量测试钉住。
+- 顺带修掉 `fetchLatestNews` 的真泄漏：逐端点的 8s 定时器原先只在成功路径 clearTimeout，`!resp.ok` 走 continue 时定时器仍挂 8s 并触发一次无人关心的 abort。
+- `llm/client.ts` 自写的 `readBodyWithTimeout` race 实现合并到 `withTimeout`（两套并存只会分叉），保留薄封装与「响应体」错误字样。
+
+**CI 脆弱测试与构建收口**
+
+- `ce6c47e`：审计分页 offset 改由 ref 权威维护（写入点同步更新，不再依赖镜像 effect 的提交时机）；`auditLog` 落盘失败用例改为「父路径是普通文件」注入(两端都确定性抛错)，此前依赖「append 到目录必 EISDIR」，Linux CI 上不触发。
+- `435794d`：`dateRange.test.ts` 的默认窗口用例改按进程本地时区算期望（硬编码 `2026-01-01` 只在 UTC+8 成立，CI 的 UTC 下必挂），并改用「起止相差恰好 1 天」验证区间。
+- `d51f277`：股票搜索用例显式 30s（CI 无外网时链路本就先等 suggest 超时再回落本地全表匹配，5s 属机器抖动触发的脆弱断言）。
+- `de7678c`：`build` 脚本先 `rmSync('dist')` 再 tsc——tsc 只写不删，上一轮收窄 include 后本地 dist 仍留着 151 个 `*.test.js` 孤儿文件，而 E2E 的 webServer 直接跑 `node server/dist/index.js`，等于可能验到上一版代码。
+- `0806872`：截面因子末四列改按 `period` 取最大档（此前取 `byPeriod` 末元素，服务端返回顺序一变就悄悄换档，且表头未标明是哪一档），表头补「（最长档）」并加乱序回归用例。
+
+验证：全量 230 文件 / 3132 用例通过（新增 2 文件 29 用例）；覆盖率 lines 94.8% / statements 92.75% / functions 94.61% / branches 83.05%（阈值 92 / 90 / 92 / 80）；lint 0 warning 0 error；Prettier 全通过；双端 tsc；双端 build；E2E 9/9。新增的源码级不变量测试已用突变验证（改回裸 `withTimeout` 时确实失败）。
+
 ## 2026-09-16 — 第三轮收尾：清空全部遗留项（新增 87 个测试）
 
 把前两轮明确记为"未做/有疑虑"的条目全部落地，不再保留已知缺口。测试 1891 → **1978 用例 / 181 文件**；覆盖率 lines 79.77% / statements 78.48% / functions 75% / branches 66%。
