@@ -7,22 +7,28 @@
  *   1. 读经验 —— factorLedger 里带完整判据证据（evidence）的历史实验；
  *   2. 切两段 —— 较早的 70% 当**训练集**（只用来挑候选），较新的 30% 当**验证集**
  *      （只用来做保留/回滚决策）。同一批数据既挑又判，等于自己给自己判卷；
- *   3. 生成候选 —— 在判据的三个维度上取网格（显著性水平 × 单调性下限 × 最小样本期数），
+ *   3. 生成候选 —— 判据的三个维度取网格（显著性水平 × 单调性下限 × 最小样本期数），
  *      外加把**现任判据**本身作为基线候选，保证「不改」永远是一个合法选项；
  *   4. 回放 —— 用 `applyVerdictPolicy`（与线上同一实现）逐条重算采信结果，算目标函数；
- *   5. 决策 —— 胜出候选必须在**验证集**上严格优于现任，且不得牺牲样本外稳定的绝对条数
- *      （靠"少采信"把精度刷上去不是进步）；通过才落盘生效，否则回滚并留痕。
+ *   5. 决策 —— 胜出候选必须同时满足三条：验证集上**决策准确率**更高、样本外稳定的
+ *      **绝对条数不减**、且配对差异通过 **McNemar 精确检验**（双侧 p < 0.05）。
  *
- * 为什么目标函数是「采信集的样本外稳定占比」：
- *   台账里唯一可自动判定、且**独立于判据本身**的真值信号就是 `oosStable`
- *   （它是评估器把 IC 序列切前 70%/后 30% 分别做显著性检验得出的，不是判据的产物）。
- *   判据的职责正是"选出能扛住样本外的因子"，用它做目标与判据的职责一致。
- *   代价必须一并记录：只追精度会退化成"几乎不采信"，故设采信率下限。
+ * 目标函数为什么是「决策准确率」而不是「采信集精度」：
+ *   一条记录的判定对错只有两种好结局——采信了扛住样本外的因子（真阳性）、
+ *   剔除了没扛住的因子（真阴性）。只盯精度会漏掉后者：把好因子一起扔掉的策略
+ *   精度可能更高。准确率把两类错误一起算进去，而且**天然是配对二值**，
+ *   于是可以直接上 McNemar——这正是"它只是启发式、不是显著性检验"那个短板的解法。
+ *   精度仍然照常记录：它是使用者真正关心的口径（采信的东西有多可靠）。
  *
- * 诚实的边界（写在代码里而不是留在口头）：
- *   这是**带训练/验证切分的启发式搜索**，不是显著性检验；候选网格有限，
- *   结论只对"这批历史实验"负责。因此每条记录都把候选全集、切分口径与样本量
- *   一并落盘，让人可以复核而不是只能相信。
+ * 为什么不对候选数做多重比较校正：
+ *   候选是在**训练集**上挑的，验证集自始至终没参与选择。选择偏差由切分本身挡掉了，
+ *   验证集上的检验是一次干净的确认性检验，不是"32 次里的最大值"。
+ *
+ * 诚实的边界（写在代码里，而不是留在口头）：
+ *   ① 候选网格有限，结论只对「这批历史实验」负责；
+ *   ② 提高证据下限（60 条可回放 / 20 条验证）是有意的——判据会被自动改写并影响
+ *      后续所有分析结论，样本不足时"不动"才是正确答案，故宁可让循环多在等待态；
+ *   ③ 每条记录都把候选全集、切分口径、样本量与检验统计量一并落盘，供人复核。
  */
 import { applyVerdictPolicy, type VerdictEvidence } from './factorEvaluation.js';
 import { listFactorExperiments, MAX_LEDGER_ITEMS, type FactorExperiment } from './factorLedger.js';
@@ -30,6 +36,7 @@ import {
   applyHarnessPolicy,
   DEFAULT_HARNESS_POLICY,
   getHarnessPolicyState,
+  POLICY_BOUNDS,
   type HarnessPolicy,
   type HarnessPolicyState,
 } from './harnessPolicy.js';
@@ -42,21 +49,23 @@ import {
   type TriedCandidate,
 } from './improvementLedger.js';
 
-/** 可参与回放的最小证据条数：低于此数任何"改进"都是噪声 */
-export const MIN_EVIDENCE_COUNT = 20;
 /**
- * 验证集最小条数：决策必须建立在足够样本上。
- * 取 8 而非更小值：它同时是「证据总量够但验证集仍不够」这一档的守门人——
- * 证据下界 20 条时验证集只有 6 条（精度分辨率 1/6），不足以支撑一次策略改动。
+ * 可参与回放的最小证据条数：低于此数任何"改进"都是噪声。
+ * 取 60 而非 20：判据一旦被改写就影响后续全部分析结论，而配对检验在小样本上
+ * 几乎没有功效——与其给出一个测不出来的结论，不如先攒够证据。
  */
-export const MIN_VALIDATION_COUNT = 8;
+export const MIN_EVIDENCE_COUNT = 60;
+/** 验证集最小条数：它决定检验的功效。20 条时 6:0 的不一致对即可达显著（p≈0.031） */
+export const MIN_VALIDATION_COUNT = 20;
 /** 训练集占比（其余作验证集）；较早的一段训练、较新的一段验证，避免用未来信息调参 */
 export const TRAIN_RATIO = 0.7;
 /**
  * 采信率下限：候选至少采信 10% 的待评记录。
- * 没有它，目标函数的最优解几乎总是"几乎不采信"——精度 100% 但一个因子都没选出来。
+ * 没有它，目标函数的最优解几乎总是"几乎不采信"——准确率好看但一个因子都没选出来。
  */
 export const MIN_KEPT_SHARE = 0.1;
+/** 决策显著性水平（双侧） */
+export const DECISION_ALPHA = 0.05;
 
 /** 候选网格：显著性水平 */
 const GRID_SIGNIFICANCE = [0.01, 0.02, 0.05, 0.1] as const;
@@ -88,12 +97,16 @@ export interface ReplayRow {
 export interface PolicyScore {
   /** 被采信的条数 */
   kept: number;
-  /** 采信中样本外稳定的条数（分子） */
+  /** 采信中样本外稳定的条数 */
   keptStable: number;
-  /** 采信集的样本外稳定占比；无采信时为 null */
+  /** 采信集的样本外稳定占比（使用者口径）；无采信时为 null */
   precision: number | null;
   /** 采信率 = kept / 总数 */
   keptShare: number;
+  /** 判定正确的条数：采信了稳定因子，或剔除了不稳定因子 */
+  correct: number;
+  /** 决策准确率 = correct / 总数（目标函数） */
+  accuracy: number;
   /** 总条数 */
   total: number;
 }
@@ -118,25 +131,122 @@ export function buildCandidates(incumbent: HarnessPolicy): HarnessPolicy[] {
   return [...out.values()];
 }
 
+/** 某条记录在该判据下的采信决定（逐条，供配对检验用） */
+export function policyDecisions(policy: HarnessPolicy, rows: ReplayRow[]): boolean[] {
+  return rows.map((row) => applyVerdictPolicy(row.evidence, policy).effective);
+}
+
 /** 纯函数：把候选判据逐条回放到记录集上 */
 export function scorePolicy(policy: HarnessPolicy, rows: ReplayRow[]): PolicyScore {
+  const decisions = policyDecisions(policy, rows);
   let kept = 0;
   let keptStable = 0;
-  for (const row of rows) {
-    if (!applyVerdictPolicy(row.evidence, policy).effective) continue;
-    kept += 1;
-    if (row.oosStable) keptStable += 1;
+  let correct = 0;
+  for (let i = 0; i < rows.length; i += 1) {
+    const decision = decisions[i];
+    const stable = rows[i].oosStable;
+    if (decision) {
+      kept += 1;
+      if (stable) keptStable += 1;
+    }
+    // 判定正确 = 采信了稳定因子（真阳性）或剔除了不稳定因子（真阴性）
+    if (decision === stable) correct += 1;
   }
   return {
     kept,
     keptStable,
     precision: kept > 0 ? keptStable / kept : null,
     keptShare: rows.length > 0 ? kept / rows.length : 0,
+    correct,
+    accuracy: rows.length > 0 ? correct / rows.length : 0,
     total: rows.length,
   };
 }
 
-/** 两个策略在几个维度上不同（0–4） */
+/**
+ * McNemar 精确检验（双侧）。
+ *
+ * 输入是配对二值结果的不一致对数：b = 改后对/改前错，c = 改前对/改后错。
+ * 在原假设「两种判据的判定正确率相同」下，不一致对服从 Binomial(b+c, 0.5)，
+ * 双侧 p = 2 × P(X ≤ min(b,c))，封顶 1。
+ *
+ * 大样本兜底：b+c > 1000 时 0.5^n 下溢，直接返回 1（不显著）。该分支在现有配置下
+ * **不可达**——台账上限 500 条、验证集占 30%，不一致对最多 150 对；返回 1 是安全
+ * 方向（不显著 → 不改判据），不会误保留。
+ */
+export function mcnemarExact(b: number, c: number): number {
+  const n = b + c;
+  if (n === 0) return 1;
+  if (n > 1000) return 1;
+  const m = Math.min(b, c);
+  let term = 0.5 ** n; // P(X=0)
+  let tail = term;
+  for (let k = 1; k <= m; k += 1) {
+    term *= (n - k + 1) / k; // C(n,k)/C(n,k-1)
+    tail += term;
+  }
+  return Math.min(1, 2 * tail);
+}
+
+export interface PairedDecision {
+  /** 改后对、改前错的条数（McNemar b） */
+  b: number;
+  /** 改前对、改后错的条数（McNemar c） */
+  c: number;
+  pValue: number;
+  accuracyBefore: number;
+  accuracyAfter: number;
+}
+
+/** 配对比较两个判据在**同一批**验证记录上的判定正确率 */
+export function pairedDecision(
+  beforeKept: boolean[],
+  afterKept: boolean[],
+  rows: ReplayRow[],
+): PairedDecision {
+  let b = 0;
+  let c = 0;
+  let correctBefore = 0;
+  let correctAfter = 0;
+  for (let i = 0; i < rows.length; i += 1) {
+    const stable = rows[i].oosStable;
+    const okBefore = beforeKept[i] === stable;
+    const okAfter = afterKept[i] === stable;
+    if (okBefore) correctBefore += 1;
+    if (okAfter) correctAfter += 1;
+    if (okAfter && !okBefore) b += 1;
+    else if (okBefore && !okAfter) c += 1;
+  }
+  const total = rows.length || 1;
+  return {
+    b,
+    c,
+    pValue: mcnemarExact(b, c),
+    accuracyBefore: correctBefore / total,
+    accuracyAfter: correctAfter / total,
+  };
+}
+
+/**
+ * 判据改动的「归一化移动量」：各维度变化幅度除以该维度定义域宽度后求和，布尔维度记 1。
+ *
+ * 用于同分候选的取舍。此前按"改了几个维度"排，遇到两个都只改一维、得分又完全相同的
+ * 候选时只能由遍历顺序决定改哪个——实测会把显著性从 0.05 一路收紧到 0.01，而真正
+ * 起作用的是单调性。改成比移动量后，**动得最少的那个**胜出：既是"能不动就不动"的
+ * 归纳偏置，也避免把与提升无关的维度顺手改掉。
+ */
+export function policyMovement(a: HarnessPolicy, b: HarnessPolicy): number {
+  const span = (key: 'minIcSamples' | 'significanceLevel' | 'minMonotonicity') =>
+    POLICY_BOUNDS[key].max - POLICY_BOUNDS[key].min;
+  return (
+    Math.abs(a.minIcSamples - b.minIcSamples) / span('minIcSamples') +
+    Math.abs(a.significanceLevel - b.significanceLevel) / span('significanceLevel') +
+    Math.abs(a.minMonotonicity - b.minMonotonicity) / span('minMonotonicity') +
+    (a.requirePositiveSpread === b.requirePositiveSpread ? 0 : 1)
+  );
+}
+
+/** 两个策略在几个维度上不同（0–4）；作为移动量相同后的兜底排序 */
 export function policyDistance(a: HarnessPolicy, b: HarnessPolicy): number {
   let d = 0;
   if (a.minIcSamples !== b.minIcSamples) d += 1;
@@ -147,22 +257,25 @@ export function policyDistance(a: HarnessPolicy, b: HarnessPolicy): number {
 }
 
 /**
- * 候选排序键（越小越优）。
- *
- * 前三级是「好多少」：精度高者优先；精度相同则**稳定的绝对条数**多者优先
- * （同样 80% 精度，采信 8 个稳定因子比采信 4 个好）；再同则采信率高者优先。
- *
- * 第四级是「动多少」：与现任差异最小的优先。没有这一级，目标函数对
- * 「哪个维度起的作用」没有偏好，会在一堆同分候选里按遍历顺序随便挑一个——
- * 实测中它会把**与提升无关**的维度也一起改掉（显著性从 0.05 挪到 0.01，
- * 仅仅因为它排在网格前面）。同分时取最小改动，是"能不动就不动"的归纳偏置。
+ * 候选排序键（返回负数表示 a 更优）。
+ *   ① 准确率高者优先（主目标）
+ *   ② 稳定的绝对条数多者优先（同样准确率，多留一个真因子更好）
+ *   ③ 采信率高者优先（同样准确率，别把判据收得太死）
+ *   ④ 与现任的归一化移动量小者优先（能不动就不动）
+ *   ⑤ 改动的维度数少者优先（同为最小移动时少动一维）
  */
-function compareScore(a: PolicyScore, b: PolicyScore, aDist: number, bDist: number): number {
-  if (a.precision === null) return b.precision === null ? 0 : 1;
-  if (b.precision === null) return -1;
-  if (a.precision !== b.precision) return b.precision - a.precision;
+function compareScore(
+  a: PolicyScore,
+  b: PolicyScore,
+  aMove: number,
+  bMove: number,
+  aDist: number,
+  bDist: number,
+): number {
+  if (a.accuracy !== b.accuracy) return b.accuracy - a.accuracy;
   if (a.keptStable !== b.keptStable) return b.keptStable - a.keptStable;
   if (a.keptShare !== b.keptShare) return b.keptShare - a.keptShare;
+  if (aMove !== bMove) return aMove - bMove;
   return aDist - bDist;
 }
 
@@ -182,7 +295,6 @@ export function collectReplayRows(): ReplayRow[] {
     .reverse()
     .filter((e: FactorExperiment) => e.evidence !== undefined)
     .map((e) => ({
-      // 只保留判据需要的四项；台账里的 quantileRows 与 icN 由记录侧保证齐全
       evidence: { ...e.evidence!, pValue: e.pValue },
       oosStable: Boolean(e.oosStable),
     }));
@@ -191,9 +303,9 @@ export function collectReplayRows(): ReplayRow[] {
 /**
  * 已被"用不少于当前验证集规模的数据"探索过的候选键。
  *
- * 负结果复用的判据：某候选在验证集更大（信息更多）的那一轮里都赢不了，
- * 现在数据更少，再试一次不会得到不同结论。反过来，当验证集长大后
- * （validationCount 超过历史记录）候选会重新变为可探索——证据变了就该重判。
+ * 负结果复用的判据：某候选在验证集更大（信息更多）的那一轮里都赢不了，现在数据
+ * 更少，再试一次不会得到不同结论。反过来，当验证集长大后（validationCount 超过
+ * 历史记录）候选会重新变为可探索——证据变了就该重判。
  */
 export function exploredKeys(currentValidationCount: number): Set<string> {
   const keys = new Set<string>();
@@ -251,7 +363,7 @@ function runRound(dryRun: boolean): ImprovementRoundResult {
   if (rows.length < MIN_EVIDENCE_COUNT) {
     return {
       changed: false,
-      reason: `可回放的历史实验仅 ${rows.length} 条（需 ≥${MIN_EVIDENCE_COUNT}）：台账里的判据证据是本次改造起才开始留痕的，先多跑几轮因子评估再来`,
+      reason: `可回放的历史实验仅 ${rows.length} 条（需 ≥${MIN_EVIDENCE_COUNT}）：判据证据自本次改造起才开始留痕，存量记录不含该字段，先多跑几轮因子评估再来`,
       record: null,
       policyState: incumbentState,
       evaluated: 0,
@@ -264,7 +376,7 @@ function runRound(dryRun: boolean): ImprovementRoundResult {
   if (validation.length < MIN_VALIDATION_COUNT) {
     return {
       changed: false,
-      reason: `验证集仅 ${validation.length} 条（需 ≥${MIN_VALIDATION_COUNT}）：样本太少时"精度提升"多半是噪声`,
+      reason: `验证集仅 ${validation.length} 条（需 ≥${MIN_VALIDATION_COUNT}）：样本太少时配对检验没有功效，"提升"多半是噪声`,
       record: null,
       policyState: incumbentState,
       evaluated: 0,
@@ -290,22 +402,28 @@ function runRound(dryRun: boolean): ImprovementRoundResult {
   for (const p of fresh) candidateMap.set(policyKey(p), p);
   const candidates = [...candidateMap.values()];
 
-  // 训练集挑候选：可行的里面取最优（同分取与现任差异最小者）
+  // 训练集挑候选：可行的里面取最优（同分取移动量最小者）
   const tried: TriedCandidate[] = [];
   let best: { policy: HarnessPolicy; trainScore: PolicyScore } | null = null;
+  let bestMove = Number.POSITIVE_INFINITY;
   let bestDist = Number.POSITIVE_INFINITY;
   for (const policy of candidates) {
     const trainScore = scorePolicy(policy, train);
     const feasible = isFeasible(trainScore);
     tried.push({
       policy,
-      trainScore: feasible ? (trainScore.precision ?? null) : null,
+      trainScore: feasible ? trainScore.accuracy : null,
       validationScore: null,
     });
     if (!feasible) continue;
+    const move = policyMovement(policy, incumbent);
     const dist = policyDistance(policy, incumbent);
-    if (best === null || compareScore(trainScore, best.trainScore, dist, bestDist) < 0) {
+    if (
+      best === null ||
+      compareScore(trainScore, best.trainScore, move, bestMove, dist, bestDist) < 0
+    ) {
       best = { policy, trainScore };
+      bestMove = move;
       bestDist = dist;
     }
   }
@@ -320,17 +438,26 @@ function runRound(dryRun: boolean): ImprovementRoundResult {
     };
   }
 
-  // 验证集做决策：现任 vs 胜出候选
+  // 并列数：与胜出者在训练集上准确率相同的候选个数（>1 说明主目标区分不开，供人复核取舍）
+  const winnerAccuracy = best.trainScore.accuracy;
+  const tiedAtBest = tried.filter(
+    (t) => t.trainScore !== null && t.trainScore === winnerAccuracy,
+  ).length;
+
+  // 验证集做决策：现任 vs 胜出候选（配对 McNemar）
   const beforeScore = scorePolicy(incumbent, validation);
   const afterScore = scorePolicy(best.policy, validation);
+  const paired = pairedDecision(
+    policyDecisions(incumbent, validation),
+    policyDecisions(best.policy, validation),
+    validation,
+  );
   // 把胜出候选的验证集得分补进 tried，便于事后复核"训练集最优在验证集上是什么样"
-  const bestKey = policyKey(best.policy);
+  const winnerKey = policyKey(best.policy);
   for (const t of tried) {
-    if (policyKey(t.policy) === bestKey) t.validationScore = afterScore.precision ?? null;
+    if (policyKey(t.policy) === winnerKey) t.validationScore = afterScore.accuracy;
   }
 
-  const beforePrecision = beforeScore.precision ?? 0;
-  const afterPrecision = afterScore.precision ?? 0;
   const basis = {
     evidenceCount: rows.length,
     trainCount: train.length,
@@ -339,25 +466,38 @@ function runRound(dryRun: boolean): ImprovementRoundResult {
   };
   const metric = {
     name: 'oos-precision' as const,
-    before: round4(beforePrecision),
-    after: round4(afterPrecision),
-    delta: round4(afterPrecision - beforePrecision),
+    before: round4(beforeScore.precision ?? 0),
+    after: round4(afterScore.precision ?? 0),
+    delta: round4((afterScore.precision ?? 0) - (beforeScore.precision ?? 0)),
     keptBefore: beforeScore.kept,
     keptAfter: afterScore.kept,
   };
+  const significance = {
+    accuracyBefore: round4(paired.accuracyBefore),
+    accuracyAfter: round4(paired.accuracyAfter),
+    afterBetter: paired.b,
+    beforeBetter: paired.c,
+    pValue: round4(paired.pValue),
+    alpha: DECISION_ALPHA,
+    significant: paired.pValue < DECISION_ALPHA,
+  };
 
-  // 决策：必须严格更优，且不得牺牲稳定的绝对条数
-  const improved = afterPrecision > beforePrecision;
+  const accuracyImproved = paired.accuracyAfter > paired.accuracyBefore;
   const noLoss = afterScore.keptStable >= beforeScore.keptStable;
-  const decided = improved && noLoss;
+  const decided = accuracyImproved && noLoss && significance.significant;
 
   let verdict: string;
-  if (!improved) {
-    verdict = `验证集上胜出候选未优于现任（精度 ${fmt(beforePrecision)} → ${fmt(afterPrecision)}），维持现任判据`;
+  if (!accuracyImproved) {
+    verdict = `验证集上胜出候选未优于现任（决策准确率 ${pct(paired.accuracyBefore)} → ${pct(paired.accuracyAfter)}），维持现任判据`;
   } else if (!noLoss) {
-    verdict = `验证集精度虽升（${fmt(beforePrecision)} → ${fmt(afterPrecision)}），但样本外稳定的绝对条数从 ${beforeScore.keptStable} 降到 ${afterScore.keptStable}——靠少采信换精度不算进步，维持现任判据`;
+    verdict = `决策准确率虽升（${pct(paired.accuracyBefore)} → ${pct(paired.accuracyAfter)}），但样本外稳定的绝对条数从 ${beforeScore.keptStable} 降到 ${afterScore.keptStable}——靠少采信换指标不算进步，维持现任判据`;
+  } else if (!significance.significant) {
+    verdict = `决策准确率 ${pct(paired.accuracyBefore)} → ${pct(paired.accuracyAfter)}，但配对差异未达显著（McNemar 不一致对 ${paired.b}:${paired.c}，双侧 p=${significance.pValue.toFixed(4)} ≥ ${DECISION_ALPHA}），维持现任判据`;
   } else {
-    verdict = `验证集精度 ${fmt(beforePrecision)} → ${fmt(afterPrecision)}（采信 ${beforeScore.kept} → ${afterScore.kept} 条，其中稳定 ${beforeScore.keptStable} → ${afterScore.keptStable} 条），保留改动`;
+    verdict = `决策准确率 ${pct(paired.accuracyBefore)} → ${pct(paired.accuracyAfter)}（McNemar 不一致对 ${paired.b}:${paired.c}，双侧 p=${significance.pValue.toFixed(4)} < ${DECISION_ALPHA}；采信 ${beforeScore.kept} → ${afterScore.kept} 条，其中稳定 ${beforeScore.keptStable} → ${afterScore.keptStable} 条），保留改动`;
+  }
+  if (tiedAtBest > 1) {
+    verdict += `（另有 ${tiedAtBest - 1} 个候选在训练集上与它同分，按移动量最小取此者）`;
   }
 
   const record: ImprovementRecord | null = dryRun
@@ -368,8 +508,9 @@ function runRound(dryRun: boolean): ImprovementRoundResult {
         before: { ...incumbent },
         after: { ...best.policy },
         metric,
+        significance,
         outcome: decided ? 'kept' : 'reverted',
-        verdict: dryRun ? `（演练，未落盘）${verdict}` : verdict,
+        verdict,
         tried,
       });
 
@@ -404,6 +545,7 @@ function runRound(dryRun: boolean): ImprovementRoundResult {
       before: { ...incumbent },
       after: { ...best.policy },
       metric,
+      significance,
       outcome: 'reverted',
       verdict: `候选更优但策略写入失败，未生效：${applied.errors.join('；')}`,
       tried,
@@ -430,11 +572,11 @@ function round4(v: number): number {
   return Math.round(v * 10000) / 10000;
 }
 
-function fmt(v: number): string {
+function pct(v: number): string {
   return `${(v * 100).toFixed(1)}%`;
 }
 
 /** 现任判据是否就是出厂值（供状态接口如实披露"从未被改动过"） */
 export function isFactoryPolicy(policy: HarnessPolicy): boolean {
-  return policyKey(policy) === policyKey(DEFAULT_HARNESS_POLICY as HarnessPolicy);
+  return policyKey(policy) === policyKey({ ...DEFAULT_HARNESS_POLICY });
 }

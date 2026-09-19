@@ -34,6 +34,29 @@ export interface TriedCandidate {
   validationScore: number | null;
 }
 
+/**
+ * 决策的统计证据（配对 McNemar 精确检验）。
+ *
+ * 只记「精度从多少升到多少」是不够的：精度是比例，样本少时同样的比值可能来自
+ * 完全不同的证据强度。这里把**配对**检验的原始计数一并落盘——不一致对 b/c 是
+ * 可复核的最小充分统计量，p 值由它算出，任何人拿这两个数都能重算一遍。
+ */
+export interface ImprovementSignificance {
+  /** 判定准确率（采信稳定因子 / 剔除不稳因子，两者都算对） */
+  accuracyBefore: number;
+  accuracyAfter: number;
+  /** 改后对、改前错的条数（McNemar b） */
+  afterBetter: number;
+  /** 改前对、改后错的条数（McNemar c） */
+  beforeBetter: number;
+  /** 双侧精确 p 值 */
+  pValue: number;
+  /** 判定阈值 */
+  alpha: number;
+  /** 是否达到显著（决策的必要条件之一） */
+  significant: boolean;
+}
+
 export interface ImprovementRecord {
   id: string;
   createdAt: string;
@@ -53,7 +76,7 @@ export interface ImprovementRecord {
   before: HarnessPolicy;
   /** 本轮胜出的候选策略 */
   after: HarnessPolicy;
-  /** 决策指标：在验证集上的「采信集样本外稳定占比」 */
+  /** 决策指标：在验证集上的「采信集样本外稳定占比」（使用者口径） */
   metric: {
     name: 'oos-precision';
     before: number;
@@ -63,6 +86,8 @@ export interface ImprovementRecord {
     keptBefore: number;
     keptAfter: number;
   };
+  /** 决策的统计证据（配对 McNemar 精确检验） */
+  significance: ImprovementSignificance;
   outcome: ImprovementOutcome;
   /** 中文判定说明，可直接展示给用户 */
   verdict: string;

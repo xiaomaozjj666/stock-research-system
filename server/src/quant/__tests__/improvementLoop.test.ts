@@ -22,10 +22,15 @@ import {
   exploredKeys,
   isFactoryPolicy,
   isFeasible,
+  mcnemarExact,
+  pairedDecision,
+  policyDecisions,
   policyDistance,
+  policyMovement,
   runImprovementRound,
   scorePolicy,
   splitCounts,
+  type PolicyScore,
   type ReplayRow,
 } from '../improvementLoop.js';
 import { clearFactorExperiments, recordFactorExperiments } from '../factorLedger.js';
@@ -195,16 +200,21 @@ describe('scorePolicy', () => {
 });
 
 describe('isFeasible / splitCounts / policyDistance', () => {
+  /** 只填判定可行性需要的三个字段；correct/accuracy 与可行性无关 */
+  const score = (kept: number, keptShare: number): PolicyScore => ({
+    kept,
+    keptStable: kept,
+    precision: kept > 0 ? 1 : null,
+    keptShare,
+    correct: kept,
+    accuracy: keptShare,
+    total: 20,
+  });
+
   it('必须真的采信了东西，且采信率不低于下限', () => {
-    expect(isFeasible({ kept: 0, keptStable: 0, precision: null, keptShare: 0, total: 10 })).toBe(
-      false,
-    );
-    expect(isFeasible({ kept: 1, keptStable: 1, precision: 1, keptShare: 0.05, total: 20 })).toBe(
-      false,
-    );
-    expect(isFeasible({ kept: 2, keptStable: 2, precision: 1, keptShare: 0.1, total: 20 })).toBe(
-      true,
-    );
+    expect(isFeasible(score(0, 0))).toBe(false);
+    expect(isFeasible(score(1, 0.05))).toBe(false);
+    expect(isFeasible(score(2, 0.1))).toBe(true);
   });
 
   it('splitCounts 与循环实际切分一致（状态接口据此预告）', () => {
@@ -272,6 +282,15 @@ describe('exploredKeys', () => {
       keptBefore: 10,
       keptAfter: 8,
     },
+    significance: {
+      accuracyBefore: 0.6,
+      accuracyAfter: 0.8,
+      afterBetter: 6,
+      beforeBetter: 0,
+      pValue: 0.0313,
+      alpha: 0.05,
+      significant: true,
+    },
     outcome: 'reverted',
     verdict: 'v',
     tried: [{ policy, trainScore: 0.5, validationScore: null }],
@@ -291,12 +310,136 @@ describe('exploredKeys', () => {
 });
 
 // ============================================================
+// 决策的统计护栏
+// ============================================================
+
+/** 造一条判据证据（默认全部通过出厂判据） */
+const ev = (monotonicity: number): ReplayRow['evidence'] => ({
+  icN: 20,
+  pValue: 0.001,
+  quantileRows: 5,
+  monotonicity,
+  spread: 0.02,
+});
+
+describe('mcnemarExact', () => {
+  it('没有不一致对 → p=1（没有证据就没有结论）', () => {
+    expect(mcnemarExact(0, 0)).toBe(1);
+  });
+
+  it('单侧极端 6:0 → p=0.03125，恰好过 0.05', () => {
+    expect(mcnemarExact(6, 0)).toBeCloseTo(0.03125, 6);
+    expect(mcnemarExact(6, 0)).toBeLessThan(0.05);
+  });
+
+  it('单侧极端 5:0 → p=0.0625，差一口气（这正是提高验证集下限的原因）', () => {
+    expect(mcnemarExact(5, 0)).toBeCloseTo(0.0625, 6);
+    expect(mcnemarExact(5, 0)).toBeGreaterThan(0.05);
+  });
+
+  it('双侧对称：b/c 互换结果相同', () => {
+    expect(mcnemarExact(7, 2)).toBeCloseTo(mcnemarExact(2, 7), 12);
+  });
+
+  it('接近平衡 → 不显著', () => {
+    expect(mcnemarExact(10, 9)).toBeGreaterThan(0.9);
+  });
+
+  it('p 值封顶为 1', () => {
+    expect(mcnemarExact(3, 3)).toBeLessThanOrEqual(1);
+    expect(mcnemarExact(1, 0)).toBe(1);
+  });
+
+  it('不一致对超过 1000 时保守返回 1（现有配置不可达，且方向安全：不显著→不改判据）', () => {
+    expect(mcnemarExact(600, 401)).toBe(1);
+  });
+});
+
+describe('pairedDecision', () => {
+  // 4 条验证记录：两条稳定、两条不稳
+  const rows: ReplayRow[] = [
+    { evidence: ev(0.8), oosStable: true },
+    { evidence: ev(0.8), oosStable: true },
+    { evidence: ev(0.65), oosStable: false },
+    { evidence: ev(0.65), oosStable: false },
+  ];
+
+  it('数出不一致对与两侧准确率', () => {
+    // 改前全采信：稳定留对、不稳也留错 → 对 2/4
+    // 改后只留强因子：稳定留对、不稳剔对、但丢掉一条"弱但稳" → 对 3/4
+    const d = pairedDecision([true, true, true, true], [true, false, false, false], rows);
+    expect(d.b).toBe(2); // 两条不稳因子由"留错"变"剔对"
+    expect(d.c).toBe(1); // 一条稳定因子由"留对"变"丢掉"
+    expect(d.accuracyBefore).toBe(0.5);
+    expect(d.accuracyAfter).toBe(0.75);
+    expect(d.pValue).toBe(mcnemarExact(2, 1));
+  });
+
+  it('判据完全相同 → 无不一致对，p=1', () => {
+    const same = [true, true, false, false];
+    const d = pairedDecision(same, [...same], rows);
+    expect(d.b).toBe(0);
+    expect(d.c).toBe(0);
+    expect(d.pValue).toBe(1);
+    expect(d.accuracyAfter).toBe(d.accuracyBefore);
+    // 全判对的情形
+    expect(d.accuracyBefore).toBe(1);
+  });
+
+  it('空记录集不除零', () => {
+    const d = pairedDecision([], [], []);
+    expect(d.accuracyBefore).toBe(0);
+    expect(d.pValue).toBe(1);
+  });
+});
+
+describe('policyMovement', () => {
+  it('同一策略移动量为 0', () => {
+    expect(policyMovement({ ...DEFAULT_HARNESS_POLICY }, { ...DEFAULT_HARNESS_POLICY })).toBe(0);
+  });
+
+  it('按定义域归一：显著性动 0.04 比单调性动 0.1 更"重"', () => {
+    const base: HarnessPolicy = { ...DEFAULT_HARNESS_POLICY };
+    const sigMove = policyMovement(base, { ...base, significanceLevel: 0.01 }); // 0.04/0.199
+    const monoMove = policyMovement(base, { ...base, minMonotonicity: 0.7 }); // 0.10/0.90
+    expect(sigMove).toBeGreaterThan(monoMove);
+  });
+
+  it('布尔维度变化记 1', () => {
+    const base: HarnessPolicy = { ...DEFAULT_HARNESS_POLICY };
+    const both = policyMovement(base, { ...base, requirePositiveSpread: false });
+    expect(both).toBe(1);
+  });
+
+  it('多维度变化累加', () => {
+    const base: HarnessPolicy = { ...DEFAULT_HARNESS_POLICY };
+    const one = policyMovement(base, { ...base, minMonotonicity: 0.7 });
+    const two = policyMovement(base, { ...base, minMonotonicity: 0.7, significanceLevel: 0.01 });
+    expect(two).toBeGreaterThan(one);
+  });
+});
+
+describe('policyDecisions', () => {
+  it('逐条给出采信决定，与 scorePolicy 口径一致', () => {
+    const rows: ReplayRow[] = [
+      { evidence: ev(0.8), oosStable: true },
+      { evidence: ev(0.65), oosStable: false },
+    ];
+    expect(policyDecisions({ ...DEFAULT_HARNESS_POLICY }, rows)).toEqual([true, true]);
+    expect(policyDecisions({ ...DEFAULT_HARNESS_POLICY, minMonotonicity: 0.7 }, rows)).toEqual([
+      true,
+      false,
+    ]);
+  });
+});
+
+// ============================================================
 // 一轮改进
 // ============================================================
 
 describe('runImprovementRound：早退路径', () => {
   it('证据不足时不动，并说明还差多少', () => {
-    seedLedger(repeat([GOOD], 5)); // 5 条 < 20
+    seedLedger(repeat([GOOD], 5)); // 5 条，远低于证据下限
     const r = runImprovementRound();
     expect(r.changed).toBe(false);
     expect(r.record).toBeNull();
@@ -305,9 +448,9 @@ describe('runImprovementRound：早退路径', () => {
     expect(getHarnessPolicyState().source).toBe('default');
   });
 
-  it('证据够但验证集不足时不动（精度分辨率不够，提升多半是噪声）', () => {
-    // 22 条 → 训练 15 / 验证 7 < 8
-    seedLedger(repeat([GOOD], 22));
+  it('证据够但验证集不足时不动（配对检验没有功效，提升多半是噪声）', () => {
+    // 60 条 → 训练 42 / 验证 18 < 20：刚好卡在"总量够、验证不够"这一档
+    seedLedger(repeat([GOOD], 60));
     const r = runImprovementRound();
     expect(r.changed).toBe(false);
     expect(r.record).toBeNull();
@@ -316,7 +459,7 @@ describe('runImprovementRound：早退路径', () => {
   });
 
   it('全部候选不可行时不动（多空价差全为非正，任何判据都采信不出东西）', () => {
-    seedLedger(repeat([{ ...GOOD, spread: -0.01 }], 30));
+    seedLedger(repeat([{ ...GOOD, spread: -0.01 }], 70));
     const r = runImprovementRound();
     expect(r.changed).toBe(false);
     expect(r.reason).toContain('不可行');
@@ -324,7 +467,7 @@ describe('runImprovementRound：早退路径', () => {
   });
 
   it('没有未探索过的候选时不动（负结果复用，不重复跑同一片区域）', () => {
-    seedLedger(repeat([GOOD, WEAK_UNSTABLE], 20));
+    seedLedger(repeat([GOOD, WEAK_UNSTABLE], 35));
     const first = runImprovementRound();
     expect(first.changed).toBe(true);
     // 证据没变 → 上一轮试过的候选全部视为已探索
@@ -338,9 +481,9 @@ describe('runImprovementRound：早退路径', () => {
 });
 
 describe('runImprovementRound：决策', () => {
-  it('验证集上严格更优且不牺牲稳定条数 → 保留改动并落盘生效', () => {
+  it('验证集上显著更优且不牺牲稳定条数 → 保留改动并落盘生效', () => {
     // 一半强因子、一半弱且不稳：收紧单调性下限可把弱因子剔掉
-    seedLedger(repeat([GOOD, WEAK_UNSTABLE], 20));
+    seedLedger(repeat([GOOD, WEAK_UNSTABLE], 35));
     const r = runImprovementRound();
 
     expect(r.changed).toBe(true);
@@ -348,22 +491,29 @@ describe('runImprovementRound：决策', () => {
     expect(r.record!.outcome).toBe('kept');
     expect(r.record!.metric.after).toBeGreaterThan(r.record!.metric.before);
     expect(r.record!.metric.keptAfter).toBeLessThan(r.record!.metric.keptBefore);
-    expect(r.record!.basis.evidenceCount).toBe(40);
-    expect(r.record!.basis.trainCount + r.record!.basis.validationCount).toBe(40);
+    expect(r.record!.basis.evidenceCount).toBe(70);
+    expect(r.record!.basis.trainCount + r.record!.basis.validationCount).toBe(70);
     expect(r.record!.tried.length).toBeGreaterThan(1);
+
+    // 决策必须带得出统计证据：不一致对与 p 值都可复核
+    const sig = r.record!.significance;
+    expect(sig.significant).toBe(true);
+    expect(sig.pValue).toBeLessThan(sig.alpha);
+    expect(sig.afterBetter).toBeGreaterThan(0);
+    expect(sig.accuracyAfter).toBeGreaterThan(sig.accuracyBefore);
 
     // 生效的判据真的写到了盘上，且与记账一致
     const st = getHarnessPolicyState();
     expect(st.source).toBe('stored');
     expect(st.revision).toBe(1);
     expect(st.policy).toEqual(r.record!.after);
-    // 同分取最小改动：只动单调性这一维（数值维度不该被顺手改掉）
+    // 同分取移动量最小者：只动单调性这一维（无关维度不该被顺手改掉）
     expect(policyDistance(st.policy, { ...DEFAULT_HARNESS_POLICY })).toBe(1);
     expect(st.policy.minMonotonicity).toBe(0.7);
   });
 
-  it('现任已是最优（精度 100%）→ 回滚并留痕，策略不动', () => {
-    seedLedger(repeat([GOOD], 40));
+  it('现任已是最优（准确率 100%）→ 回滚并留痕，策略不动', () => {
+    seedLedger(repeat([GOOD], 70));
     const r = runImprovementRound();
     expect(r.changed).toBe(false);
     expect(r.record).not.toBeNull();
@@ -373,22 +523,38 @@ describe('runImprovementRound：决策', () => {
     expect(getHarnessPolicyState().source).toBe('default');
   });
 
-  it('靠少采信换精度但牺牲了稳定条数 → 回滚（不是进步）', () => {
-    // 强因子(0.9/稳) + 弱但稳(0.65/稳) + 弱且不稳(0.65/不稳)：
-    // 收紧单调性会同时剔掉"弱但稳"，绝对条数下降
+  it('准确率虽升但牺牲了稳定条数 → 回滚（靠少采信换指标不是进步）', () => {
+    // 强且稳(0.9) + 弱但稳(0.65) + 两个弱且不稳(0.65)：
+    // 收紧单调性会连"弱但稳"一起剔掉，准确率上去、稳定的绝对条数却降了
     seedLedger(
-      repeat([{ mono: 0.9, stable: true }, { mono: 0.65, stable: true }, WEAK_UNSTABLE], 14),
+      repeat(
+        [{ mono: 0.9, stable: true }, { mono: 0.65, stable: true }, WEAK_UNSTABLE, WEAK_UNSTABLE],
+        20,
+      ),
     );
     const r = runImprovementRound();
     expect(r.changed).toBe(false);
     expect(r.record!.outcome).toBe('reverted');
-    expect(r.record!.metric.after).toBeGreaterThan(r.record!.metric.before);
+    expect(r.record!.significance.accuracyAfter).toBeGreaterThan(
+      r.record!.significance.accuracyBefore,
+    );
     expect(r.reason).toContain('不算进步');
     expect(getHarnessPolicyState().source).toBe('default');
   });
 
+  it('准确率提升但配对差异不显著 → 回滚（小样本上的"提升"不算数）', () => {
+    // 验证集 21 条里只有 3 个弱且不稳：全剔掉也只构成 3:0 的不一致对，
+    // 双侧 p = 2×(1/2³) = 0.25 > 0.05
+    seedLedger(repeat([GOOD, GOOD, GOOD, GOOD, GOOD, GOOD, WEAK_UNSTABLE], 10));
+    const r = runImprovementRound();
+    expect(r.changed).toBe(false);
+    expect(r.record!.significance.significant).toBe(false);
+    expect(r.reason).toContain('未达显著');
+    expect(getHarnessPolicyState().source).toBe('default');
+  });
+
   it('演练模式：算出结论但不落盘、不改策略、不写记录', () => {
-    seedLedger(repeat([GOOD, WEAK_UNSTABLE], 20));
+    seedLedger(repeat([GOOD, WEAK_UNSTABLE], 35));
     const r = runImprovementRound({ dryRun: true });
     expect(r.changed).toBe(false);
     expect(r.record).toBeNull();
@@ -398,7 +564,7 @@ describe('runImprovementRound：决策', () => {
   });
 
   it('候选更优但策略写盘失败 → 记为回滚，不留下"已改进"的假象', () => {
-    seedLedger(repeat([GOOD, WEAK_UNSTABLE], 20));
+    seedLedger(repeat([GOOD, WEAK_UNSTABLE], 35));
     const blocker = path.join(tmpDir, 'policy-blocker');
     fs.writeFileSync(blocker, 'x', 'utf-8');
     process.env.HARNESS_POLICY_FILE = path.join(blocker, 'policy.json');
@@ -416,7 +582,7 @@ describe('runImprovementRound：决策', () => {
   });
 
   it('保留后的新判据真的参与后续分析判定（judgeFactor 走当前策略）', async () => {
-    seedLedger(repeat([GOOD, WEAK_UNSTABLE], 20));
+    seedLedger(repeat([GOOD, WEAK_UNSTABLE], 35));
     const r = runImprovementRound();
     expect(r.changed).toBe(true);
 
