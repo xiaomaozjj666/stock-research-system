@@ -37,7 +37,14 @@ lines 94.94% / statements 92.9% / functions 94.7% / branches 83.25%。
 
 - 新增三个工具：`quant_improvement_status`、`quant_improvement_run`（`dryRun` 可选）、`quant_improvement_history`（`limit` 夹到 [1,200]）。工具总数 9 → 12；`server.tools.test.ts` 里钉住工具名**顺序**与 `required` 映射的两处断言同步更新。
 
-验证：全量 235 文件 / 3237 用例通过（新增 1 文件 40 用例）；覆盖率 lines 94.94% / statements 92.9% / functions 94.7% / branches 83.25%（阈值 92 / 90 / 92 / 80）；lint 0 warning 0 error；Prettier 全通过；双端 tsc；双端 build；E2E 9/9。
+**⑥ CI 抓到的缺陷：台账时间倒序比较器对相等键返回 -1**
+
+- 推送后 CI 在 `improvementLedger.test.ts` 的「记录后可按时间倒序查回」上失败（`expected '第一条' to be '第二条'`），**本地全绿**。根因不是测试写错，是比较器病态：`(a, b) => (a.createdAt < b.createdAt ? 1 : -1)` 在同毫秒写入时，`compare(a,b)` 与 `compare(b,a)` **都**返回 -1——违反排序契约（相等必须返回 0），顺序由排序算法实现决定。
+- 本地躲过的原因是写盘要「mkdir + writeFileSync + rename」，两次记录通常间隔 >1ms；CI 的临时文件系统快得多，两次写入常落在同一毫秒。典型"本地跑不出来"的缺陷。
+- 修法：相等键返回 0，交给稳定排序保持数组原序；台账数组本就是**新在前**，故同毫秒内的先后即写入先后。同一写法在 `factorLedger.listFactorExperiments` 里也有（改进台账是照它抄的），一并修正——那里的顺序还决定改进循环「较早 70% 训练 / 较新 30% 验证」的切分，不确定等于每轮拿到的训练/验证集都在变。
+- 回归测试各加一条，直接落盘 **5 条**同时间戳记录断言完整顺序（用 5 条而不是 2 条：元素太少时排序算法可能恰好保住原序，测不出病态比较器）。已做突变验证：改回病态版本两条用例都确实失败。
+
+验证：全量 235 文件 / 3239 用例通过（新增 1 文件 42 用例）；覆盖率 lines 94.95% / statements 92.91% / functions 94.74% / branches 83.26%（阈值 92 / 90 / 92 / 80）；lint 0 warning 0 error；Prettier 全通过；双端 tsc；双端 build；E2E 9/9。
 
 ## 2026-09-19 — 改进闭环（RSI · L2）：用历史实验回放调采信判据
 
