@@ -5,11 +5,11 @@
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
   <img src="https://img.shields.io/badge/tests-3239%20cases-brightgreen" alt="3239 测试用例" />
-  <img src="https://img.shields.io/badge/CI-GitHub%20Actions-brightgreen" alt="CI" />
+  <a href="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml"><img src="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
 
-> 面向 A 股的全栈投研平台：多专家协同研判、专业 K 线行情分析、量化回测与防过拟合评估、可插拔交易成本模型与风险归因、模拟盘研究闭环、自选股异动监控，以及对话式研究助手。
+> 面向 A 股的全栈投研平台：多专家协同研判、专业 K 线行情分析、量化回测与防过拟合评估、可插拔交易成本模型与风险归因、模拟盘研究闭环、自选股异动监控，以及对话式研究助手。「今日」页把每天要看的聚到一屏：自选股异动、关注股评分变化、最近一份研究简报。
 
 ![深度研究报告总览](docs/screenshots/report-overview.png)
 
@@ -210,7 +210,11 @@ copy .env.example server\.env    # Windows cmd
 |           | `GET /api/quant/health`                                                                                     | 上游预检：行情源 / LLM / 本地缓存（源不可达且无缓存时评估直接 503，不再干等到超时）         |
 |           | `POST /api/quant/factor/cross-section`                                                                      | 截面因子评估：量价/基本面/事件因子逐日截面 IC + Newey-West + 分层收益 + OOS                 |
 |           | `POST /api/quant/factor/expression`                                                                         | 因子假设实验室：受限 DSL 表达式（白名单解析，**不执行模型生成的代码**）→ 评估 → 台账        |
+|           | `POST /api/quant/factor/evaluate`                                                                           | 单因子评估 tear sheet：IC 显著性 + 分层回测 + 换手率 + alpha/beta（方法学对齐 alphalens/qlib）|
 |           | `GET/POST /api/quant/factor/experiments`                                                                    | 因子实验台账：试过什么、IC/显著性/样本外是否稳定、是否采信                                  |
+|           | `POST /api/quant/factor/composite`、`POST /api/quant/factor/composite/batch`                                | 多因子加权组合 alpha（单只/批量，时间序列 IC 口径，只算方向性信号不跑回测）                 |
+|           | `POST /api/quant/factor/expression/batch`                                                                   | 批量假设验证：一次评估多组 DSL 表达式因子                                                   |
+|           | `GET /api/quant/universe/boards`                                                                            | 东财行业板块列表（截面 universe 下拉用，低频 TTL 缓存）                                     |
 |           | `GET /api/quant/research-memory/:code`                                                                      | 研究记忆：同股票历史结论 + 已验证因子作为先验                                               |
 |           | `POST /api/quant/screener/run`、`GET /api/quant/screener/latest`                                            | 全市场初筛雷达：形态触发（海龟/均线上穿/涨停）+ RPS 分位扫全市场，结果落盘                  |
 |           | `POST /api/quant/timeseries/analyze`                                                                        | 时间序列计量：`test=adf/garch/coint/arima/kalman-beta`（协整与时变对冲需传 `code2`）        |
@@ -224,8 +228,8 @@ copy .env.example server\.env    # Windows cmd
 |           | `GET /api/paper/stats`                                                                                      | 累计收益 / 最大回撤 / 年化夏普                                                              |
 | 审计      | `GET /api/audit`                                                                                            | 合规审计查询（类别 / 风险等级 / 时间 / 会话过滤）                                           |
 | 港美股    | `GET /api/intl/fundamentals?code=&market=`、`GET /api/intl/klines`                                          | 港美股财务估值 + 日 K 线（与 A 股同一东财 K 线通道，secid 映射 116.x/107.x）                |
-| 对话      | `POST /api/chat`、`GET /api/chat/stream`                                                                    | 自然语言研究助手（SSE 流式）                                                                |
-| 自选股    | `GET/POST/DELETE /api/watchlist`、`POST /api/watchlist/news-backtest`、`POST /api/watchlist/monitor`        | 清单管理 / 批量新闻回测 / 异动监控                                                          |
+| 对话      | `POST /api/chat`、`GET /api/chat/stream`、`POST /api/chat/history/clear`                                    | 自然语言研究助手（SSE 流式）/ 清空会话历史                                                  |
+| 自选股    | `GET/POST/DELETE /api/watchlist`（`DELETE /api/watchlist/:code` 删单只）、`GET /api/watchlist/alerts`、`POST /api/watchlist/news-backtest`、`POST /api/watchlist/monitor` | 清单管理 / 异动告警快照 / 批量新闻回测 / 异动监控 |
 | 自治循环  | `POST /api/autonomous/start`、`/stop`、`GET /api/autonomous/status`                                         | 主动监控自治循环                                                                            |
 | 改进闭环  | `GET /api/improvement/status`、`POST /api/improvement/run`（`dryRun` 演练）、`GET /api/improvement/history` | 用历史实验回放调采信判据：保留/回滚都有留痕，可复核                                         |
 | 改进调度  | `POST /api/improvement/scheduler/start`（`intervalHours`）、`/stop`                                         | 无人值守开关；启动时默认按 `IMPROVEMENT_INTERVAL_HOURS` 自动开启                            |

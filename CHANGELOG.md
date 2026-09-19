@@ -1,7 +1,7 @@
 # Changelog
 
 股票研究系统（多专家投研 + 量化回测）变更历史。
-按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `ENGINEERING-NOTES.md`。
+按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `docs/ENGINEERING-NOTES.md`。
 
 ## 2026-09-19 — 改进闭环补齐：统计护栏、无人值守调度与 MCP 暴露
 
