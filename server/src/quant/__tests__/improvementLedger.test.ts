@@ -154,6 +154,25 @@ describe('写入与查询', () => {
     expect(summarizeImprovements().total).toBe(0);
   });
 
+  it('同毫秒写入也保持"新在前"（相等键的比较器必须返回 0）', () => {
+    // 回归：比较器写成 a.createdAt < b.createdAt ? 1 : -1 时，相等键两个方向都返回 -1，
+    // 违反排序契约、顺序由引擎实现决定。CI 的临时文件系统比本地快，两次写入常落在同一
+    // 毫秒，于是本地一直绿、CI 红（2026-09-19 实测）。这里直接落盘多条同时间戳记录，
+    // 与运行快慢无关地钉住这个不变量；**用 5 条而不是 2 条**——元素太少时排序算法可能
+    // 恰好保住原序，测不出病态比较器。
+    const same = new Date().toISOString();
+    const items = ['e', 'd', 'c', 'b', 'a'].map((v) => ({
+      ...makeInput({ verdict: v }),
+      id: v,
+      createdAt: same,
+    }));
+    fs.writeFileSync(ledgerFile, JSON.stringify({ items }), 'utf-8');
+    resetImprovementLedgerCache();
+    expect(listImprovements().map((r) => r.verdict)).toEqual(['e', 'd', 'c', 'b', 'a']);
+    // 概览同样走这个比较器，一并复验
+    expect(summarizeImprovements().total).toBe(5);
+  });
+
   it('写盘失败返回 null（调用方据此知道"没记下"，而不是以为记下了）', () => {
     const blocker = path.join(tmpDir, 'blocker-file');
     fs.writeFileSync(blocker, 'x', 'utf-8');

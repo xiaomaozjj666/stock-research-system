@@ -198,9 +198,24 @@ export function recordImprovementAsync(
   return withImprovementStoreLock(() => recordImprovement(input));
 }
 
+/**
+ * 时间倒序比较器。
+ *
+ * **必须对相等键返回 0**。写成 `a.createdAt < b.createdAt ? 1 : -1` 时，同毫秒写入的
+ * 两条记录会让 compare(a,b) 与 compare(b,a) **都**返回 -1——违反排序契约，顺序由引擎
+ * 实现决定。CI 的临时文件系统比本地快，两次写入常落在同一毫秒，于是本地长期绿、CI 红
+ * （2026-09-19 实测：`记录后可按时间倒序查回` 断言 expected '第一条' to be '第二条'）。
+ * 返回 0 之后由稳定排序保持数组原序，而台账数组本就是**新在前**（见 recordImprovement），
+ * 于是同毫秒内的先后即写入先后，顺序确定。
+ */
+function byCreatedAtDesc(a: { createdAt: string }, b: { createdAt: string }): number {
+  if (a.createdAt === b.createdAt) return 0;
+  return a.createdAt < b.createdAt ? 1 : -1;
+}
+
 /** 查询改进历史（按时间倒序） */
 export function listImprovements(limit = 50): ImprovementRecord[] {
-  const items = [...readStore().items].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const items = [...readStore().items].sort(byCreatedAtDesc);
   const n = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 50;
   return items.slice(0, n);
 }
@@ -228,7 +243,7 @@ export function summarizeImprovements(): {
   for (const it of items) {
     for (const c of it.tried ?? []) tried.add(policyKey(c.policy));
   }
-  const sorted = [...items].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const sorted = [...items].sort(byCreatedAtDesc);
   return {
     total: items.length,
     kept: kept.length,

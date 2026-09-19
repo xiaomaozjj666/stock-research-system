@@ -7,6 +7,7 @@ import {
   listFactorExperiments,
   summarizeFactorExperiments,
   clearFactorExperiments,
+  resetFactorLedgerCache,
   type FactorExperimentInput,
 } from '../factorLedger.js';
 
@@ -36,6 +37,23 @@ beforeEach(() => {
 });
 
 describe('因子实验台账', () => {
+  it('同毫秒写入也保持"新在前"（相等键的比较器必须返回 0）', () => {
+    // 回归：比较器原为 a.createdAt < b.createdAt ? 1 : -1，相等键两个方向都返回 -1，
+    // 违反排序契约。改进台账那边因此被 CI 抓出「本地绿、CI 红」（2026-09-19），
+    // 此处的写法同源。顺序还直接决定改进循环「较早 70% 训练 / 较新 30% 验证」的切分，
+    // 不确定就等于每轮拿到的训练/验证集都在变。用 5 条而非 2 条：元素太少时排序算法
+    // 可能恰好保住原序，测不出病态比较器。
+    const same = new Date().toISOString();
+    const items = ['e', 'd', 'c', 'b', 'a'].map((v) => ({
+      ...entry({ name: v }),
+      id: v,
+      createdAt: same,
+    }));
+    fs.writeFileSync(LEDGER_FILE, JSON.stringify({ items }), 'utf-8');
+    resetFactorLedgerCache();
+    expect(listFactorExperiments().map((i) => i.name)).toEqual(['e', 'd', 'c', 'b', 'a']);
+  });
+
   it('批量记录并返回写入条目（含 id 与时间戳）', () => {
     const added = recordFactorExperiments([entry(), entry({ name: 'cs_other', kept: false })]);
     expect(added).toHaveLength(2);

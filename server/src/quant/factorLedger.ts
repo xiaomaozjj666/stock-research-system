@@ -201,11 +201,25 @@ function recordFactorExperimentsUnsafe(inputs: FactorExperimentInput[]): FactorE
   return writeStore(store) ? added : [];
 }
 
+/**
+ * 时间倒序比较器。
+ *
+ * **必须对相等键返回 0**：写成 `a.createdAt < b.createdAt ? 1 : -1` 时，同毫秒写入的
+ * 两条记录会让 compare(a,b) 与 compare(b,a) 都返回 -1——违反排序契约，顺序由引擎实现
+ * 决定。改进台账那边正是因此被 CI 抓出「本地绿、CI 红」（2026-09-19）；此处的写法与之
+ * 同源，一并修正。返回 0 后由稳定排序保持数组原序，而台账数组是**新在前**，故同毫秒内
+ * 的先后即写入先后——这也让改进循环的「较早 70% 训练 / 较新 30% 验证」切分变得确定。
+ */
+function byCreatedAtDesc(a: { createdAt: string }, b: { createdAt: string }): number {
+  if (a.createdAt === b.createdAt) return 0;
+  return a.createdAt < b.createdAt ? 1 : -1;
+}
+
 /** 查询实验台账（按时间倒序）；可按来源/采信状态过滤 */
 export function listFactorExperiments(
   filter: { source?: FactorExperimentSource; kept?: boolean; limit?: number } = {},
 ): FactorExperiment[] {
-  let items = [...readStore().items].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  let items = [...readStore().items].sort(byCreatedAtDesc);
   if (filter.source) items = items.filter((i) => i.source === filter.source);
   if (filter.kept !== undefined) items = items.filter((i) => i.kept === filter.kept);
   const limit = Number.isFinite(filter.limit) ? Math.max(1, Math.floor(filter.limit!)) : 100;
