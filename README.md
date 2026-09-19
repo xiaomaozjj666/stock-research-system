@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-3197%20cases-brightgreen" alt="3197 测试用例" />
+  <img src="https://img.shields.io/badge/tests-3237%20cases-brightgreen" alt="3237 测试用例" />
   <img src="https://img.shields.io/badge/CI-GitHub%20Actions-brightgreen" alt="CI" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -143,11 +143,12 @@ server/          Express API 服务
   │   ├── experts/    基本面 / 估值 / 风险 / 行业 / 资金流 / 题材 / 政策 / 解禁 / 仲裁
   │   ├── expertRunner.ts        多专家并行 + 有限重试 + 单专家降级
   │   ├── analysisCheckpoint.ts  按阶段落盘的断点续跑（TTL 过期保护）
-  │   └── outcomeTracker.ts      评级台账：实际收益回填 + 命中率统计
+  │   ├── outcomeTracker.ts      评级台账：实际收益回填 + 命中率统计
+  │   └── improvementScheduler.ts 改进循环周期调度（默认 6 小时，env 可关）
   ├── quant/        回测引擎（Analyzer + CostModel + T+1）+ 因子分析（量价/基本面PIT/事件/形态/两融）+ 因子组合回测 + 风险归因 + 模拟盘 + 改进闭环
   │   ├── factorLedger.ts        因子实验台账：试过什么、结论如何（含判据输入留痕）
   │   ├── harnessPolicy.ts       可调采信判据（默认＝出厂值，改动有留痕、可回滚）
-  │   ├── improvementLoop.ts     用历史台账回放候选判据，训练集挑、验证集判
+  │   ├── improvementLoop.ts     用历史台账回放候选判据，训练集挑、验证集判（McNemar）
   │   ├── improvementLedger.ts   改动台账：改了什么 / 凭什么改 / 改前改后指标 / 否掉了谁
   │   └── agents/     DataEngineer / BacktestAuditor / StrategyOptimizer
   ├── llm/          模型路由、成本治理、RAG、知识图谱、MCP 工具
@@ -157,7 +158,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3197 用例 / 234 个测试文件，行覆盖 94.9%）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3237 用例 / 235 个测试文件，行覆盖 94.9%）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
 
 ## 快速开始
 
@@ -227,6 +228,7 @@ copy .env.example server\.env    # Windows cmd
 | 自选股    | `GET/POST/DELETE /api/watchlist`、`POST /api/watchlist/news-backtest`、`POST /api/watchlist/monitor`        | 清单管理 / 批量新闻回测 / 异动监控                                                          |
 | 自治循环  | `POST /api/autonomous/start`、`/stop`、`GET /api/autonomous/status`                                         | 主动监控自治循环                                                                            |
 | 改进闭环  | `GET /api/improvement/status`、`POST /api/improvement/run`（`dryRun` 演练）、`GET /api/improvement/history` | 用历史实验回放调采信判据：保留/回滚都有留痕，可复核                                         |
+| 改进调度  | `POST /api/improvement/scheduler/start`（`intervalHours`）、`/stop`                                         | 无人值守开关；启动时默认按 `IMPROVEMENT_INTERVAL_HOURS` 自动开启                            |
 | 文档 RAG  | `POST /api/ingest`、`GET /api/documents`                                                                    | 研报/财报/公告 PDF/文本入库 + 洞察抽取                                                      |
 | 模型/成本 | `GET /api/models`、`GET /api/cost`、`POST /api/cost/reset`                                                  | 多模型路由 / 成本治理                                                                       |
 | 集成投票  | `POST /api/llm/ensemble`、`GET/POST /api/llm/calibration`                                                   | 多模型加权投票（默认单模型=关闭，`LLM_ENSEMBLE_SIZE>1` 启用）/ 命中率校准                   |
@@ -261,14 +263,15 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 `quant_cross_section`（截面因子评估）、`quant_factor_expression`（因子假设实验室）、
 `quant_factor_expression_batch`（批量因子假设验证，≤50 条共享同一面板）、
 `quant_factor_experiments`（实验台账查询）、`quant_screener_run` / `quant_screener_latest`
-（全市场初筛）、`quant_timeseries_analyze`（ADF/GARCH/协整/ARIMA/Kalman 时间序列计量）。
+（全市场初筛）、`quant_timeseries_analyze`（ADF/GARCH/协整/ARIMA/Kalman 时间序列计量）、
+`quant_improvement_status` / `quant_improvement_run` / `quant_improvement_history`（改进闭环）。
 同一套量化能力也已接入站内 Chat Agent（function-calling）：对话中可直接触发初筛结果
 查询、实验台账概览、时序计量、最近公告原文、估值建模与研究简报列表。
 
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（3197 用例 / 234 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（3237 用例 / 235 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（9 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src、e2e）
 npm run format:check  # Prettier 格式检查
@@ -278,7 +281,8 @@ npm run test:coverage # 全量单测 + 覆盖率阈值（与 CI 一致）
 
 - **CI 门禁**（GitHub Actions）：lint / 双端 tsc / 双端 build / 全量测试 + 覆盖率阈值（lines ≥ 92% / statements ≥ 90% / functions ≥ 92% / branches ≥ 80%）/ Playwright E2E。
 - **受控评估**：`compareBacktests` 输出 DSR（扣除搜索偏差）与 Bootstrap 置信区间；`quant/cscv.ts` 以组合对称交叉验证计算过拟合概率（PBO）；`walkForward.ts` 以 OOS 夏普 < 70% × IS 夏普判定过拟合。
-- **改进闭环（RSI）**：`quant/improvementLoop.ts` 用历史实验台账**回放**候选采信判据——较早 70% 挑候选、较新 30% 做决策，只有验证集上严格更优且不牺牲样本外稳定条数的改动才落盘生效。每次改动连同改前改后指标、依据与试过的候选记入 `quant/improvementLedger.ts`；`/api/improvement/status|run|history` 可查、可演练（`dryRun` 不落盘）、可回滚（删除策略文件即回到出厂判据）。判据本身由 `quant/harnessPolicy.ts` 持有，默认值与改造前逐字一致。
+- **改进闭环（RSI）**：`quant/improvementLoop.ts` 用历史实验台账**回放**候选采信判据——较早 70% 挑候选、较新 30% 做决策，且必须同时满足三条才落盘：验证集上**决策准确率**（采信了扛住样本外的因子、剔除了没扛住的，两者都算对）更高、样本外稳定的**绝对条数不减**、配对差异通过 **McNemar 精确检验**（双侧 p < 0.05）。每次改动连同改前改后指标、检验统计量（不一致对 b/c 与 p 值）、依据与试过的候选记入 `quant/improvementLedger.ts`；`/api/improvement/status|run|history` 可查、可演练（`dryRun` 不落盘）、可回滚（删除策略文件即回到出厂判据）。判据本身由 `quant/harnessPolicy.ts` 持有，默认值与改造前逐字一致。
+- **无人值守**：`services/improvementScheduler.ts` 按期自动跑一轮（`IMPROVEMENT_INTERVAL_HOURS` 控制，默认 6 小时，0 = 关闭；首次延迟 10 分钟避开启动预热），单轮失败指数退避、连续失败自动停止并记日志；也可由 `/api/improvement/scheduler/start|stop` 运行期开关，或经 MCP 的 `quant_improvement_run` 手动触发。**证据不足（可回放 < 60 条或验证集 < 20 条）时循环不动并说明还差多少**——判据会被自动改写，样本不够时"不动"才是正确答案。
 - **合规审计**：金融监管 8 号文留痕 + 运行时熔断 + `/api/audit` 查询。
 - **全链路追踪**：`X-Trace-Id` + 模型调用 span / 成本。
 
