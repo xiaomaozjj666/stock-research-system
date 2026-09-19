@@ -15,6 +15,25 @@ import * as path from 'path';
 /** 假设来源：截面标准因子 / 自定义表达式 / LLM 生成的假设 */
 export type FactorExperimentSource = 'cross-section' | 'expression' | 'hypothesis';
 
+/**
+ * 判据输入留痕。
+ *
+ * 「用历史经验调判据」（改进循环）要求台账记得住**当时据以判定的原始数值**。
+ * 此前只落了 pValue 与 oosStable，单调性与多空价差没存，于是历史记录无法回放——
+ * 攒再多实验也调不动判据。新增本块后，凡带本块的记录都能参与回放；
+ * 旧记录缺此块，回放时**跳过**（不猜、不补默认值，宁可样本变少也不造假数据）。
+ */
+export interface FactorJudgementEvidence {
+  /** IC 有效样本期数 */
+  icN: number;
+  /** 分档数 */
+  quantileRows: number;
+  /** 分档收益单调性 ∈ [−1,1] */
+  monotonicity: number;
+  /** 多空价差（小数） */
+  spread: number;
+}
+
 /** 一条实验记录 = 因子 × 持有期（一次评估内多个因子/窗口会拆成多条） */
 export interface FactorExperiment {
   id: string;
@@ -45,6 +64,10 @@ export interface FactorExperiment {
   oosStable: boolean;
   /** 是否采信（与 judgeFactor 同口径） */
   kept: boolean;
+  /**
+   * 判据输入（旧记录缺省）。改进循环只回放带本块的记录。
+   */
+  evidence?: FactorJudgementEvidence;
   /** 备注（如跳过原因、降级说明） */
   notes?: string;
 }

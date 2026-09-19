@@ -22,6 +22,7 @@
  * 所有导出函数为纯函数，无副作用，可独立单测。
  */
 import { spearmanRankIC, averageRanks } from './factorAnalytics.js';
+import { DEFAULT_HARNESS_POLICY, type HarnessPolicy } from './harnessPolicy.js';
 import {
   neweyWestTStat,
   olsRegression,
@@ -822,6 +823,10 @@ export function evaluateFactor(
  * 判断是否应采信该因子：IC 统计显著 + 分层收益单调 + 多空价差为正。
  * 三条同时成立才算「有效」——只满足 IC 显著而单调性差的因子，
  * 收益往往集中在单侧尾部，实盘不可用。
+ *
+ * 四个阈值来自 HarnessPolicy（默认 = 出厂值，与硬编码时期逐字一致）。
+ * 判据本身抽到 applyVerdictPolicy 是刻意的：改进循环要拿历史台账**回放**
+ * 候选判据，若它自己重写一遍规则，调出来的策略与线上实际生效的就不是同一个东西。
  */
 export interface FactorVerdict {
   effective: boolean;
@@ -829,16 +834,60 @@ export interface FactorVerdict {
   reasons: string[];
 }
 
-export function judgeFactor(report: FactorPeriodReport): FactorVerdict {
+/** 判据的全部输入：既可从评估报告提取，也可从台账记录回放 */
+export interface VerdictEvidence {
+  /** IC 有效样本期数 */
+  icN: number;
+  /** IC 显著性 p 值 */
+  pValue: number;
+  /** 分档数 */
+  quantileRows: number;
+  /** 分档收益单调性 ∈ [−1,1] */
+  monotonicity: number;
+  /** 多空价差（小数） */
+  spread: number;
+}
+
+/** 从评估报告提取判据输入（线上留痕与循环回放共用，避免两处字段口径漂移） */
+export function evidenceFromReport(report: FactorPeriodReport): VerdictEvidence {
+  return {
+    icN: report.ic.n,
+    pValue: report.ic.pValue,
+    quantileRows: report.quantile.rows.length,
+    monotonicity: report.quantile.monotonicity,
+    spread: report.quantile.spread,
+  };
+}
+
+/**
+ * 采信判据的**单一实现**：线上判定与改进循环回放都走这里。
+ * 纯函数，无副作用——策略由调用方显式传入，便于单测与回放。
+ */
+export function applyVerdictPolicy(
+  ev: VerdictEvidence,
+  policy: HarnessPolicy = DEFAULT_HARNESS_POLICY,
+): FactorVerdict {
   const reasons: string[] = [];
-  if (report.ic.n < 5) reasons.push(`IC 样本仅 ${report.ic.n} 期，不足以判定显著性`);
-  else if (report.ic.pValue >= 0.05) {
-    reasons.push(`IC 未通过显著性检验（p=${report.ic.pValue.toFixed(3)} ≥ 0.05）`);
+  if (ev.icN < policy.minIcSamples) {
+    reasons.push(`IC 样本仅 ${ev.icN} 期，不足以判定显著性`);
+  } else if (ev.pValue >= policy.significanceLevel) {
+    reasons.push(`IC 未通过显著性检验（p=${ev.pValue.toFixed(3)} ≥ ${policy.significanceLevel}）`);
   }
-  if (report.quantile.rows.length < 3) reasons.push('分档数不足 3，无法检验单调性');
-  else if (report.quantile.monotonicity < 0.6) {
-    reasons.push(`分档收益单调性偏弱（${report.quantile.monotonicity.toFixed(2)} < 0.60）`);
+  if (ev.quantileRows < 3) reasons.push('分档数不足 3，无法检验单调性');
+  else if (ev.monotonicity < policy.minMonotonicity) {
+    reasons.push(
+      `分档收益单调性偏弱（${ev.monotonicity.toFixed(2)} < ${policy.minMonotonicity.toFixed(2)}）`,
+    );
   }
-  if (report.quantile.spread <= 0) reasons.push('多空价差非正，因子方向不成立');
+  if (policy.requirePositiveSpread && ev.spread <= 0) {
+    reasons.push('多空价差非正，因子方向不成立');
+  }
   return { effective: reasons.length === 0, reasons };
+}
+
+export function judgeFactor(
+  report: FactorPeriodReport,
+  policy: HarnessPolicy = DEFAULT_HARNESS_POLICY,
+): FactorVerdict {
+  return applyVerdictPolicy(evidenceFromReport(report), policy);
 }

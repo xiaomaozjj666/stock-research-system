@@ -35,7 +35,14 @@ import {
   computeCompositeAlphaForStrategy,
   computeCompositeAlphaBatch,
 } from '../quant/compositeService.js';
-import { evaluateFactor, judgeFactor, type FactorObservation } from '../quant/factorEvaluation.js';
+import {
+  evaluateFactor,
+  judgeFactor,
+  type FactorObservation,
+  type FactorPeriodReport,
+  type FactorVerdict,
+} from '../quant/factorEvaluation.js';
+import { getHarnessPolicy } from '../quant/harnessPolicy.js';
 import {
   buildCrossSectionPanel,
   type FundamentalFactorName,
@@ -453,7 +460,7 @@ router.post('/api/quant/factor/evaluate', quantLimiter, circuitBreakerGuard, (re
     });
 
     // 逐持有期附上「是否采信」判定：IC 显著 + 分层单调 + 多空价差为正
-    const byPeriod = report.byPeriod.map((p) => ({ ...p, verdict: judgeFactor(p) }));
+    const byPeriod = report.byPeriod.map((p) => ({ ...p, verdict: judgeWithActivePolicy(p) }));
     res.json({ ...report, byPeriod });
   } catch (error) {
     // maxLoss 超限属数据问题（调用方可放宽阈值重试），返回 422 而非 500
@@ -622,6 +629,17 @@ function runSnapshot(fields: Record<string, unknown>): Record<string, unknown> {
   return { at: new Date().toISOString(), node: process.version, ...fields };
 }
 
+/**
+ * 采信判定走**当前生效**的 Harness 策略（未经改进循环改动时即出厂值，行为与硬编码时期一致）。
+ *
+ * 每次调用现取策略，而不是在模块加载时缓存一份：改进循环可能在任何两次分析之间
+ * 保留新判据，加载时缓存会让改动"看起来没生效"，排查起来极难。
+ * getHarnessPolicy() 内部有内存缓存，逐持有期调用不产生额外 IO。
+ */
+function judgeWithActivePolicy(p: FactorPeriodReport): FactorVerdict {
+  return judgeFactor(p, getHarnessPolicy());
+}
+
 /** 评估结果的因子形态（台账只关心这几个字段，避免与评估器类型硬耦合） */
 interface LedgerFactorInput {
   name: string;
@@ -629,8 +647,9 @@ interface LedgerFactorInput {
     sampleSize?: number;
     byPeriod?: {
       period: number;
-      ic?: { mean?: number; pValue?: number };
+      ic?: { mean?: number; pValue?: number; n?: number };
       oos?: { stable?: boolean };
+      quantile?: { rows?: unknown[]; monotonicity?: number; spread?: number };
       verdict?: { effective?: boolean };
     }[];
   };
@@ -649,6 +668,20 @@ function ledgerEntriesFromReport(
   const out: FactorExperimentInput[] = [];
   for (const f of factors) {
     for (const p of f.report?.byPeriod ?? []) {
+      // 判据输入留痕：改进循环据此回放候选判据。四项齐全才落块——残缺的证据
+      // 会让回放把「字段缺失」误当成「数值为 0」，宁可这条记录不参与调优。
+      const evidences =
+        typeof p.ic?.n === 'number' &&
+        typeof p.quantile?.monotonicity === 'number' &&
+        typeof p.quantile?.spread === 'number' &&
+        Array.isArray(p.quantile?.rows)
+          ? {
+              icN: p.ic.n,
+              quantileRows: p.quantile.rows.length,
+              monotonicity: p.quantile.monotonicity,
+              spread: p.quantile.spread,
+            }
+          : null;
       out.push({
         source: meta.source,
         name: meta.name ?? f.name,
@@ -660,6 +693,7 @@ function ledgerEntriesFromReport(
         pValue: p.ic?.pValue ?? Number.NaN,
         oosStable: Boolean(p.oos?.stable),
         kept: Boolean(p.verdict?.effective),
+        ...(evidences ? { evidence: evidences } : {}),
       });
     }
   }
@@ -1263,7 +1297,7 @@ router.post(
         const report = evaluateFactor(obs);
         return {
           ...report,
-          byPeriod: report.byPeriod.map((p) => ({ ...p, verdict: judgeFactor(p) })),
+          byPeriod: report.byPeriod.map((p) => ({ ...p, verdict: judgeWithActivePolicy(p) })),
         };
       };
       // 组合回测（可选）需要各因子的原始观测面板：push 时同步登记
@@ -1895,7 +1929,7 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
       type: 'expression',
       report: {
         ...report,
-        byPeriod: report.byPeriod.map((p) => ({ ...p, verdict: judgeFactor(p) })),
+        byPeriod: report.byPeriod.map((p) => ({ ...p, verdict: judgeWithActivePolicy(p) })),
       },
     };
     const source: FactorExperimentSource =
@@ -2047,7 +2081,7 @@ router.post(
           type: 'expression',
           report: {
             ...report,
-            byPeriod: report.byPeriod.map((p) => ({ ...p, verdict: judgeFactor(p) })),
+            byPeriod: report.byPeriod.map((p) => ({ ...p, verdict: judgeWithActivePolicy(p) })),
           },
         };
         const recorded = recordFactorExperiments(
