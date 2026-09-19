@@ -7,7 +7,7 @@
  *   - triedValues 是负结果复用的抓手，去重口径必须稳定（浮点按固定精度归一）；
  *   - 容量淘汰、损坏回落、写失败返回 null（不抛）——台账是研究资产，不是数据源。
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -81,8 +81,14 @@ beforeEach(() => {
 
 describe('写入与查询', () => {
   it('记录后可按时间倒序查回，且补齐 id 与 createdAt', () => {
+    // createdAt 只有毫秒精度，同毫秒写入的顺序不可断言；用假时钟隔开 1ms 保证先后
+    vi.useFakeTimers();
+    const base = new Date('2026-09-19T00:00:00.000Z').getTime();
+    vi.setSystemTime(base);
     const a = recordImprovement(makeInput({ verdict: '第一条' }));
+    vi.setSystemTime(base + 1);
     const b = recordImprovement(makeInput({ verdict: '第二条' }));
+    vi.useRealTimers();
     expect(a).not.toBeNull();
     expect(b).not.toBeNull();
     expect(a!.id).toBeTruthy();
