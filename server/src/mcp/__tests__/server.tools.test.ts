@@ -80,9 +80,12 @@ describe('工具注册表 MCP_TOOLS', () => {
     'quant_screener_run',
     'quant_screener_latest',
     'quant_timeseries_analyze',
+    'quant_improvement_status',
+    'quant_improvement_run',
+    'quant_improvement_history',
   ];
 
-  it('按固定顺序注册 9 个工具，名称与预期完全一致', () => {
+  it('按固定顺序注册 12 个工具，名称与预期完全一致', () => {
     expect(MCP_TOOLS.map((t) => t.name)).toEqual(EXPECTED_NAMES);
   });
 
@@ -111,6 +114,10 @@ describe('工具注册表 MCP_TOOLS', () => {
       quant_screener_run: null,
       quant_screener_latest: null,
       quant_timeseries_analyze: ['test', 'code'],
+      // 改进闭环三个工具都无必填项：状态与历史无入参，跑一轮的 dryRun 可选
+      quant_improvement_status: null,
+      quant_improvement_run: null,
+      quant_improvement_history: null,
     });
   });
 

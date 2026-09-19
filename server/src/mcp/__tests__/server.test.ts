@@ -110,3 +110,44 @@ describe('tools/call 错误处理', () => {
     expect(res.result.content[0].text).toContain('HTTP 500');
   });
 });
+
+describe('改进闭环工具（RSI）', () => {
+  it('状态 → GET /api/improvement/status', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ policy: {}, replay: {} }));
+    const data = await executeTool('quant_improvement_status');
+    expect(data).toHaveProperty('replay');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/improvement/status');
+  });
+
+  it('跑一轮 → POST 且 dryRun 默认 false（缺省不是演练）', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ changed: false }));
+    await executeTool('quant_improvement_run');
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain('/api/improvement/run');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ dryRun: false });
+  });
+
+  it('跑一轮 → dryRun=true 透传（演练不该被静默降级成真跑）', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ changed: false }));
+    await executeTool('quant_improvement_run', { dryRun: true });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ dryRun: true });
+  });
+
+  it('历史 → limit 夹到 [1,200]，非法值回落 20', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+    await executeTool('quant_improvement_history', { limit: 99999 });
+    expect(String(fetchMock.mock.calls[0][0])).toContain('limit=200');
+
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+    await executeTool('quant_improvement_history', { limit: 'abc' });
+    expect(String(fetchMock.mock.calls[0][0])).toContain('limit=20');
+
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+    await executeTool('quant_improvement_history');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('limit=20');
+  });
+});

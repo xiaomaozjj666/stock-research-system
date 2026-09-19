@@ -174,6 +174,32 @@ export const MCP_TOOLS: McpTool[] = [
       required: ['test', 'code'],
     },
   },
+  {
+    name: 'quant_improvement_status',
+    description:
+      '改进闭环状态（RSI）：当前生效的因子采信判据、可回放的历史实验够不够、周期调度开没开、历史上保留/回滚过几次',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'quant_improvement_run',
+    description:
+      '跑一轮改进闭环：用历史实验台账回放候选采信判据（较早 70% 训练挑候选、较新 30% 验证做决策，配对 McNemar 检验），通过才落盘生效。dryRun=true 只算不落盘',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dryRun: { type: 'boolean', description: '演练：只评估不落盘、不改判据（默认 false）' },
+      },
+    },
+  },
+  {
+    name: 'quant_improvement_history',
+    description:
+      '改进台账：每轮改了什么、依据多少条证据、改前改后指标与配对检验统计量、试过哪些候选',
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number', description: '返回条数（默认 20，上限 200）' } },
+    },
+  },
 ];
 
 async function callApi(
@@ -269,6 +295,18 @@ export async function executeTool(
         if (args[k] !== undefined) body[k] = args[k];
       }
       return callApi('/api/quant/timeseries/analyze', { method: 'POST', body });
+    }
+    case 'quant_improvement_status':
+      return callApi('/api/improvement/status');
+    case 'quant_improvement_run':
+      return callApi('/api/improvement/run', {
+        method: 'POST',
+        body: { dryRun: args.dryRun === true },
+      });
+    case 'quant_improvement_history': {
+      const raw = Number(args.limit);
+      const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), 200) : 20;
+      return callApi(`/api/improvement/history?limit=${limit}`);
     }
     default:
       throw new Error(`未知工具：${name}`);
