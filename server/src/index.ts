@@ -32,6 +32,7 @@ import intlRouter from './routes/intl.js';
 import documentsRouter, { INGEST_PATH } from './routes/documents.js';
 import costRouter from './routes/cost.js';
 import autonomousRouter from './routes/autonomous.js';
+import improvementRouter from './routes/improvement.js';
 
 // 启动即校验环境变量（H-04）：非法 PORT / CACHE_TTL_HOURS 等直接快速失败，
 // 避免以错误的默认值静默运行。生产环境关键配置缺失会打 warn 提示。
@@ -206,6 +207,7 @@ app.use(intlRouter);
 app.use(documentsRouter);
 app.use(costRouter);
 app.use(autonomousRouter);
+app.use(improvementRouter);
 
 // === 生产环境 SPA 静态托管：让单容器同时服务前端页面与 API（同源，无 CORS 依赖） ===
 // 仅当 ../client/dist 存在（即已执行 npm run build）且为生产环境时启用；
