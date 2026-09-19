@@ -340,3 +340,33 @@ backtrader 主循环事实：Cerebro 只做组装与广播，**撮合真相在 B
   完全一致（曾因只查 ts/tsx 漏掉 DATA-SOURCES.md 等 CI 失败一轮）。
 - **vitest 过滤器必须从 repo root 用 `server/src/...` 相对路径**（include 是
   `server/src/**`）；在 server/ 目录内跑会 "No test files found"。
+
+## 2026-09-19 改进闭环（RSI）落地事实
+
+**判据改动的三个落盘文件**（都可用 env 重定向，测试隔离靠它）：
+
+| 文件                                     | env                       | 内容                                    |
+| ---------------------------------------- | ------------------------- | --------------------------------------- |
+| `server/src/data/factorExperiments.json` | `FACTOR_LEDGER_FILE`      | 因子实验台账（含 `evidence` 判据输入）  |
+| `server/src/data/improvements.json`      | `IMPROVEMENT_LEDGER_FILE` | 改进台账（改了什么/依据/指标/否掉了谁） |
+| `server/src/data/harnessPolicy.json`     | `HARNESS_POLICY_FILE`     | 当前生效的采信判据                      |
+
+- **回放只认带 `evidence` 的记录**。该字段自 2026-09-19 起才落盘，**存量记录一律跳过**：
+  残缺证据会让回放把「字段缺失」当成「数值为 0」，那是在编数据。→ 新部署上
+  `/api/improvement/status` 的 `replay.available` 会长时间远小于 `required`（20），
+  这是真实状态，不是 bug。
+- **判据的单一实现是 `applyVerdictPolicy(evidence, policy)`**。线上 `judgeFactor` 与
+  循环回放共用它；若循环自己重写一遍规则，调出来的策略与线上实际生效的就不是同一个东西。
+- **切分口径只写在 `splitCounts` 一处**，路由的状态预告也用它。预告说"够了"、实跑却因
+  验证集不足直接返回，属于最难排查的不一致。
+- **默认策略必须与硬编码时期逐字一致**（`5 / 0.05 / 0.6 / true`），并由
+  `harnessPolicy.test.ts` 钉住。判据被改动是**有留痕的显式动作**，不该由重构悄悄完成。
+- **回滚 = 删策略文件**（`resetHarnessPolicy()`）。没有单独的"回滚接口"：文件不在即出厂值，
+  比多一个可能与自己状态不一致的回滚路径更可靠。
+- **`recordImprovement` 写盘失败返回 `null`（factorLedger 是返回 `[]`）**：一轮改进是单个
+  对象，没有"空批次"这种合法语义，用 `null` 才能把"没写"与"写了空"分开。
+- 台账数组**新在前**（`[new, ...old].slice(0, MAX)`），容量淘汰挤掉的是**最后一个**元素。
+  写容量相关用例时极易搞反，`improvementLedger.test.ts` 里有注释钉住。
+- 循环内部**不外抛异常**：它是增强能力，不该把定时任务或 HTTP 处理器打挂；失败一律
+  返回 `changed:false` + 中文原因。
+- **早退轮次不写台账**（证据不足/无新候选）：否则每天一条"数据还不够"会淹没真正跑过候选的记录。

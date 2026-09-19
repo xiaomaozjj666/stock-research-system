@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-3132%20cases-brightgreen" alt="3132 测试用例" />
+  <img src="https://img.shields.io/badge/tests-3197%20cases-brightgreen" alt="3197 测试用例" />
   <img src="https://img.shields.io/badge/CI-GitHub%20Actions-brightgreen" alt="CI" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -144,7 +144,11 @@ server/          Express API 服务
   │   ├── expertRunner.ts        多专家并行 + 有限重试 + 单专家降级
   │   ├── analysisCheckpoint.ts  按阶段落盘的断点续跑（TTL 过期保护）
   │   └── outcomeTracker.ts      评级台账：实际收益回填 + 命中率统计
-  ├── quant/        回测引擎（Analyzer + CostModel + T+1）+ 因子分析（量价/基本面PIT/事件/形态/两融）+ 因子组合回测 + 风险归因 + 模拟盘
+  ├── quant/        回测引擎（Analyzer + CostModel + T+1）+ 因子分析（量价/基本面PIT/事件/形态/两融）+ 因子组合回测 + 风险归因 + 模拟盘 + 改进闭环
+  │   ├── factorLedger.ts        因子实验台账：试过什么、结论如何（含判据输入留痕）
+  │   ├── harnessPolicy.ts       可调采信判据（默认＝出厂值，改动有留痕、可回滚）
+  │   ├── improvementLoop.ts     用历史台账回放候选判据，训练集挑、验证集判
+  │   ├── improvementLedger.ts   改动台账：改了什么 / 凭什么改 / 改前改后指标 / 否掉了谁
   │   └── agents/     DataEngineer / BacktestAuditor / StrategyOptimizer
   ├── llm/          模型路由、成本治理、RAG、知识图谱、MCP 工具
   └── data/         证券主数据 / 模拟盘账户 / 审计日志 / 研究历史（本地缓存）
@@ -153,7 +157,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3132 用例 / 230 个测试文件，行覆盖 94.8%）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3197 用例 / 234 个测试文件，行覆盖 94.9%）+ Playwright（E2E 9 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + E2E）
 
 ## 快速开始
 
@@ -194,41 +198,42 @@ copy .env.example server\.env    # Windows cmd
 
 ## API 概览
 
-| 分类      | 接口                                                                                                 | 说明                                                                                        |
-| --------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| 分析      | `POST /api/analyze`                                                                                  | 6 位 A 股代码多专家研判（含风险归因 + 历史对比）；body 传 `resume: true` 可从上次中断处续跑 |
-|           | `GET /api/analyze/stream`                                                                            | SSE 流式分析（逐阶段推送进度）；`?resume=1` 续跑                                            |
-|           | `POST /api/compare`                                                                                  | 2-3 只股票横向对比                                                                          |
-|           | `GET /api/stocks`、`GET /api/stocks/search`                                                          | 股票列表 / 搜索                                                                             |
-| 历史      | `GET /api/history`、`GET /api/history/:id`、`DELETE /api/history/:id`                                | 研究历史列表 / 详情 / 删除（同代码去重，容量 100）                                          |
-| 量化      | `POST /api/quant/analyze`                                                                            | 量化研究（回测 + 数据质量 + 审计 + 优化 + 摘要）                                            |
-|           | `GET /api/quant/health`                                                                              | 上游预检：行情源 / LLM / 本地缓存（源不可达且无缓存时评估直接 503，不再干等到超时）         |
-|           | `POST /api/quant/factor/cross-section`                                                               | 截面因子评估：量价/基本面/事件因子逐日截面 IC + Newey-West + 分层收益 + OOS                 |
-|           | `POST /api/quant/factor/expression`                                                                  | 因子假设实验室：受限 DSL 表达式（白名单解析，**不执行模型生成的代码**）→ 评估 → 台账        |
-|           | `GET/POST /api/quant/factor/experiments`                                                             | 因子实验台账：试过什么、IC/显著性/样本外是否稳定、是否采信                                  |
-|           | `GET /api/quant/research-memory/:code`                                                               | 研究记忆：同股票历史结论 + 已验证因子作为先验                                               |
-|           | `POST /api/quant/screener/run`、`GET /api/quant/screener/latest`                                     | 全市场初筛雷达：形态触发（海龟/均线上穿/涨停）+ RPS 分位扫全市场，结果落盘                  |
-|           | `POST /api/quant/timeseries/analyze`                                                                 | 时间序列计量：`test=adf/garch/coint/arima/kalman-beta`（协整与时变对冲需传 `code2`）        |
-|           | `POST /api/quant/valuation/model`                                                                    | 估值建模：两阶段 EPS 贴现（内在价值+敏感性矩阵）+ 可比公司表，假设可缺省自动推导            |
-|           | `GET /api/quant/announcements`                                                                       | 公司公告：标题一览 + 指定篇目全文（`artCode` 参数），进研究语境与 Chat 工具                 |
-|           | `GET /api/quant/digests`、`POST /api/quant/digests/run`                                              | 研究简报：初筛状态 + 实验台账概览 + 增量说明；定时生成由 `QUANT_DIGEST_INTERVAL_HOURS` 控制 |
-|           | `POST /api/backtest/evaluate`                                                                        | 受控评估：新闻叠加 vs 基线（DSR / Bootstrap CI）                                            |
-| 模拟盘    | `GET /api/paper/portfolio`                                                                           | 账户：现金 / 持仓 / 订单 / 每日净值                                                         |
-|           | `POST /api/paper/order`                                                                              | 模拟下单（市价/限价，A 股规则撮合）                                                         |
-|           | `POST /api/paper/settle`                                                                             | 日终结算：按收盘价撮合挂单 + 记录当日净值                                                   |
-|           | `GET /api/paper/stats`                                                                               | 累计收益 / 最大回撤 / 年化夏普                                                              |
-| 审计      | `GET /api/audit`                                                                                     | 合规审计查询（类别 / 风险等级 / 时间 / 会话过滤）                                           |
-| 港美股    | `GET /api/intl/fundamentals?code=&market=`、`GET /api/intl/klines`                                   | 港美股财务估值 + 日 K 线（与 A 股同一东财 K 线通道，secid 映射 116.x/107.x）                |
-| 对话      | `POST /api/chat`、`GET /api/chat/stream`                                                             | 自然语言研究助手（SSE 流式）                                                                |
-| 自选股    | `GET/POST/DELETE /api/watchlist`、`POST /api/watchlist/news-backtest`、`POST /api/watchlist/monitor` | 清单管理 / 批量新闻回测 / 异动监控                                                          |
-| 自治循环  | `POST /api/autonomous/start`、`/stop`、`GET /api/autonomous/status`                                  | 主动监控自治循环                                                                            |
-| 文档 RAG  | `POST /api/ingest`、`GET /api/documents`                                                             | 研报/财报/公告 PDF/文本入库 + 洞察抽取                                                      |
-| 模型/成本 | `GET /api/models`、`GET /api/cost`、`POST /api/cost/reset`                                           | 多模型路由 / 成本治理                                                                       |
-| 集成投票  | `POST /api/llm/ensemble`、`GET/POST /api/llm/calibration`                                            | 多模型加权投票（默认单模型=关闭，`LLM_ENSEMBLE_SIZE>1` 启用）/ 命中率校准                   |
-| 技能路由  | `GET /api/llm/skills?message=`                                                                       | 确定性规则表：判定该走哪个专用技能（因子/回测/对比/新闻/自选/通用）                         |
-| 其他      | `GET /api/health`                                                                                    | 健康检查（外部 API 可达性 + 缓存目录）                                                      |
-|           | `GET /api/metrics`                                                                                   | Prometheus 指标导出                                                                         |
-|           | `GET /api/openapi.json`                                                                              | OpenAPI 3.1 机器可读契约                                                                    |
+| 分类      | 接口                                                                                                        | 说明                                                                                        |
+| --------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| 分析      | `POST /api/analyze`                                                                                         | 6 位 A 股代码多专家研判（含风险归因 + 历史对比）；body 传 `resume: true` 可从上次中断处续跑 |
+|           | `GET /api/analyze/stream`                                                                                   | SSE 流式分析（逐阶段推送进度）；`?resume=1` 续跑                                            |
+|           | `POST /api/compare`                                                                                         | 2-3 只股票横向对比                                                                          |
+|           | `GET /api/stocks`、`GET /api/stocks/search`                                                                 | 股票列表 / 搜索                                                                             |
+| 历史      | `GET /api/history`、`GET /api/history/:id`、`DELETE /api/history/:id`                                       | 研究历史列表 / 详情 / 删除（同代码去重，容量 100）                                          |
+| 量化      | `POST /api/quant/analyze`                                                                                   | 量化研究（回测 + 数据质量 + 审计 + 优化 + 摘要）                                            |
+|           | `GET /api/quant/health`                                                                                     | 上游预检：行情源 / LLM / 本地缓存（源不可达且无缓存时评估直接 503，不再干等到超时）         |
+|           | `POST /api/quant/factor/cross-section`                                                                      | 截面因子评估：量价/基本面/事件因子逐日截面 IC + Newey-West + 分层收益 + OOS                 |
+|           | `POST /api/quant/factor/expression`                                                                         | 因子假设实验室：受限 DSL 表达式（白名单解析，**不执行模型生成的代码**）→ 评估 → 台账        |
+|           | `GET/POST /api/quant/factor/experiments`                                                                    | 因子实验台账：试过什么、IC/显著性/样本外是否稳定、是否采信                                  |
+|           | `GET /api/quant/research-memory/:code`                                                                      | 研究记忆：同股票历史结论 + 已验证因子作为先验                                               |
+|           | `POST /api/quant/screener/run`、`GET /api/quant/screener/latest`                                            | 全市场初筛雷达：形态触发（海龟/均线上穿/涨停）+ RPS 分位扫全市场，结果落盘                  |
+|           | `POST /api/quant/timeseries/analyze`                                                                        | 时间序列计量：`test=adf/garch/coint/arima/kalman-beta`（协整与时变对冲需传 `code2`）        |
+|           | `POST /api/quant/valuation/model`                                                                           | 估值建模：两阶段 EPS 贴现（内在价值+敏感性矩阵）+ 可比公司表，假设可缺省自动推导            |
+|           | `GET /api/quant/announcements`                                                                              | 公司公告：标题一览 + 指定篇目全文（`artCode` 参数），进研究语境与 Chat 工具                 |
+|           | `GET /api/quant/digests`、`POST /api/quant/digests/run`                                                     | 研究简报：初筛状态 + 实验台账概览 + 增量说明；定时生成由 `QUANT_DIGEST_INTERVAL_HOURS` 控制 |
+|           | `POST /api/backtest/evaluate`                                                                               | 受控评估：新闻叠加 vs 基线（DSR / Bootstrap CI）                                            |
+| 模拟盘    | `GET /api/paper/portfolio`                                                                                  | 账户：现金 / 持仓 / 订单 / 每日净值                                                         |
+|           | `POST /api/paper/order`                                                                                     | 模拟下单（市价/限价，A 股规则撮合）                                                         |
+|           | `POST /api/paper/settle`                                                                                    | 日终结算：按收盘价撮合挂单 + 记录当日净值                                                   |
+|           | `GET /api/paper/stats`                                                                                      | 累计收益 / 最大回撤 / 年化夏普                                                              |
+| 审计      | `GET /api/audit`                                                                                            | 合规审计查询（类别 / 风险等级 / 时间 / 会话过滤）                                           |
+| 港美股    | `GET /api/intl/fundamentals?code=&market=`、`GET /api/intl/klines`                                          | 港美股财务估值 + 日 K 线（与 A 股同一东财 K 线通道，secid 映射 116.x/107.x）                |
+| 对话      | `POST /api/chat`、`GET /api/chat/stream`                                                                    | 自然语言研究助手（SSE 流式）                                                                |
+| 自选股    | `GET/POST/DELETE /api/watchlist`、`POST /api/watchlist/news-backtest`、`POST /api/watchlist/monitor`        | 清单管理 / 批量新闻回测 / 异动监控                                                          |
+| 自治循环  | `POST /api/autonomous/start`、`/stop`、`GET /api/autonomous/status`                                         | 主动监控自治循环                                                                            |
+| 改进闭环  | `GET /api/improvement/status`、`POST /api/improvement/run`（`dryRun` 演练）、`GET /api/improvement/history` | 用历史实验回放调采信判据：保留/回滚都有留痕，可复核                                         |
+| 文档 RAG  | `POST /api/ingest`、`GET /api/documents`                                                                    | 研报/财报/公告 PDF/文本入库 + 洞察抽取                                                      |
+| 模型/成本 | `GET /api/models`、`GET /api/cost`、`POST /api/cost/reset`                                                  | 多模型路由 / 成本治理                                                                       |
+| 集成投票  | `POST /api/llm/ensemble`、`GET/POST /api/llm/calibration`                                                   | 多模型加权投票（默认单模型=关闭，`LLM_ENSEMBLE_SIZE>1` 启用）/ 命中率校准                   |
+| 技能路由  | `GET /api/llm/skills?message=`                                                                              | 确定性规则表：判定该走哪个专用技能（因子/回测/对比/新闻/自选/通用）                         |
+| 其他      | `GET /api/health`                                                                                           | 健康检查（外部 API 可达性 + 缓存目录）                                                      |
+|           | `GET /api/metrics`                                                                                          | Prometheus 指标导出                                                                         |
+|           | `GET /api/openapi.json`                                                                                     | OpenAPI 3.1 机器可读契约                                                                    |
 
 ## MCP（供 Cursor / Claude Code / Cline）
 
@@ -263,7 +268,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（3132 用例 / 230 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（3197 用例 / 234 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（9 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src、e2e）
 npm run format:check  # Prettier 格式检查
@@ -273,6 +278,7 @@ npm run test:coverage # 全量单测 + 覆盖率阈值（与 CI 一致）
 
 - **CI 门禁**（GitHub Actions）：lint / 双端 tsc / 双端 build / 全量测试 + 覆盖率阈值（lines ≥ 92% / statements ≥ 90% / functions ≥ 92% / branches ≥ 80%）/ Playwright E2E。
 - **受控评估**：`compareBacktests` 输出 DSR（扣除搜索偏差）与 Bootstrap 置信区间；`quant/cscv.ts` 以组合对称交叉验证计算过拟合概率（PBO）；`walkForward.ts` 以 OOS 夏普 < 70% × IS 夏普判定过拟合。
+- **改进闭环（RSI）**：`quant/improvementLoop.ts` 用历史实验台账**回放**候选采信判据——较早 70% 挑候选、较新 30% 做决策，只有验证集上严格更优且不牺牲样本外稳定条数的改动才落盘生效。每次改动连同改前改后指标、依据与试过的候选记入 `quant/improvementLedger.ts`；`/api/improvement/status|run|history` 可查、可演练（`dryRun` 不落盘）、可回滚（删除策略文件即回到出厂判据）。判据本身由 `quant/harnessPolicy.ts` 持有，默认值与改造前逐字一致。
 - **合规审计**：金融监管 8 号文留痕 + 运行时熔断 + `/api/audit` 查询。
 - **全链路追踪**：`X-Trace-Id` + 模型调用 span / 成本。
 
