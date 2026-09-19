@@ -10,7 +10,7 @@
  * `ready: false` 并给出还差多少——把这一点藏起来，用户会以为循环在干活。
  * ============================================================================
  */
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -27,6 +27,10 @@ vi.mock('../middleware.js', async (importOriginal) => {
 import { app } from '../index.js';
 import { clearFactorExperiments, recordFactorExperiments } from '../quant/factorLedger.js';
 import { clearImprovements, resetImprovementLedgerCache } from '../quant/improvementLedger.js';
+import {
+  getImprovementSchedulerState,
+  stopImprovementScheduler,
+} from '../services/improvementScheduler.js';
 import {
   DEFAULT_HARNESS_POLICY,
   resetHarnessPolicy,
@@ -65,7 +69,7 @@ function seed(n: number): void {
  */
 function seedMixed(): void {
   recordFactorExperiments(
-    Array.from({ length: 40 }, (_, i) => {
+    Array.from({ length: 70 }, (_, i) => {
       const strong = i % 2 === 0;
       return {
         source: 'cross-section' as const,
@@ -127,10 +131,10 @@ describe('GET /api/improvement/status', () => {
   });
 
   it('证据够时 ready 为 true（切分口径与循环同源）', async () => {
-    seed(30); // 30 条 → 训练 21 / 验证 9 ≥ 8
+    seed(70); // 70 条 → 训练 49 / 验证 21 ≥ 20
     const res = await request(app).get('/api/improvement/status');
-    expect(res.body.replay.available).toBe(30);
-    expect(res.body.replay.validationAvailable).toBe(9);
+    expect(res.body.replay.available).toBe(70);
+    expect(res.body.replay.validationAvailable).toBe(21);
     expect(res.body.replay.ready).toBe(true);
   });
 
@@ -155,7 +159,7 @@ describe('POST /api/improvement/run', () => {
   });
 
   it('证据充足且现任已最优 → 回滚并留痕，策略仍未改动', async () => {
-    seed(40);
+    seed(70);
     const res = await request(app).post('/api/improvement/run').send({});
     expect(res.status).toBe(200);
     expect(res.body.changed).toBe(false);
@@ -165,7 +169,7 @@ describe('POST /api/improvement/run', () => {
   });
 
   it('演练模式：不回传记录（"有记录=已生效"是最容易被误读的地方）', async () => {
-    seed(40);
+    seed(70);
     const res = await request(app).post('/api/improvement/run').send({ dryRun: true });
     expect(res.status).toBe(200);
     expect(res.body.dryRun).toBe(true);
@@ -176,7 +180,7 @@ describe('POST /api/improvement/run', () => {
 
 describe('GET /api/improvement/history', () => {
   it('默认 limit 20，非法值回落，上限夹到 200', async () => {
-    seed(40);
+    seed(70);
     await request(app).post('/api/improvement/run').send({});
 
     const def = await request(app).get('/api/improvement/history');
@@ -194,17 +198,81 @@ describe('GET /api/improvement/history', () => {
     expect(neg.body.limit).toBe(20);
   });
 
-  it('记录结构可直接复核：改动前后、依据、指标、试过的候选都在', async () => {
-    seed(40);
+  it('记录结构可直接复核：改动前后、依据、指标、统计量、试过的候选都在', async () => {
+    seed(70);
     await request(app).post('/api/improvement/run').send({});
     const res = await request(app).get('/api/improvement/history');
     const rec = res.body.items[0];
     expect(rec.before).toBeTruthy();
     expect(rec.after).toBeTruthy();
-    expect(rec.basis.evidenceCount).toBe(40);
+    expect(rec.basis.evidenceCount).toBe(70);
     expect(rec.basis.split).toContain('训练');
     expect(rec.metric.name).toBe('oos-precision');
+    // 统计证据必须落盘：不一致对 b/c 是可复核的最小充分统计量
+    expect(rec.significance.alpha).toBe(0.05);
+    expect(typeof rec.significance.pValue).toBe('number');
+    expect(rec.significance).toHaveProperty('afterBetter');
+    expect(rec.significance).toHaveProperty('beforeBetter');
     expect(Array.isArray(rec.tried)).toBe(true);
     expect(rec.tried.length).toBeGreaterThan(0);
+  });
+});
+
+describe('改进调度端点（无人值守）', () => {
+  afterEach(() => {
+    stopImprovementScheduler();
+  });
+
+  it('未启动时 status.scheduler 为 null（不假装在跑），并公开判定标准', async () => {
+    const res = await request(app).get('/api/improvement/status');
+    expect(res.status).toBe(200);
+    expect(res.body.scheduler).toBeNull();
+    expect(res.body.decision.test).toContain('McNemar');
+    expect(res.body.decision.alpha).toBe(0.05);
+  });
+
+  it('start：显式 intervalHours 生效并回显状态', async () => {
+    const res = await request(app)
+      .post('/api/improvement/scheduler/start')
+      .send({ intervalHours: 3 });
+    expect(res.status).toBe(200);
+    expect(res.body.started).toBe(true);
+    expect(res.body.scheduler.intervalMs).toBe(3 * 3600_000);
+    expect(res.body.scheduler.running).toBe(true);
+
+    const st = await request(app).get('/api/improvement/status');
+    expect(st.body.scheduler.running).toBe(true);
+    expect(st.body.scheduler.intervalMs).toBe(3 * 3600_000);
+  });
+
+  it('start：env 显式关闭又没给间隔 → 400 并给出两条出路（不静默改用默认值）', async () => {
+    const saved = process.env.IMPROVEMENT_INTERVAL_HOURS;
+    process.env.IMPROVEMENT_INTERVAL_HOURS = '0';
+    try {
+      const res = await request(app).post('/api/improvement/scheduler/start').send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('IMPROVEMENT_INTERVAL_HOURS');
+      expect(res.body.error).toContain('intervalHours');
+      expect(getImprovementSchedulerState()).toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env.IMPROVEMENT_INTERVAL_HOURS;
+      else process.env.IMPROVEMENT_INTERVAL_HOURS = saved;
+    }
+  });
+
+  it('start：间隔上限夹到 720 小时', async () => {
+    const res = await request(app)
+      .post('/api/improvement/scheduler/start')
+      .send({ intervalHours: 99999 });
+    expect(res.body.scheduler.intervalMs).toBe(720 * 3600_000);
+  });
+
+  it('stop：停止后状态回到 null', async () => {
+    await request(app).post('/api/improvement/scheduler/start').send({ intervalHours: 1 });
+    expect(getImprovementSchedulerState()).not.toBeNull();
+    const res = await request(app).post('/api/improvement/scheduler/stop').send({});
+    expect(res.status).toBe(200);
+    expect(res.body.stopped).toBe(true);
+    expect(getImprovementSchedulerState()).toBeNull();
   });
 });

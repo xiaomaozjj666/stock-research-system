@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { loadStockMaster } from './services/stockMaster.js';
 import { startOutcomeRefresher, stopOutcomeRefresher } from './services/outcomeTracker.js';
+import { startImprovementScheduler } from './services/improvementScheduler.js';
 import { startQuantCachePruner } from './quant/quantCache.js';
 import { startDigestScheduler } from './quant/researchDigest.js';
 import { configureTracer, expressTracerMiddleware } from './services/telemetry.js';
@@ -322,6 +323,11 @@ if (process.env.NODE_ENV !== 'test') {
     startQuantCachePruner();
     // 研究简报定时生成：QUANT_DIGEST_INTERVAL_HOURS 控制（默认 0 = 关闭）
     startDigestScheduler();
+    // 改进循环周期调度（RSI · L2）：无人值守地按期用历史实验回放调采信判据。
+    // IMPROVEMENT_INTERVAL_HOURS 控制（默认 6 小时；0 = 关闭，此时不注册任何定时器）。
+    // 首次运行延迟 10 分钟，避开启动预热；单轮失败退避、连续失败自动停止，
+    // 全程记日志——判据是被自动改写的东西，必须留下可追溯的痕迹。
+    startImprovementScheduler();
   });
 
   // === Graceful Shutdown ===
