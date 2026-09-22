@@ -1,6 +1,11 @@
 # Dependabot：定期扫描 npm 依赖的安全更新与版本升级。
 # 与 `npm audit`（点查）互补——Dependabot 会主动提 PR 修复已知漏洞依赖。
 # npm 生态在 monorepo workspaces 下只需在根目录声明一个 ecosystem。
+#
+# 约束：同一个包不要同时出现在 devDependencies/dependencies 与 package.json 的 overrides 里。
+# Dependabot 会**分别**更新这两处，只要有一侧先动、两侧 specifier 不再逐字相同，npm 就报
+# EOVERRIDE 并拒绝解析，表现为本任务每周报一次 dependency_file_not_resolvable 而整体变红
+# （2026-09-22 的 nanoid 即如此，已移除其 override，见 docs/ENGINEERING-NOTES.md）。
 version: 2
 updates:
   - package-ecosystem: npm
