@@ -12,8 +12,8 @@
 - `npm run lint`（JS/风格）0。
 - `server`: `npx tsc --noEmit` 0。
 - `client`: `npm run build` OK。
-- `npm run test`（vitest run）：截至 2026-08-11 为 **761 passed / 0 failed**（69 个测试文件）。
-- 覆盖率门禁（`vitest.config.mts`）：阈值 lines 70 / statements 68 / functions 62 / branches 55；配置注释记录的基线（2026-08-13，793 tests）为 lines 71.99% / statements 70.67% / functions 63.76% / branches 56.55%。`server/src/quant/**` 与 `client/src/**` 均纳入统计（`coverage.include`），排除清单见「测试注意」节。
+- `npm run test`（vitest run）：截至 2026-09-22 为 **3239 passed / 0 failed**（235 个测试文件）。此前这里记的是 2026-08-11 的 761 / 69 文件，已过期一个数量级，本次订正。
+- 覆盖率门禁（`vitest.config.mts`）：阈值 **lines 92 / statements 90 / functions 92 / branches 80**（2026-08-14 由 70/68/62/55 提上来；本节此前一直记的是旧值，本次订正）。实测（2026-09-22）：lines 94.95% / statements 92.91% / functions 94.74% / branches 83.26%。`server/src/quant/**` 与 `client/src/**` 均纳入统计（`coverage.include`），排除清单见「测试注意」节。
 
 ## 依赖升级的硬约束（踩过的坑）
 
@@ -23,7 +23,8 @@
 4. **ECharts6/React19 类型桥接**：`client/src/components/ChartsSection.tsx` 把 `ReactEChartsCore` cast 为 `ComponentType<{echarts, option: unknown,...}>`。ECharts6 的 `EChartsOption` 过严，option 用 unknown。
 5. **安装命令**：`npm install --legacy-peer-deps --dangerously-allow-all-scripts`（legacy-peer-deps 绕过 TS7 peer；allow-all-scripts 放行 esbuild postinstall）。
 6. **同伴依赖必须精确 pin**：`@eslint/js` 最新是 **10.0.1**（版本号独立于 eslint）；`@vitejs/plugin-react` **6.1.1**（支持 Vite 8；笔记此前写的 6.0.5 已过期）；`echarts-for-react` **3.0.7**（3.0.6 会拉 react18 嵌套）——该依赖已于 2026-08-14 的图表崩溃修复中移除，此处仅作历史约束留档；`react-markdown` **10.1.0**（peer react>=18）。
-7. **同一个包不要同时写在 `devDependencies` 与 `overrides` 里**（2026-09-22 移除了 `nanoid` 的 override）：两侧 specifier 只要不逐字相同，npm 就报 `EOVERRIDE` 并拒绝解析，而 Dependabot 会**分别**更新它们——单独升任一侧都会触发，表现为每周一次的 `dependency_file_not_resolvable`、整次更新任务变红。要么只写直接依赖，要么只写 override。注意 npm 报错文案里的版本号取自**直接依赖**那一侧（`Override for nanoid@6.0.1 conflicts with direct dependency` 指的是直接依赖已经变成 6.0.1），照字面去查 override 会找错方向。
+7. **同一个包不要同时写在 `devDependencies` 与 `overrides` 里**（2026-09-22 移除了 `nanoid` 的 override）：两侧 specifier 只要不逐字相同，npm 就报 `EOVERRIDE` 并拒绝解析，而 Dependabot 会**分别**更新它们——单独升任一侧都会触发，表现为每周一次的 `dependency_file_not_resolvable`、整次更新任务变红。要么只写直接依赖，要么只写 override。注意 npm 报错文案里的版本号取自**直接依赖**那一侧（`Override for nanoid@6.0.1 conflicts with direct dependency` 指的是直接依赖已经变成 6.0.1），照字面去查 override 会找错方向。移除后 Dependabot 关掉旧 PR、另开一个把 `nanoid` 升到 `^6.0.1` 的分组 PR：根节点 6.0.1 + `postcss` 自己嵌套的 3.3.19 是**合法**的两份拷贝（不再是历史上那次 `invalid`），仓库内也没有代码 import 它。
+8. **两个依赖 PR 都改了 `package-lock.json` 时，后合并的必须复验**（2026-09-22 实测）：Dependabot 的每个分组 PR 都基于当时的 main 生成 lock，先后合并时 Git 做的是**文本合并**，会拼出「两边各自都没错、合起来才错」的条目——实测 `packages["server"].dependencies.dotenv` 落成 `"^18.0.1"`，而 `server/package.json` 是精确固定的 `"18.0.1"`。**没有任何门禁会拦下它**：`npm ci` 的同步校验比对的是**解析出的版本**（两者都指向 18.0.1），不是 specifier 字符串。识别方法就是合并后跑一次 `npm install`，看 `package-lock.json` 是否出现 diff；修法以 manifest 为准，因为 lock 是**逐字镜像** manifest 的（同文件里 `^6.0.1`、`^7.0.2` 都保留脱字符）。
 
 ## 数据源约束
 
@@ -477,3 +478,17 @@ Dependabot 在 09-21 那一轮留下两个红点：开发组 PR 的 CI，以及�
   用了 `>=`，把 nanoid 解析到了 6.0.1（ESM-only），导致 postcss 的
   `require('nanoid/non-secure')` 构建期失败。**问题出在 override 本身，而不是缺少 override**
   ——按"再多加一层钉死"去修，只会越修越死。
+- **收尾时的后续（同日）**：override 一移除，Dependabot 立刻关掉旧 PR、另开一个把 `nanoid`
+  升到 `^6.0.1` 的分组 PR，合并后树变成根 6.0.1 + `postcss` 自己嵌套的 3.3.19，`npm ls`
+  合法（两份拷贝，不再是 `invalid`）。这恰好反过来说明上面那条判据的适用边界：**"唯一消费者
+  与直接依赖同区间"说明的是"此刻这份 override 没在起作用"，不保证以后也不起作用**——
+  一旦直接依赖被升到别的区间，就该重新判断要不要显式钉，而不是默认它一直冗余。
+
+### ③ 合并依赖 PR 的复合 lock（同日稍后）
+
+- `#20` 与 `#18` 都改 `package-lock.json`，各自基于当时的 main 生成；先后合并后 Git 做的是
+  文本合并，`packages["server"].dependencies.dotenv` 落成 `"^18.0.1"`，而 `server/package.json`
+  是精确固定的 `"18.0.1"`。
+- **CI 是绿的**——`npm ci` 的同步校验比对**解析出的版本**，不是 specifier 字符串，所以这类
+  复合差异没有任何门禁会报警。识别手段只有一个：合并后跑一次 `npm install`，看 lock 有没有 diff。
+- 详细约束已收进「依赖升级的硬约束」第 8 条。

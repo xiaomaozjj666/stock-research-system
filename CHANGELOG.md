@@ -3,6 +3,36 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `docs/ENGINEERING-NOTES.md`。
 
+## 2026-09-22（当日稍后）— 收尾：三个 Dependabot PR 合并后的 lock 复合差异（2853e1c / d5f5eef / 070b1b6）
+
+PR #19 被 Dependabot 自己关掉、另开了 #20（5 项 → 7 项）——上一节移除 override 之后，
+那个原本卡住的 `nanoid` 升级终于能被收进分组。本仓 #20、#18 与 `issue-agent` #5 按其 CI
+结果全部合并（各自分支上 quality + e2e 双 job 均为绿）。
+
+**① 两个 PR 都改 `package-lock.json` 时，后合并的会留下复合差异**
+
+- #20（开发组）与 #18（dotenv）各自基于当时的 main 生成 lock。先后合并后，lock 里
+  `packages["server"].dependencies.dotenv` 落成 `"^18.0.1"`，而 `server/package.json`
+  是精确固定的 `"18.0.1"`——文本合并拼出来的，两边都不是错的，合起来才错。
+- **CI 拦不下它**：`npm ci` 的同步校验比对的是**解析出的版本**（两者都指向 18.0.1），
+  不是 specifier 字符串。所以这类差异没有任何门禁会报警，只能靠人发现。
+- 识别方法：合并依赖 PR 后跑一次 `npm install`，看 `package-lock.json` 是否出现 diff。
+  lock 是**逐字镜像** manifest 的（同文件里根的 `^6.0.1`、typescript 的 `^7.0.2` 都保留了
+  脱字符），故以 manifest 为准改回 `"18.0.1"`（070b1b6，一行，无版本变化）。
+
+**② `nanoid` 的最终状态（接上一节）**
+
+- 根节点 `nanoid` 由 `^3.3.18` 升到 `^6.0.1`；`postcss` 声明的 `^3.3.18` 让它**自己嵌套**
+  了一份 `3.3.19`。`npm ls nanoid` 合法（两份拷贝），不再是历史上那次 `invalid`。
+- 仓库内无任何代码 `import 'nanoid'`，故这次升级对运行时无影响。上一节那条约束不变：
+  **同一个包不要同时写进直接依赖与 `overrides`**，否则 Dependabot 升任一侧都会触发 `EOVERRIDE`。
+
+**③ 顺带订正两处过期文档**
+
+- `docs/ENGINEERING-NOTES.md` 的「质量门禁」节此前记的还是 2026-08-11 的
+  `761 passed / 69 文件` 与旧阈值 `70/68/62/55`；实际是 **3239 / 235** 与
+  **`92/90/92/80`**，已按实测订正并标注日期。
+
 ## 2026-09-22 — CI 回绿：超时用例去掉网络依赖，冗余 override 移除（a2e3bf5 / 8967003）
 
 两处门禁变红，都不是业务代码的问题，但都值得治本而不是加宽阈值。
@@ -31,7 +61,8 @@
   Dependabot 只要单独把直接依赖升到 6.0.1，两侧 specifier 不再逐字相同，npm 就拒绝解析。
 - 这条 override 早已冗余：唯一的传递消费者 `postcss` 声明的也是 `^3.3.18`，直接依赖本身
   就足以把整棵树钉在 3.x。移除后 `package-lock.json` **逐字节未变**（SHA256 相同），
-  `npm ls nanoid` 仍是单个 `3.3.19 deduped`。
+  `npm ls nanoid` 仍是单个 `3.3.19 deduped`（**这是当日该提交时的状态**；几小时后合并
+  PR #20，nanoid 被升到 `^6.0.1`，树变成根 6.0.1 + postcss 嵌套 3.3.19，见下一节）。
 - 9226ac2 那条「钉 nanoid ≥3.3.17 修高危传递漏洞」的结论不变：当时真正的病根是 override
   用了 `>=` 把 nanoid 解析到 6.0.1（ESM-only），而不是缺少 override。
 - 结论：**同一个包不要同时出现在 `devDependencies` 与 `overrides` 里**——两侧 specifier
