@@ -3,6 +3,43 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `docs/ENGINEERING-NOTES.md`。
 
+## 2026-09-22 — CI 回绿：超时用例去掉网络依赖，冗余 override 移除（a2e3bf5 / 8967003）
+
+两处门禁变红，都不是业务代码的问题，但都值得治本而不是加宽阈值。
+
+**① `/api/stocks/search` 正常路径用例改为打桩（Dependabot 的 PR 因此变红）**
+
+- 该用例此前真实打通路由 → 服务层：CI 上要先等东财 suggest 超时，再回落本地全表
+  5000+ 只股票的最长公共子串 DP，耗时随机器负载在数秒到数十秒间浮动。**同一提交在两次
+  CI 上会得出相反结论**——d51f277 已为此把超时从默认 5s 放宽到 30s，本轮仍被打穿
+  （30107ms 超时），PR #19 因此变红。
+- 根因不是超时给得不够，而是它违反了 `ci.yml` 里写明的约定「测试均已 mock 网络
+  （不依赖真实行情/东财接口）」。现按 `routes.market.test.ts` / `routes.rateLimit.test.ts`
+  的同一口径给 `searchStocks` 打桩。
+- 断言同时收紧：被闸门拒绝的两条请求必须**不触达服务层**（`not.toHaveBeenCalled()`，
+  这正是"拦在昂贵匹配之前"这条语义本身）；正常词必须放行，并**原样回传**服务层结果
+  （此前只判 200 与 `Array.isArray`）。用例 30107ms → 462ms，本文件 14 条不变。
+- 突变验证：把长度闸门挪到服务调用之后、把 `res.json(results)` 换成 `res.json([])`，
+  恰好这两条用例失败，其余 12 条不受影响。
+
+**② `nanoid` 从 `overrides` 移除（Dependabot 的更新任务本身变红）**
+
+- 现象：Dependabot Updates 报 `dependency_file_not_resolvable`，详情为
+  `Override for nanoid@6.0.1 conflicts with direct dependency`。本地用最小 `package.json`
+  复现确认这就是 npm 的 `EOVERRIDE`，且**报错文案里的版本号取自「直接依赖」那一侧**：
+  `nanoid` 同时写在 `devDependencies`（`^3.3.18`）与 `overrides`（`^3.3.18`）里，
+  Dependabot 只要单独把直接依赖升到 6.0.1，两侧 specifier 不再逐字相同，npm 就拒绝解析。
+- 这条 override 早已冗余：唯一的传递消费者 `postcss` 声明的也是 `^3.3.18`，直接依赖本身
+  就足以把整棵树钉在 3.x。移除后 `package-lock.json` **逐字节未变**（SHA256 相同），
+  `npm ls nanoid` 仍是单个 `3.3.19 deduped`。
+- 9226ac2 那条「钉 nanoid ≥3.3.17 修高危传递漏洞」的结论不变：当时真正的病根是 override
+  用了 `>=` 把 nanoid 解析到 6.0.1（ESM-only），而不是缺少 override。
+- 结论：**同一个包不要同时出现在 `devDependencies` 与 `overrides` 里**——两侧 specifier
+  一旦不同步就是 `EOVERRIDE`，而 Dependabot 恰好会分别更新它们。
+
+本地全量 3239 用例 / 235 文件全过；覆盖率 lines 94.95% / statements 92.91% / functions
+94.74% / branches 83.26%，与用例数一样均未变动（本轮只改断言口径与依赖声明）。
+
 ## 2026-09-19 — 改进闭环补齐：统计护栏、无人值守调度与 MCP 暴露
 
 上一节把 L2 闭环跑通了，但留了三处短板：只能人工调接口、统计上只是启发式、同分候选按遍历

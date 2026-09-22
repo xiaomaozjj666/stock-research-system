@@ -23,6 +23,7 @@
 4. **ECharts6/React19 类型桥接**：`client/src/components/ChartsSection.tsx` 把 `ReactEChartsCore` cast 为 `ComponentType<{echarts, option: unknown,...}>`。ECharts6 的 `EChartsOption` 过严，option 用 unknown。
 5. **安装命令**：`npm install --legacy-peer-deps --dangerously-allow-all-scripts`（legacy-peer-deps 绕过 TS7 peer；allow-all-scripts 放行 esbuild postinstall）。
 6. **同伴依赖必须精确 pin**：`@eslint/js` 最新是 **10.0.1**（版本号独立于 eslint）；`@vitejs/plugin-react` **6.1.1**（支持 Vite 8；笔记此前写的 6.0.5 已过期）；`echarts-for-react` **3.0.7**（3.0.6 会拉 react18 嵌套）——该依赖已于 2026-08-14 的图表崩溃修复中移除，此处仅作历史约束留档；`react-markdown` **10.1.0**（peer react>=18）。
+7. **同一个包不要同时写在 `devDependencies` 与 `overrides` 里**（2026-09-22 移除了 `nanoid` 的 override）：两侧 specifier 只要不逐字相同，npm 就报 `EOVERRIDE` 并拒绝解析，而 Dependabot 会**分别**更新它们——单独升任一侧都会触发，表现为每周一次的 `dependency_file_not_resolvable`、整次更新任务变红。要么只写直接依赖，要么只写 override。注意 npm 报错文案里的版本号取自**直接依赖**那一侧（`Override for nanoid@6.0.1 conflicts with direct dependency` 指的是直接依赖已经变成 6.0.1），照字面去查 override 会找错方向。
 
 ## 数据源约束
 
@@ -53,6 +54,7 @@
 - `vitest.config.mts` 的 `resolve.extensions` 必须显式含 `.tsx`，否则解析不了 extensionless `.tsx` 导入。
 - `routes.test.ts` 需 `app` 可导入不绑端口：`server/src/index.ts` 把 `app.listen`/优雅关闭包进 `if(process.env.NODE_ENV!=='test')`，vitest.config 设 `env:{NODE_ENV:'test'}`。
 - 覆盖率排除清单以 `vitest.config.mts` 的 `coverage.exclude` 为准，**只有**：`**/*.test.ts`、`**/*.d.ts`、`server/src/index.ts`（Express 入口）、`server/src/routes/**`（路由模块）、`server/src/middleware.ts`（限流/熔断/安全头）、`server/src/llm/client.ts`、`server/src/llm/mcpClient.ts`、`server/src/llm/expertRunner.ts`、`client/src/main.tsx`、`client/src/vite-env.d.ts`。注意 `server/src/llm/**` 并非整目录排除（rag/prompts/tools/knowledgeGraph 等纯逻辑模块必须纳入，否则门禁形同虚设），`server/src/quant/**` 同样纳入统计（此前笔记写的「quant 被排除、覆盖率稳定在 ~80%」与配置不符，已订正）。
+- **路由测试不得真实打通服务层**：`ci.yml` 写明「测试均已 mock 网络（不依赖真实行情/东财接口）」，而 `/api/stocks/search` 的正常路径用例曾真实走到 `searchStocks`——CI 上要先等东财 suggest 超时、再回落本地全表 5000+ 只的 DP，**同一提交在两次 CI 上结论相反**（2026-09-22：放宽到 30s 仍以 30107ms 超时）。改按 `routes.market.test.ts` 口径打桩后 30107ms → 462ms。**给慢用例放宽超时是掩盖，不是修复**；先问「它为什么会慢」，多数答案是"它连了不该连的东西"。
 
 ## 构建/部署注意
 
@@ -94,6 +96,7 @@
 
 - 本机有 `http_proxy=http://127.0.0.1:7890` 代理，会干扰 npm/vitest 运行；执行前先 `unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY`。
 - Git Bash 里 `curl -o /tmp/x.json` 的路径映射不可靠，落盘请用项目内相对路径。
+- **PowerShell 会吃掉 npm 的 `--` 分隔符**：`npm run test -- --coverage` 在 pwsh 里被送成 `npm run test --coverage`，npm 报 `EUNKNOWNCONFIG: Unknown cli flag: --coverage`；同一条命令在 `cmd /c "..."` 下正常（CI 是 Linux bash，不受影响）。在 pwsh 里复现 CI 请直接调等价命令 `npx vitest run --coverage`，或包一层 `cmd /c`。
 
 ## 已接线模块说明（2026-08-09 复核）
 
@@ -418,3 +421,59 @@ backtrader 主循环事实：Cerebro 只做组装与广播，**撮合真相在 B
   验证」，顺序不确定等于每轮拿到的训练/验证集都在变——排序缺陷会伪装成"模型不稳定"。
 - **写同毫秒回归用例要用 ≥5 条记录**。2 条时排序算法可能恰好保住原序，病态比较器照样通过；
   5 条同时间戳才能稳定暴露。写完必须做突变验证（改回病态版本确认用例真的失败）。
+
+## 2026-09-22 CI 回绿：两个红点都不是业务代码的问题
+
+Dependabot 在 09-21 那一轮留下两个红点：开发组 PR 的 CI，以及它自己的更新任务。
+两件事互不相关，但根因都值得写下来。
+
+### ① 超时用例：放宽阈值掩盖了「连了真实网络」
+
+- `server/src/__tests__/routes.validation.test.ts` 的「正常关键词 → 200 且返回数组」真实打通
+  路由到 `searchStocks`。CI 无外网时要先等东财 suggest 超时，再回落本地全表 5000+ 只的
+  最长公共子串 DP——**耗时由机器负载决定，不由代码决定**。
+- d51f277 把它从默认 5s 放宽到 30s，并写下「同一提交在另一次 CI 上就是通过的」。这句话本身
+  就是判决：用例不确定。09-21 那次以 30107ms 打穿 30s。
+- **正确的入口是先问「这条用例要测什么」**。它锁的是路由层的长度闸门，上游能不能连上与被测
+  行为无关；而 `ci.yml` 早就写明「测试均已 mock 网络」。于是要么打桩，要么这条用例不该存在。
+  选了打桩，并把断言从「200 + 是数组」收紧为「放行到服务层且**原样回传**」，再补上被拒请求
+  「**不触达服务层**」——后者才是那句"拦在昂贵匹配之前"注释的可执行版本。
+- 打桩照抄同目录既有口径，避免又造一套：
+
+  ```ts
+  const mocks = vi.hoisted(() => ({ searchStocks: vi.fn() }));
+  vi.mock('../services/dataService.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../services/dataService.js')>();
+    return { ...actual, searchStocks: mocks.searchStocks };
+  });
+  ```
+
+- 突变验证不能省：把长度闸门挪到服务调用之后、把 `res.json(results)` 换成 `res.json([])`，
+  确认**恰好**对应的两条用例失败、其余 12 条不受影响。只会"跑绿"的用例等于没有用例。
+
+### ② `EOVERRIDE`：同一个包既写在直接依赖又写在 override
+
+- Dependabot 的报错只有一行：`Override for nanoid@6.0.1 conflicts with direct dependency`。
+  **照字面去查 override 会找错方向**——npm 这句话里的版本号取自**直接依赖**那一侧，
+  它说的其实是"直接依赖已经是 6.0.1 了"。
+- 复现只要一个最小目录（不必动仓库；注意留在系统临时目录、别落进仓库）。下面这种写法，
+  以及把两侧版本对调后的写法，都会报同一句话；**不要用 `jsonc`/`json` 代码块记它**，
+  本仓库的 prettier 配了 `trailingComma: all`，会把片段补成非法 JSON：
+
+  ```text
+  {
+    "devDependencies": { "nanoid": "6.0.1", "postcss": "^8.5.0" },
+    "overrides": { "nanoid": "^3.3.18" }
+  }
+  ```
+
+  `npm install --package-lock-only` 即复现同一句话；删掉 `overrides.nanoid` 后两种版本组合都过。
+
+- 判断「这条 override 还有没有用」要看**传递消费者声明的范围**，而不是它存不存在：
+  `npm ls nanoid` 显示唯一消费者是 `postcss`，声明的也是 `^3.3.18`，与直接依赖同区间，
+  于是整棵树本来就只有一份 3.3.19——override 在或不在结果相同。移除后 `package-lock.json`
+  的 SHA256 **逐字节未变**，这就是"冗余"的硬证据，比读一遍 package.json 猜要可靠。
+- 顺带修正一处历史归因：9226ac2「钉 nanoid ≥3.3.17 修高危传递漏洞」真正的病根是 override
+  用了 `>=`，把 nanoid 解析到了 6.0.1（ESM-only），导致 postcss 的
+  `require('nanoid/non-secure')` 构建期失败。**问题出在 override 本身，而不是缺少 override**
+  ——按"再多加一层钉死"去修，只会越修越死。
