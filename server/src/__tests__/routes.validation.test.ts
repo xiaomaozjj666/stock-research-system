@@ -1,9 +1,21 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { app } from '../index.js';
+
+// /api/stocks/search 的服务层打桩。真实链路在 CI 上要先等东财 suggest 超时、再回落本地
+// 全表 5000+ 只股票的最长公共子串 DP，耗时随机器负载在数秒到数十秒间浮动——同一提交在
+// 两次 CI 上会得出相反结论（本文件此前为此把超时放宽到 30s，仍被打穿）。本文件要锁的是
+// 「路由层闸门」，与上游是否可用无关，故与 routes.market.test.ts、routes.rateLimit.test.ts
+// 采用同一套打桩口径，顺带守住 ci.yml 里「测试均已 mock 网络」这条约定。
+const mocks = vi.hoisted(() => ({ searchStocks: vi.fn() }));
+
+vi.mock('../services/dataService.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/dataService.js')>();
+  return { ...actual, searchStocks: mocks.searchStocks };
+});
 
 // ============================================================================
 // 入参校验回归测试（防"畸形输入污染持久化状态"）
@@ -13,6 +25,7 @@ import { app } from '../index.js';
 //     2) 非法 side 会跳过卖出的 T+1 校验、并在结算时被当作卖出处理。
 //     3) /api/stocks/search 关键词无长度上限：全表最长公共子串 DP 会阻塞事件循环。
 //   本文件锁定这三处的修复，避免回归。
+//   隔离：全部用例不触真实网络（/api/stocks/search 的服务层打桩，其余路由只走校验分支）。
 // ============================================================================
 
 const tmpPaperFile = path.join(
@@ -133,9 +146,15 @@ describe('模拟盘入参校验（/api/paper）', () => {
 });
 
 describe('股票搜索入参校验（/api/stocks/search）', () => {
-  it('缺少关键词 → 400', async () => {
+  beforeEach(() => {
+    mocks.searchStocks.mockReset();
+  });
+
+  // 闸门的意义是「拦在昂贵匹配之前」：被拒的请求必须不触达服务层。
+  it('缺少关键词 → 400，且不触达服务层', async () => {
     const res = await request(app).get('/api/stocks/search');
     expect(res.status).toBe(400);
+    expect(mocks.searchStocks).not.toHaveBeenCalled();
   });
 
   it('关键词超长（>32 字符）→ 400，避免全表 DP 阻塞事件循环', async () => {
@@ -144,15 +163,20 @@ describe('股票搜索入参校验（/api/stocks/search）', () => {
       .query({ keyword: '贵'.repeat(200) });
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('过长');
+    expect(mocks.searchStocks).not.toHaveBeenCalled();
   });
 
-  // 真实打到 /api/stocks/search：CI 无外网时它会先等东财 suggest 超时，再回落本地全表
-  // 模糊匹配（5000+ 只的最长公共子串 DP）。CI 机器慢时整条链路会超过默认的 5s，
-  // 与代码无关（同一提交在另一次 CI 上就是通过的）——故给足超时而不是压缩断言。
-  it('正常关键词（≤32 字符）→ 200 且返回数组', { timeout: 30_000 }, async () => {
+  // 上限不能误伤正常词：≤32 字符必须放行到服务层，并原样回传其结果。
+  it('正常关键词（≤32 字符）→ 放行到服务层并原样返回数组', async () => {
+    const hits = [{ code: '600519', name: '贵州茅台' }];
+    mocks.searchStocks.mockResolvedValue(hits);
+
     const res = await request(app).get('/api/stocks/search').query({ keyword: '茅台' });
+
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body).toEqual(hits);
+    expect(mocks.searchStocks).toHaveBeenCalledWith('茅台');
   });
 });
 
