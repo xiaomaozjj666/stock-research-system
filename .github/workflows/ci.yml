@@ -116,6 +116,17 @@ jobs:
             client/dist
           retention-days: 7
 
+      - name: Contract smoke (real process vs spec)
+        # 补上此前唯一没被验证过的一环：**真实 HTTP 响应**是否与契约一致。
+        # 此前所有检查都在进程内（import buildOpenApiDocument 后比对），
+        # 而契约是手写的、响应是 res.json 拼的 —— 两者是独立代码路径，
+        # 「契约声明的字段」与「路由实际写出的字段」不一致时进程内测不出来。
+        # 该脚本会先 build server（契约与响应读同一份 dist，杜绝版本漂移），
+        # 再起真实进程请求 16 个无副作用端点逐字段校验。
+        # 已反向验证：把 ModelSpec.id 谎称成 integer 后立即报出
+        # `$.registry[0].id: 期望 number，实际 string` 并以非 0 退出。
+        run: npm run smoke:contract
+
       - name: Test with coverage
         # vitest run 全量测试（globals=false，测试内显式 import vi/expect）+ 覆盖率阈值门禁
         # （vitest.config.mts thresholds：lines 92 / statements 90 / functions 92 / branches 80）。

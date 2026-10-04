@@ -990,3 +990,135 @@ unknown 报错；引入不认识构造 → 报错）。`contractParity.ts` 也�
 我只跑了 `tsc --noEmit -p client/tsconfig.json`（排除测试）与全量 vitest（不查类型），
 **两个门禁都恰好覆盖不到测试文件的类型**。以后收敛类型时，
 除主配置外必须同时跑 `npm run typecheck:tests`。
+
+## 2026-10-05 补最后一环：真实 HTTP 响应 vs 契约（此前从未验证过）
+
+### 为什么必须补这一环
+
+前三轮把契约补全、接了类型生成、加了各种守卫，但**所有验证都在进程内**
+（`import buildOpenApiDocument()` 后比对）。而契约与响应是**两条独立的代码路径**：
+
+- 契约 = `services/openapi.ts` 里**手写**的 schema；
+- 响应 = 各路由里 `res.json(...)` **实际拼出来**的对象。
+
+两者不一致时，进程内测试**测不出来** —— 它只验证「契约自洽」，不验证
+「契约描述的就是服务实际返回的」。这正是本项目反复出现的漂移形态
+（paths 缺 25 条、horizons 声明反了、chart_list 必填性不符，都是同一类）。
+
+### 做法
+
+新增三个脚本（`npm run smoke:contract`）：
+
+| 文件 | 职责 |
+|---|---|
+| `scripts/contract-from-dist.mjs` | 从 **server/dist** 载入契约 |
+| `scripts/contract-smoke.mts` | 请求 16 个无副作用端点，逐字段校验实际响应 |
+| `scripts/run-contract-smoke.mts` | 先 build → 起真实进程 → 跑校验 → 关停 |
+
+覆盖 16 个不依赖上游、不改状态的 GET 端点。**覆盖面不足是已知取舍**：
+POST 类与需要真实行情的端点离线无法稳定复现，强行纳入只会让门禁随机红。
+
+### 两个「假绿灯」陷阱（这次抓得很值）
+
+**陷阱 1：契约读源码、响应读 dist。** 最初 `contract-smoke` 从
+`server/src/services/openapi.ts` import 契约，而被测进程跑 `server/dist/index.js`
+—— 改了源码没重新 build 时，就是**新契约比旧响应**。实测：把 `WatchlistCodes.codes`
+谎称成 `number`，冒烟仍报「0 个不符」。
+修法两条同时上：契约改从 dist 读（`contract-from-dist.mjs`）+ 启动器**先 build 再起进程**。
+（这一步顺带验证了「先构建」的价值：我第一次注入时手滑写坏了语法，构建失败被门禁直接拦下。）
+
+**陷阱 2：拿空数组当验证样本。** 修好同源问题后重测，注入 `WatchlistCodes.codes`
+仍然抓不到 —— 查真实响应才发现 `/api/watchlist` 返回 `{"codes":[]}`，
+**数组为空，元素级校验根本不执行**。注入点选在了无法证伪的端点上。
+换成有真实数据的 `/api/models`（`registry` 里有实际模型）后一次命中。
+
+### 反向验证（结果）
+
+把 `ModelSpec.id` 从 `string` 谎称成 `integer`（语法合法，能过构建）：
+
+```
+✗ GET /api/models
+    $.registry[0].id: 期望 number，实际 string（"deepseek-chat"）
+真实进程校验：16 个端点，1 个与契约不符      → exit 1
+```
+
+还原后 → `16 个端点，0 个与契约不符` → exit 0。
+**指名具体字段、退出码非 0、还原即绿** —— 三点齐了才算一条真守卫。
+
+顺带修掉校验器自身的一个假红灯：最初只认 OpenAPI 3.1 的
+`type: ['string','null']`，不认 3.0 的 `nullable: true`，于是把 5 个
+**本来正确**的契约误报成「期望非 null，实际 null」（PaperStats.currentDate、
+FactorExperimentSummary.lastAt、harnessPolicy.updatedAt 等）。
+假红灯同样有害 —— 它会让人去"修"根本没坏的东西。
+
+### 纪律
+
+**新写的门禁，第一次就要先问「它会红吗」。** 本轮三次假绿灯（源码/dist 不同源、
+空数组样本、`Equal`/identity 误报）都是同一个病因的不同表现：
+**没验证过守卫在故障时是否真的报警**。
+
+## 2026-10-05 补最后一环：真实 HTTP 响应 vs 契约（此前从未验证过）
+
+### 为什么必须补这一环
+
+前三轮把契约补全、接了类型生成、加了各种守卫，但**所有验证都在进程内**
+（`import buildOpenApiDocument()` 后比对）。而契约与响应是**两条独立的代码路径**：
+
+- 契约 = `services/openapi.ts` 里**手写**的 schema；
+- 响应 = 各路由里 `res.json(...)` **实际拼出来**的对象。
+
+两者不一致时，进程内测试**测不出来** —— 它只验证「契约自洽」，不验证
+「契约描述的就是服务实际返回的」。这正是本项目反复出现的漂移形态
+（paths 缺 25 条、horizons 声明反了、chart_list 必填性不符，都是同一类）。
+
+### 做法
+
+新增三个脚本（`npm run smoke:contract`）：
+
+| 文件 | 职责 |
+|---|---|
+| `scripts/contract-from-dist.mjs` | 从 **server/dist** 载入契约 |
+| `scripts/contract-smoke.mts` | 请求 16 个无副作用端点，逐字段校验实际响应 |
+| `scripts/run-contract-smoke.mts` | 先 build → 起真实进程 → 跑校验 → 关停 |
+
+覆盖 16 个不依赖上游、不改状态的 GET 端点。**覆盖面不足是已知取舍**：
+POST 类与需要真实行情的端点离线无法稳定复现，强行纳入只会让门禁随机红。
+
+### 两个「假绿灯」陷阱（这次抓得很值）
+
+**陷阱 1：契约读源码、响应读 dist。** 最初 `contract-smoke` 从
+`server/src/services/openapi.ts` import 契约，而被测进程跑 `server/dist/index.js`
+—— 改了源码没重新 build 时，就是**新契约比旧响应**。实测：把 `WatchlistCodes.codes`
+谎称成 `number`，冒烟仍报「0 个不符」。
+修法两条同时上：契约改从 dist 读（`contract-from-dist.mjs`）+ 启动器**先 build 再起进程**。
+（这一步顺带验证了「先构建」的价值：我第一次注入时手滑写坏了语法，构建失败被门禁直接拦下。）
+
+**陷阱 2：拿空数组当验证样本。** 修好同源问题后重测，注入 `WatchlistCodes.codes`
+仍然抓不到 —— 查真实响应才发现 `/api/watchlist` 返回 `{"codes":[]}`，
+**数组为空，元素级校验根本不执行**。注入点选在了无法证伪的端点上。
+换成有真实数据的 `/api/models`（`registry` 里有实际模型）后一次命中。
+
+### 反向验证（结果）
+
+把 `ModelSpec.id` 从 `string` 谎称成 `integer`（语法合法，能过构建）：
+
+```
+✗ GET /api/models
+    $.registry[0].id: 期望 number，实际 string（"deepseek-chat"）
+真实进程校验：16 个端点，1 个与契约不符      → exit 1
+```
+
+还原后 → `16 个端点，0 个与契约不符` → exit 0。
+**指名具体字段、退出码非 0、还原即绿** —— 三点齐了才算一条真守卫。
+
+顺带修掉校验器自身的一个假红灯：最初只认 OpenAPI 3.1 的
+`type: ['string','null']`，不认 3.0 的 `nullable: true`，于是把 5 个
+**本来正确**的契约误报成「期望非 null，实际 null」（PaperStats.currentDate、
+FactorExperimentSummary.lastAt、harnessPolicy.updatedAt 等）。
+假红灯同样有害 —— 它会让人去"修"根本没坏的东西。
+
+### 纪律
+
+**新写的门禁，第一次就要先问「它会红吗」。** 本轮三次假绿灯（源码/dist 不同源、
+空数组样本、`Equal`/identity 误报）都是同一个病因的不同表现：
+**没验证过守卫在故障时是否真的报警**。
