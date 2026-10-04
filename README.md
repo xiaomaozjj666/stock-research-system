@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-3372%20cases-brightgreen" alt="3372 测试用例" />
+  <img src="https://img.shields.io/badge/tests-3376%20cases-brightgreen" alt="3376 测试用例" />
   <a href="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml"><img src="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -169,7 +169,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3372 用例 / 244 个测试文件，行覆盖 93.8%）+ Playwright（E2E 12 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3376 用例 / 244 个测试文件，行覆盖 93.8%）+ Playwright（E2E 12 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
 
 ## 快速开始
 
@@ -250,7 +250,7 @@ copy .env.example server\.env    # Windows cmd
 | 技能路由  | `GET /api/llm/skills?message=`                                                                                                                                            | 确定性规则表：判定该走哪个专用技能（因子/回测/对比/新闻/自选/通用）                            |
 | 其他      | `GET /api/health`                                                                                                                                                         | 健康检查（外部 API 可达性 + 缓存目录）                                                         |
 |           | `GET /api/metrics`                                                                                                                                                        | Prometheus 指标导出                                                                            |
-|           | `GET /api/openapi.json`                                                                                                                                                   | OpenAPI 3.1 机器可读契约                                                                       |
+|           | `GET /api/openapi.json`                                                                                                                                                   | OpenAPI 3.1 机器可读契约（**全部** 64 条路由，由测试与应用实际路由表双向校验，不会漏）         |
 
 ## MCP（供 Cursor / Claude Code / Cline）
 
@@ -286,7 +286,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（3372 用例 / 244 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（3376 用例 / 244 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（12 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src、e2e）
 npm run format:check  # Prettier 格式检查

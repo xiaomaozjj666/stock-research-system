@@ -1,10 +1,17 @@
 /**
  * OpenAPI 3.1 契约（机器可读 API 规范）
  * ----------------------------------------------------------------------------
- * 与 README「API 概览」表格对应的唯一权威来源：服务端经 GET /api/openapi.json
- * 自托管本规范，可供 Swagger UI / 代码生成 / 契约校验工具消费。
+ * API 形状的唯一权威来源：服务端经 GET /api/openapi.json 自托管本规范，
+ * 可供 Swagger UI / 代码生成 / 契约校验工具消费。
  *
- * 维护约定：新增或修改路由时同步更新此处（openapi.routes.test.ts 有结构性校验兜底）。
+ * 维护约定：新增或修改路由时同步更新此处。兜底不是靠人肉清单，而是
+ * `services/__tests__/openapi.routes.test.ts` 里的「与实际挂载路由一致」——
+ * 它从 app 的真实路由表反推，与本文件**双向**比对：新增路由漏写契约会直接失败
+ * 并报出该补哪个 paths key。因此这里不需要（也不应该）再维护一份端点清单。
+ *
+ * 2026-10-04 补录了 25 条此前从未进契约的路由（quant 因子/台账/简报、llm 校准、
+ * 改进闭环、intl K 线等）。此前本文件只覆盖 README 表格的 24 条，而 app 实际挂载
+ * 64 条，缺口长期存在且无任何测试能发现——补录后由上述双向校验接管。
  */
 
 export const OPENAPI_VERSION = '3.1.0';
@@ -778,6 +785,450 @@ export function buildOpenApiDocument() {
           responses: {
             200: { description: '{ deleted: true }' },
             404: errorResponse('历史记录不存在'),
+          },
+        },
+      },
+
+      /* ===== 以下为 2026-10-04 补录的路由契约 =====
+         此前规范只覆盖 README「核心端点」，另有 25 条已挂载路由从未进契约，
+         而 openapi.routes.test.ts 只校验一份硬编码的核心清单，因此这类缺口
+         不会让任何测试变红。补录后由「路由与契约双向一致」的结构测试接管：
+         新增路由而漏写契约会直接失败（见该测试的 allowlist 机制）。 */
+
+      '/api/quant/universe/boards': {
+        get: {
+          tags: ['quant'],
+          summary: '行业板块列表（横截面选股 universe 的可选范围）',
+          description:
+            '东财新旧两套行业体系并存（银行 / 银行Ⅱ / 国有大型银行Ⅲ），已滤掉名称以 Ⅱ/Ⅲ ' +
+            '结尾的旧体系子级，只保留现行一级板块（纯降噪：这些代码本身仍可直接请求）。' +
+            '上游失败但磁盘有快照时返回 stale=true 与 staleAgeMs，如实披露这是陈旧快照。',
+          responses: {
+            200: { description: '{ boards: IndustryBoard[], stale?: true, staleAgeMs?: number }' },
+            429: errorResponse('触发限流（元数据默认每分钟 30 次）'),
+            502: errorResponse('行业板块列表获取失败'),
+          },
+        },
+      },
+      '/api/quant/factor/cross-section': {
+        post: {
+          tags: ['quant'],
+          summary: '因子截面评估（IC / 分层收益 / 多空组合）',
+          description:
+            '可选 universe（codes 或 board）、topN、horizons；includeFundamental/Events/Margin ' +
+            '为按需叠加的因子族，portfolio=true 时为每个因子附带 top-N 等权周期调仓回测。' +
+            'indexUniverse 走 Baostock sidecar 取指数历史成分（point-in-time）。',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              codes: { type: 'array', items: stockCodeSchema },
+              board: { type: 'string' },
+              topN: { type: 'integer' },
+              horizons: { type: 'array', items: { type: 'string' } },
+              includeFundamental: { type: 'boolean' },
+              includeEvents: { type: 'boolean' },
+              includeMargin: { type: 'boolean' },
+              portfolio: { type: 'object' },
+            },
+          }),
+          responses: {
+            200: { description: 'CrossSectionResult（各因子 IC/分层收益 + 可选组合回测）' },
+            400: errorResponse('参数或取值范围非法'),
+            429: errorResponse('触发限流，或 LLM 排队超时（带 Retry-After）'),
+            502: errorResponse('上游取数失败'),
+            503: errorResponse('合规熔断触发'),
+          },
+        },
+      },
+      '/api/quant/timeseries/analyze': {
+        post: {
+          tags: ['quant'],
+          summary: '时间序列因子分析（时序 IC / 滚动稳定性）',
+          requestBody: jsonBody({ type: 'object' }),
+          responses: {
+            200: { description: '时序分析结果' },
+            400: errorResponse('参数非法（窗口、至少观测数、区间一致性等）'),
+            429: errorResponse('触发限流，或 LLM 排队超时（带 Retry-After）'),
+            502: errorResponse('取数不足（数据不足 / 观测不足 / 对齐后样本过少）'),
+            503: errorResponse('合规熔断触发'),
+            500: errorResponse('时间序列分析失败'),
+          },
+        },
+      },
+      '/api/quant/factor/expression': {
+        post: {
+          tags: ['quant'],
+          summary: '自定义因子表达式评估（受限 DSL，不执行模型生成的代码）',
+          description:
+            'LLM 生成假设或手输表达式 → parseFactorExpression 解析为白名单语法 AST → ' +
+            '截面评估器验证 → 台账留痕。关键点：**不 eval 任何模型产出的代码**，' +
+            '因此没有沙箱逃逸面。startDate/endDate 未传时沿用 730 天默认窗口。',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              expression: { type: 'string', description: '因子表达式（白名单 DSL）' },
+              name: { type: 'string' },
+              board: { type: 'string' },
+              codes: { type: 'array', items: stockCodeSchema },
+              topN: { type: 'integer' },
+              horizons: { type: 'array', items: { type: 'string' } },
+              portfolio: { type: 'object' },
+              startDate: { type: 'string', description: 'YYYY-MM-DD' },
+              endDate: { type: 'string', description: 'YYYY-MM-DD' },
+            },
+            required: ['expression'],
+          }),
+          responses: {
+            200: { description: '因子评估结果 + 组合回测（若请求 portfolio）+ 台账留痕条数' },
+            400: errorResponse('表达式非法或参数越界（解析错误详情原样回传，不做脱敏）'),
+            429: errorResponse('触发限流，或 LLM 排队超时（带 Retry-After）'),
+            503: errorResponse('合规熔断触发'),
+          },
+        },
+      },
+      '/api/quant/factor/expression/batch': {
+        post: {
+          tags: ['quant'],
+          summary: '批量因子假设验证（多表达式一次测算）',
+          description: '逐条评估并汇总 ok 计数；results 内每条带 stocksIncluded / stocksSkipped。',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              expressions: { type: 'array', items: { type: 'object' } },
+              board: { type: 'string' },
+              topN: { type: 'integer' },
+              horizons: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['expressions'],
+          }),
+          responses: {
+            200: { description: '{ universe, horizons, requested, evaluated, results[] }' },
+            400: errorResponse('参数非法'),
+            429: errorResponse('触发限流，或 LLM 排队超时（带 Retry-After）'),
+            500: errorResponse('批量因子假设验证失败'),
+          },
+        },
+      },
+      '/api/quant/research-memory/{code}': {
+        get: {
+          tags: ['quant'],
+          summary: '个股研究记忆（历史结论与追踪指标）',
+          parameters: [
+            {
+              name: 'code',
+              in: 'path',
+              required: true,
+              schema: stockCodeSchema,
+              description: '6 位 A 股代码',
+            },
+          ],
+          responses: {
+            200: { description: '该股的研究记忆（结论、争议点、跟踪项）' },
+            400: errorResponse('非 6 位 A 股代码'),
+            429: errorResponse('触发限流'),
+            500: errorResponse('研究记忆读取失败'),
+          },
+        },
+      },
+      '/api/quant/digests': {
+        get: {
+          tags: ['quant'],
+          summary: '研究简报列表（倒序）',
+          parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', default: 20 } }],
+          responses: {
+            200: { description: '{ items: ResearchDigest[] }' },
+            429: errorResponse('触发限流'),
+            500: errorResponse('研究简报读取失败'),
+          },
+        },
+      },
+      '/api/quant/digests/run': {
+        post: {
+          tags: ['quant'],
+          summary: '手动触发一份研究简报',
+          description: '与定时任务（QUANT_DIGEST_INTERVAL_HOURS，默认关闭）共用同一落盘。',
+          responses: {
+            200: { description: '本次生成的研究简报' },
+            429: errorResponse('触发限流，或 LLM 排队超时（带 Retry-After）'),
+            500: errorResponse('研究简报生成失败'),
+          },
+        },
+      },
+      '/api/quant/announcements': {
+        get: {
+          tags: ['quant'],
+          summary: '个股公告列表 / 单篇公告全文',
+          description: '带 artCode 时返回该篇全文；否则按 6 位 A 股代码返回公告列表。',
+          parameters: [
+            { name: 'code', in: 'query', schema: stockCodeSchema },
+            { name: 'artCode', in: 'query', schema: { type: 'string' } },
+            { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 10 } },
+          ],
+          responses: {
+            200: { description: '公告列表，或 { artCode, content } 单篇全文' },
+            400: errorResponse('未提供 artCode 且 code 不是 6 位 A 股代码'),
+            429: errorResponse('触发限流'),
+          },
+        },
+      },
+      '/api/quant/valuation/model': {
+        post: {
+          tags: ['quant'],
+          summary: '估值建模（DCF / 相对估值，假设可覆盖默认值）',
+          description:
+            'assumptions 可覆盖 growthRate1/2、discountRate、explicitYears、baseEps；' +
+            '非有限数值的项被忽略并回落默认值（不是报错）。',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              code: stockCodeSchema,
+              assumptions: {
+                type: 'object',
+                properties: {
+                  growthRate1: { type: 'number' },
+                  growthRate2: { type: 'number' },
+                  discountRate: { type: 'number' },
+                  explicitYears: { type: 'integer' },
+                  baseEps: { type: 'number' },
+                },
+              },
+            },
+            required: ['code'],
+          }),
+          responses: {
+            200: { description: '估值模型输出（现金流折现 + 敏感性）' },
+            400: errorResponse('代码非法或假设违反约束（增长率/折现率/显性年数等）'),
+            429: errorResponse('触发限流，或 LLM 排队超时（带 Retry-After）'),
+            502: errorResponse('估值建模失败（数据获取或计算异常）'),
+            503: errorResponse('合规熔断触发'),
+          },
+        },
+      },
+      '/api/quant/health': {
+        get: {
+          tags: ['system'],
+          summary: '量化侧上游预检（行情源 / LLM / 缓存 / 增强通道）',
+          description:
+            '动手前先判「行情源通不通 / LLM 配没配 / 缓存有没有」，避免用户干等超时后只拿到' +
+            '一句没有行动指引的 502。tushare / baostock 为可选增强通道，未配置或失败都如实降级' +
+            '披露，不影响 preflight.ok。',
+          responses: {
+            200: { description: '{ ok, checks…, tushare, baostock }' },
+            429: errorResponse('触发限流'),
+            500: errorResponse('上游预检失败'),
+          },
+        },
+      },
+      '/api/quant/factor/experiments': {
+        get: {
+          tags: ['quant'],
+          summary: '因子实验台账（列出 + 汇总）',
+          parameters: [
+            { name: 'source', in: 'query', schema: { type: 'string' } },
+            { name: 'kept', in: 'query', schema: { type: 'boolean' } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', default: 100 } },
+          ],
+          responses: {
+            200: { description: '{ items, summary }' },
+            429: errorResponse('触发限流'),
+            500: errorResponse('实验台账读取失败'),
+          },
+        },
+        post: {
+          tags: ['quant'],
+          summary: '补录因子实验（外部脚本/离线评估的结论也能进台账）',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              entries: { type: 'array', minItems: 1, maxItems: 200, items: { type: 'object' } },
+            },
+            required: ['entries'],
+          }),
+          responses: {
+            200: { description: '{ recorded }' },
+            400: errorResponse('entries 缺失、为空或超过 200 条'),
+            429: errorResponse('触发限流'),
+            500: errorResponse('实验台账写入失败'),
+          },
+        },
+      },
+      '/api/intl/klines': {
+        get: {
+          tags: ['intl'],
+          summary: '港美股 K 线（默认近 2 年）',
+          description: '仅港/美股；A 股代码请走量化/行情既有接口，传入会返回 400 而非误导性数据。',
+          parameters: [
+            { name: 'code', in: 'query', required: true, schema: { type: 'string' } },
+            {
+              name: 'market',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', enum: ['HK', 'US'] },
+            },
+            {
+              name: 'startDate',
+              in: 'query',
+              schema: { type: 'string', description: 'YYYY-MM-DD' },
+            },
+            { name: 'endDate', in: 'query', schema: { type: 'string', description: 'YYYY-MM-DD' } },
+          ],
+          responses: {
+            200: { description: '{ code, market, bars[] }' },
+            400: errorResponse('参数非法，或传入 A 股代码'),
+            429: errorResponse('触发限流（元数据默认每分钟 30 次）'),
+            502: errorResponse('上游 K 线获取失败'),
+          },
+        },
+      },
+      '/api/quant/screener/run': {
+        post: {
+          tags: ['quant'],
+          summary: '全市场初筛（长任务，客户端提前断开则级联中止在途取数）',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              maxStocks: { type: 'integer' },
+              startDate: { type: 'string', description: 'YYYY-MM-DD' },
+              endDate: { type: 'string', description: 'YYYY-MM-DD' },
+            },
+          }),
+          responses: {
+            200: { description: '初筛结果（命中列表 + 各条件通过情况）' },
+            400: errorResponse('参数非法'),
+            429: errorResponse('触发限流，或 LLM 排队超时（带 Retry-After）'),
+            500: errorResponse('全市场初筛失败'),
+            503: errorResponse('合规熔断触发'),
+          },
+        },
+      },
+      '/api/quant/screener/latest': {
+        get: {
+          tags: ['quant'],
+          summary: '最近一次初筛结果（无人值守运行后回看）',
+          responses: {
+            200: { description: '最近一次初筛的落盘结果' },
+            404: errorResponse('还没有初筛记录（需先 POST /api/quant/screener/run）'),
+            429: errorResponse('触发限流'),
+          },
+        },
+      },
+      '/api/llm/ensemble': {
+        post: {
+          tags: ['system'],
+          summary: '多模型集成调用（可指定 models / temperature / maxTokens）',
+          description:
+            'models 最多 5 个；temperature / maxTokens 越界时**夹紧到上限**并在服务端日志记录' +
+            '原值（不报错），因此客户端不会因边界值直接失败。',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              messages: { type: 'array', items: { type: 'object' } },
+              models: { type: 'array', maxItems: 5, items: { type: 'string' } },
+              task: { type: 'string' },
+              temperature: { type: 'number' },
+              maxTokens: { type: 'integer' },
+            },
+            required: ['messages'],
+          }),
+          responses: {
+            200: { description: '集成结果（各模型输出 + 汇总）' },
+            400: errorResponse('messages 非法，或 models 不是 1-5 个非空字符串'),
+            429: errorResponse('触发限流，或 LLM 排队超时（带 Retry-After）'),
+            502: errorResponse('多模型集成调用失败'),
+            503: errorResponse('合规熔断触发'),
+          },
+        },
+      },
+      '/api/llm/calibration': {
+        get: {
+          tags: ['system'],
+          summary: '模型权重（校准结果）',
+          responses: {
+            200: { description: '{ weights }' },
+            429: errorResponse('触发限流'),
+          },
+        },
+        post: {
+          tags: ['system'],
+          summary: '记录一次模型判断的验证结果（correct = 事后被验证正确）',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: { model: { type: 'string' }, correct: { type: 'boolean' } },
+            required: ['model'],
+          }),
+          responses: {
+            200: { description: '{ ok: true, weights }' },
+            400: errorResponse('未提供 model'),
+            429: errorResponse('触发限流'),
+            500: errorResponse('校准记录失败'),
+          },
+        },
+      },
+      '/api/llm/skills': {
+        get: {
+          tags: ['system'],
+          summary: '技能路由（给定一句话判定该走哪个专用技能）',
+          description: '规则表判定，确定性输出，不调用模型。',
+          parameters: [{ name: 'message', in: 'query', schema: { type: 'string' } }],
+          responses: {
+            200: { description: '命中的技能路由结果' },
+            429: errorResponse('触发限流'),
+          },
+        },
+      },
+      '/api/improvement/status': {
+        get: {
+          tags: ['system'],
+          summary: '改进闭环状态（harness policy + 台账汇总）',
+          responses: { 200: { description: '{ state, ledger }' } },
+        },
+      },
+      '/api/improvement/run': {
+        post: {
+          tags: ['system'],
+          summary: '手动跑一轮改进（dryRun=true 时只评估不落盘）',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: { dryRun: { type: 'boolean' } },
+          }),
+          responses: {
+            200: { description: '本轮改进结果（候选、采纳与否、配对统计护栏）' },
+            429: errorResponse('触发限流（写操作默认每分钟 10 次）'),
+          },
+        },
+      },
+      '/api/improvement/history': {
+        get: {
+          tags: ['system'],
+          summary: '改进轮次历史（倒序）',
+          parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', default: 20 } }],
+          responses: {
+            200: { description: '{ items }（limit 上限 200）' },
+          },
+        },
+      },
+      '/api/improvement/scheduler/start': {
+        post: {
+          tags: ['system'],
+          summary: '启动改进闭环的周期调度（无人值守）',
+          description: 'intervalHours 未传时回落 harness policy 的默认间隔。',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: { intervalHours: { type: 'number' } },
+          }),
+          responses: {
+            200: { description: '调度已启动（含下次运行时间）' },
+            429: errorResponse('触发限流（写操作默认每分钟 10 次）'),
+          },
+        },
+      },
+      '/api/improvement/scheduler/stop': {
+        post: {
+          tags: ['system'],
+          summary: '停止改进闭环的周期调度',
+          responses: {
+            200: { description: '调度已停止' },
+            429: errorResponse('触发限流（写操作默认每分钟 10 次）'),
           },
         },
       },
