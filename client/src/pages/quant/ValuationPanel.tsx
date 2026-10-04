@@ -31,7 +31,11 @@ function SensitivityTable({ r }: { r: NonNullable<ValuationModelResult['sensitiv
               <td className="mono">r = {(rate * 100).toFixed(1)}%</td>
               {r.matrix[i].map((v, j) => (
                 <td key={j} className={Number.isFinite(v) ? 'mono' : 'mono ds-coverage'}>
-                  {Number.isFinite(v) ? v.toFixed(2) : '发散'}
+                  {/* matrix 的元素是 number | null：服务端对非法假设格（g2 逼近 r 等
+                      无解组合）写 null。Number.isFinite(null) 为 false，故下面这个
+                      判断本就同时挡住了 null 与 Infinity/NaN；此处的显式 null 守卫
+                      是为了让类型收窄与意图一致，不改变运行行为。 */}
+                  {typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '发散'}
                 </td>
               ))}
             </tr>

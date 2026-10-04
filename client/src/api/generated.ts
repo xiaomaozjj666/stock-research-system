@@ -1460,8 +1460,10 @@ export type ResearchDigest = {
   ledger: {
     total: number;
     kept: number;
-    keptExpectedFalse?: number;
-    keptOosShare?: number;
+    /** 期望假阳性上界 = 采信数 × 5% */
+    keptExpectedFalse: number;
+    /** 采信集中 OOS 稳定的占比（0-1） */
+    keptOosShare: number;
     bySource: Record<string, number>;
   };
   notes: string[];
@@ -1789,8 +1791,8 @@ export type ValuationModelResult = {
   comparables: ComparableAnalysis;
   /** 实际生效的假设（自动推导的也回传，便于复现） */
   assumptions: {
-    /** 基期 EPS；取不到时序列化为 null */
-    baseEps: number | null;
+    /** 基期 EPS；估值模型要求为正数，非正即抛错，故不会是 null */
+    baseEps: number;
     /** 显性期增速（小数） */
     growthRate1: number;
     /** input=调用方传入；eps_cagr_3y=由 EPS 3 年 CAGR 钳制推导 */

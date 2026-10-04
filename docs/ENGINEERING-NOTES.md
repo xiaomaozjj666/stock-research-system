@@ -827,3 +827,96 @@ LLM 集成与校准、技能路由、改进闭环全套、intl K 线、全市场
 （中文全角括号 `）` 混入代码、以及多/少一个右括号），每次只修一个就重跑，
 来回三轮。正确做法是**先 `tsc --noEmit` 一次列出全部语法错**（它会连带报出
 后续所有行），再用一条正则统一修，而不是逐个 `grep` + 逐个改。
+
+## 2026-10-04 类型生成落地：从「声明唯一权威」到「真是唯一」
+
+### 为什么响应 schema 必须补（补之前只有 2/64）
+
+上一轮补全了 25 条遗漏路由，paths 覆盖率与 app 实际挂载对齐了。但动手前核实
+前提时发现**响应体契约几乎是空的**：64 个 operation 里只有 2 个的 200 响应带
+schema，其余 62 个只有一句 description。此时上生成器，只会产出 62 个
+`unknown` —— 生成器能用、类型不能用，等于花一轮工程换一个不能吃的壳。
+
+### TypeScript 7 没有编译器 API（这条决定了整个架构）
+
+```
+node -e "console.log(Object.keys(require('typescript')))"
+→ [ 'version', 'versionMajorMinor' ]
+```
+
+`createProgram` / `createSourceFile` / `forEachChild` 全是 `undefined`
+（TS 7 是 Go 原生移植版）。**后果**：无法从类型注解反推 JSON Schema，
+所以 `ts-json-schema-generator` / `openapi-typescript` 在本项目用不了 ——
+它们的输入是 TS 类型，而本项目权威来源是 OpenAPI 文档，**方向相反**。
+方向既然是「文档 → 类型」，自研生成器（`services/apiTypeGen.ts`，纯函数、
+零运行时依赖、可在测试里直接调）比引入一个用不上的依赖更划算。
+
+### 写「守卫」时踩的三个坑（最容易复发，务必记住）
+
+1. **`type _X = A extends B ? true : never` 永远绿。** TS 对未加约束的条件类型
+   不做求值检查，一个明显不成立的关系也能编译通过。实测
+   `Hand.StockPoolItem extends Generated.StockPoolItem` 为假（后者多 chart_list），
+   tsc 静默通过。**这是虚假安全感，比没有守卫更危险** —— 守卫的价值全在"会红"。
+2. **社区流行的 `Equal<X, Y>`（互斥签名）在本项目误报。** 两侧各自声明了同名
+   `PaperPosition` / `FinancialData`，形状逐字相同，但两次独立声明 → identity
+   不同 → 判 false。守卫一旦习惯性误报，人就开始无视它。
+3. **能用就别用**：判据直接赋值 `declare const a: B = g`（两个方向）最可靠 ——
+   编译器真的会检查，且错误信息直接指名是哪个类型的哪个字段。
+
+**结论：任何守卫都必须先反向验证它会红。** `apiTypeGen.test.ts` 末尾有 4 条
+专门做这件事的用例（删组件 → $ref 报错；删响应 content → 报错；换空 schema →
+unknown 报错；引入不认识构造 → 报错）。`contractParity.ts` 也做过一次实测：
+往 `FactorExperiment` 注入一个多余字段，确认 parity 立刻变红后才恢复。
+
+### 假红灯和假绿灯一样有害
+
+生成器最初只取 `content['application/json']`，于是两个 SSE 端点
+（`text/event-stream`）被判成"没写 schema"而报错 —— **把本来正确的契约
+判成错误**，会让人去"修"根本没坏的东西。改成按声明顺序取第一个带 schema 的
+媒体类型（JSON 优先）。
+
+### 补 62 个 schema 时抓出的真实契约 bug
+
+这不是走过场。逐条读 handler 补写的过程里暴露出的问题，按类型分三类：
+
+- **声明与实现相反**：`horizons` 写成 `string[]`，而 `parseHorizons` 收的是
+  整数数组（`Math.trunc(Number(v))` + `Number.isInteger` 校验，传字符串反而能过）。
+  且 5 处各内联一遍、其中 3 处连类型都写错 → 抽成共用 `horizonsSchema`。
+- **可空只写在 description 里**：`IntlFundamentalsResult.fundamentals` 的
+  description 写着「上游不可用时为 null」，schema 却是非空 `$ref`。生成的类型
+  非空，消费方照契约写代码遇到降级响应就崩。**可空必须写进 schema**
+  （`oneOf: [$ref, {type:'null'}]`）。`$ref` 的兄弟字段（description 之类）
+  对类型生成器是不可见的。
+- **必填性两边不一致**：`ScenarioResult` 漏 `supportingArguments`；
+  `FinancialData` 漏 6 个服务端确实返回的字段；`IntlFundamentals` 漏 4 个必填；
+  `ChartConfig.config` 必填性不符；`DataQualityFlags` 前端标可选、服务端必填。
+  方向上**以服务端 `types.ts` 为权威**（它是实现，契约是投影）。
+
+### 一个值得单独记的发现
+
+`ValuationModelResult.sensitivity.matrix` 的元素是 `number | null`
+（服务端对 g2 逼近 r 等无解组合写 null），而前端手写类型声明成 `number[][]`。
+收敛到契约类型后，`ValuationPanel.tsx` 立刻报 `TS18047: 'v' is possibly 'null'`。
+原代码靠 `Number.isFinite(v)` 判断发散 —— `Number.isFinite(null)` 为 false，
+**行为本来就是对的**，但类型上一直在说谎。已改成
+`typeof v === 'number' && Number.isFinite(v)`，语义与运行行为都不变，
+只是让类型收窄与意图一致。
+
+**这正是"更严格的类型"的价值**：它没有制造 bug，而是让一处既有的隐式假设
+显式化了。
+
+### 门禁接线
+
+- `npm run generate:api-types` 生成 / `npm run check:api-types` 只比对；
+  CI `quality` job 新增一步，改了契约没重新生成会拦住合并。
+- 生成物**提交进仓库**（不 gitignore），让契约↔类型的漂移在 PR diff 里直接可见。
+- 生成物落盘前过 prettier（引号统一单引号），否则 `format:check` 门禁会红。
+- 体积预算**零变化**（仍 1242.54 kB / 预算 1300 kB）：类型是纯编译期产物。
+  接生成类型不会带来任何运行时体积，这点值得记住。
+
+### 仍未收敛的部分（刻意保留）
+
+`client/src/pages/quant/types.ts` 里的 `QuantResearchReport` /
+`CrossSectionResult` 等**继续手写**：它们是前端页面的展示模型（页面才是消费方），
+不是 API 契约的一部分，契约里没有对应 operation。强行生成反而会让页面布局
+跟着契约漂移。这类"消费方自有模型"不该由契约生成 —— 边界要划清。

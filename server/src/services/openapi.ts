@@ -2838,11 +2838,14 @@ export function buildOpenApiDocument() {
               properties: {
                 total: { type: 'number' },
                 kept: { type: 'number' },
-                keptExpectedFalse: { type: 'number' },
-                keptOosShare: { type: 'number' },
+                // 服务端 factorLedger.summarizeFactorExperiments 无条件写入这两个
+                // （分别是「采信数 × 5% 的期望假阳性上界」与「采信集 OOS 稳定占比」），
+                // 此前契约把它们标成可选，生成出的类型会让消费方以为可能缺字段
+                keptExpectedFalse: { type: 'number', description: '期望假阳性上界 = 采信数 × 5%' },
+                keptOosShare: { type: 'number', description: '采信集中 OOS 稳定的占比（0-1）' },
                 bySource: { type: 'object', additionalProperties: { type: 'number' } },
               },
-              required: ['total', 'kept', 'bySource'],
+              required: ['total', 'kept', 'keptExpectedFalse', 'keptOosShare', 'bySource'],
             },
             notes: { type: 'array', items: { type: 'string' } },
           },
@@ -5151,8 +5154,7 @@ export function buildOpenApiDocument() {
               properties: {
                 baseEps: {
                   type: 'number',
-                  nullable: true,
-                  description: '基期 EPS；取不到时序列化为 null',
+                  description: '基期 EPS；估值模型要求为正数，非正即抛错，故不会是 null',
                 },
                 growthRate1: { type: 'number', description: '显性期增速（小数）' },
                 growthRate1Source: {

@@ -4,6 +4,10 @@ import axios from 'axios';
 // 重新生成会被 `npm run check:api-types`（CI 门禁）拦下——这正是本项目此前
 // 「契约与前端各写一份、必然分叉」的解法。
 import type {
+  ChatAgentResponse as GeneratedChatAgentResponse,
+  ChatEvidence as GeneratedChatEvidence,
+  DocumentInsight as GeneratedDocumentInsight,
+  ValuationModelResult as GeneratedValuationModelResult,
   IntlKline as GeneratedIntlKline,
   GETApiStocksResponse as StockListResponse,
   GETApiStocksSearchResponse as StockSearchResponse,
@@ -372,60 +376,25 @@ export async function runWatchlistNewsBacktest(
 }
 
 // === 对话式助手 ===
-export interface ChatEvidence {
-  id: string;
-  source: string;
-  text: string;
-  stockCode?: string;
-}
-
-export interface ChatDebate {
-  bull: string;
-  bear: string;
-  synthesis: string;
-}
-
-export interface RiskDebateResult {
-  aggressive: string;
-  neutral: string;
-  conservative: string;
-  synthesis: string;
-}
-
-export interface AgentPlan {
-  action: 'direct' | 'tools' | 'debate';
-  reason: string;
-}
-
-export interface CalculationError {
-  claim: string;
-  reconstructedFormula: string;
-  recomputedValue: string;
-  claimedValue: string;
-  discrepancy: string;
-}
-
-export interface AnswerVerification {
-  verified: boolean;
-  unverified: string[];
-  calculationErrors: CalculationError[];
-  warning: string;
-}
-
-export interface ChatAgentResponse {
-  answer: string;
-  toolsUsed: string[];
-  evidence: ChatEvidence[];
-  debate?: ChatDebate;
-  riskDebate?: RiskDebateResult;
-  /** 路由规划结果（LLM 可用时返回） */
-  plan?: AgentPlan;
-  /** 幻觉防护校验结果 */
-  verification?: AnswerVerification;
-  /** true = LLM 未配置，规则降级 */
-  degraded: boolean;
-  model?: string;
-}
+/**
+ * 对话相关类型全部收敛到契约生成的定义。
+ *
+ * 逐个字段比对过生成物与手写版，结构完全一致，故这里只做别名、不改任何字段。
+ * 收益不是省几行代码，而是**它们从此跟着契约走**：服务端给 ChatAgentResponse
+ * 加字段时，生成物会更新、这里也会跟着变；此前手写版会静默停留在旧形状。
+ * 公开名保留（ChatDebate / RiskDebateResult / AgentPlan / AnswerVerification /
+ * CalculationError / ChatEvidence 都有其它模块在 import，改名是破坏性变更）。
+ */
+export type ChatEvidence = GeneratedChatEvidence;
+export type ChatAgentResponse = GeneratedChatAgentResponse;
+/** debate / riskDebate / plan / verification 在契约里是内联对象，用索引访问取，勿另立定义 */
+export type ChatDebate = NonNullable<ChatAgentResponse['debate']>;
+export type RiskDebateResult = NonNullable<ChatAgentResponse['riskDebate']>;
+export type AgentPlan = NonNullable<ChatAgentResponse['plan']>;
+export type AnswerVerification = NonNullable<ChatAgentResponse['verification']>;
+export type CalculationError = NonNullable<
+  NonNullable<ChatAgentResponse['verification']>['calculationErrors'][number]
+>;
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -454,14 +423,16 @@ export async function chatWithAgent(
 }
 
 // === 研究增强接口（文档库 / 模型路由 / 成本 / 记忆 / 自治监控） ===
-export interface IngestInsight {
-  summary: string;
-  positives: string[];
-  risks: string[];
-  catalysts: string[];
-  confidence: number;
-  source: string;
-}
+/**
+ * 文档洞察。
+ *
+ * 原先是手写 interface，且把 confidence/source 放宽成 number / string。
+ * 服务端 documentInsights.ts 的真实类型是三个字面量联合，契约里也是
+ * （'high'|'medium'|'low' 与 'llm'|'heuristic'）——放宽会让消费方写出
+ * 永远走不到的类型分支，并把「LLM 未配置时 source='heuristic'」这个
+ * 关键降级信号退化成普通字符串。故直接用契约生成的类型。
+ */
+export type IngestInsight = GeneratedDocumentInsight;
 export interface IngestResult {
   id: string;
   title: string;
@@ -1117,46 +1088,16 @@ export async function getIntlKlines(params: {
   }
 }
 
-/** 估值建模结果（两阶段 EPS 贴现 + 可比公司表） */
-export interface ValuationModelResult {
-  model: 'two_stage_eps_dcf';
-  code: string;
-  fairValue: number | null;
-  currentPrice: number;
-  upsidePct: number | null;
-  dcf: {
-    fairValue: number;
-    explicitValue: number;
-    terminalValue: number;
-    discountedTerminalValue: number;
-    cashFlows: { year: number; eps: number; discountFactor: number; presentValue: number }[];
-    assumptions: Record<string, number>;
-  } | null;
-  sensitivity: {
-    discountRates: number[];
-    growthRates1: number[];
-    matrix: number[][];
-  } | null;
-  comparables: {
-    peers: { code: string; name: string; pe: number | null; pb: number | null }[];
-    sampleSize: number;
-    medianPe: number | null;
-    medianPb: number | null;
-    medianRoe: number | null;
-    pePremiumPct: number | null;
-    pbPremiumPct: number | null;
-    impliedValueByMedianPe: number | null;
-  };
-  assumptions: {
-    baseEps: number;
-    growthRate1: number;
-    growthRate1Source: 'input' | 'eps_cagr_3y';
-    growthRate2: number;
-    discountRate: number;
-    explicitYears: number;
-  };
-  limitations: string[];
-}
+/**
+ * 估值建模结果（两阶段 EPS 贴现 + 可比公司表）。
+ *
+ * 改用契约生成的类型：手写版有两处与实现不符 ——
+ *   1) sensitivity.matrix 声明成 number[][]，但服务端对非法假设格写 null
+ *      （g2 接近 r 等无解组合），按 number[][] 消费会拿到与 null 比较的假代码；
+ *   2) dcf.assumptions 声明成 Record<string, number>，实际是结构化对象
+ *      （growthRate1/growthRate2/discountRate/explicitYears/baseEps）。
+ */
+export type ValuationModelResult = GeneratedValuationModelResult;
 
 export async function runValuationModelApi(params: {
   code: string;

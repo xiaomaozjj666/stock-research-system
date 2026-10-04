@@ -85,3 +85,20 @@ declare const _if_g: Generated.IntlFundamentalsResult;
 declare const _if_h: Hand.IntlFundamentalsResult;
 export const _ifToHand: Hand.IntlFundamentalsResult = _if_g;
 export const _ifToGen: Generated.IntlFundamentalsResult = _if_h;
+
+/*
+ * 下面这组是**别名**而非独立声明（client.ts 里已收敛为 `type X = Generated.X`），
+ * 按���它们不是"两份定义"，不需要等价断言；列在这里是为了让读者知道
+ * 哪些类型已经收敛、哪些还留在 client/types.ts 里手写。
+ * 尚未收敛的（刻意保留手写）：页面层自己消费、契约里没有对应 operation 的类型，
+ * 例如 QuantResearchReport / CrossSectionResult（pages/quant/types.ts）——
+ * 它们是**前端页面的展示模型**，不是 API 契约的一部分，不应由契约生成。
+ */
+
+// --- 因子实验台账（/api/quant/factor/experiments 的 items 元素） ---
+// 注意它在 client.ts 而非 types.ts（那是 api 层自己导出的消费方类型）
+import type { FactorExperiment as FactorExperimentHand } from './client';
+declare const _fe_g: Generated.FactorExperiment;
+declare const _fe_h: FactorExperimentHand;
+export const _feToHand: FactorExperimentHand = _fe_g;
+export const _feToGen: Generated.FactorExperiment = _fe_h;
