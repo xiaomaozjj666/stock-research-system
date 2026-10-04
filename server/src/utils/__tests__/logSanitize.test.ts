@@ -88,4 +88,20 @@ describe('sanitizeUrlForLog', () => {
       expect(LOG_SAFE_QUERY_KEYS).not.toContain(risky);
     }
   });
+
+  /**
+   * 访问令牌绝不能落进日志 / span。
+   *
+   * 前端对 SSE 端点只能把令牌放在 `?token=`（EventSource 不能自定义请求头），
+   * 于是「日志侧把 token 抹掉」就成了这条链路唯一的泄漏防线——一旦有人日后
+   * 把 token 加进 LOG_SAFE_QUERY_KEYS，令牌就会随每个 SSE 请求写进日志文件
+   * 与 span，而落盘后无法回收。故用测试把这条钉死。
+   */
+  it('token 永不进白名单，且其值被抹成 [redacted]', () => {
+    expect(LOG_SAFE_QUERY_KEYS).not.toContain('token');
+    const secret = 'super-secret-token-value';
+    const out = sanitizeUrlForLog(`/api/analyze/stream?stockCode=600519&token=${secret}`);
+    expect(out).not.toContain(secret);
+    expect(out).toBe(`/api/analyze/stream?stockCode=600519&token=${REDACTED}`);
+  });
 });

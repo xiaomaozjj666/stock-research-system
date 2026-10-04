@@ -6165,3 +6165,102 @@ button.comparison-tag-add:disabled {
     box-shadow: inset -14px 0 12px -12px rgba(0, 0, 0, 0.55);
   }
 }
+
+/* ===== API 访问令牌解锁条 =====
+   仅在后端配置了 API_AUTH_TOKEN、且页面捕获到 401 时出现（见 components/ApiTokenBar.tsx）。
+   未启用鉴权时不渲染，因此这里的样式对本地开发路径零影响。 */
+.api-token-bar {
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+}
+
+.api-token-bar__form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.api-token-bar__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.api-token-bar__input {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.api-token-bar__input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.api-token-bar__btn {
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.api-token-bar__btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+.api-token-bar__btn--primary {
+  color: var(--text-inverse);
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.api-token-bar__btn--primary:hover {
+  color: var(--text-inverse);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.api-token-bar__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.api-token-bar__hint code {
+  padding: 1px 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border-radius: 3px;
+}
+
+/* 窄屏：按钮独占一行，避免输入框被挤到不可用宽度 */
+@media (max-width: 600px) {
+  .api-token-bar__input {
+    flex-basis: 100%;
+  }
+}

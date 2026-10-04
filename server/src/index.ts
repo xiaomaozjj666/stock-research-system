@@ -34,6 +34,7 @@ import documentsRouter, { INGEST_PATH } from './routes/documents.js';
 import costRouter from './routes/cost.js';
 import autonomousRouter from './routes/autonomous.js';
 import improvementRouter from './routes/improvement.js';
+import { apiAuthGuard } from './middleware.js';
 
 // 启动即校验环境变量（H-04）：非法 PORT / CACHE_TTL_HOURS 等直接快速失败，
 // 避免以错误的默认值静默运行。生产环境关键配置缺失会打 warn 提示。
@@ -194,6 +195,11 @@ configureTracer({
   },
 });
 app.use(expressTracerMiddleware());
+
+// === API 访问令牌鉴权（API_AUTH_TOKEN 未设置时完全放行，行为与此前逐字相同） ===
+// 必须挂在所有 /api 路由之前、且在 CORS 之后：既要让 OPTIONS 预检先被放行
+// （apiAuth 内部也放行，双保险），也要让 401 响应带上 CORS 头，浏览器才读得到。
+app.use('/api', apiAuthGuard);
 
 // === 挂载路由模块 ===
 app.use(healthRouter);

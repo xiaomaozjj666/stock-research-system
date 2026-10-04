@@ -15,11 +15,51 @@ import type {
   PaperStats,
   WatchlistMonitorResult,
 } from '../types';
+// 量化三类响应体由页面层定义（页面才是消费方），此处只引用不复制，
+// 避免同一形状在两处各写一遍后悄悄分叉。
+import type {
+  CompositeAlphaBatchResult,
+  CrossSectionResult,
+  QuantResearchReport,
+} from '../pages/quant/types';
+import { getApiToken, notifyUnauthorized, withTokenQuery } from './auth';
 
 const api = axios.create({
   baseURL: '/api',
   timeout: 120000,
 });
+
+/**
+ * 自动附带访问令牌（仅在用户已解锁时）。
+ *
+ * 为什么用拦截器而不是逐个请求传参：REST 端点有 30+ 个，逐个加参数等于给
+ * 「某处忘传令牌」留下永久的坑——而那种坑的表现是"某个页面莫名其妙 401"，
+ * 极难定位。拦截器是唯一能保证**新增端点默认就带鉴权**的位置。
+ */
+api.interceptors.request.use((config) => {
+  const token = getApiToken();
+  if (token) {
+    // 用 set() 而非展开合并：axios 的 headers 是 AxiosHeaders 类实例，
+    // 展开成普通对象会丢掉 set/get/has 等方法（TS 与运行时都会出问题）。
+    config.headers.set('x-api-token', token);
+  }
+  return config;
+});
+
+/**
+ * 收到 401 就广播出去，驱动解锁条出现（见 api/auth.ts 的 notifyUnauthorized）。
+ * 必须在这里而不是各页面：401 可能来自任意端点，拦截器是唯一的全局覆盖点。
+ *
+ * 返回 rejected 原样透传：拦截器只观察、不吞错误，各调用方的错误处理逻辑不变。
+ */
+api.interceptors.response.use(
+  (response) => response,
+  (error: unknown) => {
+    const status = (error as { response?: { status?: number } })?.response?.status;
+    if (status === 401) notifyUnauthorized();
+    return Promise.reject(error);
+  },
+);
 
 /**
  * 把 axios 的原始错误翻译成用户能理解、能行动的中文提示。
@@ -46,6 +86,11 @@ export function normalizeApiError(error: unknown, fallback = '请求失败'): Er
   const serverMsg = e.response.data?.error || e.response.data?.message;
   if (serverMsg) return new Error(serverMsg);
   if (status === 404) return new Error('接口不存在（404），请确认前后端版本一致');
+  // 鉴权：只在服务端确实回 401 时提示"输令牌"。未启用鉴权时不存在这个状态码，
+  // 所以本地开发不会看到这条提示。
+  // 文案不写"右上角"这类方位词——解锁条的位置可能调整，写位置就等于给自己埋一个
+  // 会过期的说明；只说"页面上的解锁条"，位置变了也不用改这句。
+  if (status === 401) return new Error('需要访问令牌：请在页面上的解锁条中填入 API_AUTH_TOKEN');
   if (status === 429) return new Error('请求过于频繁，请稍后再试');
   if (status && status >= 500) return new Error(`后端服务异常（${status}），请查看服务端日志`);
   return new Error(fallback);
@@ -53,13 +98,15 @@ export function normalizeApiError(error: unknown, fallback = '请求失败'): Er
 
 let currentController: AbortController | null = null;
 
-export async function analyzeStock(stockCode: string) {
+export async function analyzeStock(stockCode: string): Promise<AnalysisResult> {
   // Cancel previous request if any
   if (currentController) currentController.abort();
   currentController = new AbortController();
 
   try {
-    const response = await api.post(
+    // 显式泛型：服务端 res.json(result) 直接下发 AnalysisResult，
+    // 不写泛型时 response.data 是 any，本函数的返回值也就无人校验。
+    const response = await api.post<AnalysisResult>(
       '/analyze',
       { stockCode },
       {
@@ -76,18 +123,36 @@ export async function analyzeStock(stockCode: string) {
   }
 }
 
-export async function getStockList() {
+/** /api/stocks 单项（server getSupportedStocks()：代码 / 简称 / 所属行业） */
+export interface StockListItem {
+  code: string;
+  name: string;
+  industry: string;
+}
+
+export async function getStockList(): Promise<StockListItem[]> {
   try {
-    const response = await api.get('/stocks', { timeout: 15000 });
+    // 上游失败时服务端回兜底数组而非报错，故返回类型就是数组本身，不需要再包一层
+    const response = await api.get<StockListItem[]>('/stocks', { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '获取股票列表失败');
   }
 }
 
-export async function searchStocks(keyword: string, signal?: AbortSignal) {
+/** /api/stocks/search 单项（server searchStocks()：只回代码与简称，不含 industry） */
+export interface StockSearchHit {
+  code: string;
+  name: string;
+}
+
+export async function searchStocks(
+  keyword: string,
+  signal?: AbortSignal,
+): Promise<StockSearchHit[]> {
   try {
-    const response = await api.get('/stocks/search', {
+    // 搜索失败时服务端回空数组（200），故调用方的 Array.isArray 兜底是防御性的
+    const response = await api.get<StockSearchHit[]>('/stocks/search', {
       params: { keyword },
       timeout: 15000,
       signal,
@@ -111,9 +176,11 @@ export async function runQuantAnalysis(
     }[];
   },
   signal?: AbortSignal,
-) {
+): Promise<QuantResearchReport> {
   try {
-    const response = await api.post('/quant/analyze', payload, { signal });
+    // 泛型指向页面自己的报告类型（pages/quant/types.ts），而不是在此复制一份：
+    // 两处定义一旦分叉，泛型会立刻在调用点报错，这正是我们想要的检查。
+    const response = await api.post<QuantResearchReport>('/quant/analyze', payload, { signal });
     return response.data;
   } catch (error: unknown) {
     // 用户主动取消：以专用类型上抛，调用方据此静默收尾而非当失败渲染
@@ -130,13 +197,19 @@ export async function runBatchCompositeAlpha(
     horizons?: number[];
   },
   signal?: AbortSignal,
-) {
+): Promise<CompositeAlphaBatchResult> {
   try {
-    const response = await api.post('/quant/factor/composite/batch', payload, {
-      // 批量测算：每只都要拉 K 线 + 基准，放宽超时（上限 20 只）
-      timeout: 180000,
-      signal,
-    });
+    // 服务端在 result 之外还附带 run / preflight 两个复现快照字段，
+    // 页面当前不消费，故泛型只声明被消费的子集（多余字段运行时仍在，不影响渲染）。
+    const response = await api.post<CompositeAlphaBatchResult>(
+      '/quant/factor/composite/batch',
+      payload,
+      {
+        // 批量测算：每只都要拉 K 线 + 基准，放宽超时（上限 20 只）
+        timeout: 180000,
+        signal,
+      },
+    );
     return response.data;
   } catch (error: unknown) {
     // 用户主动取消：以专用类型上抛，调用方据此静默收尾而非当失败渲染
@@ -190,9 +263,10 @@ export async function runCrossSectionEvaluation(
     portfolio?: { holdDays?: number; topN?: number; costBps?: number };
   },
   signal?: AbortSignal,
-) {
+): Promise<CrossSectionResult> {
   try {
-    const response = await api.post('/quant/factor/cross-section', payload, {
+    // 与批量测算同理：服务端额外回 run / preflight / ledger，此处只声明被消费的子集
+    const response = await api.post<CrossSectionResult>('/quant/factor/cross-section', payload, {
       // 每只都要拉行情 + 财务 + 季度财报。基本面已走缓存、K 线为增量补尾，
       // 但数百只的全市场大面板冷启动仍可能耗时数分钟，故放宽到 10 分钟。
       timeout: 600000,
@@ -235,7 +309,7 @@ export async function compareStocks(
 // === 自选股 / 持仓监控 ===
 export async function getWatchlist(): Promise<{ codes: string[] }> {
   try {
-    const response = await api.get('/watchlist', { timeout: 15000 });
+    const response = await api.get<{ codes: string[] }>('/watchlist', { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '获取自选股失败');
@@ -244,7 +318,11 @@ export async function getWatchlist(): Promise<{ codes: string[] }> {
 
 export async function addToWatchlist(code: string): Promise<{ codes: string[] }> {
   try {
-    const response = await api.post('/watchlist', { code }, { timeout: 15000 });
+    const response = await api.post<{ codes: string[] }>(
+      '/watchlist',
+      { code },
+      { timeout: 15000 },
+    );
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '添加自选股失败');
@@ -253,7 +331,9 @@ export async function addToWatchlist(code: string): Promise<{ codes: string[] }>
 
 export async function removeFromWatchlist(code: string): Promise<{ codes: string[] }> {
   try {
-    const response = await api.delete(`/watchlist/${code}`, { timeout: 15000 });
+    const response = await api.delete<{ codes: string[] }>(`/watchlist/${code}`, {
+      timeout: 15000,
+    });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '移除自选股失败');
@@ -266,7 +346,7 @@ export async function runWatchlistNewsBacktest(
   signal?: AbortSignal,
 ): Promise<import('../types').WatchlistNewsBacktestReport> {
   try {
-    const response = await api.post(
+    const response = await api.post<import('../types').WatchlistNewsBacktestReport>(
       '/watchlist/news-backtest',
       { codes: codes ?? [] },
       { timeout: 180000, signal },
@@ -349,7 +429,10 @@ export async function chatWithAgent(
   signal?: AbortSignal,
 ): Promise<ChatAgentResponse> {
   try {
-    const response = await api.post('/chat', payload, { timeout: 120000, signal });
+    const response = await api.post<ChatAgentResponse>('/chat', payload, {
+      timeout: 120000,
+      signal,
+    });
     return response.data;
   } catch (error: unknown) {
     if (axios.isCancel(error)) throw new AnalysisCancelledError('已取消本次回答');
@@ -379,7 +462,7 @@ export async function ingestDocument(payload: {
   stockCode?: string;
 }): Promise<IngestResult> {
   try {
-    const response = await api.post('/ingest', payload, { timeout: 120000 });
+    const response = await api.post<IngestResult>('/ingest', payload, { timeout: 120000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '文档入库失败');
@@ -390,7 +473,10 @@ export async function listDocuments(): Promise<{
   docs: { id: string; source: string; preview: string }[];
 }> {
   try {
-    const response = await api.get('/documents', { timeout: 15000 });
+    const response = await api.get<{
+      count: number;
+      docs: { id: string; source: string; preview: string }[];
+    }>('/documents', { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '读取资料库失败');
@@ -411,7 +497,7 @@ export interface ModelRoutingInfo {
 }
 export async function getModels(): Promise<ModelRoutingInfo> {
   try {
-    const response = await api.get('/models', { timeout: 15000 });
+    const response = await api.get<ModelRoutingInfo>('/models', { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '获取模型信息失败');
@@ -430,7 +516,7 @@ export interface CostReport {
 }
 export async function getCostReport(): Promise<CostReport> {
   try {
-    const response = await api.get('/cost', { timeout: 15000 });
+    const response = await api.get<CostReport>('/cost', { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '获取成本报告失败');
@@ -438,7 +524,7 @@ export async function getCostReport(): Promise<CostReport> {
 }
 export async function resetCostReport(): Promise<{ ok: boolean }> {
   try {
-    const response = await api.post('/cost/reset', {}, { timeout: 15000 });
+    const response = await api.post<{ ok: boolean }>('/cost/reset', {}, { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '重置成本失败');
@@ -447,7 +533,13 @@ export async function resetCostReport(): Promise<{ ok: boolean }> {
 
 export async function clearChatHistory(sessionId: string): Promise<{ ok: boolean }> {
   try {
-    const response = await api.post('/chat/history/clear', { sessionId }, { timeout: 15000 });
+    const response = await api.post<{ ok: boolean }>(
+      '/chat/history/clear',
+      { sessionId },
+      {
+        timeout: 15000,
+      },
+    );
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '清空对话记忆失败');
@@ -467,7 +559,12 @@ export async function startAutonomous(
   intervalMs?: number,
 ): Promise<AutonomousState & { started: boolean }> {
   try {
-    const response = await api.post('/autonomous/start', { intervalMs }, { timeout: 15000 });
+    // 服务端 res.json({ started: true, ...withCoverage(state) })
+    const response = await api.post<AutonomousState & { started: boolean }>(
+      '/autonomous/start',
+      { intervalMs },
+      { timeout: 15000 },
+    );
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '启动自动监控失败');
@@ -475,7 +572,12 @@ export async function startAutonomous(
 }
 export async function stopAutonomous(): Promise<{ stopped: boolean; lastAlerts: unknown[] }> {
   try {
-    const response = await api.post('/autonomous/stop', {}, { timeout: 15000 });
+    // 服务端 res.json({ stopped: true, lastAlerts })；lastAlerts 元素未在前端消费
+    const response = await api.post<{ stopped: boolean; lastAlerts: unknown[] }>(
+      '/autonomous/stop',
+      {},
+      { timeout: 15000 },
+    );
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '停止自动监控失败');
@@ -483,7 +585,8 @@ export async function stopAutonomous(): Promise<{ stopped: boolean; lastAlerts: 
 }
 export async function getAutonomousStatus(): Promise<AutonomousState> {
   try {
-    const response = await api.get('/autonomous/status', { timeout: 15000 });
+    // 未在运行时服务端只回 { running: false }，其余字段缺省 —— 故泛型里除 running 外均可选
+    const response = await api.get<AutonomousState>('/autonomous/status', { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '获取监控状态失败');
@@ -512,7 +615,8 @@ export function chatWithAgentStream(
   // "第二轮无需重复股票代码"在流式主路径不可用
   const params = new URLSearchParams({ message });
   if (options.sessionId) params.set('sessionId', options.sessionId);
-  const es = new EventSource(`/api/chat/stream?${params.toString()}`);
+  // SSE 只能走 query 传令牌：EventSource 不允许自定义请求头
+  const es = new EventSource(withTokenQuery(`/api/chat/stream?${params.toString()}`));
   let settled = false;
   /** 首包看门狗：20 秒内没收到任何事件即判定服务不可用，避免静默挂起 */
   let watchdog: ReturnType<typeof setTimeout> | null = setTimeout(() => {
@@ -599,9 +703,11 @@ export function analyzeStockStream(
   options: AnalyzeStreamOptions = {},
 ): { cancel: () => void; done: Promise<AnalysisResult> } {
   const maxRetries = options.maxRetries ?? 3;
-  const url = `/api/analyze/stream?stockCode=${encodeURIComponent(stockCode)}${
-    options.resume ? '&resume=1' : ''
-  }`;
+  const url = withTokenQuery(
+    `/api/analyze/stream?stockCode=${encodeURIComponent(stockCode)}${
+      options.resume ? '&resume=1' : ''
+    }`,
+  );
 
   let resolveDone!: (r: AnalysisResult) => void;
   let rejectDone!: (e: Error) => void;
@@ -711,7 +817,7 @@ export function analyzeStockStream(
 // === 模拟盘（paper trading）研究闭环 ===
 export async function getPaperPortfolio(): Promise<PaperPortfolio> {
   try {
-    const response = await api.get('/paper/portfolio', { timeout: 15000 });
+    const response = await api.get<PaperPortfolio>('/paper/portfolio', { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '读取模拟盘账户失败');
@@ -720,7 +826,9 @@ export async function getPaperPortfolio(): Promise<PaperPortfolio> {
 
 export async function placePaperOrder(body: PaperOrderInput): Promise<{ order: PaperOrder }> {
   try {
-    const response = await api.post('/paper/order', body, { timeout: 15000 });
+    const response = await api.post<{ order: PaperOrder }>('/paper/order', body, {
+      timeout: 15000,
+    });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '模拟下单失败');
@@ -738,7 +846,13 @@ export async function settlePaperDay(body: {
   history: PaperEquityPoint[];
 }> {
   try {
-    const response = await api.post('/paper/settle', body, { timeout: 30000 });
+    // 服务端 latestEquity 取 equity.at(-1)：当日无净值点时为 undefined，故可选
+    const response = await api.post<{
+      date: string;
+      cash: number;
+      latestEquity?: PaperEquityPoint;
+      history: PaperEquityPoint[];
+    }>('/paper/settle', body, { timeout: 30000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '日终结算失败');
@@ -747,7 +861,7 @@ export async function settlePaperDay(body: {
 
 export async function getPaperStats(): Promise<PaperStats> {
   try {
-    const response = await api.get('/paper/stats', { timeout: 15000 });
+    const response = await api.get<PaperStats>('/paper/stats', { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '读取模拟盘统计失败');
@@ -781,8 +895,13 @@ export async function getAuditLog(
     if (typeof offset === 'number' && Number.isFinite(offset) && offset >= 0) {
       params.offset = Math.floor(offset);
     }
-    const response = await api.get('/audit', { params, timeout: 15000 });
-    const data = response.data as { count?: number; entries?: AuditEntry[] };
+    // 泛型即原先那段 as 断言：字段保持可选，下面的 ?? / typeof 兜底分支才有意义
+    // （服务端两个字段都会给，但审计查询是只读降级路径，不想因缺字段整页崩掉）
+    const response = await api.get<{ count?: number; entries?: AuditEntry[] }>('/audit', {
+      params,
+      timeout: 15000,
+    });
+    const data = response.data;
     const entries = data.entries ?? [];
     return {
       count: typeof data.count === 'number' ? data.count : entries.length,
@@ -830,10 +949,13 @@ export async function getFactorExperiments(params?: {
   limit?: number;
 }): Promise<{ items: FactorExperiment[]; summary: FactorExperimentSummary }> {
   try {
-    const response = await api.get('/quant/factor/experiments', {
-      params: params ?? {},
-      timeout: 15000,
-    });
+    const response = await api.get<{ items: FactorExperiment[]; summary: FactorExperimentSummary }>(
+      '/quant/factor/experiments',
+      {
+        params: params ?? {},
+        timeout: 15000,
+      },
+    );
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '实验台账读取失败');
@@ -863,7 +985,10 @@ export interface ResearchDigest {
 
 export async function getResearchDigests(limit = 10): Promise<{ items: ResearchDigest[] }> {
   try {
-    const response = await api.get('/quant/digests', { params: { limit }, timeout: 15000 });
+    const response = await api.get<{ items: ResearchDigest[] }>('/quant/digests', {
+      params: { limit },
+      timeout: 15000,
+    });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '研究简报读取失败');
@@ -872,7 +997,7 @@ export async function getResearchDigests(limit = 10): Promise<{ items: ResearchD
 
 export async function runResearchDigestNow(): Promise<ResearchDigest> {
   try {
-    const response = await api.post('/quant/digests/run', {}, { timeout: 60000 });
+    const response = await api.post<ResearchDigest>('/quant/digests/run', {}, { timeout: 60000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '研究简报生成失败');
@@ -902,19 +1027,8 @@ export interface FactorPortfolioBacktest {
   periods: number;
 }
 
-export async function runFactorExpression(
-  payload: {
-    expression: string;
-    board?: string;
-    codes?: string[];
-    topN?: number;
-    horizons?: number[];
-    name?: string;
-    source?: 'expression' | 'hypothesis';
-    portfolio?: { holdDays?: number; topN?: number; costBps?: number };
-  },
-  signal?: AbortSignal,
-): Promise<{
+/** 单条受限 DSL 表达式的评估结果（从原内联返回类型提取，便于在泛型处引用） */
+export interface FactorExpressionResult {
   stocksIncluded: string[];
   stocksSkipped: { code: string; reason: string }[];
   factor: {
@@ -931,9 +1045,24 @@ export async function runFactorExpression(
   };
   portfolio?: FactorPortfolioBacktest | null;
   ledger: { recorded: number; total: number };
-}> {
+}
+
+export async function runFactorExpression(
+  payload: {
+    expression: string;
+    board?: string;
+    codes?: string[];
+    topN?: number;
+    horizons?: number[];
+    name?: string;
+    source?: 'expression' | 'hypothesis';
+    portfolio?: { holdDays?: number; topN?: number; costBps?: number };
+  },
+  signal?: AbortSignal,
+): Promise<FactorExpressionResult> {
   try {
-    const response = await api.post('/quant/factor/expression', payload, {
+    // 服务端另回 run / preflight 等复现字段，此处只声明被消费的子集
+    const response = await api.post<FactorExpressionResult>('/quant/factor/expression', payload, {
       // 数百只大面板冷启动可能数分钟，与截面评估同量级
       timeout: 600000,
       signal,
@@ -946,15 +1075,20 @@ export async function runFactorExpression(
   }
 }
 
-/** 上游预检：行情源 / LLM / 本地缓存 */
-export async function getQuantHealth(): Promise<{
+/** 上游预检结果（从原内联返回类型提取，便于在泛型处引用） */
+export interface QuantHealthResult {
   ok: boolean;
   checks: { key: string; ok: boolean; detail: string }[];
   degraded: string[];
   checkedAt: string;
-}> {
+}
+
+/** 上游预检：行情源 / LLM / 本地缓存 */
+export async function getQuantHealth(): Promise<QuantHealthResult> {
   try {
-    const response = await api.get('/quant/health', { timeout: 20000 });
+    // 服务端在 preflight 之外还并入 tushare / baostock 两个通道块，
+    // 前端只读 preflight 本体，故泛型只声明这一层（多余字段运行时仍在）
+    const response = await api.get<QuantHealthResult>('/quant/health', { timeout: 20000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '上游预检失败');
@@ -967,7 +1101,7 @@ export async function getIntlFundamentals(
   market?: IntlMarket,
 ): Promise<IntlFundamentalsResult> {
   try {
-    const response = await api.get('/intl/fundamentals', {
+    const response = await api.get<IntlFundamentalsResult>('/intl/fundamentals', {
       params: { code, market },
       timeout: 30000,
     });
@@ -994,7 +1128,14 @@ export async function getIntlKlines(params: {
   endDate?: string;
 }): Promise<{ code: string; market: string; count: number; klines: IntlKline[] }> {
   try {
-    const response = await api.get('/intl/klines', { params, timeout: 30000 });
+    // 服务端另回 startDate / endDate（回显实际生效区间），当前无消费方，
+    // 公开返回类型保持原样不动，泛型只声明已被消费的字段
+    const response = await api.get<{
+      code: string;
+      market: string;
+      count: number;
+      klines: IntlKline[];
+    }>('/intl/klines', { params, timeout: 30000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '港美股 K 线获取失败');
@@ -1053,7 +1194,9 @@ export async function runValuationModelApi(params: {
   };
 }): Promise<ValuationModelResult> {
   try {
-    const response = await api.post('/quant/valuation/model', params, { timeout: 60000 });
+    const response = await api.post<ValuationModelResult>('/quant/valuation/model', params, {
+      timeout: 60000,
+    });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '估值建模失败');
@@ -1078,7 +1221,12 @@ export type HistoryListItem = HistorySummary & { timeline?: HistoryTimelinePoint
 
 export async function fetchHistoryList(limit = 50): Promise<HistoryListItem[]> {
   try {
-    const response = await api.get('/history', { params: { limit }, timeout: 15000 });
+    // 泛型是**信封**而不是数组本身：服务端 res.json({ items: [...] })，
+    // 少写这一层泛型的话 response.data.items 就是 any，列表元素全无类型
+    const response = await api.get<{ items: HistoryListItem[] }>('/history', {
+      params: { limit },
+      timeout: 15000,
+    });
     return response.data.items;
   } catch (error: unknown) {
     throw normalizeApiError(error, '历史记录读取失败');
@@ -1087,7 +1235,7 @@ export async function fetchHistoryList(limit = 50): Promise<HistoryListItem[]> {
 
 export async function fetchHistoryDetail(id: string): Promise<HistoryItem> {
   try {
-    const response = await api.get(`/history/${id}`, { timeout: 15000 });
+    const response = await api.get<HistoryItem>(`/history/${id}`, { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '历史记录读取失败');
@@ -1105,7 +1253,14 @@ export async function deleteHistoryItem(id: string): Promise<void> {
 // === 自选股异动监控：重跑批量新闻回测并检出预警 ===
 export async function monitorWatchlist(signal?: AbortSignal): Promise<WatchlistMonitorResult> {
   try {
-    const response = await api.post('/watchlist/monitor', {}, { timeout: 120000, signal });
+    const response = await api.post<WatchlistMonitorResult>(
+      '/watchlist/monitor',
+      {},
+      {
+        timeout: 120000,
+        signal,
+      },
+    );
     return response.data;
   } catch (error: unknown) {
     if (axios.isCancel(error)) throw new AnalysisCancelledError('监控已取消');
@@ -1124,7 +1279,9 @@ export type WatchlistAlertsSnapshot = Omit<WatchlistMonitorResult, 'generatedAt'
 
 export async function fetchWatchlistAlerts(): Promise<WatchlistAlertsSnapshot> {
   try {
-    const response = await api.get('/watchlist/alerts', { timeout: 15000 });
+    const response = await api.get<WatchlistAlertsSnapshot>('/watchlist/alerts', {
+      timeout: 15000,
+    });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '最近监控记录读取失败');

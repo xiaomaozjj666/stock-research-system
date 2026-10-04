@@ -8,7 +8,19 @@ import {
   clearChatHistory,
 } from '../client.js';
 
-const axiosInst = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn() }));
+// 注：桩必须带 interceptors —— client.ts 在模块加载时就注册了 request/response
+// 拦截器（鉴权头注入 + 401 广播）。这里内联而非抽公共 helper：vi.hoisted 的回调
+// 在 ESM import 之前执行，抽成 import 的 helper 会撞 "Cannot access before
+// initialization"（已实测）。桩只需调用不报错，无需断言，故用 no-op。
+
+const axiosInst = vi.hoisted(() => ({
+  post: vi.fn(),
+  get: vi.fn(),
+  interceptors: {
+    request: { use: () => {} },
+    response: { use: () => {} },
+  },
+}));
 vi.mock('axios', () => ({ default: { create: () => axiosInst } }));
 
 describe('normalizeApiError', () => {
@@ -35,6 +47,19 @@ describe('normalizeApiError', () => {
   it('429 提示频繁', () => {
     const e = { response: { status: 429, data: {} } };
     expect(normalizeApiError(e).message).toContain('频繁');
+  });
+
+  it('401 指向解锁条（且不写死方位，避免文案过期）', () => {
+    const e = { response: { status: 401, data: {} } };
+    const msg = normalizeApiError(e).message;
+    expect(msg).toContain('解锁条');
+    expect(msg).toContain('API_AUTH_TOKEN');
+  });
+
+  it('服务端给了 error 文案时优先用它（而非本地兜底提示）', () => {
+    // 服务端文案区分了"缺令牌"与"令牌无效"，比前端泛化提示更有信息量
+    const e = { response: { status: 401, data: { error: '访问令牌无效' } } };
+    expect(normalizeApiError(e).message).toBe('访问令牌无效');
   });
 
   it('5xx 提示后端异常', () => {

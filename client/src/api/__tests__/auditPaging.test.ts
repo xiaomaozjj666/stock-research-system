@@ -1,7 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { getAuditLog } from '../client.js';
 
-const axiosInst = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
+// 注：桩必须带 interceptors —— client.ts 在模块加载时就注册了 request/response
+// 拦截器（鉴权头注入 + 401 广播）。这里内联而非抽公共 helper：vi.hoisted 的回调
+// 在 ESM import 之前执行，抽成 import 的 helper 会撞 "Cannot access before
+// initialization"（已实测）。桩只需调用不报错，无需断言，故用 no-op。
+
+const axiosInst = vi.hoisted(() => ({
+  get: vi.fn(),
+  post: vi.fn(),
+  interceptors: {
+    request: { use: () => {} },
+    response: { use: () => {} },
+  },
+}));
 vi.mock('axios', () => ({ default: { create: () => axiosInst } }));
 
 function makeEntries(n: number, from = 0) {

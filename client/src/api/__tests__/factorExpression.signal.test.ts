@@ -6,7 +6,19 @@ import { AnalysisCancelledError, runFactorExpression } from '../client.js';
  * 并在取消时拿到 AnalysisCancelledError（据此静默收尾，而不是当失败渲染）。
  * axios 被 mock：这里验证的是我们的透传/错误映射，不发真实请求。
  */
-const axiosInst = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn() }));
+// 注：桩必须带 interceptors —— client.ts 在模块加载时就注册了 request/response
+// 拦截器（鉴权头注入 + 401 广播）。这里内联而非抽公共 helper：vi.hoisted 的回调
+// 在 ESM import 之前执行，抽成 import 的 helper 会撞 "Cannot access before
+// initialization"（已实测）。桩只需调用不报错，无需断言，故用 no-op。
+
+const axiosInst = vi.hoisted(() => ({
+  post: vi.fn(),
+  get: vi.fn(),
+  interceptors: {
+    request: { use: () => {} },
+    response: { use: () => {} },
+  },
+}));
 
 vi.mock('axios', () => ({
   default: {

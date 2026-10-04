@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { analyzeStockStream, AnalysisCancelledError, type AnalysisStage } from './api/client';
+import { isUnauthorized, onUnauthorized, resetUnauthorized } from './api/auth';
+import ApiTokenBar from './components/ApiTokenBar';
 import type { AnalysisResult } from './types';
 import StockSelector from './components/StockSelector';
 import LoadingScreen from './components/LoadingScreen';
@@ -116,7 +118,8 @@ function isEditableTarget(el: EventTarget | null): boolean {
  * 用无样式的 div 包裹即可让 hidden 生效，无需改各页面。
  * 内层独立 Suspense：若共用一个边界，新面板首次拉取 chunk 会把整块区域（含已挂载的
  * 隐藏面板）一起切到 fallback；独立边界则互不影响。
- * hidden 不会阻止 lazy 加载：切走后 chunk 仍继续拉取并挂载，切回来直接可显示。
+ * hidden 不会阻止 lazy 加载：白名单面板切走后 chunk 仍继续拉取并挂载，切回来直接可显示；
+ * 非白名单面板则由 shouldRenderTab 卸载，切回来重新挂载。
  */
 function TabPane({
   active,
@@ -221,6 +224,58 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'history', label: '历史' },
 ];
 
+/** 未带 hash（或 hash 无法识别）时的默认标签页 */
+const DEFAULT_TAB: TabId = 'research';
+
+/**
+ * 需要"切走也保留挂载"的标签页白名单。
+ *
+ * 背景：早期实现是"访问过的页签一律常驻挂载"（非激活时仅 hidden）。这么做的
+ * 初衷是保住「对比已选股票」「模拟盘已填的下单参数」「研究助手整段对话」——
+ * 这些确实是用户付出过成本、且无法从服务端重新取回的本地状态。但一刀切的代价是
+ * **每个访问过的重面板都会永久留在树上**：QuantPage 77 kB，内部秒表/轮询在隐藏时
+ * 照跑，且每次 App 重渲染都要连带重渲染；而它们换来的连续性并不都值得那份常驻成本。
+ *
+ * 因此改为白名单：只有"本地状态无法重新获取"的面板才常驻，其余切走即卸载。
+ * 逐个标签页的取舍见下方注释。
+ */
+const KEEP_ALIVE_TABS: ReadonlySet<TabId> = new Set<TabId>([
+  // 「对比分析」：用户逐个挑选出的对比标的列表（stocks）只能靠本地状态维持，
+  //   服务端没有"我这次对比了哪几只"这份记录。丢失 = 用户重挑一遍。
+  'compare',
+  // 「模拟盘」：已填的下单参数（价格/数量）与本地持仓视图同理，重新填一遍成本很高，
+  //   且下单草稿被静默清空属于会丢钱的 bug 级别。
+  'paper',
+  // 「研究助手」：整段对话是连续的用户输入，SSE 回答还可能在途；丢一段对话不可接受。
+  'chat',
+]);
+
+/**
+ * 非白名单的标签页一律切走即卸载，各自的理由：
+ *
+ * - research：本来就不走 lazy，恒定挂载 + hidden（见下方渲染处），与本集合无关。
+ * - today：纯只读聚合，三块内容都来自"各自最近一次运行结果"（服务端已落盘），
+ *   重新挂载会重新取数，反而比留着一份可能过期的快照更符合"今日"的语义。
+ * - quant：单次研究要跑 10-40 秒、结果只在组件 state 里，但**代价是隐藏时仍在
+ *   每秒跳秒表并持续重渲染**（见 QuantPage 的 ticker）。若用户切走后又切回来，
+ *   重新提交一次参数即可，损失的是一次重跑而不是已付出的对话/持仓数据。
+ * - watchlist：清单是服务端状态，批量回测/监控结果同样可重跑；换来的连续性
+ *   不抵它常驻的渲染成本。
+ * - history：更早就已按"切走即卸载"处理（每次进入取最新列表），本次只是把它
+ *   从散落在 shouldRenderTab 里的特判收敛到白名单这一处统一规则。
+ */
+
+/**
+ * hash → tab id；无法识别时返回 null，由调用方回落到默认页。
+ * 认不出的 hash 必须回退而不是渲染空白页：分享出去的链接可能来自旧版本，
+ * 旧版本的标签页 id 如今已下线，直接渲染会得到一个什么都没有的界面。
+ */
+function tabFromHash(hash: string): TabId | null {
+  const raw = hash.replace(/^#/, '').trim();
+  if (!raw) return null;
+  return TABS.some((t) => t.id === raw) ? (raw as TabId) : null;
+}
+
 function App() {
   const { showToast } = useToast();
   // 「回到顶部」的平滑滚动走 JS（CSS 的 scroll-behavior 管不到 scrollTo 的 behavior 参数），
@@ -230,15 +285,23 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [analysisStage, setAnalysisStage] = useState<AnalysisStage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 后端启用 API_AUTH_TOKEN 且当前令牌无效/缺失时为 true，驱动解锁条出现。
+  // 默认 false：未启用鉴权（本系统的默认形态）时这条路径永远不触发。
+  const [needsToken, setNeedsToken] = useState(() => isUnauthorized());
   const [activeSection, setActiveSection] = useState('');
-  const [activeTab, setActiveTab] = useState<TabId>('research');
+  // 初始标签页取自 location.hash：这样「#/quant」这类链接能直接落到对应视图
+  const [activeTab, setActiveTab] = useState<TabId>(
+    () => tabFromHash(window.location.hash) ?? DEFAULT_TAB,
+  );
   /**
-   * 已激活过的 tab 集合：首次激活才挂载，之后常驻（非激活时靠 hidden 隐藏）。
-   * 原先用 activeTab === 'xxx' && 条件渲染，切走即卸载，导致「对比已选股票」「模拟盘
-   * 已填的下单参数」「研究助手整段对话」全部丢失；与 QuantPage 内部三个子模式的
-   * 「常驻挂载 + hidden」保持一致。未激活过的 tab 仍不渲染，避免首屏并发取数。
+   * 已激活过、且属于 KEEP_ALIVE_TABS 的标签页集合：首次激活才挂载，之后常驻
+   * （非激活时靠 hidden 隐藏）。白名单之外的标签页不进这个集合——切走即卸载，
+   * 这样"访问过的页签"不再无上限地留在渲染树里。
+   * 见 KEEP_ALIVE_TABS 上方注释：保留的是"用户付出过、且服务端取不回来"的本地状态。
    */
-  const [mountedTabs, setMountedTabs] = useState<Set<TabId>>(() => new Set<TabId>(['research']));
+  const [mountedTabs, setMountedTabs] = useState<ReadonlySet<TabId>>(
+    () => new Set<TabId>(['research']),
+  );
   /**
    * 当前 tab 的镜像值：滚动监听只注册一次（[] 依赖），又需要知道报告面板是否可见
    * （见滚动监听内注释），故用 ref 传值。
@@ -289,8 +352,10 @@ function App() {
     activeTabRef.current = activeTab;
   }, [activeTab]);
 
-  // 激活即登记：hidden 常驻挂载后，离开的 tab 仍留在树里，靠这个集合保证不被卸载
+  // 激活即登记（仅限白名单页签）：白名单内的页签登记后 hidden 常驻，
+  // 集合因此只会在 3 个条目内增长；非白名单页签不登记，切走即卸载。
   useEffect(() => {
+    if (!KEEP_ALIVE_TABS.has(activeTab)) return;
     setMountedTabs((prev) => {
       if (prev.has(activeTab)) return prev; // 引用不变 → 不触发多余渲染
       const next = new Set(prev);
@@ -298,6 +363,54 @@ function App() {
       return next;
     });
   }, [activeTab]);
+
+  /**
+   * hash ← 当前标签页：让「当前在哪个视图」成为可分享、可收藏的 URL。
+   *
+   * 用 hash 而非路由库：全站只有这一个状态需要同步，引入 react-router 不值当；
+   * 且 hash 不会打到服务端，同一份静态部署即可分享某个视图的链接。
+   *
+   * 首次挂载用 replaceState 归一化（把空 hash / 失效 hash 收敛成默认页），
+   * 而不是直接赋值 —— 后者会往历史里塞一条记录，于是用户第一次按「后退」
+   * 只会退回到一个看不见的空 hash，表现为"后退键没反应"。
+   */
+  const firstHashSyncRef = useRef(true);
+  /**
+   * 标记"这次 activeTab 变化来自 hash 而非用户点击"：来自 hash 时不能再写回，
+   * 否则后退到空 hash 会被立刻补写成 #research，等于把刚退掉的历史塞回去，
+   * 后退键就卡住了。读写都在下面这一个 effect 内完成，避免依赖 effect 顺序。
+   */
+  const fromHashRef = useRef(false);
+  useEffect(() => {
+    if (fromHashRef.current) {
+      fromHashRef.current = false;
+      return;
+    }
+    const target = `#${activeTab}`;
+    if (window.location.hash === target) return;
+    if (firstHashSyncRef.current) {
+      firstHashSyncRef.current = false;
+      window.history.replaceState(null, '', target);
+      return;
+    }
+    window.location.hash = target;
+  }, [activeTab]);
+
+  /**
+   * 标签页 ← hash 变化：接管浏览器的前进/后退按钮。
+   * 认不出的 hash 回落到默认页（见 tabFromHash），不会出现渲染空白的界面。
+   */
+  useEffect(() => {
+    const handleHashChange = () => {
+      const next = tabFromHash(window.location.hash) ?? DEFAULT_TAB;
+      // 无变化时不置标志：否则标志会滞留，误吞掉下一次用户主动切页的写回
+      if (next === activeTabRef.current) return;
+      fromHashRef.current = true;
+      setActiveTab(next);
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   // 滚动监听，更新导航高亮 + 滚动进度
   // 用 rAF 节流，避免高频 setState 引发重渲染；section 仅在变化时才 setState
@@ -383,6 +496,17 @@ function App() {
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // 订阅全局 401 广播：任一 REST 请求被服务端拒绝即弹出解锁条。
+  // 订阅放在 App 根组件而非各页面——401 可能来自任意端点，挂在根上一处覆盖全部。
+  useEffect(() => onUnauthorized(() => setNeedsToken(true)), []);
+
+  // 解锁成功后清掉标记并整页重载（ApiTokenBar 负责 reload）：重载后所有已失败
+  // 的请求会自然重发，无需逐个页面手动重试。
+  const handleTokenSolved = useCallback(() => {
+    resetUnauthorized();
+    setNeedsToken(false);
   }, []);
 
   const handleAnalyze = useCallback(async (stockCode: string, opts?: { resume?: boolean }) => {
@@ -547,17 +671,14 @@ function App() {
   /**
    * 是否渲染该面板：当前 tab 在渲染期即视为已挂载 —— 否则「点击 → effect 补登记」
    * 之间会先渲染一帧空面板（useEffect 在提交/绘制之后才跑）。
+   * 其余只有在 KEEP_ALIVE_TABS 里（且已激活过）才继续挂载；「历史」等其余页签
+   * 切走即卸载，重新进入时取最新数据。
    */
-  const shouldRenderTab = (tab: TabId) => {
-    // 「历史」例外：该页没有任何需要保留的输入态，且它只在挂载时取一次数据。
-    // 若随其它面板一起常驻，新分析入库后再切回会看不到最新一条（需刷新页面），
-    // 因此让它随切换卸载/重挂，进入即取最新列表。
-    if (tab === 'history') return activeTab === 'history';
-    return tab === activeTab || mountedTabs.has(tab);
-  };
+  const shouldRenderTab = (tab: TabId) => tab === activeTab || mountedTabs.has(tab);
 
   return (
     <div className="app">
+      <ApiTokenBar visible={needsToken} onDismiss={handleTokenSolved} />
       <StockSelector onAnalyze={handleAnalyze} loading={loading} />
 
       <div className="tab-bar" role="tablist" aria-label="功能导航" onKeyDown={handleTabKeyDown}>
@@ -912,8 +1033,8 @@ function App() {
           </div>
         )}
       </div>
-      {/* 懒加载面板：首次激活才挂载，之后常驻 + hidden（未激活过的不渲染，首屏不并发取数）。
-          每个面板一个独立 Suspense 边界，见上方 TabPane 注释 */}
+      {/* 懒加载面板：首次激活才挂载；白名单页签之后常驻 + hidden，其余切走即卸载
+          （未激活过的不渲染，首屏不并发取数）。每个面板一个独立 Suspense 边界，见上方 TabPane 注释 */}
       {shouldRenderTab('today') && (
         <TabPane active={activeTab === 'today'} id="panel-today" tabId="tab-today">
           <TodayPanel />
