@@ -111,6 +111,8 @@ Playwright `--retries=1` **12 条全过**（真实构建产物 + 真实进程 + 
 1 中（`ip-address` SSRF），**CI 审计门禁会直接失败**。`npm audit fix` 做了补丁级升级
 （`brace-expansion` 5.0.9→5.0.12、`ip-address` 10.4.0→10.7.3，均为传递依赖），
 现 `found 0 vulnerabilities`，升级后全量用例与 e2e 均复跑通过。
+（后续 Dependabot 独立提交了同两项的 5.0.12 / 10.7.2 升级，合并时 lock 的 `ip-address`
+取更高的 10.7.3。）
 
 **⑥ 两条钉死文件名的结构断言测试**改为扫整个目录并加反断言——拆分后不再假绿，
 今后再拆文件也不用维护文件名清单。
