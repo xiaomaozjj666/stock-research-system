@@ -28,18 +28,27 @@ function makeResult(over: Partial<ValuationModelResult> = {}): ValuationModelRes
         { year: 1, eps: 1.2, discountFactor: 0.917, presentValue: 1.1 },
         { year: 2, eps: 1.344, discountFactor: 0.842, presentValue: 1.13 },
       ],
-      assumptions: { growthRate1: 0.12 },
+      assumptions: {
+        growthRate1: 0.12,
+        growthRate2: 0.03,
+        discountRate: 0.09,
+        explicitYears: 5,
+        baseEps: 1.2,
+      },
     },
     sensitivity: {
       discountRates: [0.09, 0.1],
       growthRates1: [0.1, 0.12],
       matrix: [
         [40.1, 45.25],
-        [Number.POSITIVE_INFINITY, 41],
+        // 不可算格：服务端置 NaN，JSON 序列化后到前端就是 null。
+        // 这里必须写 null 而不是 Infinity —— 用 Infinity 会让本用例失去
+        // 「null 必须被渲染成发散」这个断言能力（Infinity 走的是另一条分支）。
+        [null, 41],
       ],
     },
     comparables: {
-      peers: [{ code: '000858', name: '五粮液', pe: 20, pb: 5 }],
+      peers: [{ code: '000858', name: '五粮液', pe: 20, pb: 5, roe: 0.24, marketCap: 4800 }],
       sampleSize: 12,
       medianPe: 18.5,
       medianPb: 3.2,

@@ -127,8 +127,15 @@ function okStream() {
   });
 }
 
-/** 直接在 document 上按快捷键（全局监听挂在 document） */
-function pressOn(target: EventTarget, key: string, mods: Record<string, boolean> = {}) {
+/**
+ * 直接在 document 上按快捷键（全局监听挂在 document）
+ *
+ * target 标注为 `Document | Element` 而非 `EventTarget`：fireEvent.keyDown 只接受
+ * DOM 可派发事件的宿主类型，`EventTarget` 太宽（它连 Window 都不是），
+ * 类型检查会拒绝。收窄到实际传入的两类（document / 元素）后既能过检查，
+ * 也不会放宽到失去保护。
+ */
+function pressOn(target: Document | Element, key: string, mods: Record<string, boolean> = {}) {
   fireEvent.keyDown(target, { key, ...mods });
 }
 

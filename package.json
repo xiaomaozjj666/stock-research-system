@@ -20,6 +20,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p client/tsconfig.json",
+    "typecheck:tests": "tsc --noEmit -p client/tsconfig.test.json",
     "test:e2e": "playwright test",
     "size:budget": "npm run build --workspace=client && node client/scripts/check-bundle-size.mjs",
     "mcp:serve": "npx tsx server/src/mcp/cli.ts",

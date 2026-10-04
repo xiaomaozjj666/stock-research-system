@@ -920,3 +920,71 @@ unknown 报错；引入不认识构造 → 报错）。`contractParity.ts` 也�
 `CrossSectionResult` 等**继续手写**：它们是前端页面的展示模型（页面才是消费方），
 不是 API 契约的一部分，契约里没有对应 operation。强行生成反而会让页面布局
 跟着契约漂移。这类"消费方自有模型"不该由契约生成 —— 边界要划清。
+
+## 2026-10-05 补一个类型检查盲区：客户端测试文件曾完全不被类型检查
+
+### 怎么发现的（不是靠读代码，是靠对比）
+
+上一轮把 `ValuationModelResult` 从手写 interface 收敛到契约生成类型后，
+生产代码 tsc 全绿、3397 用例全绿、CI 两 job 全绿 —— 但那是**假绿**。
+
+复盘时做了一件早该做的事：**对比双端 tsconfig**。发现一处刺眼的不对称：
+
+- `server/tsconfig.json` 明确**不排除测试**，且注释写明理由
+  （「这份配置同时用于 tsc --noEmit（含测试文件的类型检查）」，构建产物由
+  `tsconfig.build.json` 负责）；
+- `client/tsconfig.json` 排除 `src/**/*.test.ts(x)`，**没有任何检查覆盖它们**。
+
+于是写了个临时配置把客户端测试纳入检查，一跑 **23 个错误**；再切回改动前的
+`6ecbd0b` 跑同一份配置 —— **19 个**。也就是说我上一轮**引入了 4 个新错误**，
+而 CI 全绿，因为那 4 个错误住在测试文件里，没有任何门禁看得见。
+
+### 这类错误的性质：测试在断言一个不存在的契约
+
+修的过程里最有意思的发现 —— 几个"测试早就写错了，但一直没人发现"：
+
+1. `restWrappers.test.ts` 给 `placePaperOrder` 传的是 `{ shares: 100 }`。
+   契约字段叫 **`quantity`**；服务端 `placeOrder` 也只读 `quantity`。
+   测试之所以"通过"，是因为它 mock 掉了整个 api 层、只断言 URL 与方法，
+   **字段名从头到尾没有任何一层检查过**。改成 `quantity` 后又暴露下一层：
+   还缺 `type`（服务端对 `type` 缺失直接 400）。
+2. 同一文件传 `market: 'us'`，而 `IntlMarket` 是 **`'HK' | 'US'`**（大写）。
+3. `RiskSection` 的 props 把 `data` 声明为必填，实现却写了 `data = []` 默认值 ——
+   **类型与实现自相矛盾**。测试里 `<RiskSection />` 不传 data 也能正常渲染
+   （运行行为正确），是类型在说谎。已按实现把 `data` 改为可选。
+4. `reportExport.test.ts` 的 `StockPoolItem` 夹具缺 `chart_list` —— 因为上一轮
+   我把 `chart_list` 从「前端标可选」纠正成「服务端必填」后，夹具露馅了。
+   **这是上一轮那次纠正的连带影响，当时确实没看见**（因为测试不被检查）。
+
+### 为什么之前一直没暴露
+
+因为这类错误**三重隐身**：
+- vitest 不做类型检查（esbuild 只转译不检查），所以测试照样绿；
+- `tsc` 排除了测试文件，所以类型检查也绿；
+- 字段名错了但 mock 掉了网络层、断言只看 URL/方法，所以**行为断言也绿**。
+
+三层同时失效。**"全绿"不等于"对"，得确认门禁覆盖了改动实际影响到的文件。**
+
+### 做法（新增 client/tsconfig.test.json）
+
+与 `tsconfig.json` 的差异**只有三处必要项**，其余全部 `extends` 继承
+（两处配置各自维护必然漂移）：
+
+| 差异 | 原因 |
+|---|---|
+| `lib` 加 `ES2022` | 测试用了 `Array.prototype.at`，ES2020 lib 里不存在（TS2550） |
+| `types` 加 `node` | 测试要 `import 'node:fs'` / 用 `Buffer`（TS2591）；`@types/node` 早已在 devDependencies，只是没声明 |
+| `exclude` 清空 | 目的就是把测试纳入 |
+
+光补这三处就从 23 降到 9 —— **剩下 9 个才是真实的类型分叉**。反过来说，
+剩下那 14 个是「配置缺口造成的噪声」，不修配置就无从区分噪声与真问题。
+
+接入门禁：`npm run typecheck:tests`，CI `quality` job 新增 "TypeCheck (client tests)"。
+现在客户端测试的类型漂移会让 CI 变红。
+
+### 纪律：改类型时要看测试文件
+
+上一轮改 `ValuationModelResult` / `StockPoolItem` / `IngestInsight` 时，
+我只跑了 `tsc --noEmit -p client/tsconfig.json`（排除测试）与全量 vitest（不查类型），
+**两个门禁都恰好覆盖不到测试文件的类型**。以后收敛类型时，
+除主配置外必须同时跑 `npm run typecheck:tests`。

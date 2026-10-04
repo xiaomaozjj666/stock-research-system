@@ -253,7 +253,12 @@ describe('FactorPanel —— 因子行字段与格式化', () => {
 
 describe('FactorPanel —— 预测力单元格（IC / p 值 / 显著徽标）', () => {
   function renderOne(horizon: FactorPredictabilityHorizon | null, column: '1月' | '3月' = '1月') {
-    const horizons = column === '1月' ? { 21: horizon } : { 63: horizon };
+    // 显式标注 Record<number, ...>：三元表达式会推成
+    // `{21: X; 63?: undefined} | {21?: undefined; 63: X}`，其中可选键的
+    // `undefined` 与索引签名 `Record<number, X|null>` 不兼容（TS2345）。
+    // 标注后由上下文目标类型约束，不再产生该不兼容。
+    const horizons: Record<number, FactorPredictabilityHorizon | null> =
+      column === '1月' ? { 21: horizon } : { 63: horizon };
     renderPanel([makeFactor({ predictability: makePredictability(horizons) })]);
     return rowOf('1月波动率').cells[column === '1月' ? 3 : 4];
   }

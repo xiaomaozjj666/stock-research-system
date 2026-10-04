@@ -80,6 +80,14 @@ jobs:
       - name: TypeCheck (server)
         run: npx tsc --noEmit -p server/tsconfig.json
 
+      - name: TypeCheck (client tests)
+        # 客户端主配置刻意排除测试文件（测试要 jsdom / node 类型，见 tsconfig.test.json
+        # 注释），代价是**测试夹具的类型漂移无人看守**。实测踩到过：把
+        # ValuationModelResult 收敛到契约类型后，生产代码全绿，而
+        # ValuationPanel.test.tsx 的夹具早已与新契约分叉 —— 因为测试文件不在
+        # 检查范围内，CI 全绿而类型早已不一致。本步补齐这个盲区。
+        run: npm run typecheck:tests
+
       - name: TypeCheck & Build (client)
         # client build = `tsc -b && vite build`（tsc -b 即 client 的类型检查门禁）
         run: npm run build --workspace=client

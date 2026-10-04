@@ -2,7 +2,15 @@ import { memo } from 'react';
 import type { StockPoolItem } from '../types';
 
 interface RiskSectionProps {
-  data: string[];
+  /**
+   * 风险条目文案。
+   *
+   * 声明为**可选**，与下方 `data = []` 的默认值一致：此前类型写必填、实现却给了
+   * 默认空数组，测试里 `<RiskSection />` 不传 data 也能渲染（运行行为正确），
+   * 但类型检查会报 `Property 'data' is missing`。类型与实现自相矛盾时，
+   * 以实现为准改类型 —— 否则每个调用点都得为了绕过类型而多写一个 `data={[]}`。
+   */
+  data?: string[];
   /** 风险归因（可选）：风格因子暴露 + 系统/特异风险分解 */
   attribution?: StockPoolItem['riskAttribution'];
 }

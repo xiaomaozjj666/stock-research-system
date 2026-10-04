@@ -1,0 +1,31 @@
+{
+  // 测试文件的类型检查配置（与 tsconfig.json 的差异见下方注释）
+  //
+  // 为什么要单独一份：`tsconfig.json` 把 `src/**/*.test.ts(x)` 排除在类型检查外
+  // —— 那个决定本身没错（测试要用 vitest 的 `vi.hoisted`、jsdom 环境、
+  // node 的 fs/Buffer，而浏览器的 tsconfig 里没有这些类型，一并检查会满屏噪声）。
+  // 但它留下了一个**盲区**：测试文件里对业务类型的引用**不受任何类型检查保护**。
+  //
+  // 实测踩到过：把 ValuationModelResult 从手写 interface 换成契约生成的类型后，
+  // 生产代码 tsc 全绿，而 `ValuationPanel.test.tsx` 里的夹具（dcf.assumptions
+  // 少了 4 个字段、peers 少了 roe/marketCap）与新契约不符 —— 因为测试文件
+  // 不在检查范围内，**CI 全绿而类型早已分叉**。
+  //
+  // 注意：服务端 tsconfig 早就不排除测试了（其注释写明「这份配置同时用于
+  // tsc --noEmit（含测试文件的类型检查）」，构建产物由 tsconfig.build.json 负责）。
+  // 客户端此前是唯一的不对称方，本配置补齐它。
+  //
+  // 相对 tsconfig.json 的三处**必要**差异（其余全部继承，避免两处配置漂移）：
+  //  1. lib 加 ES2022 —— 测试里用了 `Array.prototype.at`，ES2020 lib 里不存在
+  //     （TS2550）。生产代码目前没用到，但测试用得到。
+  //  2. types 加 node —— 测试要 import 'node:fs' / 用 Buffer（TS2591）。
+  //     @types/node 已在 devDependencies 里，只是没在浏览器配置里声明。
+  //  3. exclude 清空 —— 目的就是要把测试文件纳进来。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

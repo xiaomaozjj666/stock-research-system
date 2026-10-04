@@ -31,10 +31,12 @@ function SensitivityTable({ r }: { r: NonNullable<ValuationModelResult['sensitiv
               <td className="mono">r = {(rate * 100).toFixed(1)}%</td>
               {r.matrix[i].map((v, j) => (
                 <td key={j} className={Number.isFinite(v) ? 'mono' : 'mono ds-coverage'}>
-                  {/* matrix 的元素是 number | null：服务端对非法假设格（g2 逼近 r 等
-                      无解组合）写 null。Number.isFinite(null) 为 false，故下面这个
-                      判断本就同时挡住了 null 与 Infinity/NaN；此处的显式 null 守卫
-                      是为了让类型收窄与意图一致，不改变运行行为。 */}
+                  {/* matrix 元素在契约里是 number | null，但要记住这条链路的全貌：
+                      服务端 valuationModel 对非法假设格（g2 ≥ r）置 **NaN**，
+                      而 `JSON.stringify(NaN)` 序列化成 **null** —— 前端拿到的就是 null。
+                      消费方判断「这一格不可算」必须用 Number.isFinite（它对 null 返回
+                      false），不能用 `v === null`，否则 null 会被 `??` 之类误当成 0 显示。
+                      显式 typeof 守卫只是让类型收窄与该意图一致，不改变行为。 */}
                   {typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '发散'}
                 </td>
               ))}

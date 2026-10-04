@@ -45,6 +45,9 @@ const SAMPLE: AnalysisResult = {
         },
       ],
       reflection_notes: [],
+      // chart_list 服务端必填（ChartConfig[]）；此前前端类型误标为可选，
+      // 收敛到契约类型后夹具缺字段会被类型检查抓到
+      chart_list: [],
       follow_up_indicators: ['季度营收增速', '渠道库存'],
       scenarios: [
         {
@@ -128,6 +131,7 @@ describe('generateReportMarkdown 报告导出', () => {
           valuation_level: '',
           expert_opinions: [],
           reflection_notes: [],
+          chart_list: [],
           follow_up_indicators: [],
         },
       ],

@@ -114,7 +114,12 @@ describe('PaperTradingPage 审计日志分页', () => {
 
   it('同帧连点两次「加载更多」：只发一次请求，且 offset 不会重复取同一页', async () => {
     // 第一次「加载更多」挂在途：按钮的 disabled 要等 React 提交才生效，挡不住同帧第二次点击
-    let resolveMore!: (v: unknown) => void;
+    // resolveMore 的类型必须**与 new Promise 的 resolve 形参一致**（即该 Promise 的
+    // 解析值类型），不能图省事写 `(v: unknown) => void`：Promise 泛型被推成
+    // `{count, entries}` 后，unknown 的 resolve 无法赋给那个 resolve，
+    // 类型检查会报 TS2322。这里用 Awaited<ReturnType<typeof getAuditLog>> 取准。
+    type AuditPage = Awaited<ReturnType<typeof h.getAuditLog>>;
+    let resolveMore!: (v: AuditPage) => void;
     h.getAuditLog
       .mockImplementationOnce(async (q?: { limit?: number; offset?: number }) => ({
         count: h.entries.length,

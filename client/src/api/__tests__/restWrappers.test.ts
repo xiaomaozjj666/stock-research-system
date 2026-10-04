@@ -275,7 +275,14 @@ const CASES: ApiCase[] = [
   },
   {
     name: 'placePaperOrder',
-    call: () => placePaperOrder({ code: '600519', side: 'buy', shares: 100, price: 1600 }),
+    call: () =>
+      placePaperOrder({
+        code: '600519',
+        side: 'buy',
+        type: 'limit',
+        quantity: 100,
+        price: 1600,
+      }),
     method: 'post',
     url: '/paper/order',
     response: { order: { id: 'o1' } },
@@ -338,7 +345,7 @@ const CASES: ApiCase[] = [
   },
   {
     name: 'getIntlFundamentals',
-    call: () => getIntlFundamentals('AAPL', 'us'),
+    call: () => getIntlFundamentals('AAPL', 'US'),
     method: 'get',
     url: '/intl/fundamentals',
     response: { code: 'AAPL', metrics: [] },
@@ -488,9 +495,9 @@ describe('REST 封装 —— 请求契约（超时量级 / 参数 / signal 透�
     await searchStocks('600519');
     expect(axiosInst.get.mock.calls[0][1]).toMatchObject({ params: { keyword: '600519' } });
 
-    await getIntlFundamentals('AAPL', 'us');
+    await getIntlFundamentals('AAPL', 'US');
     expect(axiosInst.get.mock.calls[1][1]).toMatchObject({
-      params: { code: 'AAPL', market: 'us' },
+      params: { code: 'AAPL', market: 'US' },
     });
   });
 
