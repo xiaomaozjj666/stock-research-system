@@ -3,10 +3,10 @@
  * 与后端 server/src/types.ts 对齐，供 App 及各组件复用，消除重复定义。
  */
 
-// 数据质量标记
+// 数据质量标记（server/src/types.ts 的 DataQualityFlags：两个字段都是必填）
 export interface DataQualityFlags {
-  estimatedFields?: string[];
-  missingFields?: string[];
+  estimatedFields: string[];
+  missingFields: string[];
 }
 
 // === 多股对比（POST /api/compare） ===
@@ -30,6 +30,9 @@ export interface CompareResponse {
 }
 
 // 财务数据（多年）
+// 字段与 server/src/types.ts 的 FinancialData 对齐：服务端无条件写入这些序列，
+// 故此处不再标可选（此前把前 9 项设为必填、后 6 项设为可选，属防御性放宽，
+// 会让「契约要求必填、前端以为可缺」的分叉长期存在）。
 export interface FinancialData {
   years: string[];
   revenue: number[];
@@ -39,13 +42,13 @@ export interface FinancialData {
   roe: number[];
   operatingCashFlow: number[];
   eps: number[];
-  totalAssets?: number[];
-  totalLiabilities?: number[];
-  equity?: number[];
-  accountsReceivable?: number[];
-  inventory?: number[];
-  goodwill?: number[];
-  debtRatio?: number[];
+  totalAssets: number[];
+  totalLiabilities: number[];
+  equity: number[];
+  accountsReceivable: number[];
+  inventory: number[];
+  goodwill: number[];
+  debtRatio: number[];
   capEx?: number[];
   dataQuality?: DataQualityFlags;
 }
@@ -200,10 +203,25 @@ export interface WatchlistAlert {
   detail: string;
 }
 
+/**
+ * 自选股异动监控结果。
+ *
+ * requested / skipped 由服务端 routes/watchlist.ts 的 monitor 路由无条件写入：
+ * 单次上限 20 只，超出部分不报错而是**如实说明被跳过多少**（monitor 是定时/自治
+ * 循环驱动的唯一预警通道，整体报错等于关掉预警）。此前前端类型漏了这两个字段。
+ */
 export interface WatchlistMonitorResult {
-  generatedAt: string;
+  /**
+   * 快照时间。**可为 null**：服务端在「从未监控过」时回稳定空结构
+   * （generatedAt=null、alerts=[]）而不是 404，所以这个字段必须能表达 null。
+   */
+  generatedAt: string | null;
   monitored: number;
   alerts: WatchlistAlert[];
+  /** 请求监控的标的数（自选股总数，可能 > monitored） */
+  requested?: number;
+  /** 因单次上限被跳过的只数 */
+  skipped?: number;
 }
 
 // 行情历史单点（与 server/src/types.ts PriceHistoryPoint 对齐）
@@ -234,6 +252,11 @@ export interface StockPoolItem {
   valuation_level: string;
   expert_opinions: ExpertOpinion[];
   reflection_notes: string[];
+  /**
+   * 图表配置（服务端 types.ts 的 chart_list 是必填且无条件写入，故这里也是必填）。
+   * 前端目前不消费具体图表类型，`config` 按开放结构处理。
+   */
+  chart_list: { type: string; title: string; config: Record<string, unknown> }[];
   follow_up_indicators: string[];
   scenarios?: ScenarioResult[];
   strategyList?: StrategyRecommendation[];
@@ -266,6 +289,46 @@ export interface StockPoolItem {
     score_delta: number;
     rating_changed: boolean;
   };
+  /** 本次降级的专家名单（可选；单专家研判失败时记入，用于如实披露参与研判的专家数） */
+  degraded_experts?: string[];
+  /** 行业轮动信号（可选；股票有行业归属时由服务端附加） */
+  sectorRotation?: {
+    sector: string;
+    compositeScore: number;
+    rank: number;
+    recommendation: 'overweight' | 'neutral' | 'underweight';
+    prosperity: number;
+    trend: number;
+    crowding: number;
+    industryBeta: number;
+    summary: string;
+    date: string;
+  };
+  /** 最近公告语境（可选；标题一览 + 最新一篇正文摘录） */
+  announcement_brief?: string;
+  /** 知识图谱增强上下文（可选） */
+  knowledgeGraphContext?: string;
+  /** MCP 外部工具上下文（可选；仅配置 MCP_SERVER_URL 时附加） */
+  mcpContext?: { serverUrl: string; toolCount: number; tools: string[] };
+  /** 评级事后校准（可选；决策-结果闭环：该股与全样本的历史评级命中率） */
+  rating_accuracy?: {
+    stock: {
+      sampleCount: number;
+      judgedCount: number;
+      hitCount: number;
+      accuracyPct: number | null;
+      avgReturnPct: number | null;
+      pendingCount?: number;
+    };
+    overall: {
+      sampleCount: number;
+      judgedCount: number;
+      hitCount: number;
+      accuracyPct: number | null;
+      avgReturnPct: number | null;
+      pendingCount?: number;
+    };
+  };
 }
 
 // 完整分析结果
@@ -277,7 +340,12 @@ export interface AnalysisResult {
   stock_pool: StockPoolItem[];
   research_confidence: string;
   limitation_explain: string;
-  data_sources?: DataSource[];
+  /**
+   * 数据来源清单（溯源用）。
+   * 服务端 types.ts 的 AnalysisResult 把它声明为必填且无条件写入，故这里也是必填；
+   * 此前前端标成可选，属防御性放宽——会让「契约要求必有、前端以为可缺」长期分叉。
+   */
+  data_sources: DataSource[];
 }
 
 // === 研究历史记录 ===
@@ -290,6 +358,12 @@ export interface HistorySummary {
   rating: string;
   totalScore: number;
   industry?: string;
+  /**
+   * 评分/评级时间线（由旧到新，含当前这条）。
+   * 按需返回：timeline 字段上线前落盘的旧记录没有它，故可选，
+   * 渲染前必须判空（服务端 sanitizeTimeline 也会把空数组归一为「不带该字段」）。
+   */
+  timeline?: { date: string; score: number; rating: string }[];
 }
 
 export interface HistoryItem extends HistorySummary {

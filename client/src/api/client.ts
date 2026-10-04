@@ -1,14 +1,31 @@
 import axios from 'axios';
+// 端点级类型全部由契约生成（见 api/generated.ts，头部有「请勿手改」告警）。
+// 这里的 import 不是可选的便利：泛型写错会在 tsc 立刻报错，而契约改动后忘记
+// 重新生成会被 `npm run check:api-types`（CI 门禁）拦下——这正是本项目此前
+// 「契约与前端各写一份、必然分叉」的解法。
+import type {
+  IntlKline as GeneratedIntlKline,
+  GETApiStocksResponse as StockListResponse,
+  GETApiStocksSearchResponse as StockSearchResponse,
+  POSTApiPaperSettleResponse as PaperSettleResponse,
+  GETApiAuditResponse as AuditQueryResponse,
+  GETApiHistoryResponse as HistoryListResponse,
+  GETApiIntlKlinesResponse as IntlKlinesResponse,
+  GETApiDocumentsResponse as DocumentListResponse,
+  GETApiModelsResponse as ModelRoutingResponse,
+  GETApiCostResponse as CostResponse,
+  POSTApiCostResetResponse as OkResponse,
+  POSTApiChatHistoryClearResponse as ClearHistoryResponse,
+  DELETEApiHistoryIdResponse as DeleteHistoryResponse,
+} from './generated';
 import type {
   AnalysisResult,
-  AuditEntry,
   AuditQueryFilter,
   CompareResponse,
   HistoryItem,
   HistorySummary,
   IntlFundamentalsResult,
   IntlMarket,
-  PaperEquityPoint,
   PaperOrder,
   PaperOrderInput,
   PaperPortfolio,
@@ -123,28 +140,24 @@ export async function analyzeStock(stockCode: string): Promise<AnalysisResult> {
   }
 }
 
-/** /api/stocks 单项（server getSupportedStocks()：代码 / 简称 / 所属行业） */
-export interface StockListItem {
-  code: string;
-  name: string;
-  industry: string;
-}
+/**
+ * /api/stocks 单项。类型来自生成的 GETApiStocksResponse（契约 → generated.ts），
+ * 服务端 getSupportedStocks() 返回 { code, name, industry }。
+ */
+export type StockListItem = StockListResponse[number];
 
 export async function getStockList(): Promise<StockListItem[]> {
   try {
     // 上游失败时服务端回兜底数组而非报错，故返回类型就是数组本身，不需要再包一层
-    const response = await api.get<StockListItem[]>('/stocks', { timeout: 15000 });
+    const response = await api.get<StockListResponse>('/stocks', { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '获取股票列表失败');
   }
 }
 
-/** /api/stocks/search 单项（server searchStocks()：只回代码与简称，不含 industry） */
-export interface StockSearchHit {
-  code: string;
-  name: string;
-}
+/** /api/stocks/search 单项。类型来自生成的 GETApiStocksSearchResponse。 */
+export type StockSearchHit = StockSearchResponse[number];
 
 export async function searchStocks(
   keyword: string,
@@ -152,7 +165,7 @@ export async function searchStocks(
 ): Promise<StockSearchHit[]> {
   try {
     // 搜索失败时服务端回空数组（200），故调用方的 Array.isArray 兜底是防御性的
-    const response = await api.get<StockSearchHit[]>('/stocks/search', {
+    const response = await api.get<StockSearchResponse>('/stocks/search', {
       params: { keyword },
       timeout: 15000,
       signal,
@@ -468,33 +481,17 @@ export async function ingestDocument(payload: {
     throw normalizeApiError(error, '文档入库失败');
   }
 }
-export async function listDocuments(): Promise<{
-  count: number;
-  docs: { id: string; source: string; preview: string }[];
-}> {
+export async function listDocuments(): Promise<DocumentListResponse> {
   try {
-    const response = await api.get<{
-      count: number;
-      docs: { id: string; source: string; preview: string }[];
-    }>('/documents', { timeout: 15000 });
+    const response = await api.get<DocumentListResponse>('/documents', { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '读取资料库失败');
   }
 }
 
-export interface ModelRoutingInfo {
-  available: boolean;
-  embeddingEnabled: boolean;
-  registry: {
-    id: string;
-    label: string;
-    costPer1kInput: number;
-    costPer1kOutput: number;
-    tasks: string[];
-  }[];
-  routing: Record<string, string>;
-}
+/** 多模型注册表与任务路由；类型来自生成的 GETApiModelsResponse。 */
+export type ModelRoutingInfo = ModelRoutingResponse;
 export async function getModels(): Promise<ModelRoutingInfo> {
   try {
     const response = await api.get<ModelRoutingInfo>('/models', { timeout: 15000 });
@@ -504,16 +501,8 @@ export async function getModels(): Promise<ModelRoutingInfo> {
   }
 }
 
-export interface CostReport {
-  totalCost: number;
-  totalPromptTokens: number;
-  totalCompletionTokens: number;
-  callCount: number;
-  byModel: Record<
-    string,
-    { promptTokens: number; completionTokens: number; cost: number; calls: number }
-  >;
-}
+/** LLM 成本报表；类型来自生成的 GETApiCostResponse。 */
+export type CostReport = CostResponse;
 export async function getCostReport(): Promise<CostReport> {
   try {
     const response = await api.get<CostReport>('/cost', { timeout: 15000 });
@@ -524,7 +513,7 @@ export async function getCostReport(): Promise<CostReport> {
 }
 export async function resetCostReport(): Promise<{ ok: boolean }> {
   try {
-    const response = await api.post<{ ok: boolean }>('/cost/reset', {}, { timeout: 15000 });
+    const response = await api.post<OkResponse>('/cost/reset', {}, { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '重置成本失败');
@@ -533,7 +522,7 @@ export async function resetCostReport(): Promise<{ ok: boolean }> {
 
 export async function clearChatHistory(sessionId: string): Promise<{ ok: boolean }> {
   try {
-    const response = await api.post<{ ok: boolean }>(
+    const response = await api.post<ClearHistoryResponse>(
       '/chat/history/clear',
       { sessionId },
       {
@@ -839,20 +828,12 @@ export async function settlePaperDay(body: {
   date: string;
   closePrices: Record<string, number>;
   prevClosePrices?: Record<string, number>;
-}): Promise<{
-  date: string;
-  cash: number;
-  latestEquity?: PaperEquityPoint;
-  history: PaperEquityPoint[];
-}> {
+}): Promise<PaperSettleResponse> {
   try {
-    // 服务端 latestEquity 取 equity.at(-1)：当日无净值点时为 undefined，故可选
-    const response = await api.post<{
-      date: string;
-      cash: number;
-      latestEquity?: PaperEquityPoint;
-      history: PaperEquityPoint[];
-    }>('/paper/settle', body, { timeout: 30000 });
+    // 服务端 latestEquity 取 equity.at(-1)：当日无净值点时缺省，故契约里是可选
+    const response = await api.post<PaperSettleResponse>('/paper/settle', body, {
+      timeout: 30000,
+    });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '日终结算失败');
@@ -878,9 +859,7 @@ export interface AuditLogQuery extends AuditQueryFilter {
   offset?: number;
 }
 
-export async function getAuditLog(
-  query?: AuditLogQuery,
-): Promise<{ count: number; entries: AuditEntry[] }> {
+export async function getAuditLog(query?: AuditLogQuery): Promise<AuditQueryResponse> {
   try {
     // 分页已由服务端实现（server/src/routes/audit.ts）：支持 limit/offset，
     // 且 count 恒为**匹配总数**（不是本页条数），offset 越界返回空数组。
@@ -895,13 +874,13 @@ export async function getAuditLog(
     if (typeof offset === 'number' && Number.isFinite(offset) && offset >= 0) {
       params.offset = Math.floor(offset);
     }
-    // 泛型即原先那段 as 断言：字段保持可选，下面的 ?? / typeof 兜底分支才有意义
-    // （服务端两个字段都会给，但审计查询是只读降级路径，不想因缺字段整页崩掉）
-    const response = await api.get<{ count?: number; entries?: AuditEntry[] }>('/audit', {
+    const response = await api.get<AuditQueryResponse>('/audit', {
       params,
       timeout: 15000,
     });
     const data = response.data;
+    // count / entries 在契约里是必填，但审计查询是只读降级路径，
+    // 这里仍保留兜底：宁可少显示一条，也不要因缺字段让整页崩掉。
     const entries = data.entries ?? [];
     return {
       count: typeof data.count === 'number' ? data.count : entries.length,
@@ -1111,31 +1090,27 @@ export async function getIntlFundamentals(
   }
 }
 
-/** 港美股日 K 线（东财通道，secid 映射 116.x / 107.x） */
-export interface IntlKline {
-  date: string;
-  open: number;
-  close: number;
-  high: number;
-  low: number;
-  volume: number;
-}
+/**
+ * 港美股日 K 线（东财通道，secid 映射 116.x / 107.x）。
+ * 类型来自生成的 IntlKline —— 比此前手写版多一个 isSimulated：
+ * 上游取数失败时服务端会降级为**模拟 K 线**并置该标记，消费方据此如实提示用户，
+ * 不能当成真实行情画图。原先手写类型漏了这个字段，等于丢掉了这个提示能力。
+ */
+export type IntlKline = GeneratedIntlKline;
 
 export async function getIntlKlines(params: {
   code: string;
   market?: string;
   startDate?: string;
   endDate?: string;
-}): Promise<{ code: string; market: string; count: number; klines: IntlKline[] }> {
+}): Promise<IntlKlinesResponse> {
   try {
-    // 服务端另回 startDate / endDate（回显实际生效区间），当前无消费方，
-    // 公开返回类型保持原样不动，泛型只声明已被消费的字段
-    const response = await api.get<{
-      code: string;
-      market: string;
-      count: number;
-      klines: IntlKline[];
-    }>('/intl/klines', { params, timeout: 30000 });
+    // 类型来自生成的 GETApiIntlKlinesResponse：契约里已含服务端回显的
+    // startDate / endDate，不再需要「只声明被消费字段」的手工裁剪。
+    const response = await api.get<IntlKlinesResponse>('/intl/klines', {
+      params,
+      timeout: 30000,
+    });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '港美股 K 线获取失败');
@@ -1223,7 +1198,7 @@ export async function fetchHistoryList(limit = 50): Promise<HistoryListItem[]> {
   try {
     // 泛型是**信封**而不是数组本身：服务端 res.json({ items: [...] })，
     // 少写这一层泛型的话 response.data.items 就是 any，列表元素全无类型
-    const response = await api.get<{ items: HistoryListItem[] }>('/history', {
+    const response = await api.get<HistoryListResponse>('/history', {
       params: { limit },
       timeout: 15000,
     });
@@ -1244,7 +1219,7 @@ export async function fetchHistoryDetail(id: string): Promise<HistoryItem> {
 
 export async function deleteHistoryItem(id: string): Promise<void> {
   try {
-    await api.delete(`/history/${id}`, { timeout: 15000 });
+    await api.delete<DeleteHistoryResponse>(`/history/${id}`, { timeout: 15000 });
   } catch (error: unknown) {
     throw normalizeApiError(error, '历史记录删除失败');
   }
@@ -1270,12 +1245,14 @@ export async function monitorWatchlist(signal?: AbortSignal): Promise<WatchlistM
 
 /**
  * 最近一次异动监控快照（服务端落盘，刷新/复访可回看）。
- * 从未监控过时服务端返回稳定空结构（generatedAt=null、alerts=[]），不会是 404，
- * 因此 generatedAt 需要放宽为可空——WatchlistMonitorResult 的 generatedAt 是必填字符串。
+ *
+ * 从未监控过时服务端返回稳定空结构（generatedAt=null、alerts=[]），不会是 404。
+ * 此前这里有个 `Omit<..., 'generatedAt'> & { generatedAt: string | null }` 的
+ * 放宽类型，是为绕开「WatchlistMonitorResult.generatedAt 被声明成必填 string」
+ * 而存在的——而那个声明本身是错的（契约里一直是 nullable）。根因已修，
+ * 故此处直接用 WatchlistMonitorResult，不再维护第二份形状。
  */
-export type WatchlistAlertsSnapshot = Omit<WatchlistMonitorResult, 'generatedAt'> & {
-  generatedAt: string | null;
-};
+export type WatchlistAlertsSnapshot = WatchlistMonitorResult;
 
 export async function fetchWatchlistAlerts(): Promise<WatchlistAlertsSnapshot> {
   try {

@@ -71,6 +71,12 @@ jobs:
         # package.json 的 format:check 已纳入 e2e/**、scripts/**。
         run: npm run format:check
 
+      - name: Generated API types are up to date
+        # 契约（services/openapi.ts）是 API 形状的唯一权威来源，前端类型由它生成。
+        # 改了契约却忘了重新生成，前端类型就会静默过期——这正是本项目此前
+        # 「契约与前端各写一份、必然分叉」的机制性缺陷。此处只比对不写入。
+        run: npm run check:api-types
+
       - name: TypeCheck (server)
         run: npx tsc --noEmit -p server/tsconfig.json
 

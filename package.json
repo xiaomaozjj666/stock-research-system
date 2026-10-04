@@ -23,6 +23,8 @@
     "test:e2e": "playwright test",
     "size:budget": "npm run build --workspace=client && node client/scripts/check-bundle-size.mjs",
     "mcp:serve": "npx tsx server/src/mcp/cli.ts",
+    "generate:api-types": "tsx scripts/generate-api-types.mts",
+    "check:api-types": "tsx scripts/generate-api-types.mts --check",
     "format": "prettier --write \"server/src/**/*.{ts,tsx,js,json,md}\" \"client/src/**/*.{ts,tsx,js,json,md}\" \"e2e/**/*.{ts,tsx,js,json}\" \"client/scripts/**/*.{js,mjs}\" \"client/vite.config.ts\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs,mts}\" \".github/**/*.yml\"",
     "format:check": "prettier --check \"server/src/**/*.{ts,tsx,js,json,md}\" \"client/src/**/*.{ts,tsx,js,json,md}\" \"e2e/**/*.{ts,tsx,js,json}\" \"client/scripts/**/*.{js,mjs}\" \"client/vite.config.ts\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs,mts}\" \".github/**/*.yml\""
   },

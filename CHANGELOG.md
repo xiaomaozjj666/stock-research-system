@@ -3,6 +3,65 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `docs/ENGINEERING-NOTES.md`。
 
+## 2026-10-04（第五轮）· 类型生成：契约成为唯一权威来源，并抓出 9 处真实契约 bug
+
+**背景**：上一轮补全了 25 条遗漏路由（契约的 paths 覆盖 app 实际挂载的 64 条），
+但动手做类型生成前先核实前提，发现**响应体契约几乎是空的**：64 个 operation 里
+只有 2 个的 200 响应带 schema，其余 62 个只有一句 description。直接上生成器
+只会产出 62 个 `unknown`——生成器能用、类型不能用。
+
+**做法（三段）**
+
+- **补齐 62 个成功响应 schema**。逐条读 handler 与其调用的 service 补写，
+  复用 `components/schemas` 里的具名组件（`$ref`），不内联展开。
+- **自研生成器** `server/src/services/apiTypeGen.ts` + `scripts/generate-api-types.mts`，
+  输出 `client/src/api/generated.ts`（**212 个类型**：61 个 operation 响应 +
+  RequestBody + Params + 组件）。
+- **前端接入 + 双向守卫**：`client.ts` 改用生成的端点类型；
+  `client/src/api/contractParity.ts` 对 8 个同名类型做**双向赋值**等价检查（编译期）。
+
+**为什么自研而不引依赖**：`ts-json-schema-generator` / `openapi-typescript` 的输入是
+**TypeScript 类型**，而本项目的权威来源是 **OpenAPI 文档**（方向相反）；且本机
+`typescript@7`（Go 原生移植版）**只导出 `version` / `versionMajorMinor`**，
+没有 `createProgram` 等反射 API，无法从注解反推 JSON Schema。方向既定，
+几百行生成器比引入一个用不上的依赖更划算。
+
+**补 schema 时抓出 9 处真实契约 bug**（这才是重点——不是走过场）
+
+1. `horizons` 声明成 `string[]`，而 `parseHorizons` 收的是**整数数组**；
+   且 5 处各内联写一遍、其中 3 处连类型都写错 → 抽成共用 `horizonsSchema`。
+2. `IntlFundamentalsResult.fundamentals` **只在 description 里写「可能为 null」**，
+   schema 却是非空 `$ref`。生成出的类型非空，消费方照契约写代码遇到降级响应就崩。
+   **可空必须写进 schema**（改为 `oneOf: [$ref, {type:'null'}]`）。
+3. `ScenarioResult` 漏 `supportingArguments`；`preconditions` 被误标可选。
+4. `FinancialData` 漏 6 个服务端确实返回的字段。
+5. `IntlFundamentals` 漏 4 个必填字段。6. `ChartConfig.config` 必填性不符。
+6. `DataQualityFlags` 前端标可选、服务端必填。
+7. `WatchlistMonitorResult.generatedAt` 实际可为 null，前端写成必填 `string`——
+   这正是 `client.ts` 里那个 `Omit<...> & {generatedAt: string|null}` 绕行类型的由来；
+   根因修好后该绕行类型已删除。
+8. `IntlKline` 前端手写版漏 `isSimulated`（上游失败会降级为模拟 K 线），
+   等于丢掉了"提示用户这是假行情"的能力。
+
+**两个关于"守卫"的教训（本项目最容易复发的坑）**
+
+- `type _X = A extends B ? true : never` 这种写法**永远绿**：TS 对未加约束的
+  条件类型不做求值检查，一个明显不成立的关系也能编译通过。那是虚假安全感，
+  比没有守卫更危险。
+- 社区流行的 `Equal<X, Y>`（互斥签名）在本项目**误报**：两侧各自声明了同名
+  `PaperPosition` / `FinancialData`，形状逐字相同，但两次独立声明 → identity 不同 → false。
+- 最终采用**双向赋值**（`declare const a: B = g` 两个方向），实测对"形状相同但
+  分别声明"放行、对字段增删/可选性变化报错。**任何守卫都必须先反向验证它会红**——
+  `apiTypeGen.test.ts` 末尾有 4 条专门做这件事的用例。
+
+**顺带修掉一个假红灯**：生成器最初只取 `content['application/json']`，
+于是两个 SSE 端点（`text/event-stream`）被误判成"没写 schema"。假红灯和假绿灯
+一样有害——前者会让人去改本来正确的契约。
+
+**接线**：`npm run generate:api-types`（生成）/ `npm run check:api-types`（只比对）；
+CI `quality` job 新增一步 `check:api-types`，改了契约没重新生成会拦住合并。
+生成物**提交进仓库**（不 gitignore），让契约↔类型的漂移在 PR diff 里直接可见。
+
 ## 2026-10-04（第四轮）· OpenAPI 契约补全 25 条遗漏路由，并加双向漂移守卫
 
 **背景**：上一轮我给出的建议是「若要做全量 schema 层，正确切入点是从
