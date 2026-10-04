@@ -10,10 +10,12 @@
 ## 质量门禁（应全部为 0 失败）
 
 - `npm run lint`（JS/风格）0。
-- `server`: `npx tsc --noEmit` 0。
-- `client`: `npm run build` OK。
-- `npm run test`（vitest run）：截至 2026-09-22 为 **3239 passed / 0 failed**（235 个测试文件）。此前这里记的是 2026-08-11 的 761 / 69 文件，已过期一个数量级，本次订正。
-- 覆盖率门禁（`vitest.config.mts`）：阈值 **lines 92 / statements 90 / functions 92 / branches 80**（2026-08-14 由 70/68/62/55 提上来；本节此前一直记的是旧值，本次订正）。实测（2026-09-22）：lines 94.95% / statements 92.91% / functions 94.74% / branches 83.26%。`server/src/quant/**` 与 `client/src/**` 均纳入统计（`coverage.include`），排除清单见「测试注意」节。
+- `server`: `npx tsc --noEmit` 0。**该配置含测试文件**（`server/tsconfig.json` 的 exclude 只排 node_modules/dist，注释写明理由：构建产物由 `tsconfig.build.json` 负责）。
+- `client`: `npm run build` OK（主配置 `client/tsconfig.json` **排除**测试文件）。
+- `client` 测试文件：`npm run typecheck:tests` 0（`client/tsconfig.test.json`，2026-10-05 新增）。**这一条不能省** —— 主配置排除测试曾导致测试夹具的类型漂移无人看守，详见文末「客户端测试文件曾完全不被类型检查」一节。
+- `npm run test`（vitest run）：截至 2026-10-05 为 **3397 passed / 0 failed**（245 个测试文件）。此前这里记的是 2026-09-22 的 3239 / 235 文件，本次订正。
+- 覆盖率门禁（`vitest.config.mts`）：阈值 **lines 92 / statements 90 / functions 92 / branches 80**（2026-08-14 由 70/68/62/55 提上来）。实测（2026-10-04）：lines 93.71% / statements 91.76% / functions 93.93% / branches 82.18%，四项均过。`server/src/quant/**` 与 `client/src/**` 均纳入统计（`coverage.include`），排除清单见「测试注意」节。
+- **本机 `test:coverage` 退出码恒为 1**：vitest 收尾清 `coverage/.tmp` 会撞本机删除守卫（`[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]`），与覆盖率是否达标无关。**读 `Coverage summary` 段判断，不要看退出码**。CI 上不受影响。
 
 ## 依赖升级的硬约束（踩过的坑）
 

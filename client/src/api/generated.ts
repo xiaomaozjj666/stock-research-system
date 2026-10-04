@@ -1841,14 +1841,14 @@ export type WatchlistNewsBacktestReport = {
   /** 其中命中最新消息的代码数 */
   withNewsCount: number;
   /** 本轮请求的原始只数（含格式非法被 normalizeAShareCode 丢掉的） */
-  requested: number;
+  requested?: number;
   /** 因单次上限（本端点 >20 直接 400，此处为服务层默认上限）被跳过的只数 */
-  skipped: number;
+  skipped?: number;
   results: {
     code: string;
     /** 无主数据时为 null */
     name: string | null;
-    /** 无新闻（或该只取数失败）时为 null */
+    /** 无新闻（或该只取数失败）时缺省或为 null */
     newsSentiment?: NewsSignal | null;
     strategyList: StrategyRecommendation[];
     /** 按 sharpeRatio 选出的最优策略；strategyList 为空时缺省 */

@@ -2948,9 +2948,14 @@ export function buildOpenApiDocument() {
                 properties: {
                   code: { type: 'string' },
                   name: { type: 'string', nullable: true, description: '无主数据时为 null' },
+                  // 服务端 alerts.ts / newsBacktest 的类型是
+                  // `newsSentiment?: {...} | null` —— **可选且可为 null**
+                  // （该只取数失败时字段缺省；有新闻但无情绪时显式 null）。
+                  // 此前契约漏了「可选」，生成的类型非空，消费方按契约写
+                  // `const ns: NewsSignal | null = row.newsSentiment` 会编译失败。
                   newsSentiment: {
                     oneOf: [{ $ref: '#/components/schemas/NewsSignal' }, { type: 'null' }],
-                    description: '无新闻（或该只取数失败）时为 null',
+                    description: '无新闻（或该只取数失败）时缺省或为 null',
                   },
                   strategyList: {
                     type: 'array',
@@ -2999,7 +3004,7 @@ export function buildOpenApiDocument() {
               },
             },
           },
-          required: ['generatedAt', 'count', 'withNewsCount', 'requested', 'skipped', 'results'],
+          required: ['generatedAt', 'count', 'withNewsCount', 'results'],
         },
 
         /* ===== 以下为 2026-10-04 补录的「非量化域」200 响应组件 =====

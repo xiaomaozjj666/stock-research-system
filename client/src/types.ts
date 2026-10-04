@@ -1,7 +1,78 @@
 /**
  * 前端共享类型定义
+ *
  * 与后端 server/src/types.ts 对齐，供 App 及各组件复用，消除重复定义。
+ *
+ * 2026-10-05 起：本文件里**描述服务端响应**的类型一律改为从 `./api/generated`
+ * re-export，不再手写第二份。手写副本会与契约分叉 —— 实测抓出过 chart_list 必填性、
+ * IntlFundamentals 缺 4 个必填字段、DataQualityFlags 必填性等十余处不一致。
+ *
+ * 仍在本文件手写的是**前端自有模型**（如 DataQualityFlags 的语义说明，以及
+ * pages/quant/types.ts 里的页面展示模型），它们不属于 API 契约。
  */
+
+// ---- 契约生成类型（唯一来源：services/openapi.ts → scripts/generate-api-types.mts）----
+//
+// 分两段写，是因为二者语义不同，缺一不可：
+//   · `import type` —— 让本文件内部（下面那些仍手写的前端自有模型）能**引用**这些名字；
+//   · `export type { … } from` —— 把它们**导出**给全项目使用，保持本文件原有的公共面。
+// 只写后者是不够的：`export … from` 只做转发，不把名字引入本模块作用域，
+// 本文件内部引用 NewsSignal / StrategyRecommendation 会报 TS2304。
+import type {
+  CompareResponse,
+  FinancialData,
+  ValuationData,
+  DataSource,
+  ExpertOpinion,
+  ScenarioResult,
+  StrategyRecommendation,
+  NewsSignal,
+  WatchlistNewsBacktestReport,
+  WatchlistAlert,
+  WatchlistMonitorResult,
+  StockPoolItem,
+  AnalysisResult,
+  HistorySummary,
+  HistoryItem,
+  PaperPosition,
+  PaperOrder,
+  PaperEquityPoint,
+  PaperPortfolio,
+  PaperStats,
+  AuditEntry,
+  IntlFundamentals,
+  IntlFundamentalsResult,
+  ConsensusSnapshot,
+} from './api/generated';
+
+// 保持既有公共面：全项目此前从 '../types' 导入这些名字，改成 import 后必须原样再导出，
+// 否则 40+ 个引用点会一起断（而且断得很难看出是这里引起的）。
+export type {
+  CompareResponse,
+  FinancialData,
+  ValuationData,
+  DataSource,
+  ExpertOpinion,
+  ScenarioResult,
+  StrategyRecommendation,
+  NewsSignal,
+  WatchlistNewsBacktestReport,
+  WatchlistAlert,
+  WatchlistMonitorResult,
+  StockPoolItem,
+  AnalysisResult,
+  HistorySummary,
+  HistoryItem,
+  PaperPosition,
+  PaperOrder,
+  PaperEquityPoint,
+  PaperPortfolio,
+  PaperStats,
+  AuditEntry,
+  IntlFundamentals,
+  IntlFundamentalsResult,
+  ConsensusSnapshot,
+};
 
 // 数据质量标记（server/src/types.ts 的 DataQualityFlags：两个字段都是必填）
 export interface DataQualityFlags {
@@ -24,61 +95,15 @@ export interface CompareFailure {
  * - failures 为可选字段——服务端在"全部成功"时根本不返回该字段（与旧契约逐字兼容），
  *   因此消费方必须按 `failures ?? []` 处理，不能假定它一定存在。
  */
-export interface CompareResponse {
-  stocks: StockPoolItem[];
-  failures?: CompareFailure[];
-}
 
 // 财务数据（多年）
 // 字段与 server/src/types.ts 的 FinancialData 对齐：服务端无条件写入这些序列，
 // 故此处不再标可选（此前把前 9 项设为必填、后 6 项设为可选，属防御性放宽，
 // 会让「契约要求必填、前端以为可缺」的分叉长期存在）。
-export interface FinancialData {
-  years: string[];
-  revenue: number[];
-  netProfit: number[];
-  grossMargin: number[];
-  netMargin: number[];
-  roe: number[];
-  operatingCashFlow: number[];
-  eps: number[];
-  totalAssets: number[];
-  totalLiabilities: number[];
-  equity: number[];
-  accountsReceivable: number[];
-  inventory: number[];
-  goodwill: number[];
-  debtRatio: number[];
-  capEx?: number[];
-  dataQuality?: DataQualityFlags;
-}
 
 // 估值数据
-export interface ValuationData {
-  currentPrice: number;
-  pe: number;
-  pb: number;
-  ps: number;
-  marketCap: number;
-  historicalPE: { year: string; pe: number; isEstimated?: boolean }[];
-  peerComparison: {
-    name: string;
-    code: string;
-    pe: number;
-    pb: number;
-    roe: number;
-    marketCap: number;
-  }[];
-}
 
 // 数据来源
-export interface DataSource {
-  name: string;
-  description: string;
-  confidence: number;
-  /** 覆盖范围：报告里哪些模块的数字来自该来源（溯源用） */
-  coverage?: string;
-}
 
 // 专家论点
 export interface ExpertArgument {
@@ -89,13 +114,6 @@ export interface ExpertArgument {
 }
 
 // 专家观点
-export interface ExpertOpinion {
-  expert: string;
-  arguments: ExpertArgument[];
-  overallSentiment: 'bullish' | 'neutral' | 'bearish';
-  confidence: number;
-  keyPoints: string[];
-}
 
 // 争议点
 export interface ControversyPoint {
@@ -116,34 +134,8 @@ export interface ScoreDetail {
 }
 
 // 情景分析结果
-export interface ScenarioResult {
-  name: '乐观' | '中性' | '悲观';
-  probability: number;
-  keyAssumptions: string[];
-  targetPriceRange: { low: number; high: number };
-  supportingArguments: { expert: string; text: string; confidence: number }[];
-  preconditions: string[];
-}
 
 // 量化策略推荐
-export interface StrategyRecommendation {
-  strategyType: string;
-  sharpeRatio: number;
-  maxDrawdown: number;
-  winRate: number;
-  totalReturn: number;
-  applicableMarket: string;
-  fatalWeakness: string;
-  backtestWarning: string;
-  /** 含最新消息情绪叠加层的回测对比 */
-  newsAware?: {
-    totalReturn: number;
-    sharpeRatio: number;
-    maxDrawdown: number;
-    winRate: number;
-    posture: number;
-  };
-}
 
 // 最新消息单条
 export interface NewsItem {
@@ -156,16 +148,6 @@ export interface NewsItem {
 }
 
 // 最新消息情绪信号
-export interface NewsSignal {
-  polarity: number; // 加权极性 ∈ [−1,1]
-  sentimentZ: number; // 情绪 z 分
-  bullishRatio: number; // 看多占比 ∈ [0,1]
-  newsCount: number; // 新闻条数
-  freshness: number; // 新鲜度 ∈ (0,1]
-  weightedImpact: number; // 影响强度 ∈ [0,1]
-  items: NewsItem[]; // 按时效排序
-  hasNews: boolean;
-}
 
 // 自选股批量"含最新消息回测"结果行
 export interface WatchlistNewsBacktestRow {
@@ -186,22 +168,8 @@ export interface WatchlistNewsBacktestRow {
 }
 
 // 自选股批量"含最新消息回测"总报告
-export interface WatchlistNewsBacktestReport {
-  generatedAt: string;
-  count: number;
-  withNewsCount: number;
-  results: WatchlistNewsBacktestRow[];
-}
 
 // 自选股异动预警（与 server/src/services/alerts.ts 对齐）
-export interface WatchlistAlert {
-  code: string;
-  name: string | null;
-  level: 'strong-bull' | 'strong-bear' | 'high-impact';
-  polarity: number;
-  weightedImpact: number;
-  detail: string;
-}
 
 /**
  * 自选股异动监控结果。
@@ -210,19 +178,6 @@ export interface WatchlistAlert {
  * 单次上限 20 只，超出部分不报错而是**如实说明被跳过多少**（monitor 是定时/自治
  * 循环驱动的唯一预警通道，整体报错等于关掉预警）。此前前端类型漏了这两个字段。
  */
-export interface WatchlistMonitorResult {
-  /**
-   * 快照时间。**可为 null**：服务端在「从未监控过」时回稳定空结构
-   * （generatedAt=null、alerts=[]）而不是 404，所以这个字段必须能表达 null。
-   */
-  generatedAt: string | null;
-  monitored: number;
-  alerts: WatchlistAlert[];
-  /** 请求监控的标的数（自选股总数，可能 > monitored） */
-  requested?: number;
-  /** 因单次上限被跳过的只数 */
-  skipped?: number;
-}
 
 // 行情历史单点（与 server/src/types.ts PriceHistoryPoint 对齐）
 export interface PricePoint {
@@ -236,139 +191,11 @@ export interface PricePoint {
 }
 
 // 单只股票的完整研究数据
-export interface StockPoolItem {
-  stock_code: string;
-  stock_name: string;
-  industry: string;
-  core_summary: string;
-  total_score: number;
-  rating: string;
-  score_detail: ScoreDetail;
-  strengths: string[];
-  risk_list: string[];
-  controversy_points: ControversyPoint[];
-  finance_metrics: FinancialData;
-  valuation: ValuationData;
-  valuation_level: string;
-  expert_opinions: ExpertOpinion[];
-  reflection_notes: string[];
-  /**
-   * 图表配置（服务端 types.ts 的 chart_list 是必填且无条件写入，故这里也是必填）。
-   * 前端目前不消费具体图表类型，`config` 按开放结构处理。
-   */
-  chart_list: { type: string; title: string; config: Record<string, unknown> }[];
-  follow_up_indicators: string[];
-  scenarios?: ScenarioResult[];
-  strategyList?: StrategyRecommendation[];
-  newsSentiment?: NewsSignal;
-  /** 机构一致预期快照（可选；盈利预测/评级/北向持股，当前快照口径） */
-  consensus?: ConsensusSnapshot;
-  /** 行情历史（日K线，用于走势图渲染；取数失败时为模拟数据） */
-  priceHistory?: PricePoint[];
-  /** 风险归因：风格因子暴露 + 系统/特异风险分解（可选） */
-  riskAttribution?: {
-    exposures: {
-      size: number;
-      value: number;
-      momentum: number;
-      profitability: number;
-      leverage: number;
-    };
-    decomposition: {
-      systematicVol: number;
-      specificVol: number;
-      totalVol: number;
-      explainedRatio: number;
-    };
-  };
-  /** 与上次分析的对比（记忆反思闭环，可选） */
-  vs_previous?: {
-    previous_date: string;
-    previous_rating: string;
-    previous_score: number;
-    score_delta: number;
-    rating_changed: boolean;
-  };
-  /** 本次降级的专家名单（可选；单专家研判失败时记入，用于如实披露参与研判的专家数） */
-  degraded_experts?: string[];
-  /** 行业轮动信号（可选；股票有行业归属时由服务端附加） */
-  sectorRotation?: {
-    sector: string;
-    compositeScore: number;
-    rank: number;
-    recommendation: 'overweight' | 'neutral' | 'underweight';
-    prosperity: number;
-    trend: number;
-    crowding: number;
-    industryBeta: number;
-    summary: string;
-    date: string;
-  };
-  /** 最近公告语境（可选；标题一览 + 最新一篇正文摘录） */
-  announcement_brief?: string;
-  /** 知识图谱增强上下文（可选） */
-  knowledgeGraphContext?: string;
-  /** MCP 外部工具上下文（可选；仅配置 MCP_SERVER_URL 时附加） */
-  mcpContext?: { serverUrl: string; toolCount: number; tools: string[] };
-  /** 评级事后校准（可选；决策-结果闭环：该股与全样本的历史评级命中率） */
-  rating_accuracy?: {
-    stock: {
-      sampleCount: number;
-      judgedCount: number;
-      hitCount: number;
-      accuracyPct: number | null;
-      avgReturnPct: number | null;
-      pendingCount?: number;
-    };
-    overall: {
-      sampleCount: number;
-      judgedCount: number;
-      hitCount: number;
-      accuracyPct: number | null;
-      avgReturnPct: number | null;
-      pendingCount?: number;
-    };
-  };
-}
 
 // 完整分析结果
-export interface AnalysisResult {
-  /** 报告生成时间（ISO 字符串）；历史快照为当时生成的时间 */
-  generatedAt?: string;
-  /** 行情数据截止日（YYYY-MM-DD，最后一根 K 线）；无行情数据时缺省 */
-  dataAsOf?: string;
-  stock_pool: StockPoolItem[];
-  research_confidence: string;
-  limitation_explain: string;
-  /**
-   * 数据来源清单（溯源用）。
-   * 服务端 types.ts 的 AnalysisResult 把它声明为必填且无条件写入，故这里也是必填；
-   * 此前前端标成可选，属防御性放宽——会让「契约要求必有、前端以为可缺」长期分叉。
-   */
-  data_sources: DataSource[];
-}
 
 // === 研究历史记录 ===
 // 与 server/src/services/historyService.ts 对齐
-export interface HistorySummary {
-  id: string;
-  stockCode: string;
-  stockName: string;
-  createdAt: string;
-  rating: string;
-  totalScore: number;
-  industry?: string;
-  /**
-   * 评分/评级时间线（由旧到新，含当前这条）。
-   * 按需返回：timeline 字段上线前落盘的旧记录没有它，故可选，
-   * 渲染前必须判空（服务端 sanitizeTimeline 也会把空数组归一为「不带该字段」）。
-   */
-  timeline?: { date: string; score: number; rating: string }[];
-}
-
-export interface HistoryItem extends HistorySummary {
-  result: AnalysisResult;
-}
 
 // === 模拟盘（paper trading）研究闭环 ===
 // 与 server/src/quant/paperTrading.ts 对齐
@@ -377,46 +204,12 @@ export type PaperOrderType = 'market' | 'limit';
 export type PaperOrderStatus = 'pending' | 'filled' | 'expired' | 'rejected';
 
 /** 持仓（单代码一档：最近一次买入日用于 T+1 校验） */
-export interface PaperPosition {
-  code: string;
-  quantity: number; // 股数（100 整数倍）
-  avgCost: number; // 摊薄成本（含买入佣金）
-  buyDate: string; // 最近一次买入日期 YYYY-MM-DD
-}
 
 /** 订单（含成交/过期/拒绝的完整审计记录） */
-export interface PaperOrder {
-  id: string;
-  code: string;
-  side: PaperOrderSide;
-  type: PaperOrderType;
-  price?: number; // 限价单的申报价
-  quantity: number; // 委托数量（已按整手取整）
-  placedDate: string; // 下单日期 YYYY-MM-DD
-  status: PaperOrderStatus;
-  fillDate?: string;
-  fillPrice?: number;
-  filledQuantity?: number;
-  commission?: number;
-  stampDuty?: number; // 仅卖出产生
-  rejectReason?: string;
-}
 
 /** 每日净值记录 */
-export interface PaperEquityPoint {
-  date: string; // YYYY-MM-DD
-  value: number; // 现金 + 持仓市值
-}
 
 /** GET /api/paper/portfolio 响应 */
-export interface PaperPortfolio {
-  initialCapital: number;
-  cash: number;
-  currentDate: string | null;
-  positions: PaperPosition[];
-  orders: PaperOrder[]; // 最近 50 笔
-  equity: PaperEquityPoint[];
-}
 
 /** 下单入参（POST /api/paper/order） */
 export interface PaperOrderInput {
@@ -429,15 +222,6 @@ export interface PaperOrderInput {
 }
 
 /** 账户绩效统计（GET /api/paper/stats） */
-export interface PaperStats {
-  initialCapital: number;
-  finalEquity: number;
-  totalReturnPct: number | null; // 累计收益率 %
-  maxDrawdownPct: number | null; // 最大回撤 %
-  sharpeRatio: number | null; // 年化夏普（净值点不足时为 null）
-  totalDays: number; // 已结算交易天数（净值点数）
-  dailyReturns: number[]; // 逐日收益率
-}
 
 // === 合规审计（与 server/src/services/auditLog.ts 对齐） ===
 export type AuditCategory =
@@ -446,18 +230,6 @@ export type AuditCategory =
 export type AuditRiskLevel = 'info' | 'low' | 'medium' | 'high' | 'critical';
 
 /** 审计条目 */
-export interface AuditEntry {
-  id: string;
-  timestamp: number; // epoch 毫秒
-  sessionId: string;
-  userId?: string;
-  action: string; // 如 "llm.chat" / "tool.run_analysis"
-  category: AuditCategory;
-  detail: string;
-  riskLevel: AuditRiskLevel;
-  traceId?: string;
-  metadata?: Record<string, unknown>;
-}
 
 /** 审计查询过滤条件（GET /api/audit query） */
 export interface AuditQueryFilter {
@@ -472,42 +244,7 @@ export interface AuditQueryFilter {
 export type IntlMarket = 'HK' | 'US';
 
 /** 港美股基础财务估值快照 */
-export interface IntlFundamentals {
-  code: string;
-  market: IntlMarket;
-  name: string;
-  pe: number;
-  pb: number;
-  marketCap: number; // 亿元（按本币计）
-  revenue: number; // 亿元
-  netIncome: number; // 亿元
-  totalAssets: number; // 亿元
-  totalLiabilities: number; // 亿元
-  currency: string; // HK = HKD，US = USD
-  dataSource: string;
-}
 
 /** 港美股财务估值获取结果（含降级标记） */
-export interface IntlFundamentalsResult {
-  fundamentals: IntlFundamentals | null;
-  degraded: boolean;
-  source: string;
-  fetchedAt: string;
-}
 
 /** 机构一致预期快照（东财盈利预测 + 北向季度持股；无历史序列，不参与回测） */
-export interface ConsensusSnapshot {
-  code: string;
-  orgNum: number | null;
-  ratings: {
-    buy: number | null;
-    add: number | null;
-    neutral: number | null;
-    reduce: number | null;
-    sale: number | null;
-  };
-  forecasts: { year: number; eps: number; mark: 'A' | 'E' }[];
-  targetPriceMax: number | null;
-  targetPriceMin: number | null;
-  north?: { date: string; holdSharesRatio: number | null; holdMarketCap: number | null };
-}

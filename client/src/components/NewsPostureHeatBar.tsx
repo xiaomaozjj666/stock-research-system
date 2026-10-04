@@ -35,7 +35,11 @@ interface RowVM {
 
 function toViewModel(report: WatchlistNewsBacktestReport): RowVM[] {
   const rows = report.results.map((row) => {
-    const ns: NewsSignal | null = row.newsSentiment;
+    // 标注为 `| undefined`：服务端 alerts.ts 的字段是
+    // `newsSentiment?: {...} | null` —— 该只取数失败时**字段缺省**，
+    // 有新闻但无情绪时才是显式 null。两种情况都要接住。
+    // 下方一律用 `ns?.` / `!!ns?.` 判空，故行为不受影响。
+    const ns: NewsSignal | null | undefined = row.newsSentiment;
     const hasNews = !!ns?.hasNews;
     return {
       label: `${row.code}${row.name ? ' ' + row.name : ''}`,
