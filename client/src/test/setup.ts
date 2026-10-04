@@ -9,6 +9,11 @@ import { cleanup } from '@testing-library/react';
 if (typeof document !== 'undefined') {
   afterEach(() => {
     cleanup();
+    // App 把激活的标签页同步到 location.hash（深链 + 前进/后退），而同一个 jsdom
+    // window 在一个文件内被所有用例共用。不复位的话，前一个用例点过的标签页会
+    // 通过 hash "传染"给下一个用例的首次渲染（表现为懒加载面板一上来就已挂载）。
+    // 复位后每个用例都从无 hash 的干净 URL 起步，与加深链之前的行为一致。
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
   });
 
   // jsdom 没有实现 scrollIntoView，而股票搜索类组件在键盘上下键高亮时会调用它

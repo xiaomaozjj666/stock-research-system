@@ -111,3 +111,15 @@ export function normalizeAShareCode(input: unknown): string | null {
   const out = normalizeStockCodeFor(input, 'A');
   return out ? out.code : null;
 }
+
+/**
+ * 纯布尔判定：是否为 A 股 6 位代码。供「只需要一个 true/false」的前置校验用，
+ * 免得每个调用点各写一份 `/^\d{6}$/.test(x)`。
+ *
+ * 语义与散落各处的内联正则**逐字等价**：`RegExp.prototype.test` 会对非字符串入参
+ * 走 `String(x)` 隐式转换，这里直接复用同一个 A_SHARE_RE，不引入新行为。
+ * 需要规范化后的代码（trim / 数字入参转字符串）时用 normalizeAShareCode。
+ */
+export function isAShareCode(input: unknown): boolean {
+  return A_SHARE_RE.test(input as string);
+}

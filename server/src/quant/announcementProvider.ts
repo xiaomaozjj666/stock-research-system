@@ -17,6 +17,7 @@
  * 由调用方降级（与 eventProvider 同语义）。
  */
 import { withQuantCache } from './quantCache.js';
+import { isAShareCode } from '../utils/stockCode.js';
 
 const LIST_URL = 'https://np-anotice-stock.eastmoney.com/api/security/ann';
 const CONTENT_URL = 'https://np-cnotice-stock.eastmoney.com/api/content/ann';
@@ -67,7 +68,7 @@ export async function fetchAnnouncementList(
   pageSize = 10,
 ): Promise<AnnouncementListResult> {
   const c = code.trim();
-  if (!/^\d{6}$/.test(c)) {
+  if (!isAShareCode(c)) {
     throw new Error('公告查询需 6 位 A 股代码');
   }
   const size = Math.max(1, Math.min(Math.floor(pageSize), 30));

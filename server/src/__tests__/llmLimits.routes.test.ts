@@ -13,6 +13,9 @@ const agents = vi.hoisted(() => ({
   run: vi.fn(),
   runStream: vi.fn(),
 }));
+const timeseries = vi.hoisted(() => ({ analyzeTimeseries: vi.fn() }));
+const digests = vi.hoisted(() => ({ runResearchDigest: vi.fn() }));
+const screener = vi.hoisted(() => ({ runMarketScreener: vi.fn() }));
 
 vi.mock('../llm/ensemble.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../llm/ensemble.js')>();
@@ -22,6 +25,24 @@ vi.mock('../llm/ensemble.js', async (importOriginal) => {
 vi.mock('../services/chatAgent.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/chatAgent.js')>();
   return { ...actual, chatAgent: agents };
+});
+
+// 以下三个模块只替换「会打到 LLM 闸门」的那个导出函数，其余（类型、错误类等）
+// 用 importOriginal 原样带回 —— ScreenerParamError 被路由用 instanceof 判定，
+// 若一并 mock 成替身类，400 分支就再也匹配不到，测试会假绿。
+vi.mock('../quant/timeseries/analyze.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../quant/timeseries/analyze.js')>();
+  return { ...actual, analyzeTimeseries: timeseries.analyzeTimeseries };
+});
+
+vi.mock('../quant/researchDigest.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../quant/researchDigest.js')>();
+  return { ...actual, runResearchDigest: digests.runResearchDigest };
+});
+
+vi.mock('../quant/screener.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../quant/screener.js')>();
+  return { ...actual, runMarketScreener: screener.runMarketScreener };
 });
 
 // 限流器放行：本文件只验证入口限幅与 429 映射，不重复验证限流
@@ -173,6 +194,83 @@ describe('闸门排队超时 → 429 + Retry-After', () => {
     agents.run.mockRejectedValue(new Error('别的问题'));
     const chat = await request(app).post('/api/chat').send({ message: '你好' });
     expect(chat.status).toBe(500);
+  });
+
+  /**
+   * 以下三个量化端点原先一律落到 500：闸门排队超时是「可退避重试」信号，
+   * 混进 500 会让客户端无从判断该不该重试，只能整体报错。修复后统一 429 + Retry-After。
+   * 选这三个是为了覆盖三种 handler 形态：async + 领域正则前置（timeseries）、
+   * 同步 handler（digests）、async + 自定义错误类分支（screener）。
+   */
+  it('POST /api/quant/timeseries/analyze：修复前是 500，现在是 429', async () => {
+    timeseries.analyzeTimeseries.mockRejectedValue(new QueueTimeoutError('llm', 30_000, 30_000));
+    const r = await request(app)
+      .post('/api/quant/timeseries/analyze')
+      .send({ test: 'adf', code: '600519' });
+    expect(r.status).toBe(429);
+    expect(r.headers['retry-after']).toBe('30');
+    expect(r.body.code).toBe('LLM_QUEUE_TIMEOUT');
+  });
+
+  it('POST /api/quant/timeseries/analyze：闸门判定先于领域 400/502 正则', async () => {
+    // 排队超时同样是「请稍后重试」语义，不能被 400/502 的中文正则分支抢先吃掉
+    timeseries.analyzeTimeseries.mockRejectedValue(new QueueTimeoutError('llm', 30_000, 30_000));
+    const r = await request(app)
+      .post('/api/quant/timeseries/analyze')
+      .send({ test: 'adf', code: '600519' });
+    expect([400, 502]).not.toContain(r.status);
+  });
+
+  it('POST /api/quant/timeseries/analyze：领域错误仍走原有 400/502', async () => {
+    timeseries.analyzeTimeseries.mockRejectedValue(new Error('数据不足，请扩大窗口'));
+    const insufficient = await request(app)
+      .post('/api/quant/timeseries/analyze')
+      .send({ test: 'adf', code: '600519' });
+    expect(insufficient.status).toBe(502);
+
+    timeseries.analyzeTimeseries.mockRejectedValue(new Error('参数至少需要两个标的'));
+    const badParam = await request(app)
+      .post('/api/quant/timeseries/analyze')
+      .send({ test: 'cointegration', code: '600519' });
+    expect(badParam.status).toBe(400);
+  });
+
+  it('POST /api/quant/digests/run：修复前是 500，现在是 429', async () => {
+    digests.runResearchDigest.mockImplementation(() => {
+      throw new QueueTimeoutError('llm', 30_000, 30_000);
+    });
+    const r = await request(app).post('/api/quant/digests/run').send({});
+    expect(r.status).toBe(429);
+    expect(r.headers['retry-after']).toBe('30');
+    expect(r.body.code).toBe('LLM_QUEUE_TIMEOUT');
+  });
+
+  it('POST /api/quant/digests/run：非闸门错误仍是 500', async () => {
+    digests.runResearchDigest.mockImplementation(() => {
+      throw new Error('落盘失败');
+    });
+    const r = await request(app).post('/api/quant/digests/run').send({});
+    expect(r.status).toBe(500);
+  });
+
+  it('POST /api/quant/screener/run：修复前是 500，现在是 429', async () => {
+    screener.runMarketScreener.mockRejectedValue(new QueueTimeoutError('llm', 30_000, 30_000));
+    const r = await request(app).post('/api/quant/screener/run').send({ maxStocks: 50 });
+    expect(r.status).toBe(429);
+    expect(r.headers['retry-after']).toBe('30');
+    expect(r.body.code).toBe('LLM_QUEUE_TIMEOUT');
+  });
+
+  it('POST /api/quant/screener/run：入参非法仍是 400（未被闸门分支吞掉）', async () => {
+    const { ScreenerParamError } = await import('../quant/screener.js');
+    screener.runMarketScreener.mockRejectedValue(
+      new ScreenerParamError('startDate 不能晚于 endDate'),
+    );
+    const r = await request(app)
+      .post('/api/quant/screener/run')
+      .send({ startDate: '2026-09-01', endDate: '2026-01-01' });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toContain('endDate');
   });
 });
 

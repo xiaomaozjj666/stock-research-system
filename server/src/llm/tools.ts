@@ -9,6 +9,11 @@
  * - 工具执行错误被吞掉并返回字符串，让 LLM 有机会自我纠正，而非让整个对话崩溃。
  */
 
+// 本文件是全仓唯一需要 import 的东西，且刻意只引这一条：utils/stockCode 自身不 import
+// 任何模块（纯正则 + 字符串处理），不会把网络/文件系统拉进来，与上面「不 import 重型
+// 业务模块」的设计原则不冲突。原先这里散落着 7 份各自复制的 `/^\d{6}$/.test(x)`。
+import { isAShareCode } from '../utils/stockCode.js';
+
 export interface ToolDefinition {
   type: 'function';
   function: {
@@ -265,7 +270,7 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
     if (call.function.name === 'run_analysis') {
       if (!deps.runAnalysis) return 'run_analysis 未配置';
       const code = String(args.stockCode || '');
-      if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
+      if (!isAShareCode(code)) return '请提供有效的 6 位股票代码';
       const r = await deps.runAnalysis(code);
       return truncate(JSON.stringify(r, null, 2));
     }
@@ -282,7 +287,7 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       }
       const code = String(args.stockCode || '');
       // 与 run_analysis/evaluate_backtest 对齐：校验 6 位代码（此前缺失，行为不一致）
-      if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
+      if (!isAShareCode(code)) return '请提供有效的 6 位股票代码';
       const strategy = String(args.strategy || 'ma_cross');
       const start = String(
         args.startDate ||
@@ -309,7 +314,7 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
           new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
       );
       const end = String(args.endDate || new Date().toISOString().split('T')[0]);
-      if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
+      if (!isAShareCode(code)) return '请提供有效的 6 位股票代码';
       const parsed = deps.parseStrategyInput(strategy) as Record<string, unknown>;
       const baseCfg: Record<string, unknown> = {
         ...parsed,
@@ -373,9 +378,9 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       if (!deps.runTimeseriesAnalyze) return 'run_timeseries_analyze 未配置';
       const test = String(args.test || '').trim();
       const code = String(args.stockCode || '').trim();
-      if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
+      if (!isAShareCode(code)) return '请提供有效的 6 位股票代码';
       const code2 = String(args.code2 || '').trim();
-      if ((test === 'coint' || test === 'kalman-beta') && !/^\d{6}$/.test(code2)) {
+      if ((test === 'coint' || test === 'kalman-beta') && !isAShareCode(code2)) {
         return `test='${test}' 需要第二条序列的 6 位代码（code2）`;
       }
       const r = await deps.runTimeseriesAnalyze({
@@ -398,7 +403,7 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
     if (call.function.name === 'get_recent_announcements') {
       if (!deps.getAnnouncements) return 'get_recent_announcements 未配置';
       const code = String(args.stockCode || '').trim();
-      if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
+      if (!isAShareCode(code)) return '请提供有效的 6 位股票代码';
       const brief = await deps.getAnnouncements(code);
       if (!brief || (typeof brief === 'string' && brief.trim() === '')) {
         return `${code} 最近没有可读的公告记录`;
@@ -408,7 +413,7 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
     if (call.function.name === 'run_valuation_model') {
       if (!deps.runValuationModel) return 'run_valuation_model 未配置';
       const code = String(args.stockCode || '').trim();
-      if (!/^\d{6}$/.test(code)) return '请提供有效的 6 位股票代码';
+      if (!isAShareCode(code)) return '请提供有效的 6 位股票代码';
       const assumptions: Record<string, number> = {};
       if (typeof args.growthRate1 === 'number' && Number.isFinite(args.growthRate1)) {
         assumptions.growthRate1 = args.growthRate1;

@@ -3,6 +3,202 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `docs/ENGINEERING-NOTES.md`。
 
+## 2026-10-04（第三轮续）· 鉴权补齐浏览器侧：上一轮的服务端鉴权实际上把用户锁在了门外
+
+**背景**：上一轮把 API 访问令牌做完了服务端，中间件单测全绿、真实进程冒烟也通过。
+本轮复核「用户照文档配好之后实际会怎样」，发现**功能是坏的**：浏览器端零令牌支持。
+一旦真的配上 `API_AUTH_TOKEN`，前端 axios 不带凭据、没有录入入口、401 也无任何提示——
+用户打开自己的系统只看到满屏报错，无从下手，只能去翻 `.env` 手动改回来。
+**这比不加鉴权更糟**：安全功能把自己变成了路障。中间件测试发现不了，
+它们只验证服务端契约，不涉及浏览器能否自动携带凭据。
+
+**补的四件事**
+
+- **axios 请求拦截器统一注入令牌**。REST 端点有 30+ 个，逐个传参会留下"某处忘传"的
+  永久坑（表现为某个页面莫名 401，几乎无法定位）。拦截器是唯一能保证新增端点默认
+  就带鉴权的位置。用 `headers.set()` 而非展开合并——axios 的 headers 是 `AxiosHeaders`
+  类实例，展开会丢掉 `set/get/has`。
+- **SSE 走 `?token=`**。浏览器 `EventSource`（消费 `text/event-stream` 的原生 API）
+  **不允许自定义请求头**，这是平台约束，故分析/对话两个流式端点用 query 传令牌。
+  服务端**只接受 GET 的 query 令牌**，写操作不认（只多泄漏面、无收益）。
+  日志侧无需额外处理：`token` 不在 `logSanitize` 白名单内，请求日志与 telemetry span
+  都会抹成 `[redacted]`，并加断言钉死（否则日后有人把 token 加进白名单即等于把凭据写进日志）。
+- **解锁条默认不渲染，捕获到 401 才出现**（任意 REST 401 → 全局广播）。
+  本系统默认不鉴权，无条件弹窗等于让每个本地用户都多点一次；未启用鉴权的用户
+  完全看不到它，行为与加这个组件之前逐字相同。
+- **解锁后整页重载**而非局部重试：解锁前已失败的请求散落在各页面 `useEffect` 里，
+  逐个重试覆盖不全，重载让它们自然重发。
+
+**顺带修掉的两处**：4 个 axios 测试桩缺 `interceptors`（新增拦截器后集体起不来；
+已内联补齐并注明为何不能抽公共 helper——`vi.hoisted` 在 ESM import 之前执行）；
+一处 UTF-8 坏字。
+
+**测试超时的定位**：`auditLog.persistence` / `rag.corpus` / `paperTrading` /
+`fileCachePrune` / `compositeService` 曾在**全量跑**时随机红、**单独跑必绿**。
+根因是资源争抢而非逻辑：一次要 spawn 244 个 worker，磁盘密集的用例（`fs.rmSync` 递归清理、
+快照落盘往返）顶穿默认 `hookTimeout` 10s / `testTimeout` 5s；而 `test:coverage` 额外挂 v8
+插桩后执行普遍变慢一倍以上，更容易触发。已分别放宽到 60s / 30s 并注明理由。
+放宽不掩盖真卡死——死循环的用例不会返回，仍会被整体超时或 CI job timeout 兜住。
+
+**E2E「卡住」的排查**：本机跑 Playwright 曾十几分钟无输出。逐层定位后确认是环境问题，
+不是用例问题：环境设了 `HTTP_PROXY`/`HTTPS_PROXY` 却**没有 `NO_PROXY`**，webServer
+的就绪探针访问 `127.0.0.1` 也走代理，于是「服务已起但探针看不见」形成死锁
+（同一地址 `curl` 走代理 502、`--noproxy '*'` 200）。补 `NO_PROXY` 后 12 条一次全过。
+另有两处连带坑记在 `docs/ENGINEERING-NOTES.md` ⑫（globalSetup 重建触发删除守卫
+而静默挂起、被强杀跑次残留的 `test-results` 挡住下一轮）。
+
+**本轮门禁结果（均为实跑）**：`npm audit` 0 漏洞 / lint 0 警告 / 双端 tsc 0 /
+格式全过 / **244 文件 3372 用例全绿** / 覆盖率 lines 93.83% statements 91.92%
+functions 94% branches 82.25%（四项均过阈值）/ 双端 build 通过 /
+体积预算 17 个产物全过（合计 1242.54 kB / 预算 1300 kB）/
+Playwright `--retries=1` **12 条全过**（真实构建产物 + 真实进程 + 真实浏览器）。
+
+## 2026-09-28（第三轮）· API 访问令牌：把"暴露到本机之外"变成有意识的选择
+
+**背景**：此前 API 层完全开放。本机自用没问题，但一旦内网穿透 / 公网 / 团队共享，
+等于把自选股、分析、**会烧钱的 LLM 调用**、模拟盘与文件检索接口全部开放。
+
+**做法**：做成默认关闭、显式启用，而不是"强制鉴权"或"继续不管"。
+
+- 未设 `API_AUTH_TOKEN` 时中间件完全放行，**行为与加它之前逐字相同**——不影响本地开发，
+  也不影响既有用例。零回归就是这条不变式的证据（新增 19 条后 2334 条全绿）。
+- 比较用 `timingSafeEqual` 而非 `===`：逐字符比较会因首个不同字节的耗时差泄露 token 前缀，
+  公网可自动化利用；长度不同直接判否。401 响应不回显期望值。
+- 豁免范围刻意极小：**仅** `OPTIONS` 预检与 `/api/health`（容器/负载均衡探针不能要求令牌）。
+  并加反断言，确保 `/api/healthz` 这类名字相近的路径不被顺手放行。
+- 已用**真实构建产物 + 真实进程**冒烟验证：无令牌 401 / 错令牌 401 / 正确令牌 200 / health 200。
+
+**一个被测试抓出来的坑（值得记）**：中间件挂在 `app.use('/api', guard)` 上，而 Express 会把
+`req.path` 改写成**相对挂载点**的路径（`/api/health` → `/health`）。最初按 `req.path` 匹配
+豁免前缀时永远匹配不上，探活会被 401 拦掉——而这正是免鉴权豁免最不能失效的地方
+（探针拿不到 401 以外的响应就会判定服务挂了）。改用 `req.originalUrl` 后修复。
+教训：豁免路径必须同时配"子路径也豁免"和"名字相近的路径不豁免"两条**相反方向**的断言，
+只写前者锁不住。
+
+**本轮门禁结果（均为实跑）**：`npm audit` 0 漏洞 / lint 0 警告 / 双端 tsc 0 / 格式全过 /
+**178 文件 2334 用例全绿** / 双端 build 通过 / Playwright `--retries=1` 12 条全过。
+
+## 2026-09-28（续）— 结构拆分与 CI 门禁：路由按领域拆分、自省阈值可单测、体积预算、依赖审计清零
+
+上一轮修的是"静默失效"（丢数、500 掩盖 429、伪研判、失效的 lint 规则），
+本轮处理剩下的结构问题，并**把 CI 从"审计门禁会红"修到全绿**。
+
+**① `routes/quant.ts`（2102 行）按领域拆分**
+
+一个文件里混着 24 个路由、5 个领域。现拆为 `quantCore.ts` / `quantCrossSection.ts` /
+`llmAdmin.ts` / `quantOps.ts`，`quant.ts` 退化为组合根；跨领域共用的 23 个辅助声明
+（取数扇出 / 入参校验 / 模拟数据闸门 / 台账留痕）移到 `services/quant/panelService.ts`
+——它们是业务规则，留在 routes/ 下既无法直接单测也会被各领域复制成多份分叉。
+各子模块用绝对路径注册自己的 Router，`index.ts` 仍只需一行 `app.use(quantRouter)`，
+**对外 HTTP 契约零变化**。正确性以「与原文件逐行比对、未解释丢失行数为 0」验收。
+
+**② 自省阈值抽成纯函数（`services/analysisReflection.ts`）**
+
+「双层自省 + 逻辑闭环」里的阈值（现金流/利润 0.5 与 0.9、毛利率波动 10 点、PE 分位 20/80、
+营收增速 5%、反对论点置信度 65）原先内联在 780+ 行的 `executeAnalysis` 里，改一个阈值
+无法写断言。抽成无 IO 的纯函数后补 24 条测试，并顺带消掉一处真实重复：
+风险条目提取原先在自省文案和 `risk_list` 各抄了一份，阈值漂移会让两者对不上。
+
+**③ 校验收敛**：5 个文件里 15 处各写一份的 `/^\d{6}$/` 统一走 `utils/stockCode.isAShareCode()`
+（复用同一个正则，语义逐字等价）。
+
+**④ 客户端**：`mountedTabs` 改为 keep-alive 白名单（此前访问过的页签永久常驻，
+隐藏的量化页一直跑定时器）；`manualChunks` 从子串匹配改为按真实包名分组；
+新增 `check-bundle-size.mjs` 体积预算并接入 CI——原来的 `chunkSizeWarningLimit: 1000`
+之下，626 kB 的 echarts chunk 从不报警，而 warning 本来也不会让 CI 变红。
+
+**⑤ 依赖审计此前是红的**：`npm audit --audit-level=high` 报 1 高（`brace-expansion` DoS）+
+1 中（`ip-address` SSRF），**CI 审计门禁会直接失败**。`npm audit fix` 做了补丁级升级
+（`brace-expansion` 5.0.9→5.0.12、`ip-address` 10.4.0→10.7.3，均为传递依赖），
+现 `found 0 vulnerabilities`，升级后全量用例与 e2e 均复跑通过。
+
+**⑥ 两条钉死文件名的结构断言测试**改为扫整个目录并加反断言——拆分后不再假绿，
+今后再拆文件也不用维护文件名清单。
+
+**⑦ vitest worker 池实测后决定不改**（详见 `docs/ENGINEERING-NOTES.md` 第 ⑥ 条）：
+threads 更快且本次零错误，但 `isolate: true` 不保证 `process.env` 隔离，
+而本仓库测试大量注入 env，正确性风险不值得那 80 秒。
+
+**本轮门禁结果（均为实跑）**：`npm audit` 0 漏洞 / lint 0 警告 / 双端 tsc 0 /
+格式全过 / **240 文件 3312 用例全绿** / 覆盖率 lines 93.88% · statements 91.96% ·
+functions 94.12% · branches 82.25%（四项阈值均过）/ 双端 build 通过 / 体积预算 1238 kB
+（上限 1300）/ Playwright `--retries=1` 12 条全过。
+
+## 2026-09-28 — 一轮加固：覆盖率分母纠正、四处静默失效修复、客户端基建补齐
+
+以「先复现再改」为准绳的一轮加固。所有改动都有对应的新增测试，全量门禁通过
+（lint / 双端 tsc / 双端 build / 238 文件 3279 用例 + 覆盖率阈值 / 12 条 Playwright）。
+
+**① 覆盖率门禁的分母纠正（本次最重要的改动）**
+
+- 旧配置把 `server/src/routes/**` 整目录排除在覆盖率分母外（13 个文件、3758 行，
+  含 2100+ 行的 `quant.ts`），理由写的是「由 supertest 集成测试覆盖」。
+  **排除意味着这些行既不占分母、也不构成门禁**——体量最大的业务逻辑文件恰好在盲区里。
+- 实测纳入后仅降约 1.3 个点，四项阈值**全部仍通过**（说明该目录本就由
+  `server/src/__tests__/*.routes.test.ts` 真实覆盖）。新基线：
+  lines 93.81% / statements 91.88% / functions 94.08% / branches 82.09%。
+
+**② 校准数据静默丢数（`llm/ensemble.ts`）**
+
+- 全仓 8 处落盘点都用 tmp+rename，唯独这里裸 `writeFileSync`。直写会先 truncate 再写，
+  读者可能读到半截 JSON，而 `readCalibration` 的 catch **静默**返回空档，
+  随后一次 `recordModelOutcome` 就把「只剩一条统计」的结果写回——历史命中率被整份抹掉且无报错。
+- 顺带修掉每请求 N 次全文件读 + N 次 JSON.parse 的同步阻塞（按 mtimeMs + size 记忆化）。
+- 顺手纠正一处想当然的判断：`recordModelOutcome` 的「丢失更新」在**单进程内不成立**
+  （全同步读-改-写，中间没有 `await`），残留的是跨进程风险，需文件锁，属部署拓扑决策。
+
+**③ 闸门排队超时的 429 收口（`routes/quant.ts`）**
+
+44 个 handler 里只有 1 个用了 `respondIfQueueTimeout`，其余落到 500，客户端无从判断
+该不该退避重试。给 3 个确实会打到 LLM 闸门的端点补齐（`timeseries/analyze`、
+`digests/run`、`screener/run`），覆盖同步/异步/带领域错误分支三种 handler 形态。
+`timeseries` 的判定**前置**到领域 400/502 正则之前，防止将来文案演变被参数分支吃掉。
+
+**④ LLM 空结构化响应的重问回路（`llm/expertRunner.ts`）**
+
+模型回一个**合法但空**的壳（`{"arguments":[]}`）时不抛错，会被 `normalizeExpertOpinion`
+补默认值后变成「自信度 60、零论点」的伪研判——**比明确降级更糟**，因为报告不会标注降级。
+现识别该形态并把失败原文 + schema 回灌**重问一次**（刻意封顶，不无限烧 token）。
+
+**⑤ react-hooks lint 规则此前是死代码**
+
+`eslint.config.mjs` 因无 TS parser 直接忽略 `**/*.ts(x)`，`.oxlintrc.json` 又没开 React
+插件——4 处 `eslint-disable react-hooks/exhaustive-deps` 注释**完全没有约束力**。
+开启后全仓只暴露一处真实违规（`CrossSectionPanel.tsx` 依赖数组里的冗余 `codesText`），已修。
+同时把 oxlint `react` 插件默认带出的 3 条 React Compiler 取向规则显式关掉并记原因，
+避免 lint 从 0 警告变成 25 条噪声。
+
+**⑥ 指标表容量上限（`services/metrics.ts`）**
+
+`normalizeRoute` 只收敛路由段，counter key 里还有 `statusLabel`。两张 Map 加上限
+（默认 2000），淘汰「最早创建的」——刻意不做 LRU：指标条目的价值只取决于它代表哪条路由。
+
+**⑦ 客户端基建补齐**
+
+- `api/client.ts` 37 处调用点补上 axios 泛型（真正受益的是 6 个无返回标注、
+  `any` 曾泄漏给调用方的函数）；`client/src/hooks/useQuery.ts` 抽出零依赖的查询 hook
+  （序号防乱序 + 卸载中止 + onSettled 同批更新），迁移 `HistoryPage` / `WatchlistPage`。
+- `App.tsx` 的 `activeTab` 与 `location.hash` 双向同步：**不引路由库**也能深链、
+  收藏与浏览器前进后退；未知 hash 回落到默认页而非渲染空白。
+
+**⑧ 测试补强**
+
+- 新增 `e2e/analyze.spec.ts`（3 条）：此前分析流程的**失败路径完全无 e2e**。
+  用 `page.route` 把「后端挂掉」变成确定事件，因此不依赖外部数据源、稳定且快，
+  覆盖的是真实前端路径（EventSource → 退避重连 → 错误归一化 → 横幅 → 重试），
+  其中一条专门盯「失败后 loading 必须复位」，这是流式分析最易泄漏的状态。
+- 新增 `ensemble.calibration.test.ts`（12 条，委托式 fs mock 统计真实系统调用）、
+  `expertRunner` 重问回路（7 条）、`llmLimits` 三个端点的 429 映射（7 条）、
+  `metrics` 容量上限（3 条）、`useQuery`（6 条）、`App` hash 深链（5 条）。
+
+**⑨ 明确没做的**（详见 `docs/ENGINEERING-NOTES.md` 第 ⑧ 条）
+
+- 未引入 zod 全量改写请求体校验——现网边界校验虽散但各自成立且有 3279 用例兜底，
+  真正的漏洞（④）已用更小改动堵上。
+- 未把 `routes/quant.ts` 拆成 5 个文件——先让它进入门禁（①），拆分留作独立一轮。
+- 未改 vitest 的 pool/isolate——`isolate: false` 会让模块级状态在测试文件间泄漏，
+  本仓库恰恰有大量模块级状态，正确性不换那 5~10 秒。
+
 ## 2026-09-22（当日稍后）— 收尾：三个 Dependabot PR 合并后的 lock 复合差异（2853e1c / d5f5eef / 070b1b6）
 
 PR #19 被 Dependabot 自己关掉、另开了 #20（5 项 → 7 项）——上一节移除 override 之后，

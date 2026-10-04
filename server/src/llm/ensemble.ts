@@ -46,14 +46,54 @@ function getCalibrationFile(): string {
     : DEFAULT_CALIBRATION_FILE;
 }
 
+/** 空档：文件不存在/损坏时的兜底值。返回新对象，避免调用方改到共享引用。 */
+function emptyStore(): CalibrationStore {
+  return { models: {} };
+}
+
+/**
+ * 已解析校准数据的记忆化缓存。
+ *
+ * 为什么需要：`modelWeight()` 每次调用都整读整解析一次 JSON 文件，而
+ * `runEnsemble()` 会按模型数 N 次调用它——也就是说**每个分析请求要付 N 次
+ * 全文件读 + N 次 JSON.parse 的同步阻塞代价**，全部打在事件循环上。
+ * 这里改成按 mtimeMs + size 判定：文件没变就直接复用解析结果，
+ * 只有真正落盘（writeCalibration）或外部改动才会重新解析。
+ * （`getModelWeights()` 已改为只读一次，不走这条逐模型路径。）
+ *
+ * 同步 stat 本身很便宜（不读内容），用它换取「跳过读文件 + 跳过解析」是划算的。
+ * 缓存命中判据同时看 mtimeMs 与 size：某些文件系统上 mtime 精度不足（1s 级），
+ * 同一秒内的等长改写只靠 mtime 会漏检，size 兜一层。
+ */
+let calibrationMemo: {
+  file: string;
+  mtimeMs: number;
+  size: number;
+  store: CalibrationStore;
+} | null = null;
+
 function readCalibration(): CalibrationStore {
   try {
     const file = getCalibrationFile();
-    if (!fs.existsSync(file)) return { models: {} };
+    let st: fs.Stats;
+    try {
+      st = fs.statSync(file);
+    } catch {
+      // 文件不存在（或 stat 失败）→ 缓存失效，回落到空档
+      calibrationMemo = null;
+      return emptyStore();
+    }
+    const memo = calibrationMemo;
+    if (memo && memo.file === file && memo.mtimeMs === st.mtimeMs && memo.size === st.size) {
+      return memo.store;
+    }
     const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as CalibrationStore;
-    return parsed && typeof parsed.models === 'object' ? parsed : { models: {} };
+    const store = parsed && typeof parsed.models === 'object' ? parsed : emptyStore();
+    calibrationMemo = { file, mtimeMs: st.mtimeMs, size: st.size, store };
+    return store;
   } catch {
-    return { models: {} };
+    // 解析失败（文件损坏）：不复用也不写入缓存，下一次调用会重新尝试读
+    return emptyStore();
   }
 }
 
@@ -61,40 +101,81 @@ function writeCalibration(store: CalibrationStore): void {
   try {
     const file = getCalibrationFile();
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(store, null, 2), 'utf-8');
+    // 先写临时文件再 rename（同分区原子替换），与 quant/quantCache.ts、
+    // services/historyService.ts、quant/factorLedger.ts 保持一致。
+    //
+    // 为什么必须原子：直写 writeFileSync 会先 truncate 再逐块写，读者可能在
+    // 写完之前 stat 到半截 JSON。此时 readCalibration 的 catch 会**静默**返回
+    // 空档（{models:{}}），而 recordModelOutcome 随后就把「只剩一条统计」的
+    // 结果写回去——历史命中率被一次并发读整个抹掉，且没有任何报错。
+    // rename 保证读者只能看到「改前」或「改后」的完整内容。
+    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf-8');
+    fs.renameSync(tmp, file);
+    // 主动失效记忆化：stat 缓存可能与刚写入的内容不一致（mtime 精度问题），
+    // 宁可下次多解析一次，也不要返回旧权重。
+    calibrationMemo = null;
   } catch {
-    // 校准数据不是数据源：写失败静默
+    // 校准数据不是数据源：写失败静默（不阻断主流程），定位走服务端日志。
+    // 残留的 .tmp 文件由 rename 失败前的异常路径产生，不做清理——与本文件
+    // 既有「写失败不抛」的语义一致，且 tmp 名为随机数，不会相互覆盖。
   }
 }
 
 /**
- * 模型权重：Laplace 平滑的命中率，下限 1/3（避免新模型被一两次失误打死、
+ * 单个模型统计 → 权重：Laplace 平滑的命中率，下限 1/3（避免新模型被一两次失误打死、
  * 也避免零样本模型权重为 0 直接出局）。
  */
-export function modelWeight(model: string): number {
-  const stat = readCalibration().models[model];
+function weightFromStat(stat: ModelStat | undefined): number {
   if (!stat || stat.total <= 0) return 0.5;
   return Math.max(1 / 3, (stat.correct + 1) / (stat.total + 2));
 }
 
+export function modelWeight(model: string): number {
+  return weightFromStat(readCalibration().models[model]);
+}
+
 /** 全部模型权重（供运维查看） */
 export function getModelWeights(): Record<string, number> {
+  // 只读一次校准数据：逐个调 modelWeight() 会重复 stat N 次（记忆化后虽不再读盘，
+  // 但 N 次 statSync 仍是白付的同步 syscall），而这里要的本来就是同一份快照
   const models = readCalibration().models;
   const out: Record<string, number> = {};
-  for (const id of Object.keys(models)) out[id] = modelWeight(id);
+  for (const id of Object.keys(models)) out[id] = weightFromStat(models[id]);
   return out;
 }
 
-/** 记录一次模型判断的验证结果（correct = 该判断事后被验证正确） */
+/**
+ * 记录一次模型判断的验证结果（correct = 该判断事后被验证正确）。
+ *
+ * 并发语义（避免被误读为存在丢失更新）：本函数是**全同步**的读-改-写，
+ * 读与写之间没有 `await`，因此在单进程 Node 事件循环里它天然不会被另一个
+ * 请求插进来——两个并发的 `POST /api/llm/calibration` 不可能各自基于旧快照
+ * 写回，真正的「后写覆盖前写」在同进程内不会发生。
+ *
+ * 真正残留的风险是**跨进程**（多实例 / 多容器共享同一个 MODEL_CALIBRATION_FILE）：
+ * 那是两个独立事件循环，本进程内的原子性保证不成立。要覆盖那种部署形态需要
+ * 文件锁（O_EXCL 自旋或 proper-lockfile），属于部署拓扑决策，不在本次改动范围。
+ * 已消除的是「读者读到半截文件 → catch 静默返回空档 → 统计被整份抹掉」这一类，
+ * 由 writeCalibration 的 tmp+rename 解决。
+ */
 export function recordModelOutcome(model: string, correct: boolean): void {
   if (!model) return;
-  const store = readCalibration();
-  const prev = store.models[model] ?? { correct: 0, total: 0 };
-  store.models[model] = {
-    correct: prev.correct + (correct ? 1 : 0),
-    total: prev.total + 1,
-  };
-  writeCalibration(store);
+  // 基于快照**新建**一份再改，不就地改 readCalibration 返回的对象：
+  // 那份对象可能是 calibrationMemo 里的共享引用，就地修改会把「已解析的缓存」
+  // 变成一个介于两次落盘之间的中间态——一旦 writeCalibration 中途抛错（目录不可写等），
+  // 记忆化里就残留了一个从未真正落盘的版本，后续读取会被它污染。
+  const current = readCalibration().models;
+  const prev = current[model] ?? { correct: 0, total: 0 };
+  writeCalibration({
+    models: {
+      ...current,
+      [model]: {
+        correct: prev.correct + (correct ? 1 : 0),
+        total: prev.total + 1,
+      },
+    },
+  });
 }
 
 /** 清空校准数据（供测试隔离） */

@@ -2,6 +2,7 @@
  * 核心分析：多专家研判 / SSE 流式 / 研究历史。
  */
 import { Router } from 'express';
+import { isAShareCode } from '../utils/stockCode.js';
 import {
   analyzeLimiter,
   metaLimiter,
@@ -98,7 +99,7 @@ function persistAnalysisHistory(result: unknown): void {
 router.post('/api/analyze', analyzeLimiter, circuitBreakerGuard, async (req, res) => {
   try {
     const { stockCode, resume } = req.body;
-    if (!stockCode || !/^\d{6}$/.test(stockCode)) {
+    if (!stockCode || !isAShareCode(stockCode)) {
       return res.status(400).json({ error: '请提供有效的6位股票代码' });
     }
     // resume：上次分析中断时，从最后一个成功阶段续跑（省去已支付过的 LLM 成本）
@@ -127,7 +128,7 @@ router.post('/api/analyze', analyzeLimiter, circuitBreakerGuard, async (req, res
 // === 流式分析接口（SSE，逐步推送分析进度） ===
 router.get('/api/analyze/stream', analyzeLimiter, circuitBreakerGuard, async (req, res) => {
   const stockCode = String(req.query.stockCode || '');
-  if (!/^\d{6}$/.test(stockCode)) {
+  if (!isAShareCode(stockCode)) {
     return res.status(400).json({ error: '请提供有效的6位股票代码' });
   }
 

@@ -40,6 +40,45 @@ interface RawExpertOutput {
 }
 
 /**
+ * 结构化响应是否「退化」——即 JSON 本身合法，但没有任何可用的研判内容。
+ *
+ * 为什么需要单独识别：`chatJSON<T>` 的泛型只是编译期断言，运行期并不校验，
+ * `JSON.parse` 成功就原样返回。于是模型完全可能回一个合法但空的壳
+ * （如 `{"arguments":[],"keyPoints":[]}`，或用 prose 回答导致 extractJSON 只捞到片段）。
+ * 这类响应**不会**抛错，原先会一路流进 normalizeExpertOpinion，被补默认值后
+ * 变成一条「自信度 60、情绪 neutral、零论点」的伪研判——比明确降级更糟：
+ * 用户看到的是一份看起来正常、实则没有内容的专家意见，且报告不会标注降级。
+ *
+ * 判据取「论点与要点同时为空」：二者任一非空都说明模型确实给出了内容，
+ * 交由 normalizeExpertOpinion 做枚举/数值归一即可，不必浪费一次重问。
+ */
+function isDegenerateResponse(raw: RawExpertOutput | undefined): boolean {
+  if (!raw || typeof raw !== 'object') return true;
+  const hasArgs =
+    Array.isArray(raw.arguments) &&
+    raw.arguments.some((a) => {
+      const arg = a as Record<string, unknown> | null;
+      return arg && typeof arg === 'object' && String(arg.text ?? '').trim().length > 0;
+    });
+  const hasPoints =
+    Array.isArray(raw.keyPoints) && raw.keyPoints.some((p) => String(p ?? '').trim().length > 0);
+  return !hasArgs && !hasPoints;
+}
+
+/** 构造一次「把问题说清楚再问一遍」的纠正提示（只重问一次，避免无上限烧 token） */
+function buildRepairTurn(userContent: string, raw: RawExpertOutput | undefined): ChatMessage {
+  return {
+    role: 'user',
+    content:
+      '你上一次的回复无法解析成研判结果：' +
+      `实际收到的是 ${JSON.stringify(raw ?? null).slice(0, 500)}\n` +
+      '请重新只输出符合下列结构的 JSON，不要输出任何解释文字、Markdown 代码块或额外字段：\n' +
+      EXPERT_OUTPUT_SCHEMA +
+      `\n（原始任务上下文重申：${userContent.slice(0, 400)}）`,
+  };
+}
+
+/**
  * 给降级产物打内部标记（不修改传入对象，避免调用方共享的常量被污染）。
  * 字段名沿用本仓库既有约定：下划线前缀表示内部字段（见 prompts.ts 的 `_incomplete`）。
  */
@@ -73,12 +112,39 @@ export async function runExpertWithLLM(options: ExpertRunOptions): Promise<Exper
     { role: 'user', content: `${options.context}\n\n${EXPERT_OUTPUT_SCHEMA}` },
   ];
 
+  const callOptions = {
+    temperature: options.temperature ?? 0.4,
+    maxTokens: options.maxTokens ?? 1500,
+    timeout: 45000,
+  };
+
   try {
-    const raw = await chatJSON<RawExpertOutput>(messages, {
-      temperature: options.temperature ?? 0.4,
-      maxTokens: options.maxTokens ?? 1500,
-      timeout: 45000,
-    });
+    let raw = await chatJSON<RawExpertOutput>(messages, callOptions);
+
+    // 结构合法但内容为空的重问回路：只补一次，且把失败原因与原文回灌给模型，
+    // 让它带着「上次哪里不对」重新作答。第二次仍退化就走原有降级路径，
+    // 行为与修复前一致（不会因为多问一次而变得更糟）。
+    if (isDegenerateResponse(raw)) {
+      logger.warn('[LLM] 结构化响应为空，重问一次', { expertName: options.expertName });
+      const repairMessages: ChatMessage[] = [
+        ...messages,
+        { role: 'assistant', content: JSON.stringify(raw ?? null).slice(0, 1000) },
+        buildRepairTurn(`${options.context}\n\n${EXPERT_OUTPUT_SCHEMA}`, raw),
+      ];
+      try {
+        const retried = await chatJSON<RawExpertOutput>(repairMessages, callOptions);
+        if (!isDegenerateResponse(retried)) {
+          logger.info('[LLM] 重问后取得有效研判', { expertName: options.expertName });
+          raw = retried;
+        } else {
+          logger.warn('[LLM] 重问后仍为空，按降级处理', { expertName: options.expertName });
+        }
+      } catch (retryErr) {
+        // 重问本身失败（网络/闸门）不影响首轮结果的处理，落到下面的降级
+        logger.warn('[LLM] 重问失败', { expertName: options.expertName, err: retryErr as Error });
+      }
+    }
+
     return normalizeExpertOpinion({ expert: options.expertName, ...raw });
   } catch (err) {
     // 排队超时（闸门 429 语义）与"LLM 调用出错"分开标记：

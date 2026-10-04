@@ -315,7 +315,8 @@ export default function CrossSectionPanel({ active = true }: { active?: boolean 
     topN,
     indexName,
     indexDate,
-    codesText,
+    // codesText 不入依赖：回调只用派生值 codes，而 codes = useMemo(parseCodes, [codesText])
+    // （:250），codesText 一变 codes 必变，回调照样重建；留着是冗余依赖。
     codes,
     horizonsText,
     includeFundamental,

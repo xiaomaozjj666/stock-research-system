@@ -26,20 +26,32 @@ const SRC = path.join(import.meta.dirname, '..', '..');
 const read = (rel: string): string => fs.readFileSync(path.join(SRC, rel), 'utf-8');
 
 describe('A 类：上游接受 signal 的限时点必须可取消', () => {
-  it('新闻抓取：管线 / 批量回测 / 两条量化路由都用 withAbortableTimeout，不再裸 withTimeout', () => {
-    for (const file of [
+  it('新闻抓取：管线 / 批量回测 / 量化路由都用 withAbortableTimeout，不再裸 withTimeout', () => {
+    // services 侧点名单固定；routes 侧扫整个目录——2026-09-28 把 routes/quant.ts 按领域
+    // 拆成 quantCore / quantCrossSection / llmAdmin / quantOps 之后，钉死文件名会漏掉
+    // 新文件而假绿。判据改成「**谁调用了 extractNewsSignal，谁就得用 withAbortableTimeout**」。
+    const files = [
       'services/analysisPipeline.ts',
       'services/watchlistBacktest.ts',
-      'routes/quant.ts',
-    ]) {
+      ...fs
+        .readdirSync(path.join(SRC, 'routes'))
+        .filter((f) => f.endsWith('.ts'))
+        .map((f) => `routes/${f}`),
+    ];
+
+    let checked = 0;
+    for (const file of files) {
       const src = read(file);
+      if (!/extractNewsSignal\s*\(/.test(src)) continue;
+      checked += 1;
       expect(src, `${file} 应引用 withAbortableTimeout`).toContain('withAbortableTimeout');
       // 反断言：裸 withTimeout 包 newsSignal 取数 → 8s 端点 + 30s LLM 打分继续跑满
       expect(src, `${file} 不应再出现裸 withTimeout 包 extractNewsSignal`).not.toMatch(
         /withTimeout\(\s*extractNewsSignal/,
       );
-      expect(src, `${file} 应把 signal 交给 extractNewsSignal`).toContain('extractNewsSignal(');
     }
+    // 反断言：别把断言写空
+    expect(checked, '应至少有一个文件调用 extractNewsSignal').toBeGreaterThan(0);
   });
 
   it('K线取数与评级回填：时限到点后能收手，而不是白跑到 provider 自己的 15s 上限', () => {

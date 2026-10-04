@@ -170,6 +170,30 @@ interface HistogramState {
 const requestCounts = new Map<string, number>(); // key: method|route|status
 const histograms = new Map<string, HistogramState>(); // key: method|route
 
+/**
+ * 时间序列条数上限（每张表各算一份）。
+ *
+ * 为什么要设上限：`normalizeRoute` 把**路由段**收敛成有界集合（未匹配的一律
+ * `/api/:other`），method 也只有少数几个，所以正常部署下这两个 Map 的基数是
+ * 有限的。但 countKey 里还含 `statusLabel`（`String(res.statusCode)`），一旦
+ * 前置代理返回非常规状态码，或上游框架吐出非数字 status，基数就不再有界——
+ * 指标表只增不减，会随进程寿命单调增长。监控组件本身的内存不该无界。
+ *
+ * 淘汰策略：Map 按插入序迭代，删头部即「最早创建」。这里刻意**不**做 LRU
+ * （命中时移动键序），因为指标条目的价值只取决于「它代表哪条路由」，与最近是否
+ * 被访问无关；每次请求都重排键序的开销不值得。语义与 dataService.ts 的容量淘汰
+ * 一致，只是没有把命中项移到末尾。
+ */
+const METRICS_SERIES_MAX = Number(process.env.METRICS_SERIES_MAX) || 2000;
+
+function capSeries<K>(map: Map<K, unknown>): void {
+  while (map.size > METRICS_SERIES_MAX) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
+
 /** 请求结束形态：finished=响应已写出（含 4xx/5xx）；aborted=客户端中途断开（未 finish） */
 export type HttpRequestOutcome = 'finished' | 'aborted';
 
@@ -190,12 +214,14 @@ export function recordHttpRequest(
   const statusLabel = outcome === 'aborted' ? 'aborted' : String(status);
   const countKey = `${method}|${route}|${statusLabel}`;
   requestCounts.set(countKey, (requestCounts.get(countKey) ?? 0) + 1);
+  capSeries(requestCounts);
 
   const histKey = `${method}|${route}`;
   let hist = histograms.get(histKey);
   if (!hist) {
     hist = { buckets: DURATION_BUCKETS_MS.map(() => 0), sum: 0, count: 0 };
     histograms.set(histKey, hist);
+    capSeries(histograms);
   }
   for (let i = 0; i < DURATION_BUCKETS_MS.length; i++) {
     if (durationMs <= DURATION_BUCKETS_MS[i]) hist.buckets[i] += 1;

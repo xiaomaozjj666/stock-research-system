@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   AnalysisCancelledError,
   getWatchlist,
@@ -8,13 +8,13 @@ import {
   monitorWatchlist,
   fetchWatchlistAlerts,
 } from '../../api/client';
-import type { WatchlistAlertsSnapshot } from '../../api/client';
 import type { WatchlistNewsBacktestReport, WatchlistAlert } from '../../types';
 import { normalizeApiError } from '../../api/client';
 import { signCls } from '../../lib/colors';
 import NewsPostureHeatBar from '../../components/NewsPostureHeatBar';
 import StockSearchInput from '../../components/StockSearchInput';
 import { useToast } from '../../components/Toast';
+import { useQuery } from '../../hooks/useQuery';
 
 function polarityLabel(p: number): { text: string; cls: string } {
   if (p > 0.15) return { text: '偏多', cls: 'bull' };
@@ -91,22 +91,50 @@ type WatchlistErrorAction = 'load' | 'run' | 'monitor' | 'add' | 'remove' | 'emp
 
 export default function WatchlistPage() {
   const { showToast } = useToast();
-  const [codes, setCodes] = useState<string[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
-  const [loadingList, setLoadingList] = useState(true);
   const [running, setRunning] = useState(false);
   const [monitoring, setMonitoring] = useState(false);
   const [report, setReport] = useState<WatchlistNewsBacktestReport | null>(null);
-  /** 最近一次监控快照（服务端落盘）：刷新/复访也能看到上次异动，此前只存在内存里、离开即失 */
-  const [snapshot, setSnapshot] = useState<WatchlistAlertsSnapshot | null>(null);
-  /** 快照读取失败的原因：与「从未监控过」区分开，否则会误导用户以为预警是空的 */
-  const [snapshotError, setSnapshotError] = useState<string | null>(null);
-  const [error, setError] = useState<WatchlistError | null>(null);
   /** 列表真实内容是否已被可靠取回：添加/移除/回测/监控等动作失败时，
       不能因此把已有的股票列表一并藏起来 */
   const [listKnown, setListKnown] = useState(false);
+  const [error, setError] = useState<WatchlistError | null>(null);
   /** 在途批量回测/监控请求的中止器：两者都是分钟级，用户应能中途撤回 */
   const abortRef = useRef<AbortController | null>(null);
+
+  /**
+   * 清单读取交给 useQuery：挂载即拉、乱序防护与卸载中止由 hook 统一兜住。
+   * 添加/移除后用 setData 就地同步服务端返回的新清单（与 hook 同一份状态，
+   * 不再另开一个 codes state，避免两份列表各说各话）。
+   */
+  const handleListSettled = useCallback((err: unknown) => {
+    if (err) {
+      // 失败必须留痕：此前只 setError 而 codes 仍是空数组，页面会渲染成"还没有关注的股票"
+      setError({
+        ...describeError(err, '自选股加载失败：', '请确认后端服务已启动后重试'),
+        action: 'load',
+        retryable: true,
+      });
+      return;
+    }
+    // 只有本轮成功才清错：重试进行中旧横幅要留着（用户需要看到上次失败尚未解决），
+    // 而"清单出来了 + 横幅还挂着"的中间帧由 onSettled 与数据同批更新来避免
+    setError(null);
+    setListKnown(true);
+  }, []);
+
+  const listQuery = useQuery(() => getWatchlist(), [], { onSettled: handleListSettled });
+  const {
+    data: listData,
+    loading: loadingList,
+    reload: reloadList,
+    setData: setListData,
+  } = listQuery;
+  /**
+   * codes 必须 memo：data 未就绪时 `?? []` 每帧都是新数组，
+   * 依赖 codes 的 useCallback 会因此每帧重建（回调身份不稳 = 子组件白渲染）。
+   */
+  const codes = useMemo(() => listData?.codes ?? [], [listData]);
 
   // 卸载时中止在途请求，避免向已卸载组件 setState
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -115,81 +143,65 @@ export default function WatchlistPage() {
     abortRef.current?.abort();
   }, []);
 
-  const loadList = useCallback(async () => {
-    setLoadingList(true);
-    try {
-      const res = await getWatchlist();
-      setCodes(res.codes ?? []);
-      setListKnown(true);
-      setError(null);
-    } catch (err) {
-      // 失败必须留痕：此前只 setError 而 codes 仍是空数组，页面会渲染成"还没有关注的股票"
-      setError({
-        ...describeError(err, '自选股加载失败：', '请确认后端服务已启动后重试'),
-        action: 'load',
-        retryable: true,
-      });
-    } finally {
-      setLoadingList(false);
-    }
-  }, []);
+  const loadList = useCallback(() => {
+    reloadList();
+  }, [reloadList]);
 
-  useEffect(() => {
-    loadList();
-    // 仅在挂载时拉取一次；后续失败由错误横幅的「重试」按钮触发
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  /**
+   * 挂载时读回「最近一次监控」：这是复访的理由——不点任何按钮也能看到上次的异动。
+   * 同样是"挂载即拉一次"模式，故一并交给 useQuery：它顺带补上了原实现缺失的
+   * 卸载中止（原先只有 alive 标志位，不中断在途请求）。
+   */
+  const alertsQuery = useQuery(() => fetchWatchlistAlerts(), []);
+  const {
+    data: alertsData,
+    error: alertsError,
+    setData: setAlertsData,
+    clearError: clearAlertsError,
+  } = alertsQuery;
+  const snapshot = alertsData ?? null;
+  // 快照读失败的原因：与「从未监控过」区分开，否则会误导用户以为预警是空的
+  const snapshotError = alertsError
+    ? describeError(alertsError, '最近监控记录读取失败：', '请稍后重试').text
+    : null;
 
-  // 挂载时读回「最近一次监控」：这是复访的理由——不点任何按钮也能看到上次的异动
-  useEffect(() => {
-    let alive = true;
-    fetchWatchlistAlerts()
-      .then((res) => {
-        if (!alive) return;
-        setSnapshot(res);
-        setSnapshotError(null);
-      })
-      .catch((err) => {
-        // 快照只是回看入口，读失败不该拖垮页面：卡片降级提示读取失败并保留「监控异动」入口
-        if (!alive) return;
-        setSnapshotError(describeError(err, '最近监控记录读取失败：', '请稍后重试').text);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
+  const handleAdd = useCallback(
+    async (code: string, name: string) => {
+      const c = code.trim();
+      if (!c) return;
+      try {
+        const res = await addToWatchlist(c);
+        setListData({ codes: res.codes ?? [] });
+        setNames((prev) => ({ ...prev, [c]: name || prev[c] || c }));
+        setListKnown(true);
+        setError(null);
+      } catch (err) {
+        setError({
+          ...describeError(err, '添加自选股失败：', '请确认后端服务已启动后重试'),
+          action: 'add',
+          retryable: false,
+        });
+      }
+    },
+    [setListData],
+  );
 
-  const handleAdd = useCallback(async (code: string, name: string) => {
-    const c = code.trim();
-    if (!c) return;
-    try {
-      const res = await addToWatchlist(c);
-      setCodes(res.codes ?? []);
-      setNames((prev) => ({ ...prev, [c]: name || prev[c] || c }));
-      setListKnown(true);
-      setError(null);
-    } catch (err) {
-      setError({
-        ...describeError(err, '添加自选股失败：', '请确认后端服务已启动后重试'),
-        action: 'add',
-        retryable: false,
-      });
-    }
-  }, []);
-
-  const handleRemove = useCallback(async (code: string) => {
-    try {
-      const res = await removeFromWatchlist(code);
-      setCodes(res.codes ?? []);
-      setError(null);
-    } catch (err) {
-      setError({
-        ...describeError(err, '移除自选股失败：', '请稍后重试'),
-        action: 'remove',
-        retryable: false,
-      });
-    }
-  }, []);
+  const handleRemove = useCallback(
+    async (code: string) => {
+      try {
+        const res = await removeFromWatchlist(code);
+        setListData({ codes: res.codes ?? [] });
+        setError(null);
+      } catch (err) {
+        setError({
+          ...describeError(err, '移除自选股失败：', '请稍后重试'),
+          action: 'remove',
+          retryable: false,
+        });
+      }
+    },
+    [setListData],
+  );
 
   const handleRun = useCallback(async () => {
     if (codes.length === 0) {
@@ -234,8 +246,9 @@ export default function WatchlistPage() {
     try {
       const res = await monitorWatchlist(controller.signal);
       // 服务端已把同一份结果落盘：直接用它刷新常驻卡片，本地不再另存一份 alerts
-      setSnapshot(res);
-      setSnapshotError(null);
+      // （写进 alertsQuery 的 data，并清掉上一轮"快照读取失败"——数据已拿到，旧错不再成立）
+      setAlertsData(res);
+      clearAlertsError();
       showToast(
         res.alerts.length > 0 ? `发现 ${res.alerts.length} 条异动预警` : '本轮无异动预警',
         res.alerts.length > 0 ? 'info' : 'success',
@@ -254,7 +267,7 @@ export default function WatchlistPage() {
       abortRef.current = null;
       setMonitoring(false);
     }
-  }, [codes, showToast]);
+  }, [codes, showToast, setAlertsData, clearAlertsError]);
 
   /** 重试：按错误来源重跑同一个操作（列表加载 / 批量回测 / 监控） */
   const handleRetry = useCallback(() => {

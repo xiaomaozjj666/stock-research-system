@@ -78,6 +78,13 @@ jobs:
         # client build = `tsc -b && vite build`（tsc -b 即 client 的类型检查门禁）
         run: npm run build --workspace=client
 
+      - name: Bundle size budget
+        # 打包体积门禁：按 chunk 逐个核对预算（client/scripts/check-bundle-size.mjs）。
+        # 为什么不靠 vite 的 chunkSizeWarningLimit：它只是 warning，不fail；
+        # 现状是 echarts 626 kB 顶着 1000 kB 的阈值从不报警，体积可以一路涨。
+        # 预算取当前实测值 + 约 8% 余量，因此今天的构建通过，后续增长会被拦下。
+        run: node client/scripts/check-bundle-size.mjs
+
       - name: Build (server)
         # server build = `tsc`（NodeNext 编译产出 dist）
         run: npm run build --workspace=server

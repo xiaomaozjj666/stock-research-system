@@ -381,6 +381,24 @@ describe('QuantPage —— 取消与失败处理', () => {
     expect(signal?.aborted).toBe(true);
   });
 
+  it('组件卸载时清掉耗时秒表（定时器真的停了，不是靠"卸载后 setState 变 no-op"蒙混）', async () => {
+    // 面板在 App 里已改为切走即卸载，因此卸载清理是唯一一道防线：
+    // 若秒表没停，它会继续每秒对已卸载组件 setState，直到页面关闭。
+    vi.useFakeTimers();
+    mocks.runQuantAnalysis.mockReturnValue(new Promise(() => {}));
+    const { unmount } = render(<QuantPage />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('strategy-submit'));
+    });
+    // 不能用 findBy*：假定时器下 waitFor 永不推进，会把用例拖到超时
+    expect(screen.getByText('研究进行中')).toBeInTheDocument();
+    // 研究进行中时确实有定时器在跑
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('研究进行中禁用策略提交与消息输入，避免重复提交', async () => {
     mocks.runQuantAnalysis.mockReturnValue(new Promise(() => {}));
     render(<QuantPage />);

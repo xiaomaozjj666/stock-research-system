@@ -227,16 +227,37 @@ describe('abortOnClientClose（真实 HTTP 连接）', () => {
   });
 });
 
-describe('两条路由共用同一份实现（去重后无本地副本）', () => {
-  it('watchlist.ts / quant.ts 不再各自定义 abortOnClientClose，而是从 utils/clientAbort 引入', async () => {
+describe('路由层共用同一份实现（去重后无本地副本）', () => {
+  it('任何路由文件都不自己定义 abortOnClientClose，而是从 utils/clientAbort 引入', async () => {
     const fs = await import('node:fs');
     const path = await import('node:path');
     const routesDir = path.join(import.meta.dirname, '..', '..', 'routes');
-    for (const file of ['watchlist.ts', 'quant.ts']) {
+
+    // 扫**整个目录**而不是钉死文件名：2026-09-28 把 routes/quant.ts 按领域拆成
+    // quantCore / quantCrossSection / llmAdmin / quantOps 之后，钉死清单的写法会
+    // 「忘了新文件」而假绿。真正要守的不变式是：任何用到它的文件都得从共享工具引入，
+    // 且任何文件都不得出现本地定义。
+    const files = fs
+      .readdirSync(routesDir)
+      .filter((f) => f.endsWith('.ts'))
+      .sort();
+
+    const users: string[] = [];
+    for (const file of files) {
       const src = fs.readFileSync(path.join(routesDir, file), 'utf-8');
-      expect(src).toContain("from '../utils/clientAbort.js'");
       // 本地定义应已删除（避免两份实现再次分叉）
-      expect(src).not.toMatch(/function abortOnClientClose\s*\(/);
+      expect(src, `${file} 不得本地定义 abortOnClientClose`).not.toMatch(
+        /function abortOnClientClose\s*\(/,
+      );
+      if (/\babortOnClientClose\s*\(/.test(src)) {
+        users.push(file);
+        expect(src, `${file} 应从 utils/clientAbort 引入`).toContain(
+          "from '../utils/clientAbort.js'",
+        );
+      }
     }
+
+    // 反断言：别把断言写空——这条用例的整个意义就在于「确实有用到它的文件」
+    expect(users.length, '应至少有用到 abortOnClientClose 的路由文件').toBeGreaterThan(0);
   });
 });

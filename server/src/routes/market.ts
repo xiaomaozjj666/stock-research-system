@@ -2,6 +2,7 @@
  * 股票列表 / 搜索 / 横向对比。
  */
 import { Router } from 'express';
+import { isAShareCode } from '../utils/stockCode.js';
 import {
   searchLimiter,
   compareLimiter,
@@ -160,7 +161,7 @@ router.post('/api/compare', compareLimiter, circuitBreakerGuard, async (req, res
       return res.status(400).json({ error: '请选择2-3只股票进行对比' });
     }
     for (const code of stockCodes) {
-      if (!/^\d{6}$/.test(code)) {
+      if (!isAShareCode(code)) {
         return res.status(400).json({ error: `无效的股票代码：${code}` });
       }
     }

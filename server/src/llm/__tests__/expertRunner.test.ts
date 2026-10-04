@@ -112,3 +112,104 @@ describe('runExpertWithLLM：降级原因可被上层看见', () => {
     expect(opinion._degraded).toBeUndefined();
   });
 });
+
+/**
+ * 结构化响应为空时的「重问一次」回路。
+ *
+ * 缺陷背景：chatJSON<T> 的泛型只是编译期断言，JSON.parse 成功即原样返回，运行期
+ * 不校验结构。模型完全可能回一个合法但空的壳（`{"arguments":[],"keyPoints":[]}`），
+ * 这类响应**不抛错**，于是被 normalizeExpertOpinion 补上默认值后变成一条
+ * 「自信度 60、情绪 neutral、零论点」的伪研判——比明确降级更糟：报告不会标注降级，
+ * 用户看到的是一份看起来正常、实则没有内容的专家意见。
+ * 修复后：识别退化响应并把「你哪里不对 + 原文」回灌重问一次；仍退化才按原路径降级。
+ */
+describe('runExpertWithLLM：空结构化响应的重问回路', () => {
+  beforeEach(() => {
+    vi.mocked(isLLMAvailable).mockReturnValue(true);
+    vi.mocked(chatJSON).mockReset();
+  });
+
+  it('首轮返回空壳 → 重问一次并采用第二次的有效研判', async () => {
+    vi.mocked(chatJSON)
+      .mockResolvedValueOnce({ arguments: [], overallSentiment: 'neutral', keyPoints: [] })
+      .mockResolvedValueOnce(normalLLMOutput());
+
+    const opinion = await runExpertWithLLM(makeOptions());
+
+    expect(vi.mocked(chatJSON)).toHaveBeenCalledTimes(2);
+    expect(opinion.overallSentiment).toBe('bullish');
+    expect(opinion.arguments[0].text).toBe('LLM 支持论点');
+    expect(opinion._degraded).toBeUndefined(); // 重问成功就不算降级
+  });
+
+  it('有效响应不触发重问（不多烧一次 token）', async () => {
+    vi.mocked(chatJSON).mockResolvedValue(normalLLMOutput());
+
+    await runExpertWithLLM(makeOptions());
+
+    expect(vi.mocked(chatJSON)).toHaveBeenCalledTimes(1);
+  });
+
+  it('只有 keyPoints、arguments 为空 → 视为有内容，不重问', async () => {
+    vi.mocked(chatJSON).mockResolvedValue({
+      arguments: [],
+      overallSentiment: 'bullish',
+      confidence: 70,
+      keyPoints: ['只有要点没有论点'],
+    });
+
+    const opinion = await runExpertWithLLM(makeOptions());
+
+    expect(vi.mocked(chatJSON)).toHaveBeenCalledTimes(1);
+    expect(opinion.keyPoints).toEqual(['只有要点没有论点']);
+  });
+
+  it('重问最多一次：第二次仍为空则不再追问，按原路径产出（不无限烧 token）', async () => {
+    vi.mocked(chatJSON).mockResolvedValue({ arguments: [], keyPoints: [] });
+
+    const opinion = await runExpertWithLLM(makeOptions());
+
+    expect(vi.mocked(chatJSON)).toHaveBeenCalledTimes(2);
+    // 与修复前一致：空壳会被 normalizeExpertOpinion 补默认值，不抛错
+    expect(opinion.arguments).toEqual([]);
+    expect(opinion.confidence).toBe(60); // clampInt 的 fallback
+    expect(opinion._degraded).toBeUndefined();
+  });
+
+  it('重问时把失败原文与 schema 一并回灌给模型', async () => {
+    vi.mocked(chatJSON)
+      .mockResolvedValueOnce({ arguments: [], keyPoints: [] })
+      .mockResolvedValueOnce(normalLLMOutput());
+
+    await runExpertWithLLM(makeOptions());
+
+    const repairTurn = vi.mocked(chatJSON).mock.calls[1][0];
+    const last = repairTurn[repairTurn.length - 1] as { role: string; content: string };
+    expect(repairTurn.length).toBeGreaterThan(2); // 追加了 assistant 回放 + user 纠正
+    expect(last.role).toBe('user');
+    expect(last.content).toContain('无法解析成研判结果');
+    expect(last.content).toContain('"arguments"'); // 回灌了模型实际返回的内容
+    expect(last.content).toContain('overallSentiment'); // 并重述 schema
+  });
+
+  it('重问自身抛错 → 不掩盖首轮结果的处理，仍不向外抛', async () => {
+    vi.mocked(chatJSON)
+      .mockResolvedValueOnce({ arguments: [], keyPoints: [] })
+      .mockRejectedValueOnce(new Error('重问时上游 502'));
+
+    const opinion = await runExpertWithLLM(makeOptions());
+
+    expect(vi.mocked(chatJSON)).toHaveBeenCalledTimes(2);
+    expect(opinion._degraded).toBeUndefined();
+    expect(opinion.arguments).toEqual([]);
+  });
+
+  it('首轮直接抛错（闸门超时）→ 不触发重问，直接按 queue_timeout 降级', async () => {
+    vi.mocked(chatJSON).mockRejectedValue(new QueueTimeoutError('llm', 31_000, 30_000));
+
+    const opinion = await runExpertWithLLM(makeOptions());
+
+    expect(vi.mocked(chatJSON)).toHaveBeenCalledTimes(1);
+    expect(opinion._degradeReason).toBe('queue_timeout');
+  });
+});

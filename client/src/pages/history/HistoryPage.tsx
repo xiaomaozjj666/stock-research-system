@@ -7,6 +7,7 @@ import {
 } from '../../api/client';
 import type { HistoryListItem } from '../../api/client';
 import type { AnalysisResult } from '../../types';
+import { useQuery } from '../../hooks/useQuery';
 
 interface HistoryPageProps {
   /** 点击"查看"时回调：恢复完整分析结果并切回深度研究页渲染 */
@@ -67,8 +68,6 @@ function describeError(
 }
 
 export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
-  const [items, setItems] = useState<HistoryListItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   /** 原始错误（英文 / 技术细节），只作为 title 提示，不直接展示 */
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
@@ -81,33 +80,37 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
   /**
    * 「查看」的请求序号：先点 A（慢）再点 B，A 的响应后到时不得把 B 的报告顶掉——
    * 否则用户看到的是 A 的报告却以为是自己刚点的 B。
+   * （列表加载的同类防护已由 useQuery 承担，这里只管详情请求。）
    */
   const openSeqRef = useRef(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
+  /**
+   * 列表加载交给 useQuery：挂载即拉、乱序防护与卸载中止由 hook 统一兜住。
+   * 错误仍留在页面里 —— 页面要的是"说人话"的整句 + 英文原文做 title，
+   * 而 hook 给的是原始错误，格式化是展示层的事，不该塞进通用 hook。
+   */
+  const handleListSettled = useCallback((err: unknown) => {
+    if (!err) {
       setError(null);
       setErrorDetail(null);
-      const list = await fetchHistoryList(50);
-      setItems(list);
-    } catch (err) {
-      // 失败必须留下明确错误，否则会被下面的空态渲染成"暂无研究历史"
-      const { text, detail } = describeError(
-        err,
-        '研究历史加载失败：',
-        '请确认后端服务已启动后重试',
-      );
-      setError(text);
-      setErrorDetail(detail ?? null);
-    } finally {
-      setLoading(false);
+      return;
     }
+    // 失败必须留下明确错误，否则会被下面的空态渲染成"暂无研究历史"
+    const { text, detail } = describeError(err, '研究历史加载失败：', '请确认后端服务已启动后重试');
+    setError(text);
+    setErrorDetail(detail ?? null);
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const list = useQuery<HistoryListItem[]>(() => fetchHistoryList(50), [], {
+    onSettled: handleListSettled,
+  });
+  const { data, loading, reload, setData } = list;
+  const items = data ?? [];
+
+  const load = useCallback(() => {
+    // 错误横幅的写入/清理由 onSettled 统一处理，这里只负责重跑
+    reload();
+  }, [reload]);
 
   // 卸载时清掉二次确认的定时器：否则切页 3 秒后仍会对已卸载组件 setState
   // （React 18/19 下表现为 no-op，但定时器本身泄漏，且是"卸载后仍在跑"的隐患）
@@ -163,7 +166,8 @@ export default function HistoryPage({ onOpenHistory }: HistoryPageProps) {
     setDeletingIds((prev) => new Set(prev).add(id));
     try {
       await deleteHistoryItem(id);
-      setItems((prev) => prev.filter((it) => it.id !== id));
+      // 本地剔除而不是整表重拉：删除只是少了一条，再打一次接口既慢又会让列表闪一下
+      setData((prev) => (prev ?? []).filter((it) => it.id !== id));
     } catch (err) {
       const { text, detail } = describeError(err, '删除失败：', '请稍后重试');
       setError(text);

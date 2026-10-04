@@ -182,3 +182,60 @@ describe('metrics — httpMetricsMiddleware', () => {
     expect(out).toContain('http_request_duration_ms_count{method="GET",route="/api/health"} 1');
   });
 });
+
+/**
+ * 指标表的容量上限。
+ *
+ * 为什么需要测：`normalizeRoute` 只收敛了**路由段**，而 counter 的 key 里还含
+ * `statusLabel`（String(res.statusCode)）。正常部署下基数有限，但前置代理返回
+ * 非常规状态码时就不再有界，而监控组件的内存不该随进程寿命单调增长。
+ * 这类「只在异常输入下才发作」的护栏最容易被后续改动悄悄移除，因此钉一条断言。
+ */
+describe('metrics — 指标表容量上限', () => {
+  /** 从 Prometheus 文本里数出某个 metric 的时间序列条数 */
+  function seriesCount(out: string, metric: string): number {
+    return out.split('\n').filter((l) => l.startsWith(metric) && l.includes('{')).length;
+  }
+
+  it('超出上限的路由基数被截断，Map 不再无界增长', () => {
+    resetMetrics();
+    // 默认上限 2000：灌 2500 条互不相同的路由
+    for (let i = 0; i < 2500; i++) {
+      recordHttpRequest('GET', `/api/synthetic/${i}`, 200, 5);
+    }
+
+    const out = renderPrometheus();
+    expect(seriesCount(out, 'http_requests_total')).toBeLessThanOrEqual(2000);
+    expect(seriesCount(out, 'http_request_duration_ms_count')).toBeLessThanOrEqual(2000);
+
+    // 淘汰的是最早创建的条目：末尾新条目仍在（说明是 FIFO 淘汰而非整体丢弃）
+    expect(out).toContain('/api/synthetic/2499');
+    expect(out).not.toContain('/api/synthetic/0 ');
+  });
+
+  it('截断后仍在更新的活跃序列不会被立刻挤掉', () => {
+    resetMetrics();
+    for (let i = 0; i < 2500; i++) {
+      recordHttpRequest('GET', `/api/synthetic/${i}`, 200, 5);
+    }
+    // 反复写入同一条（模拟热门路由持续有流量）
+    for (let i = 0; i < 50; i++) {
+      recordHttpRequest('GET', '/api/synthetic/hot', 200, 5);
+    }
+
+    const out = renderPrometheus();
+    expect(out).toContain('/api/synthetic/hot');
+  });
+
+  it('resetMetrics 后容量重新可用', () => {
+    for (let i = 0; i < 2500; i++) {
+      recordHttpRequest('GET', `/api/pre-reset/${i}`, 200, 5);
+    }
+    resetMetrics();
+    recordHttpRequest('GET', '/api/health', 200, 3);
+
+    const out = renderPrometheus();
+    expect(out).toContain('/api/health');
+    expect(out).not.toContain('/api/pre-reset/');
+  });
+});

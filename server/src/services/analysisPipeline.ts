@@ -44,6 +44,7 @@ import {
 import { buildAnnouncementBrief } from '../quant/announcementProvider.js';
 import { styleFactorExposures, decomposeRisk } from '../quant/riskAttribution.js';
 import { withTimeout, withAbortableTimeout } from '../utils/timeout.js';
+import { buildReflectionNotes, extractOpposeRisks } from './analysisReflection.js';
 import logger from '../utils/logger.js';
 
 /** 特异波动经验基准（%）：无残差收益序列时使用（A 股中位单股波动水平） */
@@ -636,96 +637,22 @@ async function executeAnalysis(
     safeDiv(peValues.filter((p) => p <= valuation.pe).length, peValues.length) * 100;
 
   // 4. 双层自省
-  const reflectionNotes: string[] = [];
-
-  // 专家覆盖度披露：有专家降级时如实说明，避免读者按满员研判理解置信度
-  if (degradedExperts.length > 0) {
-    reflectionNotes.push(
-      `【自省·覆盖度】本次 ${EXPERT_TOTAL - degradedExperts.length}/${EXPERT_TOTAL} 位专家参与研判，${degradedExperts.join('、')}未能返回结果，已自动降级剔除，结论置信度相应下调。`,
-    );
-  }
-
-  // 事后校准披露：让报告读者知道这套评级在该股上的历史兑现情况
-  if (accuracySummary && accuracySummary.stock.sampleCount > 0) {
-    const s = accuracySummary.stock;
-    const calibration =
-      s.accuracyPct !== null
-        ? `该股历史评级命中率 ${s.accuracyPct}%（${s.hitCount}/${s.judgedCount} 次方向判断兑现）`
-        : `该股已累积 ${s.sampleCount} 次评级样本，样本量尚不足以统计命中率`;
-    reflectionNotes.push(`【自省·事后校准】${calibration}，本次结论请结合该历史表现审慎采信。`);
-  }
-
-  // 第一层：事实自省 - 基于数据阈值触发
-  // 营收增速与专家情绪矛盾检查
-  if (revenueGrowthLatest < 5 && sentimentOf('fundamental') === 'bullish') {
-    reflectionNotes.push(
-      `【自省】营收增速仅${revenueGrowthLatest.toFixed(1)}%，基本面专家仍看多，可能存在乐观偏差。`,
-    );
-  }
-
-  // 现金流/利润一致性检查
-  if (cashFlowRatio < 0.5) {
-    reflectionNotes.push(
-      `【自省·警告】经营现金流/净利润仅${cashFlowRatio.toFixed(2)}，盈利质量存疑。`,
-    );
-  } else if (cashFlowRatio > 0.9) {
-    reflectionNotes.push(
-      `【自省·验证通过】经营现金流/净利润=${cashFlowRatio.toFixed(2)}，盈利质量可靠。`,
-    );
-  }
-
-  // 毛利率稳定性检查
-  if (grossMarginRange > 10) {
-    reflectionNotes.push(
-      `【自省·警告】毛利率波动${grossMarginRange.toFixed(1)}个百分点，盈利稳定性较差。`,
-    );
-  } else if (grossMarginRange < 3) {
-    reflectionNotes.push(
-      `【自省·验证通过】毛利率波动仅${grossMarginRange.toFixed(1)}个百分点，稳定性高。`,
-    );
-  }
-
-  // 第二层：逻辑闭环 - 通用化 4 个自问
-  // 逻辑闭环①：历史数据外推的局限性
-  reflectionNotes.push(
-    `【逻辑闭环①】分析基于${n}年财务数据外推，历史趋势在行业拐点可能失效。数据跨度${n}年（${financial.years[0]}-${financial.years[n - 1]}）。`,
-  );
-
-  // 逻辑闭环②：最可能的看错场景（从动态风险列表取第一条）
-  // 注意：actualRisks 在后面计算，这里先预计算
-  const preComputedRisks = allOpinions
-    .flatMap((o) =>
-      o.arguments
-        .filter((a) => a.type === 'oppose' && a.confidence >= 65)
-        .map((a) => (a.text.length > 60 ? a.text.slice(0, 57) + '...' : a.text)),
-    )
-    .slice(0, 6);
-  const topRisk = preComputedRisks[0] || '未知风险';
-  reflectionNotes.push(`【逻辑闭环②】最可能的"看错"场景：${topRisk}。`);
-
-  // 逻辑闭环③：市场是否已 price in（基于 PE 历史分位）
-  if (pePercentile <= 20) {
-    reflectionNotes.push(
-      `【逻辑闭环③】当前PE处于历史${pePercentile.toFixed(0)}%分位，市场可能已充分反映悲观预期。`,
-    );
-  } else if (pePercentile >= 80) {
-    reflectionNotes.push(
-      `【逻辑闭环③】当前PE处于历史${pePercentile.toFixed(0)}%分位，乐观预期可能已充分定价。`,
-    );
-  } else {
-    reflectionNotes.push(
-      `【逻辑闭环③】当前PE处于历史${pePercentile.toFixed(0)}%分位，估值处于合理区间。`,
-    );
-  }
-
-  // 逻辑闭环④：关键跟踪指标（基于专家情绪动态判断）
-  const topConcern =
-    sentimentOf('industry') === 'bearish'
-      ? '行业景气度下行'
-      : sentimentOf('valuation') === 'bearish'
-        ? '估值压力'
-        : '基本面变化';
-  reflectionNotes.push(`【逻辑闭环④】如果只能跟踪一个方向，应重点关注：${topConcern}。`);
+  // 文案与阈值已抽到 services/analysisReflection.ts：那里是无 IO 的纯函数，
+  // 阈值（现金流 0.5/0.9、毛利率 10 点、PE 分位 20/80、增速 5%、反对论点置信度 65）
+  // 才有条件写单测断言，而不是只能靠整条流水线间接覆盖。
+  const reflectionNotes = buildReflectionNotes({
+    yearCount: n,
+    years: financial.years,
+    revenueGrowthLatest,
+    cashFlowRatio,
+    grossMarginRange,
+    pePercentile,
+    degradedExperts,
+    accuracySummary,
+    expertTotal: EXPERT_TOTAL,
+    sentimentOf,
+    allOpinions,
+  });
 
   // 5. 量化打分（传入行业景气度建议；行业专家降级时不传，由打分引擎取默认）
   const industrySuggestion = (expertByKey.industry as IndustryExpertResult | undefined)
@@ -790,7 +717,9 @@ async function executeAnalysis(
     )
     .slice(0, 6);
 
-  const actualRisks = preComputedRisks;
+  // 与自省文案「逻辑闭环②」共用同一份实现（原先这里是逐字复制的一份，
+  // 两份阈值若漂移，报告正文说的风险就会和 risk_list 列的对不上）
+  const actualRisks = extractOpposeRisks(allOpinions);
 
   // 10. 后续跟踪指标（动态生成）
   const followUpIndicators: string[] = [];

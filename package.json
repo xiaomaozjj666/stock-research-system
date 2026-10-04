@@ -21,9 +21,10 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p client/tsconfig.json",
     "test:e2e": "playwright test",
+    "size:budget": "npm run build --workspace=client && node client/scripts/check-bundle-size.mjs",
     "mcp:serve": "npx tsx server/src/mcp/cli.ts",
-    "format": "prettier --write \"server/src/**/*.{ts,tsx,js,json,md}\" \"client/src/**/*.{ts,tsx,js,json,md}\" \"e2e/**/*.{ts,tsx,js,json}\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs,mts}\" \".github/**/*.yml\"",
-    "format:check": "prettier --check \"server/src/**/*.{ts,tsx,js,json,md}\" \"client/src/**/*.{ts,tsx,js,json,md}\" \"e2e/**/*.{ts,tsx,js,json}\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs,mts}\" \".github/**/*.yml\""
+    "format": "prettier --write \"server/src/**/*.{ts,tsx,js,json,md}\" \"client/src/**/*.{ts,tsx,js,json,md}\" \"e2e/**/*.{ts,tsx,js,json}\" \"client/scripts/**/*.{js,mjs}\" \"client/vite.config.ts\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs,mts}\" \".github/**/*.yml\"",
+    "format:check": "prettier --check \"server/src/**/*.{ts,tsx,js,json,md}\" \"client/src/**/*.{ts,tsx,js,json,md}\" \"e2e/**/*.{ts,tsx,js,json}\" \"client/scripts/**/*.{js,mjs}\" \"client/vite.config.ts\" \"scripts/**/*.{ts,tsx,js,json,mjs}\" \"*.{json,md,mjs,mts}\" \".github/**/*.yml\""
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
