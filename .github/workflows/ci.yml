@@ -1,11 +1,15 @@
 # 项目持续集成（GitHub Actions）
-# 触发：push 到 main/master 分支 + 任意 PR
+# 触发：push 到 main/master + 任意 PR；另有 nightly 定时跑（见文末说明）
 name: CI
 
 'on':
   push:
     branches: [main, master]
   pull_request:
+  schedule:
+    # 每日 04:17 UTC（北京 12:17）。刻意避开整点：整点是 GitHub Actions
+    # 排队高峰，schedule 任务本就非紧急，错开整点更不容易被延迟。
+    - cron: '17 4 * * *'
 
 # 最小权限：工作流只需读取仓库内容（不写 PR/issue、不动 packages）。
 # 放在工作流级而非 job 级：一次声明即覆盖全部现有 job 与将来新增的 job，
@@ -204,3 +208,49 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+  # ==========================================================================
+  # 夜间全量（flaky 探测）
+  # ==========================================================================
+  # 为什么需要：CI 只在 push / PR 时跑，而**偶发失败的关键性质是「大多数时候不发生」**。
+  # 本轮稳定期实测：同一份代码连跑 5 轮全量，第 5 轮才红（clientAbort 两处
+  # 「单跑 12 次全绿、只在全量并发下触发」的问题）。没有定时任务的话，
+  # 这类问题只能等「下一次有人提交代码碰巧撞上」才会暴露 —— 可能是几周后。
+  #
+  # 跑什么：只跑 vitest 全量（最会暴露 flaky 的一层），不重复 quality/e2e
+  # —— 后两者确定性强、每轮都有覆盖，重复跑只是消耗配额。
+  #
+  # 失败怎么办：schedule 的红灯**不会**保护分支（它不是 required check），
+  # 它的作用是「在 Actions 页面留下一条可见记录」→ 早上看 CI 列表就知道
+  # 昨晚有过一次不稳定，然后本地按下面的方法复现：
+  #   npm test                                  # 单跑（大概率绿：这是 flaky 的定义）
+  #   for i in 1 2 3 4 5; do npm test; done     # 多轮才能逼出来
+  # 注意：GitHub 会自动禁用连续 60 天无活动仓库的 schedule，
+  # 重新启用需要在 Actions 页点一下「Enable workflow」。
+  nightly-full:
+    name: Nightly (flaky probe)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # 刻意保留 concurrency 不设：夜间任务之间没有代码变化，并发跑只会互相抢资源
+    # 放大 flaky 概率，反而污染探测结果。
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --dangerously-allow-all-scripts --no-audit --no-fund
+
+      - name: Full test suite (repeat to surface flakes)
+        # 同一 job 内连跑 3 轮：单轮绿的 flaky 探测不到，而这正是本轮踩过的坑。
+        # 失败即中止并保留该轮日志 —— 「哪一轮、哪个文件」是定位 flaky 的第一线索。
+        run: |
+          for i in 1 2 3; do
+            echo "=== round $i ==="
+            npx vitest run --reporter=default || exit 1
+          done
