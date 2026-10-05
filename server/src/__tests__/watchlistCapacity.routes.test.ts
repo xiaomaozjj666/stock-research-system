@@ -3,7 +3,10 @@ import request from 'supertest';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+const app = withContract(rawApp);
 
 /**
  * 自选股清单容量上限（P1：addToWatchlist 无条数上限）

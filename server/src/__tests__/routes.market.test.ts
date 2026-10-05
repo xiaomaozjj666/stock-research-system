@@ -54,17 +54,22 @@ vi.mock('../services/analysisPipeline.js', () => ({
   runAnalysis: mocks.runAnalysis,
 }));
 
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+import { analysisResult as analysisResultFixture } from '../test/contractFixtures.js';
+const app = withContract(rawApp);
 
-/** runAnalysis 的返回值只需 stock_pool[0]（compare 路由取它作为单只结果） */
+/**
+ * runAnalysis 的返回值（compare 路由取 stock_pool[0] 作为单只结果）。
+ *
+ * 字段按 server/src/types.ts 的 AnalysisResult 补全：先前只造了 4 个字段、
+ * 靠 `as unknown as AnalysisResult` 绕过检查，契约校验一接上就报
+ * 「必填字段缺失」。**这正是响应体×契约交叉校验要抓的分叉**：
+ * 桩与真实结构不符，测试就永远只验自己造的那几个字段。
+ */
 function analysisResult(code: string, name: string): AnalysisResult {
-  return {
-    generatedAt: '2026-09-16T00:00:00.000Z',
-    stock_pool: [{ stock_code: code, stock_name: name, rating: '优先跟踪', total_score: 82 }],
-    data_sources: [],
-    research_confidence: '测试置信度',
-    limitation_explain: '测试局限性',
-  } as unknown as AnalysisResult;
+  return analysisResultFixture(code, name) as unknown as AnalysisResult;
 }
 
 beforeEach(() => {

@@ -398,8 +398,8 @@ export type CompositeAlphaResult = {
   };
   /** 市场基准收益是否取到；false 时 Beta 类因子按 NaN 处理、不参与加权 */
   benchmarkAvailable: boolean;
-  /** K 线是否来自取数失败后的合成降级 */
-  isSimulated: boolean;
+  /** K 线是否来自取数失败后的合成降级；旧版结果可能缺此字段（缺省视为非模拟） */
+  isSimulated?: boolean;
 };
 
 export type CompositeContributor = {

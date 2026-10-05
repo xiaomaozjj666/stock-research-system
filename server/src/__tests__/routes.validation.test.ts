@@ -3,7 +3,10 @@ import request from 'supertest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+const app = withContract(rawApp);
 
 // /api/stocks/search 的服务层打桩。真实链路在 CI 上要先等东财 suggest 超时、再回落本地
 // 全表 5000+ 只股票的最长公共子串 DP，耗时随机器负载在数秒到数十秒间浮动——同一提交在

@@ -91,7 +91,11 @@ vi.mock('../quant/marginProvider.js', async (importOriginal) => {
   return { ...actual, fetchMarginSeries: vi.fn(async () => []) };
 });
 
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+import { compositeAlphaResult } from '../test/contractFixtures.js';
+const app = withContract(rawApp);
 import {
   computeCompositeAlphaForStrategy,
   computeCompositeAlphaBatch,
@@ -186,6 +190,9 @@ describe('模拟行情闸门：合成 K 线不得流入结论', () => {
       bars: 300,
       dataRange: { start: '2024-01-01', end: '2025-10-01' },
       benchmarkAvailable: true,
+      // compositeService 无条件写入 isSimulated（compositeService.ts 第 122 行），
+      // 桩此前漏了它，契约校验接上后报「必填字段缺失」。
+      isSimulated: false,
     } as never);
 
     const res = await request(app)
@@ -264,7 +271,12 @@ describe('horizons 统一解析：越界/小数/超个数一律 400', () => {
   const base = { stockCode: '600519' };
 
   beforeEach(() => {
-    mockedComposite.mockResolvedValue({} as never);
+    // 默认返回**符合契约的完整形状**，不是空对象。此前是 `{} as never`：
+    // 用例只断言状态码与 mock 调用参数、不看响应体，所以空桩一直「通过」——
+    // 但响应体实际是 `{}`，与契约的 CompositeAlphaResult 毫无关系。
+    // 契约校验一接上就报「必填字段缺失」（全部字段）。
+    // 具体用例要改返回内容时自行覆盖整个对象（mockComposite.mockResolvedValueOnce）。
+    mockedComposite.mockResolvedValue(compositeAlphaResult('600519') as never);
   });
 
   it.each([

@@ -21,7 +21,10 @@ vi.mock('../services/watchlistBacktest.js', () => ({
 }));
 
 // 必须在 mock 之后导入 app
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+const app = withContract(rawApp);
 
 // 确保测试环境不走真实 LLM（避免网络/长连接导致 vitest 无法干净退出）
 const origDeepSeekKey = process.env.DEEPSEEK_API_KEY;

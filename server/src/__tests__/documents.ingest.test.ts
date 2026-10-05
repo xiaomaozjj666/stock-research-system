@@ -43,7 +43,11 @@ vi.mock('../quant/pdfExtract.js', async (importOriginal) => {
   return { ...actual, extractTextFromPdf: mocks.extractTextFromPdf };
 });
 
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+import { documentInsight } from '../test/contractFixtures.js';
+const app = withContract(rawApp);
 import { INGEST_BODY_LIMIT_BYTES, MAX_TITLE_CHARS } from '../routes/documents.js';
 import logger from '../utils/logger.js';
 
@@ -56,12 +60,7 @@ beforeEach(() => {
   mocks.ingestDocument.mockReset();
   mocks.extractDocumentInsights.mockReset();
   mocks.extractTextFromPdf.mockReset();
-  mocks.extractDocumentInsights.mockResolvedValue({
-    summary: '测试摘要',
-    positives: ['利好一'],
-    risks: ['风险一'],
-    catalysts: ['催化一'],
-  });
+  mocks.extractDocumentInsights.mockResolvedValue(documentInsight());
   mocks.extractTextFromPdf.mockResolvedValue('从 PDF 抽取出来的正文');
 });
 

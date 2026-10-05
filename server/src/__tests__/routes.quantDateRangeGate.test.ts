@@ -85,7 +85,10 @@ vi.mock('../quant/marginProvider.js', async (importOriginal) => {
   return { ...actual, fetchMarginSeries: vi.fn(async () => []) };
 });
 
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+const app = withContract(rawApp);
 import {
   computeCompositeAlphaForStrategy,
   computeCompositeAlphaBatch,

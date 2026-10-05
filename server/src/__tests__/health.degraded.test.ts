@@ -48,7 +48,10 @@ vi.mock('fs', async (importOriginal) => {
   };
 });
 
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+const app = withContract(rawApp);
 
 /** 让外部探测表现为"不可达"：fetch 直接抛错（等价 DNS/连接失败） */
 beforeAll(() => {

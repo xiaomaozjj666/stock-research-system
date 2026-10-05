@@ -3,7 +3,12 @@ import request from 'supertest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+import { stockPoolItem } from '../test/contractFixtures.js';
+const app = withContract(rawApp);
+
 import { saveHistoryEntry } from '../services/historyService.js';
 
 // 历史落盘重定向到临时文件（与单测同模式），路由测试经真实 app 验证 CRUD
@@ -33,7 +38,12 @@ describe('GET /api/history 研究历史路由', () => {
       industry: '白酒',
       rating: '优先跟踪',
       totalScore: 92,
-      result: { stock_pool: [{ stock_code: '600519' }] } as never,
+      result: {
+        stock_pool: [stockPoolItem()],
+        data_sources: [],
+        research_confidence: '测试置信度',
+        limitation_explain: '测试局限性',
+      } as never,
     });
     const res = await request(app).get('/api/history');
     expect(res.status).toBe(200);
@@ -54,7 +64,12 @@ describe('GET /api/history 研究历史路由', () => {
       stockName: '平安银行',
       rating: '持续观察',
       totalScore: 60,
-      result: { stock_pool: [{ stock_code: '000001', stock_name: '平安银行' }] } as never,
+      result: {
+        stock_pool: [stockPoolItem('000001', '平安银行')],
+        data_sources: [],
+        research_confidence: '测试置信度',
+        limitation_explain: '测试局限性',
+      } as never,
     });
     const res = await request(app).get(`/api/history/${saved!.id}`);
     expect(res.status).toBe(200);

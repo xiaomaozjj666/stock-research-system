@@ -4045,7 +4045,15 @@ export function buildOpenApiDocument() {
               type: 'boolean',
               description: '市场基准收益是否取到；false 时 Beta 类因子按 NaN 处理、不参与加权',
             },
-            isSimulated: { type: 'boolean', description: 'K 线是否来自取数失败后的合成降级' },
+            // 刻意**不进 required**：批量路径的闸门用
+            // `item.result?.isSimulated !== true` 判读（routes/quantCore.ts 第 85 行），
+            // 显式兼容「旧版结果没有该字段」的历史数据。契约若声明为必填，
+            // 消费方按契约写代码就会假定它一定在 —— 与实现的实际兼容行为不符。
+            isSimulated: {
+              type: 'boolean',
+              description:
+                'K 线是否来自取数失败后的合成降级；旧版结果可能缺此字段（缺省视为非模拟）',
+            },
           },
           required: [
             'stockCode',
@@ -4057,7 +4065,6 @@ export function buildOpenApiDocument() {
             'bars',
             'dataRange',
             'benchmarkAvailable',
-            'isSimulated',
           ],
         },
 

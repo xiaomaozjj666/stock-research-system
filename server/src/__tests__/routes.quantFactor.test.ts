@@ -62,7 +62,10 @@ vi.mock('../quant/marginProvider.js', async (importOriginal) => ({
 vi.mock('../quant/baostockBridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../quant/baostockBridge.js')>()),
   fetchIndexConstituentsCached: vi.fn(),
-  baostockHealth: vi.fn(async () => ({ available: false, detail: 'mocked' })),
+  // baostockHealth 的**两个分支都**返回 python（见 baostockBridge.ts 第 169/172 行），
+  // 故 python 在契约里是必填。此前桩只造了 { available, detail }，接上契约校验后
+  // 报「必填字段缺失」——契约对、桩不完整。
+  baostockHealth: vi.fn(async () => ({ available: false, detail: 'mocked', python: 'python3' })),
 }));
 // 预检会真的探测行情源：测试环境无外网，替换为直通结果（预检自身逻辑在
 // preflight.test.ts 单独覆盖）
@@ -80,7 +83,10 @@ vi.mock('../quant/preflight.js', () => ({
   })),
 }));
 
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+const app = withContract(rawApp);
 import {
   computeCompositeAlphaForStrategy,
   computeCompositeAlphaBatch,
@@ -226,6 +232,10 @@ const compositeResult = (code: string, horizons: number[]) => ({
   bars: 400,
   dataRange: { start: '2024-01-01', end: '2025-03-01' },
   benchmarkAvailable: true,
+  // compositeService 的返回类型里 isSimulated 是必填（compositeService.ts 第 122 行
+  // 无条件写入）。此前桩里漏了它，契约校验一接上就报「必填字段缺失」——
+  // 契约是对的、桩不完整，正是响应体×契约交叉校验要抓的那类分叉。
+  isSimulated: false,
 });
 
 describe('POST /api/quant/factor/composite', () => {

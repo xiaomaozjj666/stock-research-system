@@ -22,14 +22,17 @@ vi.mock('../services/analysisPipeline.js', async (importOriginal) => {
   return { ...actual, runAnalysis: runAnalysisMock };
 });
 
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+import { analysisResult as analysisResultFixture } from '../test/contractFixtures.js';
+const app = withContract(rawApp);
 import { ANALYSIS_IN_FLIGHT } from '../routes/analysis.js';
 
-const sampleResult = {
-  stock_pool: [
-    { stock_code: '600519', stock_name: '贵州茅台', rating: '持续观察', total_score: 70 },
-  ],
-} as never;
+// 字段按 server/src/types.ts 的 AnalysisResult 补全：先前只造 4 个字段并用
+// `as never` 绕过检查，契约校验接上后报「必填字段缺失」。
+// 这里要跑完整的 /api/analyze 响应体（该端点契约要求 AnalysisResult 全形）。
+const sampleResult = analysisResultFixture() as never;
 
 /** 与流水线抛出的错误同构：code + message（生产环境 SSE 只回 message） */
 function inFlightError(): Error {

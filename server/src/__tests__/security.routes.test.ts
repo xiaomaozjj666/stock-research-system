@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+const app = withContract(rawApp);
 
 // /api/health 会对外网发 HEAD 请求（index.ts health 检查），离线/慢网 CI 下可能撞
 // vitest 默认 5s 超时；stub 全局 fetch 隔离网络，不影响被测中间件行为。

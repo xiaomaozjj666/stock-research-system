@@ -22,7 +22,10 @@ vi.hoisted(() => {
   process.env.HEALTH_PROBE_MEMO_MS = '60000';
 });
 
-import { app } from '../index.js';
+// app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { app as rawApp } from '../index.js';
+import { withContract } from '../test/contractSupertest.js';
+const app = withContract(rawApp);
 import { resetHealthProbeCache } from '../routes/health.js';
 
 const fetchMock = vi.fn();
