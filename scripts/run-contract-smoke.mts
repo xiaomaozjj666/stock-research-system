@@ -10,7 +10,9 @@
  */
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { resolve } from 'node:path';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 const PORT = Number(process.env.SMOKE_PORT ?? 3477);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -24,6 +26,70 @@ function fail(msg: string): never {
 // 1) 代理必须绕过：本机设了 HTTP_PROXY 但没有 NO_PROXY，127.0.0.1 走代理会 502
 process.env.NO_PROXY = `127.0.0.1,localhost,::1,${process.env.NO_PROXY ?? ''}`;
 process.env.no_proxy = process.env.NO_PROXY;
+
+/**
+ * 2) **数据文件隔离（必须在起进程之前设好）**。
+ *
+ * 冒烟里有一批 POST 端点（下单 / 结算 / 改自选股 / 清记忆 / 启停调度…）会**写真实
+ * 数据文件**。不隔离的话，跑一次冒烟就会污染用户自己的自选股与模拟盘账户 ——
+ * 这不是「测试副作用」，是**改用户数据**，绝不能默认发生。
+ *
+ * 机制与 `server/src/test/setup.ts` 相同（把路径指到系统临时目录），这里在
+ * **进程级**设环境变量，因为冒烟起的是真实 server 进程、不经过 vitest setup。
+ * 临时目录交操作系统清理，不主动 rm（避免批量删除撞沙箱守卫）。
+ */
+const smokeDataDir = mkdtempSync(join(tmpdir(), 'srs-smoke-'));
+process.env.WATCHLIST_FILE = join(smokeDataDir, 'watchlist.json');
+process.env.PAPER_TRADING_FILE = join(smokeDataDir, 'paperTrading.json');
+process.env.AUDIT_LOG_FILE = join(smokeDataDir, 'audit.log');
+process.env.CHAT_HISTORY_FILE = join(smokeDataDir, 'chatHistory.json');
+process.env.DATA_CACHE_DIR = join(smokeDataDir, 'cache');
+// 因子实验台账 / 研究简报也落盘：改进闭环 dryRun 不写，但 scheduler 类可能触发，
+// 同样指走临时目录，确保冒烟对真实数据零影响。
+process.env.FACTOR_LEDGER_FILE = join(smokeDataDir, 'factorExperiments.json');
+process.env.RESEARCH_DIGEST_FILE = join(smokeDataDir, 'researchDigests.json');
+// 关闭财务/季度缓存：避免冒烟把抓到的行情写进真实缓存目录。
+process.env.QUANT_FINANCIAL_CACHE_TTL_HOURS = '0';
+process.env.QUANT_QUARTERLY_CACHE_TTL_HOURS = '0';
+
+// 研究历史：与上面同一套隔离机制。
+process.env.HISTORY_FILE = join(smokeDataDir, 'history.json');
+
+/**
+ * 3) 播一颗「研究历史」种子。
+ *
+ * 为什么需要：`GET/DELETE /api/history/{id}` 的响应体同样需要被真实校验，
+ * 而 history **只由分析成功时落库**（routes/analysis.ts 的 saveHistoryEntry，
+ * 依赖 LLM + 行情），冒烟里既没有 LLM 也没有 id，POST /api/history 并不存在
+ * （404）。于是这里直接按 `HistoryStore`（services/historyService.ts）的形状
+ * 写一条进临时目录，让 DELETE 端点有确定可删的 id。
+ *
+ * 写临时目录而非真实数据：这条与删除都只作用于 smokeDataDir。
+ */
+const SMOKE_HISTORY_ID = 'smoke-history-1';
+writeFileSync(
+  process.env.HISTORY_FILE,
+  JSON.stringify({
+    items: [
+      {
+        id: SMOKE_HISTORY_ID,
+        stockCode: '600519',
+        stockName: '冒烟样本',
+        createdAt: '2026-01-05T10:00:00.000Z',
+        rating: '买入',
+        totalScore: 80,
+        industry: '白酒',
+        result: {
+          stock_pool: [],
+          data_sources: [],
+          research_confidence: '高',
+          limitation_explain: '契约冒烟种子数据',
+        },
+      },
+    ],
+  }),
+  'utf8',
+);
 
 let server: ReturnType<typeof spawn> | undefined;
 let serverLog = '';
@@ -59,7 +125,7 @@ async function main(): Promise<void> {
 
   const smoke = spawn('node', ['--import', 'tsx', 'scripts/contract-smoke.mts'], {
     cwd: repoRoot,
-    env: { ...process.env, SMOKE_BASE: BASE },
+    env: { ...process.env, SMOKE_BASE: BASE, SMOKE_HISTORY_ID },
     stdio: 'inherit',
   });
   const code = await new Promise<number>((r) => smoke.on('exit', (c) => r(c ?? 1)));

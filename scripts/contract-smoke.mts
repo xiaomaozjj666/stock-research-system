@@ -104,57 +104,150 @@ function okSchemaOf(path: string, method: string) {
 }
 
 let failed = 0;
-{
-  // 无副作用、不依赖上游的端点。GET /api/openapi.json 单独校验（它是文档自身）。
-  const targets = [
-    ['/api/health', 'get'],
-    ['/api/stocks', 'get'],
-    ['/api/watchlist', 'get'],
-    ['/api/documents', 'get'],
-    ['/api/models', 'get'],
-    ['/api/cost', 'get'],
-    ['/api/history', 'get'],
-    ['/api/paper/portfolio', 'get'],
-    ['/api/paper/stats', 'get'],
-    ['/api/audit', 'get'],
-    ['/api/autonomous/status', 'get'],
-    ['/api/quant/factor/experiments', 'get'],
-    ['/api/quant/digests', 'get'],
-    ['/api/improvement/status', 'get'],
-    ['/api/improvement/history', 'get'],
-    ['/api/watchlist/alerts', 'get'],
-  ];
+let checked = 0;
 
-  let checked = 0;
-  for (const [p, m] of targets as [string, string][]) {
-    const schema = okSchemaOf(p, m);
-    if (!schema) {
-      console.log(`  跳过 ${m.toUpperCase()} ${p}（契约无 2xx schema）`);
-      continue;
-    }
-    let res;
-    try {
-      res = await fetch(`${BASE}${p}`);
-    } catch (e) {
-      console.log(`  跳过 ${m.toUpperCase()} ${p}（请求失败：${e.message}）`);
-      continue;
-    }
-    // 非 2xx 说明该端点依赖上游/环境，跳过并说明，不算失败
-    if (!res.ok) {
-      console.log(`  跳过 ${m.toUpperCase()} ${p}（HTTP ${res.status}，依赖上游）`);
-      continue;
-    }
-    const body = await res.json();
-    const errs = validate(schema, body);
-    checked++;
-    if (errs.length === 0) {
-      console.log(`  ✓ ${m.toUpperCase()} ${p}`);
-    } else {
-      failed++;
-      console.log(`  ✗ ${m.toUpperCase()} ${p}`);
-      for (const e of errs.slice(0, 6)) console.log(`      ${e}`);
-    }
+/** 打一次请求并校验；返回 'ok' | 'skipped:<原因>' */
+async function check(
+  method: string,
+  p: string,
+  body?: unknown,
+  pathParams: Record<string, string> = {},
+): Promise<'ok' | string> {
+  const schema = okSchemaOf(p, method);
+  if (!schema) return '契约无 2xx schema';
+  let res: Response;
+  // 契约里的 path 是模板（如 '/api/history/{id}'），请求前必须把占位符**替换**掉，
+  // 不能原样拼在后面 —— 拼成 '/api/history/{id}/xxx' 会稳定 404，且极易被误读成
+  // 「服务端有问题」。subPath 用于 DELETE 这类带路径参数、且要替换而非追加的场景。
+  // 契约里的 path 是模板（如 '/api/history/{id}'），请求前必须把占位符**替换**掉，
+  // 不能原样拼在后面 —— 拼成 '/api/history/{id}/xxx' 会稳定 404，且极易被误读成
+  // 「服务端有问题」（本轮实际踩过这个坑，排查了半天才发现是脚本自己的错）。
+  const url = `${BASE}${p}`.replace(/\{(\w+)\}/g, (_, key) => pathParams[key] ?? '');
+  try {
+    res = await fetch(url, {
+      method: method.toUpperCase(),
+      ...(body === undefined
+        ? {}
+        : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+    });
+  } catch (e) {
+    return `请求失败：${e.message}`;
   }
+  // 非 2xx 说明该端点依赖上游/环境或入参不合法，跳过并说明，不算失败
+  if (!res.ok) return `HTTP ${res.status}（依赖上游或入参不合法）`;
+  const json = await res.json();
+  const errs = validate(schema, json);
+  checked++;
+  if (errs.length === 0) {
+    console.log(`  ✓ ${method.toUpperCase()} ${url.replace(BASE, '')}`);
+    return 'ok';
+  }
+  failed++;
+  console.log(`  ✗ ${method.toUpperCase()} ${url.replace(BASE, '')}`);
+  for (const e of errs.slice(0, 6)) console.log(`      ${e}`);
+  return 'ok';
+}
+
+{
+  // ── 无副作用的 GET：不改状态、不依赖上游 ──
+  const getTargets = [
+    '/api/health',
+    '/api/stocks',
+    '/api/watchlist',
+    '/api/documents',
+    '/api/models',
+    '/api/cost',
+    '/api/history',
+    '/api/paper/portfolio',
+    '/api/paper/stats',
+    '/api/audit',
+    '/api/autonomous/status',
+    '/api/quant/factor/experiments',
+    '/api/quant/digests',
+    '/api/improvement/status',
+    '/api/improvement/history',
+    '/api/watchlist/alerts',
+  ];
+  for (const p of getTargets) {
+    const r = await check('get', p);
+    if (r !== 'ok') console.log(`  跳过 GET ${p}（${r}）`);
+  }
+
+  // ── 纯本地逻辑的 POST：不碰网络/LLM/K 线，结果确定 ──
+  //
+  // 这些端点此前的**响应体从未被真实校验过**（GET-only 覆盖不到），而
+  // 「契约声明的字段」与「res.json 实际写出的字段」分属两条独立代码路径 ——
+  // 正是本项目反复漂移的形态。启动器已把数据文件重定向到临时目录
+  // （见 run-contract-smoke.mts），故这里的写操作不会污染真实数据。
+  console.log('\n  ── POST（纯本地逻辑）──');
+  const postTargets: [string, string, unknown?][] = [
+    // 模拟盘：下单（成交价给足，规则内可成交）
+    [
+      'post',
+      '/api/paper/order',
+      // placeOrder 要求账户已有交易日，否则 400「未设置交易日」。自带 date 字段
+      // 即可（路由内部会 setCurrentDate），限价 1600 给足避免被引擎拒单。
+      {
+        code: '600519',
+        side: 'buy',
+        type: 'limit',
+        quantity: 100,
+        price: 1600,
+        date: '2026-01-05',
+      },
+    ],
+    // 模拟盘：日终结算（只需日期 + 收盘价映射）
+    ['post', '/api/paper/settle', { date: '2026-01-05', closePrices: { '600519': 1610 } }],
+    // 成本账本重置：纯内存操作
+    ['post', '/api/cost/reset', {}],
+    // 会话记忆清空：写临时目录里的 chatHistory
+    ['post', '/api/chat/history/clear', { sessionId: 'smoke-session' }],
+    // 自选股增删：写临时目录
+    ['post', '/api/watchlist', { code: '600519' }],
+    // 改进闭环：dryRun 不落盘、不调模型
+    ['post', '/api/improvement/run', { dryRun: true }],
+    // 调度器：启停都是纯内存状态
+    ['post', '/api/improvement/scheduler/start', {}],
+    ['post', '/api/improvement/scheduler/stop', {}],
+    // 自治监控：启停纯内存（间隔给默认，避免长跑）
+    ['post', '/api/autonomous/start', {}],
+    ['post', '/api/autonomous/stop', {}],
+    // 因子评估：纯 CPU，输入自造面板，不取数
+    [
+      'post',
+      '/api/quant/factor/evaluate',
+      {
+        observations: Array.from({ length: 40 }, (_, i) => ({
+          date: `2026-01-${String((i % 28) + 1).padStart(2, '0')}`,
+          symbol: 'A',
+          value: i,
+          returns: { 21: (i % 7) / 100 - 0.02 },
+        })),
+      },
+    ],
+  ];
+  for (const [m, p, body] of postTargets) {
+    const r = await check(m, p, body);
+    if (r !== 'ok') console.log(`  跳过 ${m.toUpperCase()} ${p}（${r}）`);
+  }
+
+  // ── 有路径参数的 DELETE：验证 deleteFromHistory 的响应体 ──
+  //
+  // 用启动器播好的种子 id（SMOKE_HISTORY_ID），**不要**试图 POST 一条：
+  // /api/history 并没有 POST 路由（会 404），history 只在分析成功时落库，
+  // 而分析依赖 LLM + 行情 —— 冒烟环境里两者都没有。种子写在临时目录，
+  // 删除也只作用于临时数据。
+  const seedId = process.env.SMOKE_HISTORY_ID;
+  if (!seedId) {
+    console.log('  跳过 DELETE /api/history/{id}（启动器未提供 SMOKE_HISTORY_ID）');
+  } else {
+    // 先 GET 详情（同样带响应体，值得一起校验），再 DELETE
+    const r1 = await check('get', '/api/history/{id}', undefined, { id: seedId });
+    if (r1 !== 'ok') console.log(`  跳过 GET /api/history/{id}（${r1}）`);
+    const r2 = await check('delete', '/api/history/{id}', undefined, { id: seedId });
+    if (r2 !== 'ok') console.log(`  跳过 DELETE /api/history/{id}（${r2}）`);
+  }
+
   console.log(`\n真实进程校验：${checked} 个端点，${failed} 个与契约不符`);
 }
 

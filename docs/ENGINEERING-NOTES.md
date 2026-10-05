@@ -1229,3 +1229,137 @@ Error: Test timed out in 30000ms.
 **当前余量**：本机 24 核 / 33.8GB、245 worker 全并发，**比 CI（2 核）严苛得多**，
 这是优点 —— 本机能复现的 flaky 比 CI 多。当前状态：8 轮常规全量全绿、
 CI 7 次提交 14 个 job 全 success 且 `attempts=1`。
+
+## 2026-10-05 补最大短板：契约冒烟从 16 扩到 29 个端点（含 POST / DELETE）
+
+### 缺口是什么
+
+上一轮补的「真实进程契约冒烟」只覆盖 16 个**无副作用 GET**，而全项目有
+**64 个 operation（其中 31 个 POST）**。也就是说：POST 类端点的响应体
+**从未被真实校验过** —— 而「契约声明的字段」与「res.json 实际写出的字段」
+分属两条独立代码路径，正是本项目反复漂移的形态。
+
+### 为什么之前没做
+
+不是没想到，是**当时判断 POST 不可确定性测试**（要 LLM、要行情上游）。复盘后
+发现这个判断过宽：31 个 POST 里有 **11 个是纯本地逻辑**（模拟盘下单/结算、
+成本重置、清记忆、改自选股、改进 dryRun、调度器与自治监控的启停、因子评估），
+既不碰网络也不碰模型，完全可以确定性验证。
+
+### 做法
+
+1. 冒烟脚本支持 POST / DELETE：带请求体、按契约校验响应。
+2. **启动器加数据文件隔离**（这是关键的前置条件）：把 WATCHLIST_FILE /
+   PAPER_TRADING_FILE / AUDIT_LOG_FILE / CHAT_HISTORY_FILE / DATA_CACHE_DIR /
+   FACTOR_LEDGER_FILE / RESEARCH_DIGEST_FILE / HISTORY_FILE 全部指向
+   `mkdtemp` 出来的临时目录。
+   **不做这一步，跑一次冒烟就会改用户自己的自选股和模拟盘账户** ——
+   那不是「测试副作用」而是**改用户数据**。7 个环境变量名都逐一核对过
+   确实被服务端读取（不是猜的）。
+3. research-history 播种子：`GET/DELETE /api/history/{id}` 需要一个确定可删的
+   id，而 history 只在分析成功时落库（依赖 LLM + 行情），`POST /api/history`
+   并不存在（404）。故按 `HistoryStore` 形状往临时目录写一条种子。
+
+覆盖从 **16 → 29 个端点**（45%），且 29 个全部有响应体校验、零跳过。
+
+### 本轮踩的坑：路径占位符当成字面量
+
+排查 `DELETE /api/history/{id}` 一直 404 花了比预期久的时间：先后怀疑过
+数据隔离没生效、种子被 POST 覆盖、dist 过期、`.env` 覆盖 env、id 不匹配 ——
+**每个假设都被实测证伪了**（手动 curl 同一 URL 返回 200）。
+
+真因是我把契约里的**路径模板** `{id}` 当成字面量拼在了后面，实际请求的是
+`/api/history/{id}/smoke-history-1`。修法是发请求前把 `{param}` 替换掉
+（`pathParams` 参数）。
+
+**教训**：404 出现时，先把**实际请求的 URL 打出来**再做其它假设。
+前面五轮的排查全是在猜环境，只有打印 URL 能一击定位。
+
+### 反向验证（POST 守卫真的有效）
+
+把 `WatchlistCodes.codes` 的 items 从 `string` 谎称成 `number`：
+
+```
+✗ POST /api/watchlist
+    $.codes[0]: 期望 number，实际 string（"600519"）
+真实进程校验：29 个端点，1 个与契约不符     → exit 1
+```
+
+还原后 → `29 个端点，0 个与契约不符` → exit 0。
+**注意这次是靠 POST 抓到的**（GET /api/watchlist 那次 codes 为空数组，
+元素级校验不执行）—— 与之前「拿空数组当样本」是同一类陷阱的另一个面。
+
+### 仍未覆盖的 35 个 operation
+
+依赖上游（行情 / LLM / 东财）而无法离线确定性验证：analyze、compare、
+quant/analyze、factor/composite*、cross-section、backtest/evaluate、chat、
+ingest、llm/*、quant/screener/run、valuation/model 等。
+**这是明确的已知边界，不是遗漏**。要补需要给冒烟注入 fetch stub 层
+（拦截 undici 请求返回固定行情/LLM 响应），属独立一轮工程。
+
+## 2026-10-05 补最大短板：契约冒烟从 16 扩到 29 个端点（含 POST / DELETE）
+
+### 缺口是什么
+
+上一轮补的「真实进程契约冒烟」只覆盖 16 个**无副作用 GET**，而全项目有
+**64 个 operation（其中 31 个 POST）**。也就是说：POST 类端点的响应体
+**从未被真实校验过** —— 而「契约声明的字段」与「res.json 实际写出的字段」
+分属两条独立代码路径，正是本项目反复漂移的形态。
+
+### 为什么之前没做
+
+不是没想到，是**当时判断 POST 不可确定性测试**（要 LLM、要行情上游）。复盘后
+发现这个判断过宽：31 个 POST 里有 **11 个是纯本地逻辑**（模拟盘下单/结算、
+成本重置、清记忆、改自选股、改进 dryRun、调度器与自治监控的启停、因子评估），
+既不碰网络也不碰模型，完全可以确定性验证。
+
+### 做法
+
+1. 冒烟脚本支持 POST / DELETE：带请求体、按契约校验响应。
+2. **启动器加数据文件隔离**（这是关键的前置条件）：把 WATCHLIST_FILE /
+   PAPER_TRADING_FILE / AUDIT_LOG_FILE / CHAT_HISTORY_FILE / DATA_CACHE_DIR /
+   FACTOR_LEDGER_FILE / RESEARCH_DIGEST_FILE / HISTORY_FILE 全部指向
+   `mkdtemp` 出来的临时目录。
+   **不做这一步，跑一次冒烟就会改用户自己的自选股和模拟盘账户** ——
+   那不是「测试副作用」而是**改用户数据**。7 个环境变量名都逐一核对过
+   确实被服务端读取（不是猜的）。
+3. research-history 播种子：`GET/DELETE /api/history/{id}` 需要一个确定可删的
+   id，而 history 只在分析成功时落库（依赖 LLM + 行情），`POST /api/history`
+   并不存在（404）。故按 `HistoryStore` 形状往临时目录写一条种子。
+
+覆盖从 **16 → 29 个端点**（45%），且 29 个全部有响应体校验、零跳过。
+
+### 本轮踩的坑：路径占位符当成字面量
+
+排查 `DELETE /api/history/{id}` 一直 404 花了比预期久的时间：先后怀疑过
+数据隔离没生效、种子被 POST 覆盖、dist 过期、`.env` 覆盖 env、id 不匹配 ——
+**每个假设都被实测证伪了**（手动 curl 同一 URL 返回 200）。
+
+真因是我把契约里的**路径模板** `{id}` 当成字面量拼在了后面，实际请求的是
+`/api/history/{id}/smoke-history-1`。修法是发请求前把 `{param}` 替换掉
+（`pathParams` 参数）。
+
+**教训**：404 出现时，先把**实际请求的 URL 打出来**再做其它假设。
+前面五轮的排查全是在猜环境，只有打印 URL 能一击定位。
+
+### 反向验证（POST 守卫真的有效）
+
+把 `WatchlistCodes.codes` 的 items 从 `string` 谎称成 `number`：
+
+```
+✗ POST /api/watchlist
+    $.codes[0]: 期望 number，实际 string（"600519"）
+真实进程校验：29 个端点，1 个与契约不符     → exit 1
+```
+
+还原后 → `29 个端点，0 个与契约不符` → exit 0。
+**注意这次是靠 POST 抓到的**（GET /api/watchlist 那次 codes 为空数组，
+元素级校验不执行）—— 与之前「拿空数组当样本」是同一类陷阱的另一个面。
+
+### 仍未覆盖的 35 个 operation
+
+依赖上游（行情 / LLM / 东财）而无法离线确定性验证：analyze、compare、
+quant/analyze、factor/composite*、cross-section、backtest/evaluate、chat、
+ingest、llm/*、quant/screener/run、valuation/model 等。
+**这是明确的已知边界，不是遗漏**。要补需要给冒烟注入 fetch stub 层
+（拦截 undici 请求返回固定行情/LLM 响应），属独立一轮工程。
