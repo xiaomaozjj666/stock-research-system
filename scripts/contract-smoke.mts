@@ -24,85 +24,29 @@
  * 不是遗漏**。
  */
 import { loadContractFromDist } from './contract-from-dist.mjs';
+// 校验器实现在 server/src/test/contractSchema.ts：与路由测试共用同一份，
+// 避免「两处规则不一致 → A 处过 B 处红」这种无法排查的灵异事件。
+import {
+  validateAgainstSchema,
+  okSchemaOf as okSchemaOfRaw,
+} from '../server/src/test/contractSchema.js';
 
 // 服务地址由启动器传入（它负责起进程）
 const BASE = process.env.SMOKE_BASE ?? '';
 
-const doc = (await loadContractFromDist()) as any;
-const schemas = (doc.components?.schemas ?? {}) as any;
+const doc = await loadContractFromDist();
+const schemas = doc.components?.schemas ?? {};
+
+/** 契约里取某 operation 的 2xx 响应 schema（委托给公共实现） */
+function okSchemaOf(path: string, method: string): unknown {
+  return okSchemaOfRaw(doc as never, path, method);
+}
+/** 按 schema 校验实际响应（委托给公共实现） */
+function validate(schema: unknown, value: unknown): string[] {
+  return validateAgainstSchema(schema, value, schemas);
+}
 
 /** 极简 JSON Schema 校验器：只支持本项目契约实际用到的关键字 */
-function validate(schema: any, value: any, path = '$'): string[] {
-  const errs = [];
-  if (schema === undefined || schema === null || Object.keys(schema).length === 0) return errs;
-  if (schema.$ref) {
-    const name = schema.$ref.replace('#/components/schemas/', '');
-    const target = schemas[name];
-    if (!target) return [`${path}: $ref 悬空 ${name}`];
-    return validate(target, value, path);
-  }
-  if (schema.oneOf) {
-    const branches = schema.oneOf.map((b) => validate(b, value, path));
-    if (branches.every((b) => b.length > 0)) {
-      return [`${path}: oneOf 全不匹配（${branches[0][0] ?? '?'}）`];
-    }
-    return [];
-  }
-  // 可空的两种写法都要认：OpenAPI 3.1 的 `type: ['string','null']`，
-  // 以及 3.0 的 `nullable: true`（本项目契约里两者都在用 —— 只认前者会把
-  // 一批**本来正确**的契约误报成「期望非 null，实际 null」，即假红灯）。
-  const types = Array.isArray(schema.type) ? schema.type : schema.type ? [schema.type] : [];
-  const nullable = types.includes('null') || schema.nullable === true;
-  if (value === null) {
-    if (!nullable && types.length > 0) errs.push(`${path}: 期望非 null，实际 null`);
-    return errs;
-  }
-  const t = types.find((x) => x !== 'null');
-  if (t === 'object') {
-    if (typeof value !== 'object' || Array.isArray(value)) {
-      errs.push(`${path}: 期望 object，实际 ${Array.isArray(value) ? 'array' : typeof value}`);
-      return errs;
-    }
-    for (const [k, sub] of Object.entries(schema.properties ?? {})) {
-      if (!(k in value)) {
-        if ((schema.required ?? []).includes(k)) errs.push(`${path}.${k}: 必填字段缺失`);
-        continue;
-      }
-      errs.push(...validate(sub, value[k], `${path}.${k}`));
-    }
-    for (const k of schema.required ?? []) {
-      if (!(k in value)) errs.push(`${path}.${k}: 必填字段缺失`);
-    }
-  } else if (t === 'array') {
-    if (!Array.isArray(value)) {
-      errs.push(`${path}: 期望 array，实际 ${typeof value}`);
-      return errs;
-    }
-    if (schema.items)
-      value.forEach((v, i) => errs.push(...validate(schema.items, v, `${path}[${i}]`)));
-  } else if (t === 'string' && typeof value !== 'string') {
-    errs.push(
-      `${path}: 期望 string，实际 ${typeof value}（${JSON.stringify(value)?.slice(0, 40)}）`,
-    );
-  } else if ((t === 'number' || t === 'integer') && typeof value !== 'number') {
-    errs.push(
-      `${path}: 期望 number，实际 ${typeof value}（${JSON.stringify(value)?.slice(0, 40)}）`,
-    );
-  } else if (t === 'boolean' && typeof value !== 'boolean') {
-    errs.push(`${path}: 期望 boolean，实际 ${typeof value}`);
-  }
-  if (schema.enum && !schema.enum.includes(value)) {
-    errs.push(`${path}: ${JSON.stringify(value)} 不在 enum ${JSON.stringify(schema.enum)}`);
-  }
-  return errs;
-}
-
-function okSchemaOf(path: string, method: string) {
-  const op = doc.paths[path]?.[method];
-  const code = Object.keys(op?.responses ?? {}).find((c) => /^2\d\d$/.test(c));
-  return op?.responses?.[code]?.content?.['application/json']?.schema;
-}
-
 let failed = 0;
 let checked = 0;
 
