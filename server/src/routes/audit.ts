@@ -8,9 +8,39 @@
  */
 import { Router } from 'express';
 import { metaLimiter } from '../middleware.js';
-import { auditLogger } from '../services/auditLog.js';
+import { auditLogger, type AuditCategory, type RiskLevel } from '../services/auditLog.js';
 import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
+
+/**
+ * 收窄 query 里的枚举参数。
+ *
+ * 原来是 `String(q.category) as never` —— `as never` 让**任意字符串**都被当成
+ * 合法枚举值传下去，非法值（如 `category=xx`）会静默查出空结果、返回 200，
+ * 调用方无法区分「没有这类记录」与「参数写错了」。
+ * 现在非法值直接 400，与同文件里 limit/offset/startTime 的处理口径一致。
+ */
+const AUDIT_CATEGORIES: readonly AuditCategory[] = [
+  'llm_call',
+  'tool_call',
+  'trade_signal',
+  'data_access',
+  'user_query',
+  'system',
+];
+const RISK_LEVELS: readonly RiskLevel[] = ['info', 'low', 'medium', 'high', 'critical'];
+
+function narrowEnum<T extends string>(
+  raw: unknown,
+  allowed: readonly T[],
+): { present: false } | { present: true; ok: true; value: T } | { present: true; ok: false } {
+  // 三态而非两态：**没传**（present:false）与**传了非法值**（ok:false）语义不同 ——
+  // 前者不构成错误，后者要 400。两态写法会让「不传参数」也被判成非法。
+  if (raw === undefined || raw === null || raw === '') return { present: false };
+  const s = String(raw);
+  if (!(allowed as readonly string[]).includes(s)) return { present: true, ok: false };
+  return { present: true, ok: true, value: s as T };
+}
 
 const router = Router();
 
@@ -69,9 +99,21 @@ router.get('/api/audit', metaLimiter, (req, res) => {
       return res.status(400).json({ error: '查询参数非法', detail: offset.error });
     }
 
+    const category = narrowEnum(q.category, AUDIT_CATEGORIES);
+    if (category.present && !category.ok) {
+      return res
+        .status(400)
+        .json({ error: '查询参数非法', detail: `category 取值不合法：${q.category}` });
+    }
+    const riskLevel = narrowEnum(q.riskLevel, RISK_LEVELS);
+    if (riskLevel.present && !riskLevel.ok) {
+      return res
+        .status(400)
+        .json({ error: '查询参数非法', detail: `riskLevel 取值不合法：${q.riskLevel}` });
+    }
     const filter: Parameters<typeof auditLogger.query>[0] = {
-      ...(q.category ? { category: String(q.category) as never } : {}),
-      ...(q.riskLevel ? { riskLevel: String(q.riskLevel) as never } : {}),
+      ...(category.present && category.ok ? { category: category.value } : {}),
+      ...(riskLevel.present && riskLevel.ok ? { riskLevel: riskLevel.value } : {}),
       ...(startTime.value !== undefined ? { startTime: startTime.value } : {}),
       ...(endTime.value !== undefined ? { endTime: endTime.value } : {}),
       ...(q.sessionId ? { sessionId: String(q.sessionId) } : {}),

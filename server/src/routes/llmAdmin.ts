@@ -9,6 +9,7 @@ import {
   resolveMaxTokensCap,
 } from '../utils/limitGate.js';
 import { routeSkill } from '../llm/skillRouter.js';
+import { LLM_TASKS, type LLMTask } from '../llm/config.js';
 import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 
@@ -72,9 +73,11 @@ router.post('/api/llm/ensemble', quantLimiter, circuitBreakerGuard, async (req, 
         maxTokensCap: resolveMaxTokensCap(),
       });
     }
-    const result = await runEnsemble(parsed.messages as never, {
+    const result = await runEnsemble(parsed.messages, {
       ...(models ? { models } : {}),
-      ...(typeof body.task === 'string' ? { task: body.task as never } : {}),
+      ...(typeof body.task === 'string' && LLM_TASKS.includes(body.task as LLMTask)
+        ? { task: body.task as LLMTask }
+        : {}),
       ...(temperature.value !== undefined ? { temperature: temperature.value } : {}),
       ...(maxTokens.value !== undefined ? { maxTokens: maxTokens.value } : {}),
     });

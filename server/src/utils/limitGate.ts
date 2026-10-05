@@ -16,6 +16,7 @@
  * 4 路推进，只有超出部分排队；退化成 limit=1 会让一次对比分析从分钟级变成十分钟级。
  */
 import logger from './logger.js';
+import type { ChatMessage } from '../llm/client.js';
 
 // ============================================================================
 // 一、并发闸门
@@ -474,13 +475,15 @@ export const DEFAULT_MESSAGE_LIMITS: MessageLimits = {
 };
 
 /** 出站消息（与 llm/client.ts 的 ChatMessage 结构兼容，避免 utils → llm 的运行时依赖） */
-export interface OutboundChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  name?: string;
-  tool_call_id?: string;
-  tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
-}
+/**
+ * 出站消息形状。与 `llm/client.ts` 的 `ChatMessage` 字段完全一致。
+ *
+ * 此前这里是**独立重复定义**的同构接口，于是 `routes/llmAdmin.ts` 把
+ * `validateMessages()` 的结果传给 `runEnsemble(messages: ChatMessage[])` 时
+ * 类型不兼容，被迫 `as never` 绕过。重复定义是 `as never` 的常见成因 ——
+ * 字段一模一样却因为是两个类型而无法互赋。改为别名后该处自然不再需要断言。
+ */
+export type OutboundChatMessage = ChatMessage;
 
 const VALID_ROLES = new Set(['system', 'user', 'assistant', 'tool']);
 

@@ -21,6 +21,7 @@ import {
 } from '../services/historyService.js';
 import { recordAnalysis } from '../services/outcomeTracker.js';
 import { createSseChannel } from '../utils/sse.js';
+import type { AnalysisResult } from '../types.js';
 import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 
@@ -60,9 +61,12 @@ function isAnalysisInFlightError(error: unknown): boolean {
  * 把评级/评分变化（vs_previous）附加到结果，随报告一同呈现——
  * 让每次分析都能对照历史观点，看到观点演化而非孤立快照。
  */
-function persistAnalysisHistory(result: unknown): void {
+function persistAnalysisHistory(result: AnalysisResult): void {
   try {
-    const item = (result as { stock_pool?: Array<Record<string, unknown>> })?.stock_pool?.[0];
+    // 调用方两处都是 runAnalysis 的返回值（Promise<AnalysisResult>），
+    // 形参声明 unknown 会把这份类型信息丢掉、逼出后面的 `as never`。
+    // 这里显式收窄 stock_pool[0]（数组可能为空），其余字段走结构化转换。
+    const item = result?.stock_pool?.[0] as Record<string, unknown> | undefined;
     if (!item || typeof item.stock_code !== 'string') return;
 
     const prev = getPreviousAnalysis(item.stock_code);
@@ -78,7 +82,7 @@ function persistAnalysisHistory(result: unknown): void {
       industry: typeof item.industry === 'string' ? item.industry : undefined,
       rating: String(item.rating ?? ''),
       totalScore: Number(item.total_score) || 0,
-      result: result as never,
+      result,
     });
 
     // 决策-结果闭环：记下本次评级与发出时的价格，到期后回填实际收益用于命中率校准

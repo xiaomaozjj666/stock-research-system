@@ -33,6 +33,26 @@ export function isLLMAvailable(): boolean {
 /** 任务标签：决定路由到哪类模型 */
 export type LLMTask = 'chat' | 'analysis' | 'debate' | 'extract' | 'reasoning' | 'embedding';
 
+/**
+ * 任务标签的运行时集合（与 LLMTask 同一份事实来源）。
+ *
+ * 存在的理由：路由层要从 `unknown`（HTTP body）收窄到 LLMTask，光靠类型
+ * 不够 —— 运行时得校验字面量确实在集合内。此前 `routes/llmAdmin.ts` 用
+ * `body.task as never` 硬转，等于**放弃校验**（任意字符串都会被当合法任务
+ * 路由到模型）。有了这个数组，非法值走 else 分支不参与路由。
+ *
+ * `satisfies readonly LLMTask[]` 让数组与联合类型保持同步：往 LLMTask 加成员
+ * 而忘了加进这里，编译期会报错。
+ */
+export const LLM_TASKS = [
+  'chat',
+  'analysis',
+  'debate',
+  'extract',
+  'reasoning',
+  'embedding',
+] as const satisfies readonly LLMTask[];
+
 export interface ModelSpec {
   id: string;
   label: string;

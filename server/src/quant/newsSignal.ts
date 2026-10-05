@@ -299,21 +299,51 @@ export async function fetchLatestNews(
   code: string,
   opts: NewsFetchOptions = {},
 ): Promise<NewsItem[]> {
+  /**
+   * 从上游 JSON 里取「对象数组」。
+   *
+   * 为什么要收窄而不是直接 `any`：东财的响应没有外部类型定义，用 any 的话
+   * `n.title` 在上游字段改名后会**静默变成 undefined** —— 编译期毫无提示，
+   * 运行时表现为「新闻标题全空」这种难查的问题。收窄后，字段访问必须先过
+   * 类型检查，上游结构变化能在编译期暴露。
+   */
+  function asRows(json: unknown, a: string, b: string): Record<string, unknown>[] {
+    if (typeof json !== 'object' || json === null) return [];
+    const level1 = (json as Record<string, unknown>)[a];
+    if (typeof level1 !== 'object' || level1 === null) return [];
+    const rows = (level1 as Record<string, unknown>)[b];
+    if (!Array.isArray(rows)) return [];
+    return rows.filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null);
+  }
+
+  /** 从对象里按候选键名依次取字符串值（取不到返回空串） */
+  function str(row: Record<string, unknown>, ...keys: string[]): string {
+    for (const k of keys) {
+      const v = row[k];
+      if (typeof v === 'string' && v !== '') return v;
+      if (typeof v === 'number') return String(v);
+    }
+    return '';
+  }
+
   const outer = opts.signal;
   // 已取消：连第一个端点都不打（调用方可能已断开，这一趟注定是白烧配额）
   outer?.throwIfAborted();
   // 候选端点：个股公告/新闻（东方财富系）。沙箱仅放行部分子域，失败即降级。
   const secucode = code.startsWith('6') ? `${code}.SH` : `${code}.SZ`;
-  const endpoints: { url: string; parse: (json: any) => NewsItem[] }[] = [
+  const endpoints: { url: string; parse: (json: unknown) => NewsItem[] }[] = [
     {
       // 个股公告列表
       url: `https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size=10&page_index=1&stock_list=${secucode}`,
+      // 上游 JSON 无外部类型定义，用 unknown + 收窄（而不是 any）：
+      // any 会让 `n.title` 这类访问在字段改名后**静默返回 undefined**，
+      // 编译期无任何提示；unknown 则强制先收窄，上游结构变化能被类型发现。
       parse: (json) =>
-        (json?.data?.list ?? []).map((n: any, i: number) => ({
+        asRows(json, 'data', 'list').map((n, i) => ({
           id: `ann-${i}`,
-          title: String(n.title ?? n.notice_title ?? ''),
-          summary: n.summary ?? n.content ?? undefined,
-          publishedAt: n.ei_time ?? n.notice_date ?? n.datetime ?? new Date().toISOString(),
+          title: str(n, 'title', 'notice_title'),
+          summary: str(n, 'summary', 'content') || undefined,
+          publishedAt: str(n, 'ei_time', 'notice_date', 'datetime') || new Date().toISOString(),
           source: '东方财富公告',
         })),
     },
@@ -321,11 +351,11 @@ export async function fetchLatestNews(
       // 个股新闻（datacenter 系，沙箱可能可用）
       url: `https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_WEB_TECHNIQUE&columns=ALL&filter=(SECUCODE%3D%22${secucode}%22)&pageSize=10`,
       parse: (json) =>
-        (json?.data?.list ?? json?.result?.data ?? []).map((n: any, i: number) => ({
+        [...asRows(json, 'data', 'list'), ...asRows(json, 'result', 'data')].map((n, i) => ({
           id: `news-${i}`,
-          title: String(n.TITLE ?? n.title ?? n.content ?? ''),
-          summary: n.SUMMARY ?? n.summary ?? n.ABSTRACT ?? undefined,
-          publishedAt: n.DATE ?? n.publishDate ?? n.notice_date ?? new Date().toISOString(),
+          title: str(n, 'TITLE', 'title', 'content'),
+          summary: str(n, 'SUMMARY', 'summary', 'ABSTRACT') || undefined,
+          publishedAt: str(n, 'DATE', 'publishDate', 'notice_date') || new Date().toISOString(),
           source: '东方财富新闻',
         })),
     },
