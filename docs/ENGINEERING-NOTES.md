@@ -1363,3 +1363,31 @@ quant/analyze、factor/composite*、cross-section、backtest/evaluate、chat、
 ingest、llm/*、quant/screener/run、valuation/model 等。
 **这是明确的已知边界，不是遗漏**。要补需要给冒烟注入 fetch stub 层
 （拦截 undici 请求返回固定行情/LLM 响应），属独立一轮工程。
+
+## 2026-10-05 评估更正：剩余 35 个 operation 的缺口比原以为的小
+
+原评估「35 个依赖上游的 operation 从未被校验响应体」，并打算写 fetch stub 层
+（14 处 fetch、12 个文件、每种上游响应形状不同）。**动手前核实前提，发现前提不成立**：
+
+- `routes.quantFactor.test.ts` — **62 处** `expect(res.body...)`
+- `routes.quantAnalyze.test.ts` — 23 处，逐字段断言 strategy / dataQuality /
+  audit / optimization / summary / backtest
+- `documents.ingest.test.ts` — 13 处
+- 全仓 **30 个路由测试文件**都断言了响应体
+
+即：依赖上游的端点，其响应体在路由测试里**已被深度断言**（service 层被 mock，
+不打真实网络）。真正的缺口只是「这些断言没有与 OpenAPI 契约交叉校验」——
+契约改了、断言没改，仍可能分叉。
+
+**故 fetch stub 层不做**：覆盖收益低（响应体已被断言）、成本高且脆（stub 越像真实
+响应，越可能在真实上游变更时静默失配）。
+
+**更划算的下一步**：把 `scripts/contract-smoke.mts` 里已有的 JSON Schema 校验器
+（`validate()`）抽成公共 helper，让 30 个已有路由测试顺带校验契约。这样不需要
+fetch stub（service 已 mock、响应确定），且覆盖的是**当前最大的真缺口**：
+契约与实际响应的一致性。属独立一轮改动。
+
+**教训**：又一次印证「动手前先核实前提」。这与本会话早前那次
+（以为 62 个响应无 schema、实际先核实才补齐）是同一个模式的重复 ——
+上一轮我因为核实而发现了真缺口，这一轮因为核实而**避免了一个不必要的大工程**。
+核实不是保险，是提高决策质量的常规动作。
