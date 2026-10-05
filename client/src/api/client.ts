@@ -10,6 +10,8 @@ import type {
   ValuationModelResult as GeneratedValuationModelResult,
   IntlKline as GeneratedIntlKline,
   GETApiStocksResponse as StockListResponse,
+  GETApiWatchlistResponse as WatchlistResponse,
+  POSTApiAutonomousStopResponse as AutonomousStopResponse,
   GETApiStocksSearchResponse as StockSearchResponse,
   POSTApiPaperSettleResponse as PaperSettleResponse,
   GETApiAuditResponse as AuditQueryResponse,
@@ -324,31 +326,30 @@ export async function compareStocks(
 }
 
 // === 自选股 / 持仓监控 ===
-export async function getWatchlist(): Promise<{ codes: string[] }> {
+// 三个端点的响应形状都是 `WatchlistCodes`（{ codes: string[] }）。改用契约生成的
+// 类型而非内联字面量：内联字面量与契约没有任何强制关联，契约改了它不会报错
+// ——这正是本项目此前反复漂移的那个形态。
+export async function getWatchlist(): Promise<WatchlistResponse> {
   try {
-    const response = await api.get<{ codes: string[] }>('/watchlist', { timeout: 15000 });
+    const response = await api.get<WatchlistResponse>('/watchlist', { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '获取自选股失败');
   }
 }
 
-export async function addToWatchlist(code: string): Promise<{ codes: string[] }> {
+export async function addToWatchlist(code: string): Promise<WatchlistResponse> {
   try {
-    const response = await api.post<{ codes: string[] }>(
-      '/watchlist',
-      { code },
-      { timeout: 15000 },
-    );
+    const response = await api.post<WatchlistResponse>('/watchlist', { code }, { timeout: 15000 });
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '添加自选股失败');
   }
 }
 
-export async function removeFromWatchlist(code: string): Promise<{ codes: string[] }> {
+export async function removeFromWatchlist(code: string): Promise<WatchlistResponse> {
   try {
-    const response = await api.delete<{ codes: string[] }>(`/watchlist/${code}`, {
+    const response = await api.delete<WatchlistResponse>(`/watchlist/${code}`, {
       timeout: 15000,
     });
     return response.data;
@@ -530,10 +531,11 @@ export async function startAutonomous(
     throw normalizeApiError(error, '启动自动监控失败');
   }
 }
-export async function stopAutonomous(): Promise<{ stopped: boolean; lastAlerts: unknown[] }> {
+export async function stopAutonomous(): Promise<AutonomousStopResponse> {
   try {
-    // 服务端 res.json({ stopped: true, lastAlerts })；lastAlerts 元素未在前端消费
-    const response = await api.post<{ stopped: boolean; lastAlerts: unknown[] }>(
+    // 类型来自契约生成物：lastAlerts 的元素是 WatchlistAlert[]（此前内联写的是
+    // unknown[]，等于把「最近一轮检出的预警」这个信息在类型层面丢掉了）。
+    const response = await api.post<AutonomousStopResponse>(
       '/autonomous/stop',
       {},
       { timeout: 15000 },
