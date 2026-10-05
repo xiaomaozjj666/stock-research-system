@@ -115,14 +115,22 @@ describe('abortOnClientClose（真实 HTTP 连接）', () => {
       close: () => Promise<void>;
       abortedFlags: boolean[];
       finishedCount: () => number;
+      /** 路由开始执行的信号；用于让断开时机与被测行为对齐 */
+      routeStarted: Promise<void>;
     }) => Promise<void>,
   ): Promise<void> {
     const abortedFlags: boolean[] = [];
     let finished = 0;
+    /** 路由开始执行的信号：让「客户端断开」这一动作与被测行为对齐，而不是与机器速度赌 */
+    let markRouteStarted!: () => void;
+    const routeStarted = new Promise<void>((r) => {
+      markRouteStarted = r;
+    });
     const app = express();
     app.get('/slow', (_req, res) => {
       const abort = abortOnClientClose(res);
       abortedFlags.push(abort.signal.aborted);
+      markRouteStarted();
       // 模拟"在途取数"：客户端若断开，close 会在响应写回前触发 cancel
       setTimeout(() => {
         if (abort.signal.aborted) return; // 客户端已不在：不写响应
@@ -135,6 +143,10 @@ describe('abortOnClientClose（真实 HTTP 连接）', () => {
     const port = (server.address() as { port: number }).port;
     const close = () =>
       new Promise<void>((resolve) => {
+        // 同下方「客户端先断开…」那条用例的理由：这些路由都可能在响应尚未写回时
+        // 就断开，连接会停留在活跃态；server.close() 会等它们结束，于是全量并发下
+        // 收尾可能挂到 testTimeout。强制断开残留连接让收尾变成确定性动作。
+        server.closeAllConnections();
         server.close(() => resolve());
       });
     try {
@@ -143,6 +155,7 @@ describe('abortOnClientClose（真实 HTTP 连接）', () => {
         close,
         abortedFlags,
         finishedCount: () => finished,
+        routeStarted,
       });
     } finally {
       await close();
@@ -150,7 +163,7 @@ describe('abortOnClientClose（真实 HTTP 连接）', () => {
   }
 
   it('客户端中途断开 → route 内的 signal 被 abort（响应不再写回）', async () => {
-    await withServer(async ({ url, abortedFlags, finishedCount }) => {
+    await withServer(async ({ url, abortedFlags, finishedCount, routeStarted }) => {
       await new Promise<void>((resolve) => {
         const req = http.get(url, (res) => {
           res.resume();
@@ -159,14 +172,18 @@ describe('abortOnClientClose（真实 HTTP 连接）', () => {
         // 主动断开时客户端自身会收到 socket hang up（ECONNRESET）：这是预期现象，吞掉即可，
         // 否则会以 unhandled error 形式污染测试结果
         req.on('error', () => resolve());
-        // 连接建立后立刻断开：模拟用户关页/取消
-        setTimeout(() => {
+        // 等路由**真的开始执行**再断开，而不是定时 20ms 盲断。
+        // 原写法假定「20ms 内路由一定跑到了」，但全量并发（245 worker 抢 CPU）下
+        // 请求可能还在建连/排队，路由尚未执行就断开 —— 此时 abortedFlags 为空数组，
+        // 断言 `abortedFlags[0]` 拿到 undefined 而红（实测第 2 轮全量跑中现）。
+        // 改成等 routeStarted 信号，与被测行为对齐而非与机器速度赌。
+        void routeStarted.then(() => {
           req.destroy();
           resolve();
-        }, 20);
+        });
       });
       // 等业务定时器到点，确认它因 abort 而没有写回响应
-      await new Promise((r) => setTimeout(r, 80));
+      await new Promise((r) => setTimeout(r, 120));
       expect(abortedFlags[0]).toBe(false); // 断开前未 abort
       expect(finishedCount()).toBe(0); // 断开后业务被取消，没有"白跑完"
     });
@@ -222,6 +239,15 @@ describe('abortOnClientClose（真实 HTTP 连接）', () => {
       expect(seenClose).toBe(true); // 前置条件成立：注册时连接确实已经关闭
       expect(aborted).toBe(true); // 修复前这里是 false（恒不 abort）
     } finally {
+      // 为什么要 closeAllConnections：本用例的 /late 路由**故意不 res.end()**
+      // （响应保持悬空，等客户端断开），于是该连接在 server.close() 时仍处于活跃态。
+      // Node 的 server.close() 只停止接受新连接，并**等待所有活跃连接结束** ——
+      // 单独跑时客户端已 destroy、连接恰好已死所以看不出来；全量并发（245 worker
+      // 抢 CPU/端口）时 close 事件偶发滞后，`await server.close()` 就一直挂到
+      // testTimeout，表现为「客户端先断开…」这条用例随机超时（实测第 5 轮全量跑中现）。
+      // closeAllConnections() 强制断开残留连接，让收尾变成确定性动作。
+      // 业务代码里不需要它 —— 这只针对测试里那些故意保持连接悬空的场景。
+      server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
