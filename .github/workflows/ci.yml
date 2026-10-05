@@ -231,6 +231,11 @@ jobs:
     name: Nightly (flaky probe)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # 只在 schedule 时跑。**这条守卫是必需的**：schedule 只是 `on` 的一个触发源，
+    # 同一份 workflow 文件仍会被 push / pull_request 触发 —— 不加守卫的话每次提交
+    # 都会多跑 3 轮全量（实测首次推送时它确实跟着跑了一轮，白耗 5-8 分钟）。
+    # 探测的常态入口是夜间定时，push 上重复跑没有额外价值。
+    if: github.event_name == 'schedule'
     # 刻意保留 concurrency 不设：夜间任务之间没有代码变化，并发跑只会互相抢资源
     # 放大 flaky 概率，反而污染探测结果。
     steps:
