@@ -1672,6 +1672,60 @@ export type StockSkip = {
   reason: string;
 };
 
+export type StrategyConfig = {
+  name: string;
+  type: 'ma_cross' | 'momentum' | 'mean_reversion' | 'custom';
+  /**
+   * 6 位 A 股股票代码，如 600519
+   * 约束：需匹配 ^\d{6}$
+   */
+  stockCode: string;
+  /** 策略参数（键随 type 而异：短长周期 / 阈值 / 均线周期） */
+  params: Record<string, number>;
+  /**
+   * 回测区间起
+   * 约束：格式 date
+   */
+  startDate: string;
+  /**
+   * 回测区间止
+   * 约束：格式 date
+   */
+  endDate: string;
+  /** 初始资金，默认 100 万 */
+  initialCapital?: number;
+  /** 佣金率，默认万三 */
+  commission?: number;
+  /** 滑点，默认 0.1% */
+  slippage?: number;
+  /** a_share=真实 A 股费率；未设则按 commission/slippage 对称建模 */
+  costModel?: 'a_share';
+  /** 新闻情绪叠加层；与 factorOverlay 取较小值（AND 语义） */
+  newsOverlay?: {
+    /** 聚合极性 ∈ [−1,1] */
+    polarity: number;
+    /**
+     * 旧口径生效起始日
+     * 约束：格式 date
+     */
+    since?: string;
+    /** 严格时序（推荐）：引擎只用发布日 ≤ bar 日期的新闻，无前视偏差 */
+    items?: {
+      /** 发布日或 ISO datetime */
+      publishedAt: string;
+      /** 确定性极性 ∈ [−1,1] */
+      polarity: number;
+    }[];
+  };
+  /** 组合 alpha 叠加层（opt-in）：方向性 alpha 翻成建仓资金缩放系数 */
+  factorOverlay?: {
+    direction: 'up' | 'down' | 'neutral';
+    alpha: number;
+    /** 建仓缩放 ∈ [0,1] */
+    posture?: number;
+  };
+};
+
 export type StrategyRecommendation = {
   strategyType: string;
   sharpeRatio: number;
@@ -2421,7 +2475,8 @@ export type POSTApiLlmEnsembleRequestBody = {
   messages: Record<string, unknown>[];
   /** 约束：最多 5 项 */
   models?: string[];
-  task?: string;
+  /** 任务标签，决定路由到哪类模型。**非法值不报错、也不参与路由**（按默认 chat 处理）——与 temperature/maxTokens 的「夹紧 + 记日志」口径一致：调用方传错标签时仍能拿到结果，只是走了默认模型。合法值与 llm/config.ts 的 LLMTask 单一来源同步。 */
+  task?: 'chat' | 'analysis' | 'debate' | 'extract' | 'reasoning' | 'embedding';
   temperature?: number;
   maxTokens?: number;
 };
@@ -2555,7 +2610,7 @@ export type GETApiPaperStatsResponse = PaperStats;
  */
 export type POSTApiQuantAnalyzeRequestBody = {
   /** 策略配置对象或策略名（ma_cross/rsi_mean_reversion 等） */
-  strategy: unknown;
+  strategy: string | StrategyConfig;
   /** 是否实时抓取新闻情绪叠加回测 */
   useNews?: boolean;
   /** 用户粘贴的新闻条目（优先于实时抓取） */
@@ -2935,10 +2990,36 @@ export type POSTApiQuantScreenerRunResponse = ScreenerRunResult;
  * POST/PUT 等请求体
  * 端点：POST /api/quant/timeseries/analyze
  */
-export type POSTApiQuantTimeseriesAnalyzeRequestBody = Record<string, unknown>;
+export type POSTApiQuantTimeseriesAnalyzeRequestBody = {
+  /** 分析类型（adf/garch/coint/arima/kalman） */
+  test?: string;
+  /**
+   * 6 位 A 股股票代码，如 600519
+   * 约束：需匹配 ^\d{6}$
+   */
+  code?: string;
+  /**
+   * 配对检验的第二只标的（协整用）
+   * 约束：需匹配 ^\d{6}$
+   */
+  code2?: string;
+  /**
+   * 区间起（YYYY-MM-DD）
+   * 约束：格式 date
+   */
+  startDate?: string;
+  /**
+   * 区间止（YYYY-MM-DD）
+   * 约束：格式 date
+   */
+  endDate?: string;
+  /** 各 test 的专属参数（窗口长度、滞后阶数等），透传给分析器 */
+  options?: Record<string, unknown>;
+};
 
 /**
  * 时间序列因子分析（时序 IC / 滚动稳定性）
+ * 统一入口，按 test 分派到 ADF 单位根 / GARCH 族波动率 / Engle-Granger 协整 / ARIMA / Kalman 时变对冲比率。**test 与 code 缺省为空串**（由 analyzeTimeseries 内部判定并回 400），故这里不设 required —— 契约描述的是「HTTP 层能收什么形状」，「业务上必填什么」由服务层的校验文案承担。
  * 成功响应（HTTP 200）
  * 端点：POST /api/quant/timeseries/analyze
  */

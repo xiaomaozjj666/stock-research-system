@@ -271,7 +271,13 @@ export function buildOpenApiDocument() {
           requestBody: jsonBody({
             type: 'object',
             properties: {
-              strategy: { description: '策略配置对象或策略名（ma_cross/rsi_mean_reversion 等）' },
+              strategy: {
+                // 既可传策略名（ma_cross / rsi_mean_reversion 等），也可传完整策略对象
+                // （由 orchestrator.parseStrategyInput 二选一解析）。用 oneOf 表达，
+                // 此前只写 description 不给 type，生成的 TS 里是 unknown。
+                oneOf: [{ type: 'string' }, { $ref: '#/components/schemas/StrategyConfig' }],
+                description: '策略配置对象或策略名（ma_cross/rsi_mean_reversion 等）',
+              },
               useNews: { type: 'boolean', description: '是否实时抓取新闻情绪叠加回测' },
               newsItems: {
                 type: 'array',
@@ -619,7 +625,9 @@ export function buildOpenApiDocument() {
               },
             ),
             400: errorResponse(
-              '查询参数非法（时间戳需为 epoch 毫秒，limit/offset 需为 >= 0 的整数）',
+              '查询参数非法（时间戳需为 epoch 毫秒，limit/offset 需为 >= 0 的整数；' +
+                'category 须为 llm_call/tool_call/trade_signal/data_access/user_query/system 之一，' +
+                'riskLevel 须为 info/low/medium/high/critical 之一）',
             ),
             500: errorResponse('审计查询失败'),
           },
@@ -1214,7 +1222,29 @@ export function buildOpenApiDocument() {
         post: {
           tags: ['quant'],
           summary: '时间序列因子分析（时序 IC / 滚动稳定性）',
-          requestBody: jsonBody({ type: 'object' }),
+          description:
+            '统一入口，按 test 分派到 ADF 单位根 / GARCH 族波动率 / Engle-Granger 协整 / ' +
+            'ARIMA / Kalman 时变对冲比率。**test 与 code 缺省为空串**（由 analyzeTimeseries ' +
+            '内部判定并回 400），故这里不设 required —— 契约描述的是「HTTP 层能收什么形状」，' +
+            '「业务上必填什么」由服务层的校验文案承担。',
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              test: { type: 'string', description: '分析类型（adf/garch/coint/arima/kalman）' },
+              code: stockCodeSchema,
+              code2: {
+                ...stockCodeSchema,
+                description: '配对检验的第二只标的（协整用）',
+              },
+              startDate: { type: 'string', format: 'date', description: '区间起（YYYY-MM-DD）' },
+              endDate: { type: 'string', format: 'date', description: '区间止（YYYY-MM-DD）' },
+              options: {
+                type: 'object',
+                description: '各 test 的专属参数（窗口长度、滞后阶数等），透传给分析器',
+                additionalProperties: true,
+              },
+            },
+          }),
           responses: {
             200: jsonOk(
               { description: '时序分析结果' },
@@ -1662,7 +1692,14 @@ export function buildOpenApiDocument() {
             properties: {
               messages: { type: 'array', items: { type: 'object' } },
               models: { type: 'array', maxItems: 5, items: { type: 'string' } },
-              task: { type: 'string' },
+              task: {
+                type: 'string',
+                enum: ['chat', 'analysis', 'debate', 'extract', 'reasoning', 'embedding'],
+                description:
+                  '任务标签，决定路由到哪类模型。**非法值不报错、也不参与路由**（按默认 chat 处理）——' +
+                  '与 temperature/maxTokens 的「夹紧 + 记日志」口径一致：调用方传错标签时' +
+                  '仍能拿到结果，只是走了默认模型。合法值与 llm/config.ts 的 LLMTask 单一来源同步。',
+              },
               temperature: { type: 'number' },
               maxTokens: { type: 'integer' },
             },
@@ -1873,6 +1910,72 @@ export function buildOpenApiDocument() {
      */
     components: {
       schemas: {
+        /**
+         * 策略配置（quant/types.ts 的 StrategyConfig）。
+         *
+         * POST /api/quant/analyze 的 `strategy` 字段既可传策略名（string）、
+         * 也可传本对象，由 orchestrator.parseStrategyInput 二选一解析。
+         * 此前该字段只写 description 不给 type，生成的 TS 里是 unknown；
+         * 补这个组件后请求体类型才真正对得上调用方能传的东西。
+         */
+        StrategyConfig: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            type: {
+              type: 'string',
+              enum: ['ma_cross', 'momentum', 'mean_reversion', 'custom'],
+            },
+            stockCode: stockCodeSchema,
+            params: {
+              type: 'object',
+              description: '策略参数（键随 type 而异：短长周期 / 阈值 / 均线周期）',
+              additionalProperties: { type: 'number' },
+            },
+            startDate: { type: 'string', format: 'date', description: '回测区间起' },
+            endDate: { type: 'string', format: 'date', description: '回测区间止' },
+            initialCapital: { type: 'number', description: '初始资金，默认 100 万' },
+            commission: { type: 'number', description: '佣金率，默认万三' },
+            slippage: { type: 'number', description: '滑点，默认 0.1%' },
+            costModel: {
+              type: 'string',
+              enum: ['a_share'],
+              description: 'a_share=真实 A 股费率；未设则按 commission/slippage 对称建模',
+            },
+            newsOverlay: {
+              type: 'object',
+              description: '新闻情绪叠加层；与 factorOverlay 取较小值（AND 语义）',
+              properties: {
+                polarity: { type: 'number', description: '聚合极性 ∈ [−1,1]' },
+                since: { type: 'string', format: 'date', description: '旧口径生效起始日' },
+                items: {
+                  type: 'array',
+                  description: '严格时序（推荐）：引擎只用发布日 ≤ bar 日期的新闻，无前视偏差',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      publishedAt: { type: 'string', description: '发布日或 ISO datetime' },
+                      polarity: { type: 'number', description: '确定性极性 ∈ [−1,1]' },
+                    },
+                    required: ['publishedAt', 'polarity'],
+                  },
+                },
+              },
+              required: ['polarity'],
+            },
+            factorOverlay: {
+              type: 'object',
+              description: '组合 alpha 叠加层（opt-in）：方向性 alpha 翻成建仓资金缩放系数',
+              properties: {
+                direction: { type: 'string', enum: ['up', 'down', 'neutral'] },
+                alpha: { type: 'number' },
+                posture: { type: 'number', description: '建仓缩放 ∈ [0,1]' },
+              },
+              required: ['direction', 'alpha'],
+            },
+          },
+          required: ['name', 'type', 'stockCode', 'params', 'startDate', 'endDate'],
+        },
         /**
          * 全项目统一的错误响应体。
          * detail 只在非生产环境回传（见 utils/errorDetail.ts），生产环境为
