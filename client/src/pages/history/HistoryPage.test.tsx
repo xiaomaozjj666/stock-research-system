@@ -37,6 +37,10 @@ vi.mock('../../api/client', () => ({
 }));
 
 import { fetchHistoryList, fetchHistoryDetail, deleteHistoryItem } from '../../api/client';
+import type { HistoryListItem } from '../../api/client';
+// HistoryItem 未从 api/client 再导出（那里只 import 供内部使用），故直连生成层
+import type { HistoryItem, StockPoolItem } from '../../api/generated';
+import { partial } from '../../test/partial';
 
 describe('HistoryPage 研究历史', () => {
   beforeEach(() => {
@@ -95,7 +99,9 @@ describe('HistoryPage 研究历史', () => {
  * 时间线是可选字段——旧数据没有它，渲染必须与"有时间线"一样正常（不报错、不出现空括号）。
  */
 describe('HistoryPage 评分时间线', () => {
-  function itemWith(timeline?: { date: string; score: number; rating: string }[]) {
+  function itemWith(
+    timeline?: { date: string; score: number; rating: string }[],
+  ): HistoryListItem[] {
     return [
       {
         id: 'h1',
@@ -114,7 +120,7 @@ describe('HistoryPage 评分时间线', () => {
       itemWith([
         { date: '2026-08-01', score: 80, rating: '持续观察' },
         { date: '2026-09-10', score: 87, rating: '优先跟踪' },
-      ]) as never,
+      ]),
     );
     const { container } = render(<HistoryPage onOpenHistory={() => {}} />);
     await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
@@ -131,7 +137,7 @@ describe('HistoryPage 评分时间线', () => {
       itemWith([
         { date: '2026-08-01', score: 80, rating: '持续观察' },
         { date: '2026-09-10', score: 62, rating: '谨慎观望' },
-      ]) as never,
+      ]),
     );
     const { container } = render(<HistoryPage onOpenHistory={() => {}} />);
     await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
@@ -156,7 +162,7 @@ describe('HistoryPage 评分时间线', () => {
 
   it('时间线只有 1 个点（首次分析）：同样不渲染变化量', async () => {
     vi.mocked(fetchHistoryList).mockResolvedValueOnce(
-      itemWith([{ date: '2026-09-10', score: 87, rating: '优先跟踪' }]) as never,
+      itemWith([{ date: '2026-09-10', score: 87, rating: '优先跟踪' }]),
     );
     const { container } = render(<HistoryPage onOpenHistory={() => {}} />);
     await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
@@ -171,7 +177,7 @@ describe('HistoryPage 评分时间线', () => {
       itemWith([
         { date: '2026-08-01', score: 87, rating: '优先跟踪' },
         { date: '2026-09-10', score: 87, rating: '优先跟踪' },
-      ]) as never,
+      ]),
     );
     const { container } = render(<HistoryPage onOpenHistory={() => {}} />);
     await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
@@ -183,7 +189,7 @@ describe('HistoryPage 评分时间线', () => {
 });
 
 /** 永不 settle / 可手动 settle 的桩 */
-function pending<T = unknown>(): Promise<T> {
+function pending<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
@@ -197,8 +203,32 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function detailFor(id: string) {
-  return { id, stockCode: '600519', stockName: '贵州茅台', result: { stock_pool: [{ id }] } };
+/**
+ * `fetchHistoryDetail` 的完整形状桩。
+ *
+ * 字段按 `HistoryItem`（= HistorySummary & { result: AnalysisResult }）逐项补全
+ * ——先前只造 4 个字段并 `as never` 蒙混。`result` 里的三个必填项
+ * （data_sources / research_confidence / limitation_explain）是 typecheck 补出来的：
+ * 去掉它们 tsc 会立刻报「missing the following properties」。
+ *
+ * `stock_pool` 的元素只造 `{ id }`：本组用例断言的是「哪份报告被提交给
+ * onOpenHistory」，不涉及个股结论字段，故用 partial 显式声明「只实现 id」。
+ */
+function detailFor(id: string): HistoryItem {
+  return {
+    id,
+    stockCode: '600519',
+    stockName: '贵州茅台',
+    createdAt: '2026-08-14T10:00:00Z',
+    rating: '优先跟踪',
+    totalScore: 92,
+    result: {
+      stock_pool: [partial<StockPoolItem>({ stock_code: id })],
+      data_sources: [],
+      research_confidence: '中',
+      limitation_explain: '',
+    },
+  };
 }
 
 function openButtons(): HTMLElement[] {
@@ -228,11 +258,11 @@ describe('HistoryPage 查看的请求序号', () => {
   });
 
   it('先慢后快：只采纳最后一次点击的结果，迟到的旧响应被丢弃', async () => {
-    const slowA = deferred<never>();
-    const slowB = deferred<never>();
+    const slowA = deferred<HistoryItem>();
+    const slowB = deferred<HistoryItem>();
     vi.mocked(fetchHistoryDetail)
-      .mockReturnValueOnce(slowA.promise as never)
-      .mockReturnValueOnce(slowB.promise as never);
+      .mockReturnValueOnce(slowA.promise)
+      .mockReturnValueOnce(slowB.promise);
     const onOpen = vi.fn();
     render(<HistoryPage onOpenHistory={onOpen} />);
     await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
@@ -248,20 +278,28 @@ describe('HistoryPage 查看的请求序号', () => {
 
     // B 先返回 → 采纳
     await act(async () => {
-      slowB.resolve(detailFor('h2') as never);
+      slowB.resolve(detailFor('h2'));
     });
-    expect(onOpen).toHaveBeenLastCalledWith({ stock_pool: [{ id: 'h2' }] });
+    expect(onOpen).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        stock_pool: [expect.objectContaining({ stock_code: 'h2' })],
+      }),
+    );
 
     // A 迟到 → 必须被序号守卫丢弃，不得覆盖 B 的报告
     await act(async () => {
-      slowA.resolve(detailFor('h1') as never);
+      slowA.resolve(detailFor('h1'));
     });
     expect(onOpen).toHaveBeenCalledTimes(1);
-    expect(onOpen).not.toHaveBeenCalledWith({ stock_pool: [{ id: 'h1' }] });
+    expect(onOpen).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        stock_pool: [expect.objectContaining({ stock_code: 'h1' })],
+      }),
+    );
   });
 
   it('拉取途中按钮显示「打开中…」并禁用，防止同一行被连点', async () => {
-    vi.mocked(fetchHistoryDetail).mockReturnValue(pending() as never);
+    vi.mocked(fetchHistoryDetail).mockReturnValue(pending<HistoryItem>());
     render(<HistoryPage onOpenHistory={() => {}} />);
     await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
 
@@ -320,11 +358,9 @@ describe('HistoryPage 资源与并发删除', () => {
   });
 
   it('并发删除两行：A 的收尾不会清掉 B 的「删除中…」', async () => {
-    const a = deferred<never>();
-    const b = deferred<never>();
-    vi.mocked(deleteHistoryItem)
-      .mockReturnValueOnce(a.promise as never)
-      .mockReturnValueOnce(b.promise as never);
+    const a = deferred<void>();
+    const b = deferred<void>();
+    vi.mocked(deleteHistoryItem).mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
     render(<HistoryPage onOpenHistory={() => {}} />);
     await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
 
@@ -340,13 +376,13 @@ describe('HistoryPage 资源与并发删除', () => {
 
     // h1 先返回 → 只剩 h2 处于删除中；共用一个 deletingId 时 h1 的 finally 会把 h2 也解禁
     await act(async () => {
-      a.resolve(undefined as never);
+      a.resolve();
     });
     expect(screen.queryByText('贵州茅台')).toBeNull();
     expect(screen.getByRole('button', { name: '删除中…' })).toBeDisabled();
 
     await act(async () => {
-      b.resolve(undefined as never);
+      b.resolve();
     });
     expect(screen.queryByRole('button', { name: '删除中…' })).toBeNull();
     expect(screen.getByText('暂无研究历史。')).toBeInTheDocument();

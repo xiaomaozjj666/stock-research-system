@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { apiAuthGuard, extractToken, getApiAuthToken } from '../middleware.js';
+import { reqOf } from '../test/partial.js';
 
 /**
  * API 访问令牌鉴权的契约。
@@ -142,60 +143,62 @@ describe('apiAuthGuard — 启用后', () => {
 
 describe('extractToken', () => {
   it('Authorization: Bearer <t> → 取 t', () => {
-    expect(extractToken({ headers: { authorization: 'Bearer abc123' } } as never)).toBe('abc123');
+    expect(extractToken(reqOf({ headers: { authorization: 'Bearer abc123' } }))).toBe('abc123');
   });
 
   it('非 Bearer 方案 → 不从中取值', () => {
-    expect(extractToken({ headers: { authorization: 'Basic abc123' } } as never)).toBeNull();
+    expect(extractToken(reqOf({ headers: { authorization: 'Basic abc123' } }))).toBeNull();
   });
 
   it('只有 x-api-token → 取该值', () => {
-    expect(extractToken({ headers: { 'x-api-token': 'abc123' } } as never)).toBe('abc123');
+    expect(extractToken(reqOf({ headers: { 'x-api-token': 'abc123' } }))).toBe('abc123');
   });
 
   it('两者都有时优先 Authorization', () => {
     expect(
-      extractToken({
-        headers: { authorization: 'Bearer from-auth', 'x-api-token': 'from-header' },
-      } as never),
+      extractToken(
+        reqOf({
+          headers: { authorization: 'Bearer from-auth', 'x-api-token': 'from-header' },
+        }),
+      ),
     ).toBe('from-auth');
   });
 
   it('空 Bearer 值不算有效令牌', () => {
-    expect(extractToken({ headers: { authorization: 'Bearer    ' } } as never)).toBeNull();
+    expect(extractToken(reqOf({ headers: { authorization: 'Bearer    ' } }))).toBeNull();
   });
 
   it('无任何令牌头 → null', () => {
-    expect(extractToken({ headers: {} } as never)).toBeNull();
+    expect(extractToken(reqOf({ headers: {} }))).toBeNull();
   });
 
   /* === query 令牌：只给 SSE 用（EventSource 无法自定义请求头） === */
   it('GET + ?token= → 取该值', () => {
-    expect(extractToken({ method: 'GET', headers: {}, query: { token: 'abc123' } } as never)).toBe(
+    expect(extractToken(reqOf({ method: 'GET', headers: {}, query: { token: 'abc123' } }))).toBe(
       'abc123',
     );
   });
 
   it('非 GET 的 query token 一律不认（限制凭据进 URL 的泄漏面）', () => {
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-      expect(extractToken({ method, headers: {}, query: { token: 'abc123' } } as never)).toBeNull();
+      expect(extractToken(reqOf({ method, headers: {}, query: { token: 'abc123' } }))).toBeNull();
     }
   });
 
   it('query 里 token 缺失/为空串 → null', () => {
-    expect(extractToken({ method: 'GET', headers: {}, query: {} } as never)).toBeNull();
-    expect(
-      extractToken({ method: 'GET', headers: {}, query: { token: '   ' } } as never),
-    ).toBeNull();
+    expect(extractToken(reqOf({ method: 'GET', headers: {}, query: {} }))).toBeNull();
+    expect(extractToken(reqOf({ method: 'GET', headers: {}, query: { token: '   ' } }))).toBeNull();
   });
 
   it('请求头优先于 query（两者都给出时用 Authorization）', () => {
     expect(
-      extractToken({
-        method: 'GET',
-        headers: { 'x-api-token': 'from-header' },
-        query: { token: 'from-query' },
-      } as never),
+      extractToken(
+        reqOf({
+          method: 'GET',
+          headers: { 'x-api-token': 'from-header' },
+          query: { token: 'from-query' },
+        }),
+      ),
     ).toBe('from-header');
   });
 });

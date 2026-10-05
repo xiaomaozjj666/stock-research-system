@@ -10,6 +10,14 @@ import {
   stageLabel,
   type CheckpointDataPayload,
 } from '../analysisCheckpoint.js';
+import type {
+  ExpertOpinion,
+  FinancialData,
+  PriceHistoryPoint,
+  StockInfo,
+  ValuationData,
+} from '../../types.js';
+import { partial } from '../../test/partial.js';
 
 const tmpDir = mkdtempSync(join(tmpdir(), 'ckpt-'));
 const origDir = process.env.ANALYSIS_CHECKPOINT_DIR;
@@ -18,13 +26,23 @@ const origTtl = process.env.ANALYSIS_CHECKPOINT_TTL_MS;
 /** 本用例组的代次（saveCheckpoint 要求显式传 runId，防止跨代 merge） */
 const GEN = 'gen-test';
 
+/**
+ * 专家观点桩：字段按 ExpertOpinion 补全。
+ * 用例只关心「这条结论属于哪一代」，但类型要求 arguments/keyPoints 必填。
+ */
+function opinionFor(expert: string): ExpertOpinion {
+  return { expert, arguments: [], overallSentiment: 'neutral', confidence: 50, keyPoints: [] };
+}
+
 function makeData(code: string): CheckpointDataPayload {
   return {
-    info: { code, name: `股票${code}`, industry: '白酒' } as never,
-    financial: { years: ['2024'] } as never,
-    valuation: { currentPrice: 100 } as never,
+    // 本组用例只断言 info.code 与 valuation.currentPrice 会随断点落盘，
+    // 其余字段用 partial 显式声明「只实现这些」而非 as never 放弃检查。
+    info: partial<StockInfo>({ code, name: `股票${code}`, industry: '白酒' }),
+    financial: partial<FinancialData>({ years: ['2024'] }),
+    valuation: partial<ValuationData>({ currentPrice: 100 }),
     newsSignal: null,
-    priceHistory: [{ date: '2024-01-01', close: 100 }] as never,
+    priceHistory: [partial<PriceHistoryPoint>({ date: '2024-01-01', close: 100 })],
   };
 }
 
@@ -59,7 +77,7 @@ describe('analysisCheckpoint 断点续跑', () => {
 
   it('多次保存按阶段合并，不覆盖已有产物', () => {
     saveCheckpoint('600519', { stage: 'data', data: makeData('600519') }, GEN);
-    saveCheckpoint('600519', { stage: 'experts', expertOpinions: [{ expert: 'A' }] as never }, GEN);
+    saveCheckpoint('600519', { stage: 'experts', expertOpinions: [opinionFor('A')] }, GEN);
     const ck = loadCheckpoint('600519');
     // data 阶段产物仍在，experts 阶段产物已追加
     expect(ck?.data?.info.code).toBe('600519');

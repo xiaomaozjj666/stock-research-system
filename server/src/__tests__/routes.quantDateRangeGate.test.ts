@@ -93,6 +93,7 @@ import {
   computeCompositeAlphaForStrategy,
   computeCompositeAlphaBatch,
 } from '../quant/compositeService.js';
+import type { CompositeAlphaBatchResult, CompositeAlphaResult } from '../quant/compositeService.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
 
 const mockedComposite = vi.mocked(computeCompositeAlphaForStrategy);
@@ -115,9 +116,11 @@ function simulatedBars(n = 300): OHLCVData[] {
 }
 void simulatedBars; // 本轮用例尚未用到：保留工具函数，显式声明"有意保留"
 
-const compositeResult = (code: string) => ({
+// 标注返回类型后，下面 4 处 `as never` 全部不再需要：类型不匹配会在**定义处**
+// 就报出来，而不是在每个调用点靠断言蒙混。
+const compositeResult = (code: string): CompositeAlphaResult => ({
   stockCode: code,
-  market: 'A' as const,
+  market: 'A',
   benchmarkSecid: '1.000300',
   horizons: [21, 63],
   compositeAlpha: { horizons: [], hasSignal: false, overallDirection: 'neutral', overallAlpha: 0 },
@@ -128,14 +131,16 @@ const compositeResult = (code: string) => ({
   isSimulated: false,
 });
 
-function batchResultFor(codes: string[], simulated: string[] = []) {
+type BatchResult = Awaited<ReturnType<typeof computeCompositeAlphaBatch>>;
+
+function batchResultFor(codes: string[], simulated: string[] = []): BatchResult {
   return {
     requested: codes.length,
     succeeded: codes.length,
     failed: 0,
     items: codes.map((code) => ({
       stockCode: code,
-      ok: true as const,
+      ok: true,
       result: { ...compositeResult(code), isSimulated: simulated.includes(code) },
     })),
     startDate: '2024-01-01',
@@ -176,8 +181,8 @@ beforeEach(() => {
   mockedBatch.mockReset();
   mockedBars.mockReset();
   mockedBars.mockResolvedValue(realBars());
-  mockedComposite.mockResolvedValue(compositeResult('600519') as never);
-  mockedBatch.mockImplementation(async (codes: string[]) => batchResultFor(codes) as never);
+  mockedComposite.mockResolvedValue(compositeResult('600519'));
+  mockedBatch.mockImplementation(async (codes: string[]) => batchResultFor(codes));
 });
 
 describe('#2 区间参数闸门：非法日期 / 倒置 / 超长跨度 → 400 且零取数', () => {
@@ -268,9 +273,7 @@ describe('#2 区间参数闸门：非法日期 / 倒置 / 超长跨度 → 400 �
 
 describe('#3 批量闸门：跑完后据结果判定，冷缓存只按批量口径取一次数', () => {
   it('命中模拟数据 → 422 + degraded + 命中代码（语义与预检版一致）', async () => {
-    mockedBatch.mockImplementation(
-      async (codes: string[]) => batchResultFor(codes, ['000858']) as never,
-    );
+    mockedBatch.mockImplementation(async (codes: string[]) => batchResultFor(codes, ['000858']));
 
     const res = await request(app)
       .post('/api/quant/factor/composite/batch')
@@ -328,9 +331,16 @@ describe('#3 批量闸门：跑完后据结果判定，冷缓存只按批量口�
           items: codes.map((code) => ({
             stockCode: code,
             ok: true,
-            result: { ...compositeResult(code), isSimulated: undefined },
+            // 用例要模拟的是「旧版结果**根本没有** isSimulated 这个键」，
+            // 因此必须用 Omit 真删掉字段；写 `isSimulated: undefined` 不等价
+            // —— `'isSimulated' in result` 仍为 true（tsc 会拦下这个差别）。
+            result: (() => {
+              const { isSimulated: _drop, ...rest } = compositeResult(code);
+              void _drop;
+              return rest;
+            })(),
           })),
-        }) as never,
+        }) as CompositeAlphaBatchResult,
     );
 
     const res = await request(app)

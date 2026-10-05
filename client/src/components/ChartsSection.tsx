@@ -7,7 +7,7 @@ import PriceTrendChart from './PriceTrendChart';
 import { useReducedMotion } from '../hooks/useReducedMotion';
 import type { PricePoint } from '../types';
 
-interface StockData {
+export interface StockData {
   stock_name?: string;
   priceHistory?: PricePoint[];
   finance_metrics?: {
@@ -32,7 +32,7 @@ interface StockData {
   };
 }
 
-interface ChartsSectionProps {
+export interface ChartsSectionProps {
   data: StockData;
 }
 

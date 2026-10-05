@@ -1,3 +1,7 @@
+import type { AnalysisResult, FinancialData, ScoreDetail, ValuationData } from '../types.js';
+import type { CompositeAlphaResult } from '../quant/compositeService.js';
+import type { DocumentInsight } from '../services/documentInsights.js';
+
 /**
  * 契约形状的测试夹具工厂
  * ============================================================================
@@ -13,7 +17,7 @@
  */
 
 /** FinancialData 的 15 个必填序列字段 */
-export function financialMetrics(): Record<string, unknown> {
+export function financialMetrics(): FinancialData {
   return {
     years: [],
     revenue: [],
@@ -34,7 +38,7 @@ export function financialMetrics(): Record<string, unknown> {
 }
 
 /** ValuationData 的必填字段 */
-export function valuationData(): Record<string, unknown> {
+export function valuationData(): ValuationData {
   return {
     currentPrice: 100,
     pe: 20,
@@ -47,7 +51,7 @@ export function valuationData(): Record<string, unknown> {
 }
 
 /** ScoreDetail 的 5 个必填分项 */
-export function scoreDetail(): Record<string, unknown> {
+export function scoreDetail(): ScoreDetail {
   return { profit_quality: 80, growth: 75, valuation: 70, industry_boom: 78, risk_deduction: 20 };
 }
 
@@ -59,7 +63,7 @@ export function scoreDetail(): Record<string, unknown> {
 export function stockPoolItem(
   stock_code = '600519',
   stock_name = '贵州茅台',
-): Record<string, unknown> {
+): AnalysisResult['stock_pool'][number] {
   return {
     stock_code,
     stock_name,
@@ -81,11 +85,14 @@ export function stockPoolItem(
   };
 }
 
-/** AnalysisResult（/api/analyze 的 200 响应体） */
-export function analysisResult(
-  stock_code = '600519',
-  stock_name = '贵州茅台',
-): Record<string, unknown> {
+/**
+ * AnalysisResult（/api/analyze 的 200 响应体）
+ *
+ * 返回类型标注为 `AnalysisResult` 而非 `Record<string, unknown>`：标注后工厂本身
+ * 受编译器约束（少字段立刻报错），调用点也不再需要 `as never` —— 先前正因为它
+ * 返回 `Record<string, unknown>`，每个调用点都得断言一次才能塞进强类型位置。
+ */
+export function analysisResult(stock_code = '600519', stock_name = '贵州茅台'): AnalysisResult {
   return {
     generatedAt: '2026-09-16T00:00:00.000Z',
     stock_pool: [stockPoolItem(stock_code, stock_name)],
@@ -96,7 +103,7 @@ export function analysisResult(
 }
 
 /** DocumentInsight（/api/ingest 响应里的 insight） */
-export function documentInsight(): Record<string, unknown> {
+export function documentInsight(): DocumentInsight {
   return {
     summary: '测试摘要',
     positives: ['利好一'],
@@ -111,7 +118,7 @@ export function documentInsight(): Record<string, unknown> {
  * CompositeAlphaResult（/api/quant/factor/composite 的 200 响应体）。
  * `isSimulated` 必填：compositeService 无条件写入它。
  */
-export function compositeAlphaResult(stock_code = '600519'): Record<string, unknown> {
+export function compositeAlphaResult(stock_code = '600519'): CompositeAlphaResult {
   return {
     stockCode: stock_code,
     market: 'A',

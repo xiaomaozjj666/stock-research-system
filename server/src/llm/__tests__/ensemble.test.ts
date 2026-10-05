@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { chat } from '../client.js';
 import { getModelRegistry, selectModel } from '../config.js';
+import type { ModelSpec } from '../config.js';
 import {
   runEnsemble,
   candidateModels,
@@ -23,13 +24,13 @@ const mockedChat = vi.mocked(chat);
 const mockedRegistry = vi.mocked(getModelRegistry);
 const mockedSelect = vi.mocked(selectModel);
 
-function reg(ids: string[]) {
+function reg(ids: string[]): ModelSpec[] {
   return ids.map((id, i) => ({
     id,
     label: id,
     costPer1kInput: i,
     costPer1kOutput: i,
-    tasks: ['chat' as const],
+    tasks: ['chat'],
   }));
 }
 
@@ -41,7 +42,7 @@ beforeEach(() => {
   );
   resetCalibration();
   mockedChat.mockReset();
-  mockedRegistry.mockReturnValue(reg(['model-a', 'model-b', 'model-c']) as never);
+  mockedRegistry.mockReturnValue(reg(['model-a', 'model-b', 'model-c']));
   mockedSelect.mockReturnValue('model-a');
 });
 
@@ -58,7 +59,7 @@ describe('candidateModels', () => {
   });
 
   it('注册表只有 1 个模型时退化为单模型（不凑数）', () => {
-    mockedRegistry.mockReturnValue(reg(['only']) as never);
+    mockedRegistry.mockReturnValue(reg(['only']));
     const models = candidateModels('chat');
     expect(models).toHaveLength(1);
     expect(models[0]).toBe(mockedSelect('chat'));

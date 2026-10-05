@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { generateReportMarkdown } from '../reportExport';
 import type { AnalysisResult } from '../../types';
+import type { FinancialData, ValuationData } from '../../api/generated';
+import { partial } from '../../test/partial';
 
 const SAMPLE: AnalysisResult = {
   research_confidence: '高',
@@ -32,8 +34,10 @@ const SAMPLE: AnalysisResult = {
           confidence: 60,
         },
       ],
-      finance_metrics: {} as never,
-      valuation: { currentPrice: 1500, pe: 30, pb: 8 } as never,
+      // 这两段只用于「估值/财务出现在报告里」这一层，用例不逐字段校验，
+      // 故用 partial 显式声明「只实现这些字段」而非 as never 放弃整个检查。
+      finance_metrics: partial<FinancialData>({}),
+      valuation: partial<ValuationData>({ currentPrice: 1500, pe: 30, pb: 8 }),
       valuation_level: '偏高',
       expert_opinions: [
         {
@@ -78,7 +82,7 @@ const SAMPLE: AnalysisResult = {
 
 describe('generateReportMarkdown 报告导出', () => {
   it('空结果返回空字符串', () => {
-    expect(generateReportMarkdown({ stock_pool: [] } as never)).toBe('');
+    expect(generateReportMarkdown(partial<AnalysisResult>({ stock_pool: [] }))).toBe('');
   });
 
   it('生成完整 Markdown：标题/摘要/评分表/优势/专家/风险/争议/情景/策略/跟踪', () => {
@@ -126,8 +130,8 @@ describe('generateReportMarkdown 报告导出', () => {
           strengths: [],
           risk_list: [],
           controversy_points: [],
-          finance_metrics: {} as never,
-          valuation: {} as never,
+          finance_metrics: partial<FinancialData>({}),
+          valuation: partial<ValuationData>({}),
           valuation_level: '',
           expert_opinions: [],
           reflection_notes: [],

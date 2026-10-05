@@ -7,6 +7,7 @@ import {
   fetchIntlKlines,
 } from '../intlDataProvider.js';
 import { setLogLevel } from '../../utils/logger.js';
+import { jsonResponse } from '../../test/partial.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -473,12 +474,8 @@ describe('fetchIntlKlines — 港美股日 K 线', () => {
   it('美股代码映射 107.{CODE}，透传 K 线解析结果', async () => {
     globalThis.fetch = vi.fn(async (url: unknown) => {
       expect(String(url)).toContain('secid=107.TSLA');
-      return {
-        ok: true,
-        status: 200,
-        json: async () => KLINE_JSON,
-      } as never;
-    }) as never;
+      return jsonResponse(KLINE_JSON);
+    }) as unknown as typeof globalThis.fetch;
     const bars = await fetchIntlKlines('TSLA', 'US', '2026-09-01', '2026-09-12');
     expect(bars).toHaveLength(2);
     expect(bars[0].close).toBeCloseTo(290.2, 6);
@@ -487,15 +484,17 @@ describe('fetchIntlKlines — 港美股日 K 线', () => {
 
   it('港股 5 位代码映射 116.{code}', async () => {
     globalThis.fetch = vi.fn(async (url: unknown) => {
+      // 用例名断言的就是「secid 拼成 116.00700」——URL 断言是这个用例的主体，
+      // 不能因为换用 jsonResponse 桩就丢掉。
       expect(String(url)).toContain('secid=116.00700');
-      return { ok: true, status: 200, json: async () => KLINE_JSON } as never;
-    }) as never;
+      return jsonResponse(KLINE_JSON);
+    }) as unknown as typeof globalThis.fetch;
     const bars = await fetchIntlKlines('00700', 'HK', '2026-09-01', '2026-09-12');
     expect(bars).toHaveLength(2);
   });
 
   it('代码格式非法 → 抛错不发请求', async () => {
-    globalThis.fetch = vi.fn() as never;
+    globalThis.fetch = vi.fn() as unknown as typeof globalThis.fetch;
     await expect(fetchIntlKlines('700', 'HK', '2026-09-01', '2026-09-12')).rejects.toThrow(
       '4-5 位',
     );

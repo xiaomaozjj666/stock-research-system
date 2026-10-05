@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
+import type { StockData } from '../ChartsSection';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from '@testing-library/react';
 import ChartsSection from '../ChartsSection';
@@ -32,7 +33,7 @@ function stubMatchMedia(matches: boolean) {
   );
 }
 
-function makeChartData() {
+function makeChartData(): StockData {
   return {
     stock_name: '贵州茅台',
     finance_metrics: {
@@ -97,7 +98,7 @@ describe('prefers-reduced-motion → ECharts 入场动画（CSS 媒体查询覆�
 
   it('ChartsSection：默认（未开启 reduced）保留 1500ms 入场动画', () => {
     stubMatchMedia(false);
-    render(<ChartsSection data={makeChartData() as never} />);
+    render(<ChartsSection data={makeChartData()} />);
     const all = options();
     expect(all.length).toBeGreaterThanOrEqual(5);
     for (const o of all) expect(o.animation).toBe(true);
@@ -106,7 +107,7 @@ describe('prefers-reduced-motion → ECharts 入场动画（CSS 媒体查询覆�
 
   it('ChartsSection：系统开启 reduced 时 5 张图全部 animation:false', () => {
     stubMatchMedia(true);
-    render(<ChartsSection data={makeChartData() as never} />);
+    render(<ChartsSection data={makeChartData()} />);
     const all = options();
     expect(all.length).toBeGreaterThanOrEqual(5);
     for (const o of all) {

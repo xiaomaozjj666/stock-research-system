@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runAnalysis } from '../analysisPipeline.js';
 import type { StockDataSet, FinancialData, ValuationData, StockInfo } from '../../types.js';
-import { buildFinancialGraph } from '../../llm/knowledgeGraph.js';
+import { buildFinancialGraph, type KnowledgeGraph } from '../../llm/knowledgeGraph.js';
+import { partial } from '../../test/partial.js';
 import { calculateSectorRotation } from '../../quant/sectorRotation.js';
 
 // 用可控的样例数据替掉真实的网络数据获取，验证流水线装配正确性
@@ -110,8 +111,18 @@ describe('runAnalysis 流水线', () => {
     // 重置 mock 默认值：此前"不同财务特征"用例把 getData 永久替换为 weakData、
     // 增强 mock 跨 describe 改写且无还原，依赖文件内声明顺序（乱序/重跑即破）
     vi.mocked(getData).mockResolvedValue(sampleData);
-    vi.mocked(buildFinancialGraph).mockReturnValue(undefined as never);
-    vi.mocked(calculateSectorRotation).mockReturnValue(undefined as never);
+    // 这两个 mock 的目的就是「返回 undefined，迫使流水线走降级分支」。
+    // buildFinancialGraph 返回 KnowledgeGraph **类实例**（含方法），无法用对象
+    // 字面量伪造，故用 partial 显式声明；calculateSectorRotation 返回普通接口，
+    // 直接给「空输入降级」的真实返回值（见 sectorRotation.ts 第 235 行）。
+    vi.mocked(buildFinancialGraph).mockReturnValue(partial<KnowledgeGraph>({}));
+    vi.mocked(calculateSectorRotation).mockReturnValue({
+      date: new Date().toISOString().slice(0, 10),
+      signals: [],
+      topSectors: [],
+      bottomSectors: [],
+      summary: '无行业数据',
+    });
   });
 
   it('装配出结构合法的分析结果', { timeout: 30000 }, async () => {

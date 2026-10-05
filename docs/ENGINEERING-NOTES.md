@@ -58,6 +58,10 @@
 - `routes.test.ts` 需 `app` 可导入不绑端口：`server/src/index.ts` 把 `app.listen`/优雅关闭包进 `if(process.env.NODE_ENV!=='test')`，vitest.config 设 `env:{NODE_ENV:'test'}`。
 - 覆盖率排除清单以 `vitest.config.mts` 的 `coverage.exclude` 为准，**只有**：`**/*.test.ts`、`**/*.d.ts`、`server/src/index.ts`（Express 入口）、`server/src/routes/**`（路由模块）、`server/src/middleware.ts`（限流/熔断/安全头）、`server/src/llm/client.ts`、`server/src/llm/mcpClient.ts`、`server/src/llm/expertRunner.ts`、`client/src/main.tsx`、`client/src/vite-env.d.ts`。注意 `server/src/llm/**` 并非整目录排除（rag/prompts/tools/knowledgeGraph 等纯逻辑模块必须纳入，否则门禁形同虚设），`server/src/quant/**` 同样纳入统计（此前笔记写的「quant 被排除、覆盖率稳定在 ~80%」与配置不符，已订正）。
 - **路由测试不得真实打通服务层**：`ci.yml` 写明「测试均已 mock 网络（不依赖真实行情/东财接口）」，而 `/api/stocks/search` 的正常路径用例曾真实走到 `searchStocks`——CI 上要先等东财 suggest 超时、再回落本地全表 5000+ 只的 DP，**同一提交在两次 CI 上结论相反**（2026-09-22：放宽到 30s 仍以 30107ms 超时）。改按 `routes.market.test.ts` 口径打桩后 30107ms → 462ms。**给慢用例放宽超时是掩盖，不是修复**；先问「它为什么会慢」，多数答案是"它连了不该连的东西"。
+- **测试代码禁用 `as never`，改用 `test/partial.ts` 的助手**（2026-10-05 起基线为 0）。`as never` 会让「桩只造 2-3 个字段」这类缺陷完全隐形：接入契约校验时它掩盖了 4 处真实问题（断言引用不存在的字段、必填项缺失、多余的残留字段、用例名断言的东西根本没断言）。助手：`partial<T>()` / `partialList<T>()`（泛型桩）、`reqOf()` / `mwReq()` / `mwRes()`（express 中间件桩）、`jsonResponse()`（fetch 桩）。守卫见 `server/src/test/__tests__/typeEscape.test.ts`。
+- **清完 `as never` 立刻跑 `typecheck`**，否则未定义符号会伪装成「降级路径正常」。实例：换用 `jsonResponse()` 后忘加 import → `ReferenceError` 被被测代码的 `catch` 吞掉 → 走「降级模拟数据」分支 → 用例仍绿，但断言拿到的是 9 条 `isSimulated: true` 的假数据（原应为 2 条真实 K 线）。typecheck 立刻报出 `Cannot find name 'jsonResponse'`。**批量替换后必须跟一次编译**。
+- **写守卫/基线前先反向验证它能真的拦**。本项目已三次栽在「守卫自己测不准」：`as any` 正则漏了 `: any` 标注形式；`A extends B ? true : never` 对明显不成立的关系也永远绿；`as never` 基线先虚高到 82（范围与扫描逻辑不符，涨到 82 都不红）、后误收窄到 25（范围外 86 处无人监管）。**基线数字只有在「统计范围 == 实际扫描范围」时才有意义**，改范围后必须重新实测。
+- `partial.ts` 里 `Request` / `Response` 要显式从 `express` 导入：server 的 tsconfig 含 DOM lib，不显式导入会解析成浏览器同名全局类型，报错是「缺 93 个属性」这类完全误导的信息。fetch 桩另用 `FetchResponse = Awaited<ReturnType<typeof globalThis.fetch>>`。
 
 ## 构建/部署注意
 

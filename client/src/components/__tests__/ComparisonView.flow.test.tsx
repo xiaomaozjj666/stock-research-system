@@ -102,9 +102,16 @@ function pending<T = unknown>(): Promise<T> {
 }
 
 /** 收到 abort 时以 AnalysisCancelledError 拒绝（与真实 client 的取消语义一致） */
+/**
+ * 构造一个「只在 AbortSignal 触发时 reject」的 compareStocks 替身。
+ *
+ * 返回类型标注为 `Promise<CompareResponse>`：先前靠 `as never` 塞进 mock，
+ * 于是「这个替身到底返回什么」无人检查。标注后，若 compareStocks 的返回类型
+ * 变了，tsc 会在此报出。
+ */
 function rejectOnAbort() {
   return (_codes: string[], signal?: AbortSignal) =>
-    new Promise((_resolve, reject) => {
+    new Promise<Awaited<ReturnType<typeof api.compareStocks>>>((_resolve, reject) => {
       signal?.addEventListener('abort', () =>
         reject(new api.AnalysisCancelledError('对比分析已取消')),
       );
@@ -685,9 +692,7 @@ describe('ComparisonView 单只重试', () => {
   });
 
   it('单只重试带 AbortSignal：重试途中卸载会中止这个分钟级请求', async () => {
-    api.compareStocks
-      .mockResolvedValueOnce(partial())
-      .mockImplementationOnce(rejectOnAbort() as never);
+    api.compareStocks.mockResolvedValueOnce(partial()).mockImplementationOnce(rejectOnAbort());
     const { unmount } = render(<ComparisonView />);
     addTwo();
     fireEvent.click(startButton('开始对比分析（2/3）'));

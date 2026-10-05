@@ -10,19 +10,35 @@ import {
   judgeHit,
   type OutcomeRecord,
 } from '../outcomeTracker.js';
+import type { OHLCVData } from '../../quant/types.js';
 
 // 行情数据源打桩：个体最新价 120（评级发出时 100 → +20%），基准 100 → 110（+10%）
 let simulated = false;
 /** 每次取数收到的 signal（第 4 个参数）：用于断言取消是否沿调用链下传 */
 const fetchSignals: (AbortSignal | undefined)[] = [];
+/**
+ * K 线桩工厂：字段按 OHLCVData 补全。
+ *
+ * 先前只造 close + isSimulated 再 `as never[]`，于是「缺 date/ohlcv」要到
+ * 运行时被下游读取才暴露 —— 这正是 typeEscape 守卫要防的那类假绿灯。
+ */
+function barOf(close: number, isSimulated = false): OHLCVData {
+  return {
+    date: '2026-09-10',
+    open: close,
+    high: close,
+    low: close,
+    close,
+    volume: 1000,
+    isSimulated,
+  };
+}
+
 const fetchMock = vi.fn(async (code: string) => {
   if (code === '000300') {
-    return [
-      { close: 100, isSimulated: simulated },
-      { close: 110, isSimulated: simulated },
-    ] as never[];
+    return [barOf(100, simulated), barOf(110, simulated)];
   }
-  return [{ close: 120, isSimulated: simulated }] as never[];
+  return [barOf(120, simulated)];
 });
 
 vi.mock('../../quant/dataProvider.js', () => ({
@@ -44,12 +60,9 @@ beforeEach(() => {
   fetchMock.mockClear();
   fetchMock.mockImplementation(async (code: string) => {
     if (code === '000300') {
-      return [
-        { close: 100, isSimulated: simulated },
-        { close: 110, isSimulated: simulated },
-      ] as never[];
+      return [barOf(100, simulated), barOf(110, simulated)];
     }
-    return [{ close: 120, isSimulated: simulated }] as never[];
+    return [barOf(120, simulated)];
   });
   fetchSignals.length = 0;
   writeFileSync(tmpFile, JSON.stringify({ items: [] }));
@@ -264,12 +277,9 @@ describe('outcomeTracker 决策-结果闭环', () => {
       fetchMock.mockImplementation(async (code: string) => {
         await gate;
         if (code === '000300') {
-          return [
-            { close: 100, isSimulated: false },
-            { close: 110, isSimulated: false },
-          ] as never[];
+          return [barOf(100), barOf(110)];
         }
-        return [{ close: 120, isSimulated: false }] as never[];
+        return [barOf(120)];
       });
 
       try {

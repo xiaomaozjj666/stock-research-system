@@ -3,6 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
 import ChartsSection from '../ChartsSection';
+import type { StockData } from '../ChartsSection';
 
 // mock 按需 echarts：init 返回可控实例（真实 echarts 在 jsdom 下无法 init）
 const echartsMock = vi.hoisted(() => ({ init: vi.fn() }));
@@ -17,7 +18,7 @@ class ResizeObserverStub {
   unobserve() {}
 }
 
-function makeData() {
+function makeData(): StockData {
   return {
     stock_name: '贵州茅台',
     finance_metrics: {
@@ -31,7 +32,9 @@ function makeData() {
     valuation: {
       pe: 30,
       historicalPE: [{ year: '2024', pe: 25 }],
-      peerComparison: [{ name: '五粮液', code: '000858', pe: 20, pb: 5, roe: 15, marketCap: 5000 }],
+      // 只保留组件真正读取的字段：peerComparison 的类型里没有 pb/roe/marketCap，
+      // 多写的三个字段此前被 `as never` 掩盖，现在由 tsc 精确报出。
+      peerComparison: [{ name: '五粮液', code: '000858', pe: 20 }],
     },
     score_detail: {
       profit_quality: 80,
@@ -52,24 +55,24 @@ describe('ChartsSection', () => {
   });
 
   it('渲染图表区标题「可视化分析」', () => {
-    const { getByText } = render(<ChartsSection data={makeData() as never} />);
+    const { getByText } = render(<ChartsSection data={makeData()} />);
     expect(getByText('可视化分析')).toBeInTheDocument();
   });
 
   it('有财务数据时至少初始化 2 个图表（营收/盈利）', () => {
-    render(<ChartsSection data={makeData() as never} />);
+    render(<ChartsSection data={makeData()} />);
     expect(echartsMock.init).toHaveBeenCalled();
     expect(echartsMock.init.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it('渲染图表卡片标题（营收与利润趋势 / 历史 PE 走势）', () => {
-    const { getByText } = render(<ChartsSection data={makeData() as never} />);
+    const { getByText } = render(<ChartsSection data={makeData()} />);
     expect(getByText('营收与利润趋势')).toBeInTheDocument();
     expect(getByText('历史 PE 走势')).toBeInTheDocument();
   });
 
   it('空数据（无财务/估值）时按设计返回 null', () => {
-    const { container } = render(<ChartsSection data={{ stock_name: 'X' } as never} />);
+    const { container } = render(<ChartsSection data={{ stock_name: 'X' }} />);
     expect(container).toBeEmptyDOMElement();
   });
 });

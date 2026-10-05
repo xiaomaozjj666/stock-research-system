@@ -24,6 +24,8 @@ import {
   resetHistoryStoreCache,
   type HistoryEntryInput,
 } from '../historyService.js';
+import type { AnalysisResult } from '../../types.js';
+import { partial } from '../../test/partial.js';
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'history-cache-'));
 const historyFile = path.join(tmpDir, 'history.json');
@@ -51,7 +53,9 @@ function makeEntry(code: string, over: Partial<HistoryEntryInput> = {}): History
     stockName: `股票${code}`,
     rating: '持续观察',
     totalScore: 60,
-    result: { stock_pool: [{ stock_code: code }] } as never,
+    result: partial<AnalysisResult>({
+      stock_pool: [partial<AnalysisResult['stock_pool'][number]>({ stock_code: code })],
+    }),
     ...over,
   };
 }

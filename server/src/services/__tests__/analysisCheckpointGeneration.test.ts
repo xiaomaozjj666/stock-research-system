@@ -56,7 +56,7 @@ const minData = {
   },
 };
 vi.mock('../dataService.js', () => ({
-  getData: vi.fn(async () => minData as never),
+  getData: vi.fn(async () => minData),
 }));
 vi.mock('../../quant/dataProvider.js', () => ({
   fetchOHLCVData: vi.fn(async () => []),
@@ -81,6 +81,8 @@ vi.mock('../../quant/consensusProvider.js', () => ({
 }));
 
 import { runAnalysis } from '../analysisPipeline.js';
+import type { CheckpointDataPayload } from '../analysisCheckpoint.js';
+import type { ExpertOpinion } from '../../types.js';
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint } from '../analysisCheckpoint.js';
 
 describe('断点跨代隔离（全新分析不继承残留断点）', () => {
@@ -90,23 +92,9 @@ describe('断点跨代隔离（全新分析不继承残留断点）', () => {
       '600519',
       {
         stage: 'experts',
-        expertOpinions: [
-          {
-            expert: '过期代专家',
-            overallSentiment: 'bullish',
-            confidence: 99,
-            arguments: [],
-            keyPoints: ['上一代残留'],
-          } as never,
-        ],
+        expertOpinions: [opinionFor('过期代专家')],
         degradedExperts: [],
-        finalOpinion: {
-          expert: '过期代仲裁',
-          overallSentiment: 'bullish',
-          confidence: 99,
-          arguments: [],
-          keyPoints: [],
-        } as never,
+        finalOpinion: opinionFor('过期代仲裁'),
       },
       'gen-old',
     );
@@ -133,15 +121,36 @@ describe('断点跨代隔离（全新分析不继承残留断点）', () => {
   });
 });
 
-/** 断点 data 载荷（最小合法集：复用上面的 minData 三段 + 空新闻/行情） */
-function ckData() {
+/**
+ * 断点 data 载荷（最小合法集：复用上面的 minData 三段 + 空新闻/行情）。
+ *
+ * 字段按 `CheckpointDataPayload` 逐项对齐——先前整块 `as never`，于是
+ * 「少一段字段」要到运行时读断点才暴露。
+ */
+function ckData(): CheckpointDataPayload {
   return {
     info: minData.info,
     financial: minData.financial,
     valuation: minData.valuation,
     newsSignal: null,
     priceHistory: [],
-  } as never;
+  };
+}
+
+/**
+ * 专家观点桩，字段按 `ExpertOpinion` 补全。
+ *
+ * 用例只关心「这条结论属于哪一代」，但类型要求 arguments/keyPoints 等必填项，
+ * 先前只能 `as never` 蒙混。
+ */
+function opinionFor(expert: string): ExpertOpinion {
+  return {
+    expert,
+    arguments: [],
+    overallSentiment: 'bullish',
+    confidence: 99,
+    keyPoints: [],
+  };
 }
 
 describe('断点代次隔离（并发两代互不 merge、互不误删）', () => {
@@ -157,7 +166,7 @@ describe('断点代次隔离（并发两代互不 merge、互不误删）', () =
     // B 代并发落 experts 阶段：绝不能把 A 代的 data 合并进 B 代文件
     saveCheckpoint(
       '600519',
-      { stage: 'experts', expertOpinions: [{ expert: 'B代专家' }] as never },
+      { stage: 'experts', expertOpinions: [opinionFor('B代专家')] },
       'gen-B',
     );
 
@@ -174,11 +183,11 @@ describe('断点代次隔离（并发两代互不 merge、互不误删）', () =
     saveCheckpoint('600519', { stage: 'data', data: ckData() }, 'gen-A');
     saveCheckpoint(
       '600519',
-      { stage: 'experts', expertOpinions: [{ expert: 'B代专家' }] as never },
+      { stage: 'experts', expertOpinions: [opinionFor('B代专家')] },
       'gen-B',
     );
     // A 代继续写自己的 arbitration：base 代次不符 → 只保留本次 patch
-    saveCheckpoint('600519', { stage: 'arbitration', controversies: [] as never }, 'gen-A');
+    saveCheckpoint('600519', { stage: 'arbitration', controversies: [] }, 'gen-A');
 
     const forA = loadCheckpoint('600519', 'gen-A');
     expect(forA).not.toBeNull();
@@ -194,7 +203,7 @@ describe('断点代次隔离（并发两代互不 merge、互不误删）', () =
 
     saveCheckpoint(
       '600519',
-      { stage: 'experts', expertOpinions: [{ expert: '续跑专家' }] as never },
+      { stage: 'experts', expertOpinions: [opinionFor('续跑专家')] },
       adopted!.runId!,
     );
     const ck = loadCheckpoint('600519', 'gen-A');

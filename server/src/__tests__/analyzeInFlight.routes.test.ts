@@ -32,7 +32,7 @@ import { ANALYSIS_IN_FLIGHT } from '../routes/analysis.js';
 // 字段按 server/src/types.ts 的 AnalysisResult 补全：先前只造 4 个字段并用
 // `as never` 绕过检查，契约校验接上后报「必填字段缺失」。
 // 这里要跑完整的 /api/analyze 响应体（该端点契约要求 AnalysisResult 全形）。
-const sampleResult = analysisResultFixture() as never;
+const sampleResult: unknown = analysisResultFixture();
 
 /** 与流水线抛出的错误同构：code + message（生产环境 SSE 只回 message） */
 function inFlightError(): Error {

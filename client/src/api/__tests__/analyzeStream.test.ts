@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { analyzeStockStream, type AnalysisStage } from '../client.js';
+import type { AnalysisResult, AnalyzeStreamEvent } from '../generated';
+
+/**
+ * 「完成」事件携带的最小合法 AnalysisResult。
+ * 三个必填项由 tsc 逼出来：先前 `{ stock_pool: [] } as never` 让它们长期缺失，
+ * 而 AnalysisResult 的形状后来扩过一次字段，这条用例其实没跟上。
+ */
+function emptyResult(): AnalysisResult {
+  return { stock_pool: [], data_sources: [], research_confidence: '', limitation_explain: '' };
+}
 
 // 用可控的 EventSource 替身测试流式编排逻辑（看门狗 / 进度回调 / 完成 / 错误 / 取消），无需真实 DOM。
 class MockEventSource {
@@ -15,7 +25,12 @@ class MockEventSource {
   close() {
     this.closed = true;
   }
-  emit(stage: unknown) {
+  /**
+   * 收契约里的 AnalyzeStreamEvent 而非 unknown：先前写 unknown 是「主动放弃
+   * 检查」，于是 emit({ phase: '不存在' }) 这类错误事件能一路溜到被测代码。
+   * 标注真实类型后，事件形状写错在调用处就被拦下。
+   */
+  emit(stage: AnalyzeStreamEvent) {
     this.onmessage?.({ data: JSON.stringify(stage) });
   }
   emitError() {
@@ -40,11 +55,11 @@ describe('analyzeStockStream', () => {
     const es = MockEventSource.instances[0];
     es.emit({ phase: 'data', message: '获取数据中' });
     es.emit({ phase: 'scoring', message: '评分中', totalScore: 80, rating: '买入' });
-    es.emit({ phase: 'done', message: '完成', result: { stock_pool: [] } as never });
+    es.emit({ phase: 'done', message: '完成', result: emptyResult() });
     const result = await done;
     expect(stages).toHaveLength(2);
     expect(stages[1].totalScore).toBe(80);
-    expect(result).toEqual({ stock_pool: [] });
+    expect(result).toEqual(emptyResult());
     expect(es.closed).toBe(true); // 完成后清理连接
   });
 
@@ -79,11 +94,11 @@ describe('analyzeStockStream', () => {
     MockEventSource.instances[1].emit({
       phase: 'done',
       message: '完成',
-      result: { stock_pool: [] } as never,
+      result: emptyResult(),
     });
     const result = await done;
     expect(stages).toHaveLength(1);
-    expect(result).toEqual({ stock_pool: [] });
+    expect(result).toEqual(emptyResult());
   });
 
   it('重试次数耗尽后报连接失败（H-03）', async () => {
@@ -132,7 +147,7 @@ describe('analyzeStockStream', () => {
       },
       () => {},
     );
-    es.emit({ phase: 'done', message: 'x', result: {} as never });
+    es.emit({ phase: 'done', message: 'x', result: emptyResult() });
     await Promise.resolve(); // 冲刷微任务
     expect(resolved).toBe(false); // cancel 后的事件不 resolve
     await p;

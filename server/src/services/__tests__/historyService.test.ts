@@ -16,6 +16,8 @@ import {
   type HistoryItem,
   type HistorySummary,
 } from '../historyService.js';
+import type { AnalysisResult } from '../../types.js';
+import { partial } from '../../test/partial.js';
 
 // 落盘重定向到进程专属临时文件（HISTORY_FILE env，与 watchlist/paper/audit 同模式）
 const tmpDir = mkdtempSync(join(tmpdir(), 'history-svc-'));
@@ -47,7 +49,9 @@ function makeEntry(code: string, over: Partial<HistoryEntryInput> = {}): History
     industry: '白酒',
     rating: '持续观察',
     totalScore: 60,
-    result: { stock_pool: [{ stock_code: code }] } as never,
+    result: partial<AnalysisResult>({
+      stock_pool: [partial<AnalysisResult['stock_pool'][number]>({ stock_code: code })],
+    }),
     ...over,
   };
 }
@@ -120,7 +124,14 @@ describe('historyService 研究历史', () => {
   it('详情返回完整 result（可恢复研究报告渲染）', () => {
     const saved = saveHistoryEntry(
       makeEntry('300750', {
-        result: { stock_pool: [{ stock_code: '300750', name: 'x' }] } as never,
+        result: partial<AnalysisResult>({
+          stock_pool: [
+            partial<AnalysisResult['stock_pool'][number]>({
+              stock_code: '300750',
+              stock_name: 'x',
+            }),
+          ],
+        }),
       }),
     );
     const detail = getHistoryItem(saved!.id);

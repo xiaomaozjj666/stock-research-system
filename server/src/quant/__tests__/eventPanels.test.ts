@@ -255,7 +255,7 @@ describe('dragonTigerSignalEvents — 龙虎榜事件信号', () => {
         reason: '缺日期',
       },
     ];
-    const events = dragonTigerSignalEvents(rows as never);
+    const events = dragonTigerSignalEvents(rows);
     expect(events).toHaveLength(1);
     expect(events[0]).toEqual({ eventDate: '2024-04-10', value: 1 }); // 2e8/2e10 = 1%
   });

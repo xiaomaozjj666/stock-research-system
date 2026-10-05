@@ -130,7 +130,7 @@ describe('evaluateFactorExpression — 求值语义', () => {
       inventory: [1],
       goodwill: [0],
       debtRatio: [40],
-    } as never);
+    });
     expect(evaluateFactorSeries(parseFactorExpression('roe'), ctx)[0]).toBeCloseTo(12.5, 12);
   });
 });

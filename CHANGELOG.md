@@ -3,6 +3,58 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `docs/ENGINEERING-NOTES.md`。
 
+## 2026-10-05（第六轮）· 类型逃逸清零：114 → 0，并因此抓出 4 处真实桩缺陷
+
+**背景**：上一轮接入契约校验时抓出 12+ 处「测试桩 ≠ 契约」，根因都是
+`as never`。当时只把生产代码的逃逸清零（3 → 0），测试侧留了个
+「基线 25，只许减不许增」的守卫。收尾时核实这个守卫，发现它**本身就是坏的**。
+
+**守卫坏在哪（两次改错，第三次才对）**
+
+1. 第一版基线写 **82**，但统计范围是 `server/src/**` 全递归，而守卫实际只扫
+   `server/src/__tests__/` 顶层。**基线虚高 = 门槛形同虚设**，涨到 82 都不红。
+2. 第二版把范围「对齐」成 25 —— 看似修好，实则更糟：`llm/__tests__`、
+   `quant/__tests__`、`services/__tests__`、`client/src/**` 全部脱离监管，
+   合计 86 处逃逸无人看管。**先让守卫能测准，再谈基线数字。**
+3. 第三版改成「server/src + client/src + e2e 下全部 `*.test.ts(x)`」，
+   实测真实存量 **114**，基线随之写 114。然后逐个清掉，最终基线设为 **0**。
+
+**清理方式：补基础设施，不加豁免**
+
+- 新增 `server/src/test/partial.ts` 与 `client/src/test/partial.ts`：
+  `partial<T>()` / `partialList<T>()` / `reqOf()` / `mwReq()` / `mwRes()` /
+  `jsonResponse()`。把「构造不完整的测试替身」所需的类型擦除**集中到一处**，
+  调用点保留强类型提示 —— 字段名拼错仍会被拦，只有「缺字段」被有意放过。
+- `contractFixtures.analysisResult` 返回类型由 `Record<string, unknown>`
+  改为 `AnalysisResult`，工厂自身开始受编译器约束（调用点的 `as never` 随之消失）。
+- 多个本地工厂补上返回类型标注（`reg(): ModelSpec[]`、`compositeResult(): CompositeAlphaResult`、
+  `makeData(): CheckpointDataPayload` 等），不匹配在**定义处**报，而非在每个调用点靠断言蒙混。
+
+**清出来的 4 处真实缺陷**（都是 `as never` 长期掩盖的）
+
+| 位置                       | 问题                                                                                                                   |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `HistoryPage.test.tsx`     | 断言写 `{ stock_pool: [{ id: 'h2' }] }`，而真实字段是 `stock_code` —— 断言在验证一个不存在的结构                       |
+| `analyzeStream.test.ts`    | 完成事件的 `AnalysisResult` 缺 `data_sources` / `research_confidence` / `limitation_explain`，契约扩字段后该用例没跟上 |
+| `ChartsSection.test.tsx`   | `peerComparison` 桩多写 `pb` / `roe` / `marketCap` 三 个组件根本不读的字段                                             |
+| `intlDataProvider.test.ts` | 「港股代码映射 116.\*」用例**丢了 URL 断言**——用例名断言的东西没在断言                                                 |
+
+**方法论：清 `as never` 后必须立刻 typecheck**
+
+把 `as never` 换成 `partial<T>()` 后忘加 import，`jsonResponse` 未定义 →
+`ReferenceError` 被被测代码的 `catch` 吞掉 → 走「降级模拟数据」分支 →
+**用例仍绿，但拿到的是 9 条 `isSimulated: true` 的假数据**。
+是 `typecheck` 立刻报出「Cannot find name 'jsonResponse'」才发现的。
+这与本项目反复出现的「假绿灯」同源：**任何清理动作都要有独立的验证门禁**。
+
+另一处类型陷阱：`partial.ts` 里 `Request` / `Response` 同时匹配 express 与 DOM
+两个同名类型，报错是「缺 93 个属性」，方向完全误导。已显式
+`import type { Request, Response } from 'express'`，fetch 桩另用
+`FetchResponse = Awaited<ReturnType<typeof globalThis.fetch>>`。
+
+**门禁**：`typecheck` / `typecheck:tests` / `lint`（0 warnings）/ `format:check` /
+`check:api-types` / `smoke:contract`（29 端点 0 不符）/ 全量 vitest 全绿。
+
 ## 2026-10-04（第五轮）· 类型生成：契约成为唯一权威来源，并抓出 9 处真实契约 bug
 
 **背景**：上一轮补全了 25 条遗漏路由（契约的 paths 覆盖 app 实际挂载的 64 条），

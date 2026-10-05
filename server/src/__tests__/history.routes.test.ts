@@ -6,7 +6,7 @@ import { join } from 'node:path';
 // app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
 import { app as rawApp } from '../index.js';
 import { withContract } from '../test/contractSupertest.js';
-import { stockPoolItem } from '../test/contractFixtures.js';
+import { analysisResult } from '../test/contractFixtures.js';
 const app = withContract(rawApp);
 
 import { saveHistoryEntry } from '../services/historyService.js';
@@ -38,12 +38,7 @@ describe('GET /api/history 研究历史路由', () => {
       industry: '白酒',
       rating: '优先跟踪',
       totalScore: 92,
-      result: {
-        stock_pool: [stockPoolItem()],
-        data_sources: [],
-        research_confidence: '测试置信度',
-        limitation_explain: '测试局限性',
-      } as never,
+      result: analysisResult(),
     });
     const res = await request(app).get('/api/history');
     expect(res.status).toBe(200);
@@ -64,12 +59,7 @@ describe('GET /api/history 研究历史路由', () => {
       stockName: '平安银行',
       rating: '持续观察',
       totalScore: 60,
-      result: {
-        stock_pool: [stockPoolItem('000001', '平安银行')],
-        data_sources: [],
-        research_confidence: '测试置信度',
-        limitation_explain: '测试局限性',
-      } as never,
+      result: analysisResult('000001', '平安银行'),
     });
     const res = await request(app).get(`/api/history/${saved!.id}`);
     expect(res.status).toBe(200);
@@ -87,7 +77,7 @@ describe('GET /api/history 研究历史路由', () => {
       stockName: '宁德时代',
       rating: '优先跟踪',
       totalScore: 90,
-      result: {} as never,
+      result: analysisResult('300750', '宁德时代'),
     });
     const del = await request(app).delete(`/api/history/${saved!.id}`);
     expect(del.status).toBe(200);

@@ -38,7 +38,7 @@ describe('buildResearchMemory', () => {
       createdAt: '2026-09-01T00:00:00.000Z',
       rating: '增持',
       totalScore: 78,
-    } as never);
+    });
     const m = buildResearchMemory('600519');
     expect(m.previous?.rating).toBe('增持');
     expect(m.summary).toContain('上次分析');
@@ -80,7 +80,7 @@ describe('buildResearchMemory', () => {
         oosStable: true,
         kept: true,
       },
-    ] as never);
+    ]);
     const m = buildResearchMemory('600519');
     expect(m.validatedFactors).toHaveLength(1);
     expect(m.summary).toContain('cs_roe');

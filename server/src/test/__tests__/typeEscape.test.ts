@@ -47,11 +47,15 @@ const SOFT_ESCAPES: { name: string; re: RegExp }[] = [
 ];
 
 const EXEMPT = new Set<string>([
+  // 本文件自身：`as never` 只出现在正则 `/\bas\s+never\b/g` 与失败文案里，
+  // 统计时会把自己算进去（那 3 处不是真的类型逃逸）。
+  'server/src/test/__tests__/typeEscape.test.ts',
   // 测试基础设施：它们要在 unknown 与具体类型之间来回转换，正是本守卫要检查
   // 的那类转换，写死类型反而更不安全。
   'server/src/test/contractSupertest.ts',
   'server/src/test/contractFixtures.ts',
   'server/src/test/contractSchema.ts',
+  'server/src/test/partial.ts',
   // 泛型收窄技巧：`settle(fn: (v: never) => void, value: unknown)` 用 never
   // 作参数以禁止外部直接调用。改成 unknown 会让 settle 接受任意参数，
   // 反而削弱约束。
@@ -128,25 +132,75 @@ describe('生产代码不得逃逸类型', () => {
 });
 
 describe('测试里的类型逃逸不增不减', () => {
-  /** 基线：2026-10-05 实测。改动此数字必须同步下方说明 */
-  const BASELINE = 82;
+  /**
+   * 基线：2026-10-06 实测 **111**（范围：server/src + client/src + e2e 下全部
+   * `*.test.ts` / `*.test.tsx`，剥注释与字符串后）。
+   *
+   * ── 这个数字改过两次，每次都是因为「守卫自己测不准」 ──
+   *  1. 第一版写 **82**：统计范围用了 `server/src/**` 全递归，而守卫实际只扫
+   *     `server/src/__tests__/` 顶层。**基线虚高 = 门槛形同虚设**，涨到 82 都不红。
+   *  2. 第二版写 **25**：把范围收窄成顶层目录「对齐实际扫描逻辑」。看似修好了，
+   *     实则更糟 —— 范围外的 `llm/__tests__`、`quant/__tests__`、
+   *     `services/__tests__`、`client/src/**` 全都**不被任何守卫覆盖**，
+   *     合计 86 处逃逸处于无人看管状态。这与上轮「正则漏了 `: any`」是
+   *     同一个错误的两种形态：**先让守卫能测准，再谈基线数字**。
+   *
+   * 现在改为**全量测试文件**统一统计，范围与实际扫描逻辑一致。
+   * 真实存量 114 处，其中 `typeEscape.test.ts` 自身 3 处是正则/字符串字面量
+   * （`/\bas\s+never\b/g` 与文案），已计入 EXEMPT，故基线 111。
+   *
+   * 114 处的性质（2026-10-06 逐文件分类）：绝大多数是「构造不完整的对象喂给
+   * mock 或 express 中间件」。解法不是加豁免，而是补基础设施 + 补桩形状：
+   *   · express req/res 桩 → `test/partial.ts` 的 `reqOf` / `mwReq` / `mwRes`
+   *   · 业务对象桩 → 补全必填字段并标注真实返回类型（tsc 会精确报出缺哪个）
+   *   · `deferred<never>()` → 改成 `deferred<HistoryItem>()` 等真实类型，
+   *     否则 resolve/returnValue 每处都得 `as never` 蒙混
+   *
+   * ── 最终结果：114 → 0 ──
+   * 存量已全部清零，基线设为 **0**：从「不许增长」升级为「一旦出现即失败」。
+   * 这也是清理过程最有价值的部分——每清一处，tsc 都会精确报出被 `as never`
+   * 掩盖的真实问题（缺失的必填字段、多余的残留字段、类型不匹配的桩）。
+   *
+   * 新增基础设施（清理的产物，长期价值高于清理本身）：
+   *  · `server/src/test/partial.ts` —— partial / partialList / reqOf / mwReq /
+   *    mwRes / jsonResponse，把「构造不完整的测试替身」的类型擦除集中到一处
+   *  · `client/src/test/partial.ts` —— 前端对等实现
+   *  · `contractFixtures.analysisResult` 返回类型由 `Record<string, unknown>`
+   *    改为 `AnalysisResult`，工厂自身开始受编译器约束
+   *
+   * ── 清理过程本身又抓到两类假绿灯，值得记下来 ──
+   *  1. `as never` 换成 `partial<T>()` 后**忘了加 import**：`jsonResponse` 未定义，
+   *     ReferenceError 被被测代码的 catch 吞掉 → 走「降级模拟数据」分支 →
+   *     用例仍绿但拿到的是 9 条 `isSimulated: true` 的假数据。**清完必须立刻
+   *     跑 typecheck**，否则未定义符号会伪装成「降级路径正常」。
+   *  2. `partial.ts` 里 `Request`/`Response` 同时匹配 express 与 DOM 两个同名
+   *     类型，编译报「缺 93 个属性」且方向完全误导。已显式
+   *     `import type { Request, Response } from 'express'`，fetch 桩另用
+   *     `FetchResponse = Awaited<ReturnType<typeof globalThis.fetch>>`。
+   */
+  const BASELINE = 0;
 
-  it('server 测试里 as never 的总数不超过基线（只许减不许增）', () => {
-    const dir = join('server', 'src', '__tests__');
+  it('全部测试文件里 as never 的总数不超过基线（只许减不许增）', () => {
+    const TEST_ROOTS = ['server/src', 'client/src', 'e2e'];
     let total = 0;
     const perFile: string[] = [];
-    for (const f of readdirSync(dir).filter((n) => n.endsWith('.test.ts'))) {
-      const code = stripNonCode(readFileSync(join(dir, f), 'utf-8'));
+    for (const f of TEST_ROOTS.flatMap((r) => walk(r)).filter((p) => /\.test\.tsx?$/.test(p))) {
+      const norm = f.replace(/\\/g, '/');
+      if (EXEMPT.has(norm)) continue;
+      const code = stripNonCode(readFileSync(f, 'utf-8'));
       const n = (code.match(/\bas\s+never\b/g) ?? []).length;
       if (n > 0) {
         total += n;
-        perFile.push(`${f}: ${n}`);
+        perFile.push(`${norm}: ${n}`);
       }
     }
+    perFile.sort();
     expect(
       total,
-      `server 测试里 as never 共 ${total} 处，基线 ${BASELINE}。\n` +
-        '只允许减少：把桩改用 test/contractFixtures.ts 的完整形状工厂即可去掉一个。\n' +
+      `测试里 as never 共 ${total} 处，基线 ${BASELINE}。\n` +
+        '测试代码不得再出现 as never。构造不完整的对象请走 test/partial.ts 的\n' +
+        '  partial<T>(...) / reqOf / mwReq / mwRes / jsonResponse，或\n' +
+        '  test/contractFixtures.ts 的完整形状工厂。\n' +
         `分布：\n${perFile.join('\n')}`,
     ).toBeLessThanOrEqual(BASELINE);
   });

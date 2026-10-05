@@ -6,6 +6,7 @@ import {
   resetMetrics,
   httpMetricsMiddleware,
 } from '../metrics.js';
+import { mwReq, mwRes } from '../../test/partial.js';
 
 describe('metrics — normalizeRoute 路由标签归一化', () => {
   it('已知静态路由原样返回', () => {
@@ -100,24 +101,18 @@ describe('metrics — recordHttpRequest + renderPrometheus', () => {
 describe('metrics — httpMetricsMiddleware', () => {
   beforeEach(() => resetMetrics());
 
-  /** 造一个可手动触发 finish/close 的极简 res */
+  /** 造一个可手动触发 finish/close 的极简 res（字段按中介层实际读取的收窄） */
   function mockRes(statusCode = 200, writableEnded = false) {
     const listeners: Record<string, ((...args: unknown[]) => void)[]> = {};
-    const res = {
-      statusCode,
-      writableEnded,
-      on(event: string, cb: (...args: unknown[]) => void) {
-        (listeners[event] ||= []).push(cb);
-      },
-    };
+    const res = mwRes({ statusCode, writableEnded, listeners });
     return { res, listeners };
   }
 
   it('响应 finish 时记录请求', () => {
     const { res, listeners } = mockRes(200);
-    const req = { method: 'GET', path: '/api/watchlist/600519' };
+    const req = mwReq({ method: 'GET', path: '/api/watchlist/600519' });
     let nextCalled = false;
-    httpMetricsMiddleware()(req as never, res as never, () => {
+    httpMetricsMiddleware()(req, res, () => {
       nextCalled = true;
     });
 
@@ -132,8 +127,8 @@ describe('metrics — httpMetricsMiddleware', () => {
 
   it('客户端中途断开（只有 close、没有 finish）记为 status="aborted"', () => {
     const { res, listeners } = mockRes(200, false);
-    const req = { method: 'GET', path: '/api/analyze/stream' };
-    httpMetricsMiddleware()(req as never, res as never, () => {});
+    const req = mwReq({ method: 'GET', path: '/api/analyze/stream' });
+    httpMetricsMiddleware()(req, res, () => {});
 
     listeners['close'].forEach((cb) => cb()); // 断开：没有 finish
 
@@ -150,8 +145,8 @@ describe('metrics — httpMetricsMiddleware', () => {
 
   it('finish 之后的 close 不重复计数，也不产生 aborted', () => {
     const { res, listeners } = mockRes(200, true); // 正常结束：writableEnded=true
-    const req = { method: 'GET', path: '/api/analyze/stream' };
-    httpMetricsMiddleware()(req as never, res as never, () => {});
+    const req = mwReq({ method: 'GET', path: '/api/analyze/stream' });
+    httpMetricsMiddleware()(req, res, () => {});
 
     listeners['finish'].forEach((cb) => cb());
     listeners['close'].forEach((cb) => cb());
@@ -168,8 +163,8 @@ describe('metrics — httpMetricsMiddleware', () => {
 
   it('finish 与 close 同时到达也只计一次（幂等）', () => {
     const { res, listeners } = mockRes(200, false); // 极端时序：close 先到
-    const req = { method: 'GET', path: '/api/health' };
-    httpMetricsMiddleware()(req as never, res as never, () => {});
+    const req = mwReq({ method: 'GET', path: '/api/health' });
+    httpMetricsMiddleware()(req, res, () => {});
 
     listeners['close'].forEach((cb) => cb());
     listeners['finish'].forEach((cb) => cb());

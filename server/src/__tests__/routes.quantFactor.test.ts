@@ -91,6 +91,7 @@ import {
   computeCompositeAlphaForStrategy,
   computeCompositeAlphaBatch,
 } from '../quant/compositeService.js';
+import type { CompositeAlphaResult } from '../quant/compositeService.js';
 import { fetchFinancialData } from '../services/dataFetcher.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
 import {
@@ -217,15 +218,15 @@ function makeQuarterly(code: string): QuarterlySeries {
   };
 }
 
-const compositeResult = (code: string, horizons: number[]) => ({
+const compositeResult = (code: string, horizons: number[]): CompositeAlphaResult => ({
   stockCode: code,
-  market: 'A' as const,
+  market: 'A',
   benchmarkSecid: '1.000300',
   horizons,
   compositeAlpha: {
     horizons: [],
     hasSignal: false,
-    overallDirection: 'neutral' as const,
+    overallDirection: 'neutral',
     overallAlpha: 0,
   },
   factorPredictability: [],
@@ -255,7 +256,7 @@ describe('POST /api/quant/factor/composite', () => {
   });
 
   it('合法请求 → 200 且 horizons 透传', async () => {
-    mockedComposite.mockResolvedValue(compositeResult('600519', [7, 30]) as never);
+    mockedComposite.mockResolvedValue(compositeResult('600519', [7, 30]));
     const res = await request(app)
       .post('/api/quant/factor/composite')
       .send({ stockCode: '600519', horizons: [7, 30] });
@@ -287,7 +288,7 @@ describe('POST /api/quant/factor/composite/batch', () => {
       succeeded: 1,
       failed: 1,
       items: [
-        { stockCode: '600519', ok: true, result: compositeResult('600519', [21, 63]) as never },
+        { stockCode: '600519', ok: true, result: compositeResult('600519', [21, 63]) },
         { stockCode: '000000', ok: false, error: '无法获取股票 000000 的K线数据' },
       ],
       startDate: '2024-01-01',

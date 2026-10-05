@@ -13,6 +13,7 @@ import {
   MAX_SCREENER_SPAN_DAYS,
 } from '../screener.js';
 import type { OHLCVData } from '../../quant/types.js';
+import type { SecurityMasterEntry } from '../../services/stockMaster.js';
 
 vi.mock('../../services/stockMaster.js', () => ({ loadStockMaster: vi.fn() }));
 vi.mock('../../quant/dataProvider.js', async (importOriginal) => {
@@ -77,7 +78,7 @@ beforeEach(() => {
     { code: '600001', name: '突破股' },
     { code: '600002', name: '横盘股' },
     { code: '600003', name: '坏数据股' },
-  ] as never);
+  ]);
   mockedBars.mockReset();
 });
 
@@ -125,7 +126,7 @@ describe('runMarketScreener — 全市场初筛', () => {
       Array.from({ length: 11 }, (_, i) => ({
         code: i === 0 ? '600001' : `6001${String(i).padStart(2, '0')}`,
         name: `股${i}`,
-      })) as never,
+      })),
     );
     mockedBars.mockImplementation(async (code: string) =>
       code === '600001' ? riser : longFlatBars(),
@@ -145,7 +146,7 @@ describe('readLatestScreenerRun — 边界', () => {
 
 describe('selectScreenerUniverse — 确定性跨市场采样', () => {
   /** 主表乱序给出（clist 默认排序无代表性），断言按代码排序后等步长取样 */
-  const master = [
+  const master: SecurityMasterEntry[] = [
     { code: '688001', name: '科创板' },
     { code: '000001', name: '深主板' },
     { code: '600519', name: '沪主板' },
@@ -157,7 +158,7 @@ describe('selectScreenerUniverse — 确定性跨市场采样', () => {
   ];
 
   it('上限 < 全量 → 等步长取样覆盖各板块段（不再偏向单一市场）', () => {
-    const picked = selectScreenerUniverse(master as never, 4).map((m) => m.code);
+    const picked = selectScreenerUniverse(master, 4).map((m) => m.code);
     // 排序后 [000001,000858,002415,300750,301236,600519,603288,688001]，step=2
     expect(picked).toEqual(['000001', '002415', '301236', '603288']);
     // 覆盖深主板 / 中小板 / 创业板 / 沪主板——科创板段在 limit=4 时未入选但
@@ -166,14 +167,12 @@ describe('selectScreenerUniverse — 确定性跨市场采样', () => {
   });
 
   it('确定性：同一上限永远同一批代码（增量缓存命中的前提）', () => {
-    expect(selectScreenerUniverse(master as never, 5)).toEqual(
-      selectScreenerUniverse(master as never, 5),
-    );
+    expect(selectScreenerUniverse(master, 5)).toEqual(selectScreenerUniverse(master, 5));
   });
 
   it('不设上限 / 上限 ≥ 全量 → 全量（默认全市场扫描）', () => {
-    expect(selectScreenerUniverse(master as never, undefined)).toHaveLength(8);
-    expect(selectScreenerUniverse(master as never, 100)).toHaveLength(8);
+    expect(selectScreenerUniverse(master, undefined)).toHaveLength(8);
+    expect(selectScreenerUniverse(master, 100)).toHaveLength(8);
   });
 });
 

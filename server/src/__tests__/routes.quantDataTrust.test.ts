@@ -105,6 +105,8 @@ import {
   fetchIndustryBoardsWithMeta,
   fetchBoardConstituentsWithMeta,
 } from '../quant/universeProvider.js';
+import type { UniverseStock } from '../quant/universeProvider.js';
+import { partial } from '../test/partial.js';
 
 const mockedComposite = vi.mocked(computeCompositeAlphaForStrategy);
 const mockedBatch = vi.mocked(computeCompositeAlphaBatch);
@@ -175,25 +177,15 @@ describe('模拟行情闸门：合成 K 线不得流入结论', () => {
   });
 
   it('单只 composite 真实行情 → 照常 200（闸门不误伤正常路径）', async () => {
+    // 走 contractFixtures 的完整形状工厂，只覆盖本用例关心的三处：
+    // isSimulated=false（真实行情）、bars=300、dataRange 覆盖请求区间。
+    // 先前是整块内联 + `as never`，字段增删全靠人记。
     mockedComposite.mockResolvedValue({
-      stockCode: '600519',
-      market: 'A',
-      benchmarkSecid: '1.000300',
-      horizons: [21, 63],
-      compositeAlpha: {
-        horizons: [],
-        hasSignal: false,
-        overallDirection: 'neutral',
-        overallAlpha: 0,
-      },
-      factorPredictability: [],
+      ...compositeAlphaResult('600519'),
       bars: 300,
       dataRange: { start: '2024-01-01', end: '2025-10-01' },
-      benchmarkAvailable: true,
-      // compositeService 无条件写入 isSimulated（compositeService.ts 第 122 行），
-      // 桩此前漏了它，契约校验接上后报「必填字段缺失」。
       isSimulated: false,
-    } as never);
+    });
 
     const res = await request(app)
       .post('/api/quant/factor/composite')
@@ -208,18 +200,27 @@ describe('模拟行情闸门：合成 K 线不得流入结论', () => {
       Promise.resolve(code === '000858' ? simulatedBars() : realBars()),
     );
     // 批量闸门改为「跑完后据逐股结果判定」：结果里带 isSimulated 标记（见 #3）
+    // 逐股 result 走完整形状工厂 + 覆盖 isSimulated/bars，字段增删不再靠人记全。
     mockedBatch.mockResolvedValue({
       requested: 2,
       succeeded: 2,
       failed: 0,
       items: [
-        { stockCode: '600519', ok: true, result: { isSimulated: false, bars: 300 } },
-        { stockCode: '000858', ok: true, result: { isSimulated: true, bars: 300 } },
+        {
+          stockCode: '600519',
+          ok: true,
+          result: { ...compositeAlphaResult('600519'), isSimulated: false, bars: 300 },
+        },
+        {
+          stockCode: '000858',
+          ok: true,
+          result: { ...compositeAlphaResult('000858'), isSimulated: true, bars: 300 },
+        },
       ],
       startDate: '2024-01-01',
       endDate: '2025-03-01',
       horizons: [21, 63],
-    } as never);
+    });
 
     const res = await request(app)
       .post('/api/quant/factor/composite/batch')
@@ -234,14 +235,16 @@ describe('模拟行情闸门：合成 K 线不得流入结论', () => {
   });
 
   it('截面路径命中模拟数据 → 422，不产出任何因子报告', async () => {
-    mockedBoards.mockResolvedValue({ value: [], stale: false } as never);
+    // WithStaleness 的形状（value + stale）本就完整，成分股只需实现用例用到的
+    // code/name/marketCap —— 用 partial 显式声明，不放弃整个对象的检查。
+    mockedBoards.mockResolvedValue({ value: [], stale: false });
     mockedConstituents.mockResolvedValue({
       value: [
-        { code: '600519', name: '甲', marketCap: 100 },
-        { code: '000858', name: '乙', marketCap: 90 },
+        partial<UniverseStock>({ code: '600519', name: '甲', marketCap: 100 }),
+        partial<UniverseStock>({ code: '000858', name: '乙', marketCap: 90 }),
       ],
       stale: false,
-    } as never);
+    });
     mockedBars.mockResolvedValue(simulatedBars());
 
     const res = await request(app)
@@ -276,7 +279,7 @@ describe('horizons 统一解析：越界/小数/超个数一律 400', () => {
     // 但响应体实际是 `{}`，与契约的 CompositeAlphaResult 毫无关系。
     // 契约校验一接上就报「必填字段缺失」（全部字段）。
     // 具体用例要改返回内容时自行覆盖整个对象（mockComposite.mockResolvedValueOnce）。
-    mockedComposite.mockResolvedValue(compositeAlphaResult('600519') as never);
+    mockedComposite.mockResolvedValue(compositeAlphaResult('600519'));
   });
 
   it.each([
