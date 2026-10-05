@@ -11,13 +11,13 @@
 
 **逐处核实结果**
 
-| 位置 | 断言掩盖了什么 | 处理 |
-| --- | --- | --- |
+| 位置                      | 断言掩盖了什么                                                                                                                                                  | 处理                                                                                                                                   |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `chatAgent` + `llm/tools` | **最有价值的一处**：`runBacktest` 声明为 `(unknown, unknown) => Promise<unknown>`，真实实现是 `(OHLCVData[], StrategyConfig) => BacktestResult`，且**同步**返回 | 收紧 `ToolDeps` / `ChatAgentDeps` 两处签名，用 `import type` 挂真实类型（编译后擦除，不破坏「tools.ts 不 import 重型模块」的设计原则） |
-| `analysisPipeline` | `promise: undefined as unknown as Promise<...>` 是一句**类型谎言**——构造时该字段真为 `undefined` | `promise` 改可选 + 读取处 `!`，让「此刻尚未赋值」对类型系统可见 |
-| `quantOps` | `parseStrategyInput` 本就返回 `StrategyConfig`，断言纯属多余 | 直接赋值 |
-| `crossSectionBuilder` | `Object.fromEntries` 返回 `{[k: string]: T}`，无法表达键的字面量联合 | 改用带显式累加器类型的 `reduce`，顺带让「新增因子漏初始化」会报错 |
-| `TodayPanel` | 自定义了字段更松的局部 `AlertItem` 再断言转换——契约改名时编译器无声 | 删掉局部类型，直接用契约生成的 `WatchlistAlert` |
+| `analysisPipeline`        | `promise: undefined as unknown as Promise<...>` 是一句**类型谎言**——构造时该字段真为 `undefined`                                                                | `promise` 改可选 + 读取处 `!`，让「此刻尚未赋值」对类型系统可见                                                                        |
+| `quantOps`                | `parseStrategyInput` 本就返回 `StrategyConfig`，断言纯属多余                                                                                                    | 直接赋值                                                                                                                               |
+| `crossSectionBuilder`     | `Object.fromEntries` 返回 `{[k: string]: T}`，无法表达键的字面量联合                                                                                            | 改用带显式累加器类型的 `reduce`，顺带让「新增因子漏初始化」会报错                                                                      |
+| `TodayPanel`              | 自定义了字段更松的局部 `AlertItem` 再断言转换——契约改名时编译器无声                                                                                             | 删掉局部类型，直接用契约生成的 `WatchlistAlert`                                                                                        |
 
 **签名收紧的连锁反应：抓出 8 处「测试桩在撒谎」**
 
