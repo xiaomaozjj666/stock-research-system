@@ -14,6 +14,15 @@
 // 业务模块」的设计原则不冲突。原先这里散落着 7 份各自复制的 `/^\d{6}$/.test(x)`。
 import { isAShareCode } from '../utils/stockCode.js';
 
+// 仅类型导入：编译后被完全擦除，**不产生任何运行时 require**，
+// 因此不违反上面「不 import 重型业务模块」的设计原则。
+// 早前这里不引类型、只写 `Promise<unknown>`，再由 chatAgent 用
+// `as unknown as` 把真实函数塞进来——那会掩盖两处真实差异：
+//   · runBacktest 是**同步**返回 BacktestResult（声明写成 Promise，靠 await 一个
+//     非 Promise 才碰巧正常）；一旦它改成真异步，调用侧不会有任何编译提示。
+//   · 参数类型全为 unknown，写错参数个数/顺序也照过。
+import type { BacktestResult, OHLCVData, StrategyConfig } from '../quant/types.js';
+
 export interface ToolDefinition {
   type: 'function';
   function: {
@@ -36,14 +45,14 @@ export interface ToolCall {
 /** 工具执行依赖（生产环境注入真实服务，单测注入 mock） */
 export interface ToolDeps {
   runAnalysis?: (code: string) => Promise<unknown>;
-  runBacktest?: (ohlcv: unknown, strategy: unknown) => Promise<unknown>;
-  parseStrategyInput?: (input: unknown) => {
-    stockCode: string;
-    startDate?: string;
-    endDate?: string;
-    [k: string]: unknown;
-  };
-  fetchOHLCVData?: (code: string, start: string, end: string) => Promise<unknown[]>;
+  /**
+   * 回测。**同步**函数（返回 BacktestResult 而非 Promise）——
+   * 早前声明成 `Promise<unknown>`，与实现不符，靠 `await` 非 Promise 蒙混。
+   * 调用侧仍写 await（对同步结果同样合法，且为将来改成异步留出空间）。
+   */
+  runBacktest?: (ohlcv: OHLCVData[], strategy: StrategyConfig) => BacktestResult;
+  parseStrategyInput?: (input: string | StrategyConfig) => StrategyConfig;
+  fetchOHLCVData?: (code: string, start: string, end: string) => Promise<OHLCVData[]>;
   /** 提取新闻情绪信号（受控评估用：实验组叠加 newsOverlay） */
   extractNewsSignal?: (code: string) => Promise<{
     signal: {
@@ -296,8 +305,14 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       const end = String(args.endDate || new Date().toISOString().split('T')[0]);
       // parseStrategyInput 接收策略描述串（如 'ma_cross'），返回完整策略配置；
       // 随后覆盖股票代码与起止日期，得到回测所需的 StrategyConfig。
-      const parsed = deps.parseStrategyInput(strategy) as Record<string, unknown>;
-      const cfg = { ...parsed, stockCode: code, startDate: start, endDate: end };
+      // cfg 显式标注 StrategyConfig：早前写 `as Record<string, unknown>` 是为了让
+      // 展开后的对象能传给 unknown 参数——现在 runBacktest 收真实类型，无需再绕。
+      const cfg: StrategyConfig = {
+        ...deps.parseStrategyInput(strategy),
+        stockCode: code,
+        startDate: start,
+        endDate: end,
+      };
       const ohlcv = await deps.fetchOHLCVData(code, start, end);
       if (!ohlcv || ohlcv.length === 0) return `无法获取 ${code} 的 K 线数据`;
       const r = await deps.runBacktest(ohlcv, cfg);
@@ -315,9 +330,14 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       );
       const end = String(args.endDate || new Date().toISOString().split('T')[0]);
       if (!isAShareCode(code)) return '请提供有效的 6 位股票代码';
-      const parsed = deps.parseStrategyInput(strategy) as Record<string, unknown>;
-      const baseCfg: Record<string, unknown> = {
-        ...parsed,
+      // 交叉类型而非 Record<string, unknown>：newsOverlay 是本工具附加的实验字段，
+      // 不在 StrategyConfig 里，但**其余字段必须受 StrategyConfig 约束**——
+      // 早前声明成 Record 后，baseCfg 少写 name/type/params 也编译通过。
+      type BacktestCfg = StrategyConfig & {
+        newsOverlay?: { polarity: number; since?: string; items?: unknown[] };
+      };
+      const baseCfg: BacktestCfg = {
+        ...deps.parseStrategyInput(strategy),
         stockCode: code,
         startDate: start,
         endDate: end,
@@ -327,7 +347,7 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       // 基线：无新闻叠加
       const baseline = await deps.runBacktest(ohlcv, baseCfg);
       // 实验组：叠加新闻情绪信号（若无可新闻则降级为基线，对比将判 tie）
-      let expCfg: Record<string, unknown> = { ...baseCfg };
+      let expCfg: BacktestCfg = { ...baseCfg };
       if (deps.extractNewsSignal) {
         try {
           const ns = await deps.extractNewsSignal(code);
@@ -353,10 +373,8 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       const experiment = await deps.runBacktest(ohlcv, expCfg);
       // 动态导入评估器（避免工具注册表强耦合量化模块）
       const { compareBacktests } = await import('../quant/backtestEvaluator.js');
-      const comparison = compareBacktests(
-        baseline as import('../quant/types.js').BacktestResult,
-        experiment as import('../quant/types.js').BacktestResult,
-      );
+      // runBacktest 现已声明返回 BacktestResult（同步），这两处断言不再需要
+      const comparison = compareBacktests(baseline, experiment);
       return truncate(JSON.stringify(comparison, null, 2));
     }
     if (call.function.name === 'get_screener_latest') {

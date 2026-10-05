@@ -1,5 +1,43 @@
 import { describe, it, expect } from 'vitest';
 import { TOOL_DEFINITIONS, getTool, executeToolCall, type ToolDeps } from '../tools.js';
+import type { BacktestResult, StrategyConfig } from '../../quant/types.js';
+
+/**
+ * 回测结果桩：字段按 `BacktestResult` 补全。
+ *
+ * 早前写 `runBacktest: async () => ({ sharpe: 1.2 })` —— 既谎称异步（真实实现
+ * 是**同步**返回），又只造一个不存在的 `sharpe` 字段。这两处都在
+ * `ToolDeps` 声明为 `(ohlcv, strategy) => Promise<unknown>` 时无法被编译器发现；
+ * 收紧签名后 tsc 立刻逐条报出。
+ */
+function backtestResult(over: Partial<BacktestResult> = {}): BacktestResult {
+  return {
+    totalReturn: 12,
+    annualizedReturn: 12,
+    sharpeRatio: 1.2,
+    maxDrawdown: 8,
+    winRate: 55,
+    tradeCount: 42,
+    profitFactor: 1.8,
+    equityCurve: [],
+    trades: [],
+    benchmark: [],
+    ...over,
+  };
+}
+
+/** 策略配置桩：字段按 `StrategyConfig` 补全 */
+function strategyConfig(over: Partial<StrategyConfig> = {}): StrategyConfig {
+  return {
+    name: 'ma_cross',
+    type: 'ma_cross',
+    stockCode: '600519',
+    params: {},
+    startDate: '2024-01-01',
+    endDate: '2024-12-31',
+    ...over,
+  };
+}
 
 describe('tool registry', () => {
   it('defines valid OpenAI-compatible tool schemas', () => {
@@ -67,14 +105,11 @@ describe('tool registry', () => {
 
   it('run_backtest wires parse/fetch/run', async () => {
     const deps: ToolDeps = {
-      parseStrategyInput: (s) => ({
-        stockCode: String((s as { stockCode: string }).stockCode),
-        strategy: 'ma_cross',
-      }),
+      parseStrategyInput: (s) => (typeof s === 'string' ? strategyConfig() : (s as StrategyConfig)),
       fetchOHLCVData: async () => [
         { date: '2023-01-01', open: 1, close: 1, high: 1, low: 1, volume: 1 },
       ],
-      runBacktest: async () => ({ sharpe: 1.2 }),
+      runBacktest: () => backtestResult({ sharpeRatio: 1.2 }),
     };
     const r = await executeToolCall(
       {
@@ -92,9 +127,9 @@ describe('tool registry', () => {
 
   it('run_backtest 校验 6 位代码（与 run_analysis/evaluate_backtest 对齐）', async () => {
     const deps: ToolDeps = {
-      parseStrategyInput: () => ({ stockCode: '', strategy: 'ma_cross' }),
+      parseStrategyInput: () => strategyConfig({ stockCode: '' }),
       fetchOHLCVData: async () => [],
-      runBacktest: async () => ({}),
+      runBacktest: () => backtestResult(),
     };
     const r = await executeToolCall(
       {
@@ -167,12 +202,13 @@ describe('tool registry', () => {
   it('evaluate_backtest 跑基线+实验对比，返回 comparison 结构', async () => {
     let callCount = 0;
     const deps: ToolDeps = {
-      parseStrategyInput: () => ({ stockCode: '', strategy: 'ma_cross' }),
+      parseStrategyInput: () => strategyConfig({ stockCode: '' }),
       fetchOHLCVData: async () => [
         { date: '2023-01-01', open: 1, close: 1, high: 1, low: 1, volume: 1 },
       ],
       // 第一次=基线，第二次=实验组（带 newsOverlay 调用时收益更高）
-      runBacktest: async (_ohlcv, cfg) => {
+      // 同步返回（真实 runBacktest 亦是同步；早前写成 async 是靠 await 非 Promise 蒙混）
+      runBacktest: (_ohlcv, cfg) => {
         callCount++;
         const hasNews = (cfg as { newsOverlay?: unknown }).newsOverlay !== undefined;
         return {
@@ -220,11 +256,11 @@ describe('tool registry', () => {
 
   it('evaluate_backtest 无新闻时实验组退化为基线，判 tie', async () => {
     const deps: ToolDeps = {
-      parseStrategyInput: () => ({ stockCode: '', strategy: 'ma_cross' }),
+      parseStrategyInput: () => strategyConfig({ stockCode: '' }),
       fetchOHLCVData: async () => [
         { date: '2023-01-01', open: 1, close: 1, high: 1, low: 1, volume: 1 },
       ],
-      runBacktest: async () => ({
+      runBacktest: () => ({
         totalReturn: 10,
         annualizedReturn: 5,
         sharpeRatio: 1.2,
@@ -256,9 +292,9 @@ describe('tool registry', () => {
 
   it('evaluate_backtest 校验 6 位代码', async () => {
     const deps: ToolDeps = {
-      parseStrategyInput: () => ({ stockCode: '', strategy: 'ma_cross' }),
+      parseStrategyInput: () => strategyConfig({ stockCode: '' }),
       fetchOHLCVData: async () => [],
-      runBacktest: async () => ({}),
+      runBacktest: () => backtestResult(),
     };
     const r = await executeToolCall(
       {

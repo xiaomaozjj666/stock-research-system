@@ -695,7 +695,10 @@ router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, asy
     );
     const endDate = String(body.endDate ?? new Date().toISOString().split('T')[0]);
 
-    const parsed = parseStrategyInput(strategyName) as unknown as StrategyConfig;
+    // parseStrategyInput 本就返回 StrategyConfig（见 orchestrator.ts 第 17 行），
+    // 早前的 `as unknown as StrategyConfig` 是不必要的断言：它会掩盖「返回类型
+    // 真的变了」这种编译错误，而那正是路由层最需要被提示的一类改动。
+    const parsed = parseStrategyInput(strategyName);
     const baseCfg: StrategyConfig = { ...parsed, stockCode, startDate, endDate };
     const ohlcv = await fetchOHLCVData(stockCode, startDate, endDate);
     if (!ohlcv || ohlcv.length === 0) {

@@ -179,7 +179,18 @@ export interface RunAnalysisOptions {
  * （见 InFlightAnalysis.resume 与 ANALYSIS_IN_FLIGHT），不得静默复用。
  */
 interface InFlightAnalysis {
-  promise: Promise<AnalysisResult>;
+  /**
+   * 本轮的结果 Promise。**构造 handle 时故意留空**——它由下方
+   * `executeAnalysis(...)` 赋值，而那次调用需要 handle 自身（要读 listeners）。
+   *
+   * 先前写作 `undefined as unknown as Promise<AnalysisResult>`（注释「紧随其后
+   * 赋值」），那是**一句类型谎言**：编译器以为该字段从非空，实际存在一个
+   * 值为 `undefined` 的窗口。现改为可选 + 读取处用 `!`，让"此刻尚未赋值"
+   * 这件事对类型系统可见。
+   *
+   * 读取点只有两处（复用旧轮次、返回本轮），都在赋值之后。
+   */
+  promise?: Promise<AnalysisResult>;
   /** 进度订阅者：抛错（SSE 已断开）即被移除，其余订阅者与等待者不受影响 */
   listeners: Set<(stage: AnalysisStage) => void>;
   /** 是否曾有订阅者（仅 SSE 路由会传回调）：用于判断「已无人消费进度」是否成立 */
@@ -242,11 +253,10 @@ export function runAnalysis(
     } else {
       existing.silentWaiters += 1;
     }
-    return existing.promise;
+    return existing.promise!; // 在途轮次必然已赋值（构造后紧接同步赋值）
   }
 
   const handle: InFlightAnalysis = {
-    promise: undefined as unknown as Promise<AnalysisResult>, // 紧随其后赋值
     listeners: new Set(),
     hadListener: false,
     silentWaiters: 0,
@@ -263,7 +273,8 @@ export function runAnalysis(
     if (inFlightAnalyses.get(stockCode) === handle) inFlightAnalyses.delete(stockCode);
   });
   inFlightAnalyses.set(stockCode, handle);
-  return handle.promise;
+  // 上一步必定已给 promise 赋值（紧接着的同步语句），故此处非空
+  return handle.promise!;
 }
 
 async function executeAnalysis(

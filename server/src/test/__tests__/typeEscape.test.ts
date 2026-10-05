@@ -56,6 +56,12 @@ const EXEMPT = new Set<string>([
   'server/src/test/contractFixtures.ts',
   'server/src/test/contractSchema.ts',
   'server/src/test/partial.ts',
+  'server/src/test/depStubs.ts',
+  // 前端测试基建：jsdom 缺失的全局（ResizeObserver / matchMedia）只能造形状不全的
+  // 替身。它虽不是 *.test.ts，但性质与 partial.ts 相同——按「文件名排除测试」
+  // 的规则会被误算进生产代码。
+  'client/src/test/setup.ts',
+  'client/src/test/partial.ts',
   // 泛型收窄技巧：`settle(fn: (v: never) => void, value: unknown)` 用 never
   // 作参数以禁止外部直接调用。改成 unknown 会让 settle 接受任意参数，
   // 反而削弱约束。
@@ -106,9 +112,25 @@ describe('生产代码不得逃逸类型', () => {
   });
 
   it('软逃逸（as unknown as）保持在基线内 —— 用于依赖注入的类型擦除', () => {
-    // 这些是模块替身 / 动态 import 的必要代价，禁不掉；但**不许增长**：
-    // 增长通常意味着有人在用 as unknown as 掩盖真实的不兼容。
-    const BASELINE = 10;
+    // 2026-10-06 从 10 降到 1。逐处核实后，9 处断言在掩盖真实问题，已修掉：
+    //   · quantOps：parseStrategyInput 本就返回 StrategyConfig，断言纯属多余
+    //   · analysisPipeline：`undefined as unknown as Promise<...>` 是一句类型谎言
+    //     （构造时该字段真为 undefined），改为可选 + 读取处 `!`
+    //   · crossSectionBuilder：Object.fromEntries 无法表达键的字面量联合，
+    //     改用带显式累加器类型的 reduce（顺带让新增因子漏初始化会报错）
+    //   · TodayPanel：自定义了字段更松的局部 AlertItem 再断言转换，
+    //     改用契约生成的 WatchlistAlert
+    //   · chatAgent + llm/tools：**最有价值的一处** —— runBacktest 声明成
+    //     `(unknown, unknown) => Promise<unknown>`，而真实实现是
+    //     `(OHLCVData[], StrategyConfig) => BacktestResult`（**同步**返回）。
+    //     签名收紧后 tsc 逐条报出 8 处不符的测试桩，全部在撒谎（谎称异步、
+    //     缺必填字段），一并修正。**软逃逸本身是发现这些的入口。**
+    //
+    // 唯一保留的 1 处：`quant/pdfExtract.ts` 用 `await import(spec)` 动态加载
+    // **可选依赖** pdfjs-dist（未安装时 tsc/构建不能失败），specifier 存于变量
+    // 以免被静态解析。此时 import 的返回值只能是 any，断言用于收窄到手写形状 ——
+    // 属真正的类型擦除，无法消除。
+    const BASELINE = 1;
     let total = 0;
     const perFile: string[] = [];
     for (const f of SRC_ROOTS.flatMap((r) => walk(r))) {

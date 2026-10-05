@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createChatAgent, type ChatAgentDeps } from '../chatAgent.js';
+import { backtestResultStub, barsStub, parseStrategyStub } from '../../test/depStubs.js';
 import {
   MAX_HISTORY_MESSAGES,
   MAX_MESSAGE_CHARS,
@@ -14,12 +15,10 @@ import {
 function baseDeps(over: Partial<ChatAgentDeps>): ChatAgentDeps {
   return {
     runAnalysis: async () => ({}),
-    runBacktest: async () => ({}),
-    parseStrategyInput: (s) => ({
-      stockCode: String((s as { stockCode: string }).stockCode),
-      strategy: String((s as { strategy: string }).strategy),
-    }),
-    fetchOHLCVData: async () => [],
+    // 同步返回（非 Promise）：真实 runBacktest 亦是同步
+    runBacktest: () => backtestResultStub(),
+    parseStrategyInput: parseStrategyStub,
+    fetchOHLCVData: async () => barsStub(),
     retrieveEvidence: async () => [],
     isLLMAvailable: () => true,
     chat: async () => '',

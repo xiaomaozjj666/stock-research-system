@@ -3,6 +3,52 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `docs/ENGINEERING-NOTES.md`。
 
+## 2026-10-06（第六轮补）· 生产代码软逃逸 10 → 1，顺带抓出 8 处「测试桩在撒谎」
+
+**背景**：上一轮把测试代码的 `as never` 清零（114 → 0）后，剩下生产代码里的
+10 处 `as unknown as`（当时整体标注为「模块替身 / 动态 import 的必要代价」）。
+本轮逐处核实，**发现该判断只对 1 处成立**——另外 9 处在掩盖真实问题。
+
+**逐处核实结果**
+
+| 位置 | 断言掩盖了什么 | 处理 |
+| --- | --- | --- |
+| `chatAgent` + `llm/tools` | **最有价值的一处**：`runBacktest` 声明为 `(unknown, unknown) => Promise<unknown>`，真实实现是 `(OHLCVData[], StrategyConfig) => BacktestResult`，且**同步**返回 | 收紧 `ToolDeps` / `ChatAgentDeps` 两处签名，用 `import type` 挂真实类型（编译后擦除，不破坏「tools.ts 不 import 重型模块」的设计原则） |
+| `analysisPipeline` | `promise: undefined as unknown as Promise<...>` 是一句**类型谎言**——构造时该字段真为 `undefined` | `promise` 改可选 + 读取处 `!`，让「此刻尚未赋值」对类型系统可见 |
+| `quantOps` | `parseStrategyInput` 本就返回 `StrategyConfig`，断言纯属多余 | 直接赋值 |
+| `crossSectionBuilder` | `Object.fromEntries` 返回 `{[k: string]: T}`，无法表达键的字面量联合 | 改用带显式累加器类型的 `reduce`，顺带让「新增因子漏初始化」会报错 |
+| `TodayPanel` | 自定义了字段更松的局部 `AlertItem` 再断言转换——契约改名时编译器无声 | 删掉局部类型，直接用契约生成的 `WatchlistAlert` |
+
+**签名收紧的连锁反应：抓出 8 处「测试桩在撒谎」**
+
+`ToolDeps` / `ChatAgentDeps` 收紧后 tsc 逐条报出所有不符的桩，全部同类：
+
+- `runBacktest: async () => ({ sharpe: 1.2 })` —— 谎称**异步**（真实同步返回），
+  且 `sharpe` 这个字段**根本不存在**（真字段是 `sharpeRatio`）
+- `parseStrategyInput: (s) => ({ stockCode, strategy })` —— 返回的不是
+  `StrategyConfig`，缺 `name` / `type` / `params` / `startDate` / `endDate`
+- `fetchOHLCVData: async () => []` —— 返回 `unknown[]` 而非 `OHLCVData[]`
+
+新增 `server/src/test/depStubs.ts` 提供形状完整的桩工厂
+（`backtestResultStub` / `strategyConfigStub` / `barsStub` / `parseStrategyStub`）。
+两处声明（`ToolDeps` 与 `ChatAgentDeps`）现在必须一致——不一致时
+`productionDeps` 赋值会报错，这正是我们想要的。
+
+**唯一保留的 1 处**：`quant/pdfExtract.ts` 用 `await import(spec)` 动态加载
+**可选依赖** pdfjs-dist（未安装时构建不能失败），specifier 存于变量以免被
+静态解析。此时 import 返回值只能是 `any`，断言用于收窄到手写形状——真正的类型擦除。
+
+**守卫变化**：软逃逸基线 10 → **1**，并反向验证过（注入一处后立刻变红）。
+新增 EXEMPT：`depStubs.ts` / `client/src/test/setup.ts`（jsdom 全局桩）/
+`client/src/test/partial.ts` —— 它们不是 `*.test.ts` 但性质是测试基建，
+按「文件名排除测试」的规则会被误算进生产代码。
+
+**方法论：软逃逸不是「必要代价」，而是发现问题的入口**
+
+上一轮把 10 处软逃逸整体标注为「无法消除」是不对的。`as unknown as` 的危害
+不是「不好看」，而是**让签名漂移无人察觉**——本轮 8 处测试桩问题正是被它
+掩盖的。逐处核实「这个断言是否真的必要」比整体豁免有用得多。
+
 ## 2026-10-05（第六轮）· 类型逃逸清零：114 → 0，并因此抓出 4 处真实桩缺陷
 
 **背景**：上一轮接入契约校验时抓出 12+ 处「测试桩 ≠ 契约」，根因都是

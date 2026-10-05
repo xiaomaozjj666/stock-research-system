@@ -62,6 +62,10 @@
 - **清完 `as never` 立刻跑 `typecheck`**，否则未定义符号会伪装成「降级路径正常」。实例：换用 `jsonResponse()` 后忘加 import → `ReferenceError` 被被测代码的 `catch` 吞掉 → 走「降级模拟数据」分支 → 用例仍绿，但断言拿到的是 9 条 `isSimulated: true` 的假数据（原应为 2 条真实 K 线）。typecheck 立刻报出 `Cannot find name 'jsonResponse'`。**批量替换后必须跟一次编译**。
 - **写守卫/基线前先反向验证它能真的拦**。本项目已三次栽在「守卫自己测不准」：`as any` 正则漏了 `: any` 标注形式；`A extends B ? true : never` 对明显不成立的关系也永远绿；`as never` 基线先虚高到 82（范围与扫描逻辑不符，涨到 82 都不红）、后误收窄到 25（范围外 86 处无人监管）。**基线数字只有在「统计范围 == 实际扫描范围」时才有意义**，改范围后必须重新实测。
 - `partial.ts` 里 `Request` / `Response` 要显式从 `express` 导入：server 的 tsconfig 含 DOM lib，不显式导入会解析成浏览器同名全局类型，报错是「缺 93 个属性」这类完全误导的信息。fetch 桩另用 `FetchResponse = Awaited<ReturnType<typeof globalThis.fetch>>`。
+- **生产代码的 `as unknown as`（软逃逸）基线已降到 1**，仅 `quant/pdfExtract.ts` 的动态 `import(spec)` 属必要（可选依赖 pdfjs-dist，specifier 存变量避免静态解析，import 返回值只能是 any）。**别把它当「必要代价」整体豁免**——2026-10-06 逐处核实发现 9 处在掩盖真实问题，其中 `llm/tools.ts` 的 `runBacktest` 声明为 `(unknown, unknown) => Promise<unknown>` 而真实实现是 `(OHLCVData[], StrategyConfig) => BacktestResult`（**同步**返回）；签名一收紧，tsc 立刻报出 8 处「测试桩在撒谎」（谎称异步、缺必填字段、字段名写错 `sharpe` vs `sharpeRatio`）。**软逃逸的价值是发现签名漂移的入口，不是「不好看」的记号。**
+- **`llm/tools.ts` 的「不 import 重型模块」原则与类型安全可以兼得**：用 `import type { OHLCVData, StrategyConfig, BacktestResult } from '../quant/types.js'` —— 类型导入编译后被完全擦除、不产生运行时 require，因此不违反该设计原则（该文件第 8 行有说明）。此前为「保持解耦」把签名写成全 `unknown`，等于用类型安全换了个假解法。
+- 收紧 `ToolDeps` / `ChatAgentDeps` 这类**成对声明**的签名时，让它们引用同一个类型源（此处是 `quant/types.ts`）。两份声明各写一遍，漂移时只有赋值处报错；共用类型源后，漂移根本无处发生。
+- `client/src/test/setup.ts`（jsdom 全局桩）与 `server/src/test/{partial,depStubs}.ts` **不是 `*.test.ts`**，会被 `typeEscape` 守卫的「文件名排除测试」规则算进生产代码，需显式进 EXEMPT。发现方式：基线从 10 降到 1 后守卫仍报 3 处。
 
 ## 构建/部署注意
 

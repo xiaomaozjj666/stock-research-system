@@ -117,14 +117,14 @@ export type ChatStreamEvent =
 
 export interface ChatAgentDeps {
   runAnalysis: (code: string) => Promise<unknown>;
-  runBacktest: (ohlcv: unknown, strategy: unknown) => Promise<unknown>;
-  parseStrategyInput: (input: unknown) => {
-    stockCode: string;
-    startDate?: string;
-    endDate?: string;
-    [k: string]: unknown;
-  };
-  fetchOHLCVData: (code: string, start: string, end: string) => Promise<unknown[]>;
+  /**
+   * 与 `ToolDeps` 同签名（同为 llm/tools.ts 的注入契约，此处声明一份以便本文件
+   * 单独使用）。两者必须保持一致——不一致时 `productionDeps` 的赋值会报错，
+   * 这正是我们想要的：早前两处各写 `unknown` + 二次断言，签名漂移无人察觉。
+   */
+  runBacktest: (ohlcv: OHLCVData[], strategy: StrategyConfig) => BacktestResult;
+  parseStrategyInput: (input: string | StrategyConfig) => StrategyConfig;
+  fetchOHLCVData: (code: string, start: string, end: string) => Promise<OHLCVData[]>;
   retrieveEvidence: (
     q: string,
     opts?: { topK?: number; stockCode?: string; embedder?: Embedder },
@@ -626,6 +626,7 @@ import { runAnalysis } from './analysisPipeline.js';
 import { getData } from './dataService.js';
 import { runBacktest } from '../quant/backtestEngine.js';
 import { parseStrategyInput } from '../quant/agents/orchestrator.js';
+import type { BacktestResult, OHLCVData, StrategyConfig } from '../quant/types.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
 import { extractNewsSignal } from '../quant/newsSignal.js';
 import { readLatestScreenerRun } from '../quant/screener.js';
@@ -637,10 +638,11 @@ import { runValuationModel } from '../quant/valuationModel.js';
 
 const productionDeps: ChatAgentDeps = {
   runAnalysis,
-  // 真实服务签名更严格（runBacktest(data, strategy)、parseStrategyInput(string|StrategyConfig)），
-  // 在依赖注入边界统一为 unknown 化的抽象契约；运行时 executeToolCall 会以 (ohlcv, cfg) 调用。
-  runBacktest: runBacktest as unknown as ChatAgentDeps['runBacktest'],
-  parseStrategyInput: parseStrategyInput as unknown as ChatAgentDeps['parseStrategyInput'],
+  // 签名已与 ChatAgentDeps 对齐（见上方 interface 的说明），直接赋值即可。
+  // 早前是 `as unknown as ChatAgentDeps['runBacktest']`：它把「同步 vs 异步」与
+  // 「参数类型」两处真实差异藏了起来，改动实现时不会有任何编译提示。
+  runBacktest,
+  parseStrategyInput,
   fetchOHLCVData,
   extractNewsSignal,
   getScreenerLatest: () => readLatestScreenerRun(),

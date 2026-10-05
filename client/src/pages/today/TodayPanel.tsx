@@ -9,6 +9,7 @@ import {
   type WatchlistAlertsSnapshot,
 } from '../../api/client';
 import { normalizeApiError } from '../../api/client';
+import type { WatchlistAlert } from '../../api/generated';
 
 /**
  * 「今日」聚合入口。
@@ -22,12 +23,16 @@ import { normalizeApiError } from '../../api/client';
  * 不影响其余两块的展示——聚合页最忌讳"一个接口挂了整页空白"。
  */
 
-interface AlertItem {
-  code: string;
-  name?: string | null;
-  level?: string;
-  detail?: string;
-}
+/**
+ * 「今日异动」条目。
+ *
+ * 早前这里自定义了一个字段更松的局部 `AlertItem`（`level?: string`、
+ * `detail?: string`），再用 `as unknown as AlertItem[]` 把契约类型转过去。
+ * 代价是：契约新增/改名字段时编译器一声不响，而这里的宽松形状**永远匹配得上**。
+ * 现直接用契约生成的 `WatchlistAlert`——本组件只读 code / name / detail，
+ * 三者都在契约里且类型兼容（`name: string | null` 对 `name?: string | null`）。
+ */
+type AlertItem = WatchlistAlert;
 
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -145,7 +150,8 @@ export default function TodayPanel() {
     void load();
   }, [load]);
 
-  const alertItems = (alerts?.alerts ?? []) as unknown as AlertItem[];
+  // 类型直接来自契约，无需断言（见上方 AlertItem 别名的说明）
+  const alertItems: AlertItem[] = alerts?.alerts ?? [];
   const digest = digests[0];
 
   return (

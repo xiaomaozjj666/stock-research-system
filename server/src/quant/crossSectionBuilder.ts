@@ -149,14 +149,24 @@ export function buildCrossSectionPanel(
   factorCtxOverride?: (bars: OHLCVData[]) => PriceVolumeFactorContext,
 ): CrossSectionPanel {
   const priceVolume: Record<string, FactorObservation[]> = {};
-  const fundamental = Object.fromEntries(FUNDAMENTAL_KEYS.map((k) => [k, []])) as unknown as Record<
-    FundamentalFactorName,
-    FactorObservation[]
-  >;
-  const margin = Object.fromEntries(MARGIN_FACTOR_NAMES.map((k) => [k, []])) as unknown as Record<
-    MarginFactorName,
-    FactorObservation[]
-  >;
+  // 用 reduce 而非 Object.fromEntries：后者的返回类型是
+  // `{[k: string]: T}`，无法表达「键受限于 FundamentalFactorName 联合」，
+  // 于是每次用都得 `as unknown as Record<...>` 二次断言。
+  // reduce 带显式累加器类型后，键名与值类型都由编译器守住，新增因子漏初始化会直接报错。
+  const fundamental = FUNDAMENTAL_KEYS.reduce<Record<FundamentalFactorName, FactorObservation[]>>(
+    (acc, k) => {
+      acc[k] = [];
+      return acc;
+    },
+    {} as Record<FundamentalFactorName, FactorObservation[]>,
+  );
+  const margin = MARGIN_FACTOR_NAMES.reduce<Record<MarginFactorName, FactorObservation[]>>(
+    (acc, k) => {
+      acc[k] = [];
+      return acc;
+    },
+    {} as Record<MarginFactorName, FactorObservation[]>,
+  );
   const stocksIncluded: string[] = [];
   const stocksSkipped: { code: string; reason: string }[] = [];
 
