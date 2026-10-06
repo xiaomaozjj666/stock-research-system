@@ -1399,3 +1399,7 @@ fetch stub（service 已 mock、响应确定），且覆盖的是**当前最大�
 （以为 62 个响应无 schema、实际先核实才补齐）是同一个模式的重复 ——
 上一轮我因为核实而发现了真缺口，这一轮因为核实而**避免了一个不必要的大工程**。
 核实不是保险，是提高决策质量的常规动作。
+- **依赖升级的硬约束：npm workspaces 下同一包被多处声明版本时，三处必须一致**（`client/package.json` 的 deps/devDeps + 根 `package.json` 的 `overrides` + `package-lock.json` 的解析结果）。2026-10-06 踩过：dependabot 把 `client/package.json` 的 vite 升到 8.3.2，但根 `overrides.vite` 仍钉 8.3.0，lock 解析成 8.3.2 → **`npm ci` 必然失败**（`Invalid: lock file's vite@8.3.2 does not satisfy vite@8.3.0`），而**本地 `npm install` 会静默重写 lock 把它掩盖过去**（表现为 `git status` 里 lock 变 dirty）。CI 用 `npm ci` 才暴露。修法三处统一；验证用 `npm ci --dry-run`（本机全量 `npm ci` 要 5-25 分钟，dry-run 秒级且同样能报出一致性错误）。
+- **「同步 lock」这类提交要当心方向**：曾出现一个提交把 lock 改回 8.3.0 去迁就 override，但 `client/package.json` 仍精确声明 8.3.2 —— 错误方向换了，`npm ci` 照样失败。修这类问题前先列清三处当前值，别只看其中两处。
+- **依赖升级的硬约束：npm workspaces 下同一包被多处声明版本时，三处必须一致**（`client/package.json` 的 deps/devDeps + 根 `package.json` 的 `overrides` + `package-lock.json` 的解析结果）。2026-10-06 踩过：dependabot 把 `client/package.json` 的 vite 升到 8.3.2，但根 `overrides.vite` 仍钉 8.3.0，lock 解析成 8.3.2 → **`npm ci` 必然失败**（`Invalid: lock file's vite@8.3.2 does not satisfy vite@8.3.0`），而**本地 `npm install` 会静默重写 lock 把它掩盖过去**（表现为 `git status` 里 lock 变 dirty）。CI 用 `npm ci` 才暴露。修法三处统一；验证用 `npm ci --dry-run`（本机全量 `npm ci` 要 5-25 分钟，dry-run 秒级且同样能报出一致性错误）。
+- **「同步 lock」这类提交要当心方向**：曾出现一个提交把 lock 改回 8.3.0 去迁就 override，但 `client/package.json` 仍精确声明 8.3.2 —— 错误方向换了，`npm ci` 照样失败。修这类问题前先列清三处当前值，别只看其中两处。
