@@ -80,11 +80,20 @@ function stripNonCode(src: string): string {
     .replace(/"(?:[^"\\]|\\.)*"/g, '""');
 }
 
-function walk(dir: string, acc: string[] = []): string[] {
+/**
+ * 收集目录下的 .ts/.tsx。
+ *
+ * @param includeTests 传 true 时**包含** `*.test.ts`；默认 false（只取生产代码）。
+ *   两者不可混用：2026-10-06 发现「测试里的 as never」那条守卫复用了本函数的
+ *   默认形态（排除测试文件），于是遍历结果恒为空、`total` 恒为 0、**守卫恒绿**。
+ *   注入一处 `as never` 也照样通过——是「反向验证」把它揪出来的。
+ */
+function walk(dir: string, acc: string[] = [], includeTests = false): string[] {
   for (const name of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, name.name);
-    if (name.isDirectory()) walk(full, acc);
-    else if (/\.tsx?$/.test(name.name) && !/\.test\.tsx?$/.test(name.name)) acc.push(full);
+    if (name.isDirectory()) walk(full, acc, includeTests);
+    else if (/\.tsx?$/.test(name.name) && (includeTests || !/\.test\.tsx?$/.test(name.name)))
+      acc.push(full);
   }
   return acc;
 }
@@ -206,7 +215,11 @@ describe('测试里的类型逃逸不增不减', () => {
     const TEST_ROOTS = ['server/src', 'client/src', 'e2e'];
     let total = 0;
     const perFile: string[] = [];
-    for (const f of TEST_ROOTS.flatMap((r) => walk(r)).filter((p) => /\.test\.tsx?$/.test(p))) {
+    // includeTests=true 是关键：默认形态会把测试文件全部过滤掉，
+    // 让本守卫在空集合上「通过」（见 walk 的注释）。
+    for (const f of TEST_ROOTS.flatMap((r) => walk(r, [], true)).filter((p) =>
+      /\.test\.tsx?$/.test(p),
+    )) {
       const norm = f.replace(/\\/g, '/');
       if (EXEMPT.has(norm)) continue;
       const code = stripNonCode(readFileSync(f, 'utf-8'));
