@@ -140,6 +140,14 @@ jobs:
         #   process.execPath 启动自身 Node（跨平台可靠），故 Linux runner 可直接运行。
         run: npm run test -- --coverage
 
+      # 文档数字防漂移：README 里的用例数 / 测试文件数 / 行覆盖率是**手写**的，
+      # 改了代码忘了同步没人会发现（2026-10-06 终检时 README 已落后三轮：
+      # 写 3376 用例 / 244 文件 / 12 E2E，实际已是 3429 / 249 / 16）。
+      # 放在覆盖率步骤之后 —— 它要读 coverage/coverage-summary.json 取实测覆盖率。
+      # 只报不改：自动改写会让 README 在无人 review 下变动。
+      - name: Docs freshness (README numbers vs actual)
+        run: npm run check:doc-freshness
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v7

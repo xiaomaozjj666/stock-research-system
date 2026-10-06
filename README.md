@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-3376%20cases-brightgreen" alt="3376 测试用例" />
+  <img src="https://img.shields.io/badge/tests-3429%20cases-brightgreen" alt="3429 测试用例" />
   <a href="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml"><img src="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -169,7 +169,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3376 用例 / 244 个测试文件，行覆盖 93.8%）+ Playwright（E2E 12 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3429 用例 / 249 个测试文件，行覆盖 93.71%）+ Playwright（E2E 16 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
 
 ## 快速开始
 
@@ -286,8 +286,8 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（3376 用例 / 244 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
-npm run test:e2e      # Playwright 端到端（12 用例，真实浏览器 + 隔离数据）
+npm test              # Vitest 全量单测（3429 用例 / 249 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm run test:e2e      # Playwright 端到端（16 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src、e2e）
 npm run format:check  # Prettier 格式检查
 npm run typecheck     # 双端类型检查（与 CI 一致）
