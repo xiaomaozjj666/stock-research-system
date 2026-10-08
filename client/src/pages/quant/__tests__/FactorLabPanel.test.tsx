@@ -555,7 +555,11 @@ describe('FactorLabPanel —— 组合回测', () => {
     expect(screen.getByText('+12.3%').className).toContain('val-positive');
 
     expect(container.querySelector('.portfolio-curve')).not.toBeNull();
-    expect(echartsMock.init).toHaveBeenCalledTimes(1);
+    // 满载下（全量跑 200+ worker 抢 CPU）「已入台账」出现时 echarts 初始化的
+    // effect 可能尚未 flush，立即断言 init 会偶发拿到 0（2026-10-09 实测全量跑
+    // 中现，单跑稳定通过）。改为等 effect 真正执行，与被测行为对齐而非与机器速度赌。
+    await waitFor(() => expect(echartsMock.init).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    await waitFor(() => expect(setOption).toHaveBeenCalled(), { timeout: 3000 });
     const option = setOption.mock.calls[0][0] as {
       xAxis: { data: string[] };
       series: { name: string }[];

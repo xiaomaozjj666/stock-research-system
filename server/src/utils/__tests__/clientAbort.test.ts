@@ -131,12 +131,15 @@ describe('abortOnClientClose（真实 HTTP 连接）', () => {
       const abort = abortOnClientClose(res);
       abortedFlags.push(abort.signal.aborted);
       markRouteStarted();
-      // 模拟"在途取数"：客户端若断开，close 会在响应写回前触发 cancel
+      // 模拟"在途取数"：客户端若断开，close 会在响应写回前触发 cancel。
+      // 窗口给到 200ms：全量并发下 destroy → close → abort 的传播可能被
+      // 事件循环拖后几十 ms，50ms 时 abort 会输给业务定时器，「断开即取消」
+      // 反被判成白跑完（2026-10-09 实测全量跑中现，单跑稳定通过）。
       setTimeout(() => {
         if (abort.signal.aborted) return; // 客户端已不在：不写响应
         finished += 1;
         res.json({ ok: true });
-      }, 50);
+      }, 200);
     });
     const server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -182,8 +185,9 @@ describe('abortOnClientClose（真实 HTTP 连接）', () => {
           resolve();
         });
       });
-      // 等业务定时器到点，确认它因 abort 而没有写回响应
-      await new Promise((r) => setTimeout(r, 120));
+      // 等业务定时器（200ms）到点，确认它因 abort 而没有写回响应；
+      // 余量给足，避免满载下定时器本身被事件循环推迟导致提前断言。
+      await new Promise((r) => setTimeout(r, 450));
       expect(abortedFlags[0]).toBe(false); // 断开前未 abort
       expect(finishedCount()).toBe(0); // 断开后业务被取消，没有"白跑完"
     });
