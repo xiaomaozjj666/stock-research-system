@@ -25,7 +25,7 @@ updates:
         # 会漏掉 vite/fsevents 条目，npm ci 直接挂（#22/#27 两次实证）；
         # 单包 PR 从未坏过，让 vite 单独走
         exclude-patterns:
-          - "vite"
+          - 'vite'
     # TS7 与部分依赖 peer 冲突，升级需人工验证；ignore 由 CI 门禁兜底
     labels:
       - dependencies
