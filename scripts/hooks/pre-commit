@@ -1,0 +1,30 @@
+#!/bin/sh
+# Pre-commit guard: run Prettier check on staged files before allowing the commit.
+#
+# Why: SIX consecutive CI failures (2026-10-06 ~ 10-08, 3 schedule + 3 push),
+# all "Format check (Prettier)", all caused by unformatted files pushed from
+# local sessions (.github/dependabot.yml quotes, three times in a row).
+# CI is the wrong place to learn about formatting — block it at commit time.
+#
+# Enable (per clone):  git config core.hooksPath scripts/hooks
+#                 or:  npm run setup:hooks
+# Emergency bypass:    git commit --no-verify
+
+command -v npx >/dev/null 2>&1 || exit 0
+
+# Staged files (added/copied/modified/renamed), filtered to Prettier-supported types.
+files=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|tsx|mts|cts|mjs|cjs|js|jsx|json|yml|yaml|md|css|scss|html)$' || true)
+[ -z "$files" ] && exit 0
+
+# Drop anything matched by .prettierignore / gitignore (works regardless of
+# which Prettier version semantics apply to explicitly-passed paths).
+files=$(echo "$files" | while IFS= read -r f; do git check-ignore -q "$f" 2>/dev/null || echo "$f"; done)
+[ -z "$files" ] && exit 0
+
+npx prettier --check -- $files || {
+  echo ""
+  echo "pre-commit: Prettier check FAILED on staged files."
+  echo "  Fix:    npx prettier --write <files>  (then re-add and commit)"
+  echo "  Bypass: git commit --no-verify       (not recommended)"
+  exit 1
+}

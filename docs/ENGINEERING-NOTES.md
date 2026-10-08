@@ -969,6 +969,7 @@ unknown 报错；引入不认识构造 → 报错）。`contractParity.ts` 也�
 ### 为什么之前一直没暴露
 
 因为这类错误**三重隐身**：
+
 - vitest 不做类型检查（esbuild 只转译不检查），所以测试照样绿；
 - `tsc` 排除了测试文件，所以类型检查也绿；
 - 字段名错了但 mock 掉了网络层、断言只看 URL/方法，所以**行为断言也绿**。
@@ -980,11 +981,11 @@ unknown 报错；引入不认识构造 → 报错）。`contractParity.ts` 也�
 与 `tsconfig.json` 的差异**只有三处必要项**，其余全部 `extends` 继承
 （两处配置各自维护必然漂移）：
 
-| 差异 | 原因 |
-|---|---|
-| `lib` 加 `ES2022` | 测试用了 `Array.prototype.at`，ES2020 lib 里不存在（TS2550） |
+| 差异              | 原因                                                                                                |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
+| `lib` 加 `ES2022` | 测试用了 `Array.prototype.at`，ES2020 lib 里不存在（TS2550）                                        |
 | `types` 加 `node` | 测试要 `import 'node:fs'` / 用 `Buffer`（TS2591）；`@types/node` 早已在 devDependencies，只是没声明 |
-| `exclude` 清空 | 目的就是把测试纳入 |
+| `exclude` 清空    | 目的就是把测试纳入                                                                                  |
 
 光补这三处就从 23 降到 9 —— **剩下 9 个才是真实的类型分叉**。反过来说，
 剩下那 14 个是「配置缺口造成的噪声」，不修配置就无从区分噪声与真问题。
@@ -1017,11 +1018,11 @@ unknown 报错；引入不认识构造 → 报错）。`contractParity.ts` 也�
 
 新增三个脚本（`npm run smoke:contract`）：
 
-| 文件 | 职责 |
-|---|---|
-| `scripts/contract-from-dist.mjs` | 从 **server/dist** 载入契约 |
-| `scripts/contract-smoke.mts` | 请求 16 个无副作用端点，逐字段校验实际响应 |
-| `scripts/run-contract-smoke.mts` | 先 build → 起真实进程 → 跑校验 → 关停 |
+| 文件                             | 职责                                       |
+| -------------------------------- | ------------------------------------------ |
+| `scripts/contract-from-dist.mjs` | 从 **server/dist** 载入契约                |
+| `scripts/contract-smoke.mts`     | 请求 16 个无副作用端点，逐字段校验实际响应 |
+| `scripts/run-contract-smoke.mts` | 先 build → 起真实进程 → 跑校验 → 关停      |
 
 覆盖 16 个不依赖上游、不改状态的 GET 端点。**覆盖面不足是已知取舍**：
 POST 类与需要真实行情的端点离线无法稳定复现，强行纳入只会让门禁随机红。
@@ -1083,11 +1084,11 @@ FactorExperimentSummary.lastAt、harnessPolicy.updatedAt 等）。
 
 新增三个脚本（`npm run smoke:contract`）：
 
-| 文件 | 职责 |
-|---|---|
-| `scripts/contract-from-dist.mjs` | 从 **server/dist** 载入契约 |
-| `scripts/contract-smoke.mts` | 请求 16 个无副作用端点，逐字段校验实际响应 |
-| `scripts/run-contract-smoke.mts` | 先 build → 起真实进程 → 跑校验 → 关停 |
+| 文件                             | 职责                                       |
+| -------------------------------- | ------------------------------------------ |
+| `scripts/contract-from-dist.mjs` | 从 **server/dist** 载入契约                |
+| `scripts/contract-smoke.mts`     | 请求 16 个无副作用端点，逐字段校验实际响应 |
+| `scripts/run-contract-smoke.mts` | 先 build → 起真实进程 → 跑校验 → 关停      |
 
 覆盖 16 个不依赖上游、不改状态的 GET 端点。**覆盖面不足是已知取舍**：
 POST 类与需要真实行情的端点离线无法稳定复现，强行纳入只会让门禁随机红。
@@ -1399,7 +1400,9 @@ fetch stub（service 已 mock、响应确定），且覆盖的是**当前最大�
 （以为 62 个响应无 schema、实际先核实才补齐）是同一个模式的重复 ——
 上一轮我因为核实而发现了真缺口，这一轮因为核实而**避免了一个不必要的大工程**。
 核实不是保险，是提高决策质量的常规动作。
+
 - **依赖升级的硬约束：npm workspaces 下同一包被多处声明版本时，三处必须一致**（`client/package.json` 的 deps/devDeps + 根 `package.json` 的 `overrides` + `package-lock.json` 的解析结果）。2026-10-06 踩过：dependabot 把 `client/package.json` 的 vite 升到 8.3.2，但根 `overrides.vite` 仍钉 8.3.0，lock 解析成 8.3.2 → **`npm ci` 必然失败**（`Invalid: lock file's vite@8.3.2 does not satisfy vite@8.3.0`），而**本地 `npm install` 会静默重写 lock 把它掩盖过去**（表现为 `git status` 里 lock 变 dirty）。CI 用 `npm ci` 才暴露。修法三处统一；验证用 `npm ci --dry-run`（本机全量 `npm ci` 要 5-25 分钟，dry-run 秒级且同样能报出一致性错误）。
 - **「同步 lock」这类提交要当心方向**：曾出现一个提交把 lock 改回 8.3.0 去迁就 override，但 `client/package.json` 仍精确声明 8.3.2 —— 错误方向换了，`npm ci` 照样失败。修这类问题前先列清三处当前值，别只看其中两处。
 - **依赖升级的硬约束：npm workspaces 下同一包被多处声明版本时，三处必须一致**（`client/package.json` 的 deps/devDeps + 根 `package.json` 的 `overrides` + `package-lock.json` 的解析结果）。2026-10-06 踩过：dependabot 把 `client/package.json` 的 vite 升到 8.3.2，但根 `overrides.vite` 仍钉 8.3.0，lock 解析成 8.3.2 → **`npm ci` 必然失败**（`Invalid: lock file's vite@8.3.2 does not satisfy vite@8.3.0`），而**本地 `npm install` 会静默重写 lock 把它掩盖过去**（表现为 `git status` 里 lock 变 dirty）。CI 用 `npm ci` 才暴露。修法三处统一；验证用 `npm ci --dry-run`（本机全量 `npm ci` 要 5-25 分钟，dry-run 秒级且同样能报出一致性错误）。
 - **「同步 lock」这类提交要当心方向**：曾出现一个提交把 lock 改回 8.3.0 去迁就 override，但 `client/package.json` 仍精确声明 8.3.2 —— 错误方向换了，`npm ci` 照样失败。修这类问题前先列清三处当前值，别只看其中两处。
+- **格式检查前移到提交时点：pre-commit 钩子**（`scripts/hooks/pre-commit`，`npm run setup:hooks` 或 `git config core.hooksPath scripts/hooks` 启用）。2026-10-06～10-08 连续 **6 次** CI 失败（3 schedule + 3 push）全部卡在 Format check (Prettier)，元凶均为 `.github/dependabot.yml` 的引号风格——该文件被截断清空后由会话恢复，恢复时用了双引号，prettier 要求单引号。同一文件连续三次以同一种方式挂掉，说明流程有洞：本地没有任何环节强制 format。钩子在提交时点对暂存文件跑 `prettier --check`（按扩展名过滤、`git check-ignore` 排除 .prettierignore 匹配项），失败即阻断；紧急绕过 `git commit --no-verify`。注意 `core.hooksPath` 是**本地仓库配置**，新 clone 后需重跑 `npm run setup:hooks`，否则钩子不生效。
