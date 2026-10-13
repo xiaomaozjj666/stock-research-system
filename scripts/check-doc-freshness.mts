@@ -36,6 +36,15 @@ interface Check {
   actual: string;
   /** 建议的 README 片段（用于失败信息） */
   hint: string;
+  /**
+   * 数值容差：|README − 实测| ≤ tolerance 视为一致。
+   * 覆盖率必须给容差——v8 覆盖率在**同一段代码**上逐日有 ±0.01~0.02pp 的
+   * 抖动（异步分支的执行路径非确定），精确比对必然周期性误报：
+   * 2026-10-13 schedule 实测「README 93.71 vs 实测 93.72」，而同一提交
+   * d9923a0 在 10-09~10-12 连续四天全绿。0.05pp 的容差滤掉抖动，
+   * 真实漂移（新增/删除代码通常 ≥0.1pp）依然会报。
+   */
+  tolerance?: number;
 }
 
 /**
@@ -130,7 +139,7 @@ function main(): void {
     });
   }
 
-  // 3) 行覆盖率
+  // 3) 行覆盖率（带容差比对，见 Check.tolerance 注释）
   const covActual = readCoverageLines();
   const covMatch = readme.match(/行覆盖\s*([\d.]+)%/);
   if (covActual && covMatch) {
@@ -139,6 +148,7 @@ function main(): void {
       inReadme: covMatch[1] + '%',
       actual: covActual,
       hint: `把 README 的「行覆盖 X%」同步为 coverage/coverage-summary.json 的实测值 ${covActual}`,
+      tolerance: 0.05,
     });
   }
 
@@ -156,7 +166,11 @@ function main(): void {
       continue;
     }
     const normalize = (s: string) => s.replace('%', '').trim();
-    if (normalize(c.inReadme) !== normalize(c.actual)) {
+    const inReadmeNum = Number(normalize(c.inReadme));
+    const actualNum = Number(normalize(c.actual));
+    const drift = Math.abs(inReadmeNum - actualNum);
+    const withinTolerance = Number.isFinite(drift) && drift <= (c.tolerance ?? 0);
+    if (!withinTolerance) {
       problems.push(`  · ${c.name}：README 写 ${c.inReadme}，实测 ${c.actual}\n    ${c.hint}`);
     }
   }
