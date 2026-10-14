@@ -3,6 +3,50 @@
 股票研究系统（多专家投研 + 量化回测）变更历史。
 按日期倒序；commit 为完整短哈希。详细工程决策与踩坑记录见 `docs/ENGINEERING-NOTES.md`。
 
+## 2026-10-13 ~ 10-14 · schedule 红因两连修：覆盖率比对容差 + 孤儿 override 摘除
+
+**背景**：10-13 的 schedule 运行突然红——同一提交 `d9923a0` 此前连续四天全绿。
+失败步骤是自家的 Docs freshness 守卫：「README 写 93.71%，实测 93.72%」。
+
+**根因一**：v8 覆盖率在**同一段代码**上逐日有 ±0.01~0.02pp 的抖动（异步分支
+执行路径非确定），守卫精确比对等于周期性误报。修法：覆盖率比对加 ±0.05pp
+容差，抖动放行、真实漂移（增删代码通常 ≥0.1pp）仍报；反向验证 README 抬
+1pp 正确拦截。
+
+**根因二**：dependabot 的 vite PR（#30，8.3.2→8.3.4）挂在 Install dependencies。
+vite 只在 client/package.json 一处声明，根 `overrides.vite` 是孤儿钉子——
+dependabot 一升 client 的 vite，两侧 specifier 不再逐字相同 → npm EOVERRIDE。
+dependabot.yml 里「单包 PR 从未坏过」被证伪：根因是 override 本身，与分组
+无关（nanoid 前科的第二例）。修法：移除 `overrides.vite`；移除前验证 vitest
+peer 范围兼容 8、lock 仅一个 vite 实体、移除后 lock 零改动。#30 rebase 后 CI 全过。
+
+**顺带**：积压的三个 dependabot PR 全部合并（#29 production 组 3 项、
+#30 vite 8.3.4、#31 @playwright/test 1.64 + nanoid）；dependabot 合并精确
+版本声明时 lock 的 manifest 副本会写 `^` 前缀（plugin-react、vite 两例），
+npm ci 容忍、npm install 每次改写导致本地 lock 变 dirty，已逐处对齐。
+
+**教训**：①比对**连续实测值**的守卫必须给容差——「测得准」和「比得稳」是两回事；
+②override 只在该包被多处声明时才有意义，单处声明挂 override = 给 dependabot 埋雷。
+
+## 2026-10-06 晚 ~ 10-09 · 文档数字守卫、pre-commit 钩子与 flaky 加固
+
+- **E2E 12 → 16 条**（量化面板 4 条）；README 的用例数 / 文件数 / 覆盖率落后
+  三轮无人发现——新增 `check:doc-freshness` 守卫实测比对（CI 步骤
+  「Docs freshness」）。守卫第一版自己犯了第五次「守卫测不准」：E2E 用
+  Playwright 的 `test(` 而非 `it(`，数出来恒 0，反向验证后修正。
+- **两个满载 flaky 用例加固**（CI 恒绿、单跑恒绿、全量并发偶发红）：
+  FactorLabPanel 等「已入台账」后立即断言 echarts init——满载时 React effect
+  未 flush，改 waitFor 等 effect 真正执行；clientAbort 的 50ms 业务窗口在满载下
+  abort 传播会输给定时器——放宽到 200/450ms，语义不变。
+- **pre-commit 钩子**：同一批文件三次以同一种方式挂 CI 的 Format check 后，
+  把格式检查前移到提交时点（`scripts/hooks/pre-commit`，`npm run setup:hooks`
+  启用），格式问题不再等 CI 报。
+- **npm workspaces 依赖卫生**：同一包被 manifest + overrides + lock 三处声明
+  版本时，任一处不匹配 `npm ci` 必失败，而本地 `npm install` 会静默重写 lock
+  掩盖——验证统一用 `npm ci --dry-run`（秒级）。本机全量 vitest 必须限 worker
+  （`--maxWorkers=8`），否则 200+ fork 打爆资源：EXIT=1 但「220/249 文件全过、
+  0 失败」——**汇总文件数 < 总数 = 有文件没跑，不是测试失败**。
+
 ## 2026-10-06（终检）· 修掉一条恒绿的假守卫
 
 **背景**：交付前终检，对两条类型逃逸守卫做反向验证（注入逃逸看是否变红）。

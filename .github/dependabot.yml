@@ -21,9 +21,10 @@ updates:
         dependency-type: production
       development-dependencies:
         dependency-type: development
-        # vite 同时出现在 client 与 root 两个 manifest，组更新重写 lock 时
-        # 会漏掉 vite/fsevents 条目，npm ci 直接挂（#22/#27 两次实证）；
-        # 单包 PR 从未坏过，让 vite 单独走
+        # 组更新重写跨工作区 lock 时会漏 vite/fsevents 条目，npm ci 直接挂
+        # （#22/#27 两次实证，与 overrides 无关的 dependabot 缺陷），让 vite 单独走。
+        # 单包 PR 曾因孤儿 overrides.vite 而 EOVERRIDE 失败（#30）——该 override
+        # 已于 2026-10-14 移除，此后单包 PR 验证健康（rebase 后全绿）
         exclude-patterns:
           - 'vite'
     # TS7 与部分依赖 peer 冲突，升级需人工验证；ignore 由 CI 门禁兜底
