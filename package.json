@@ -34,22 +34,22 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@playwright/test": "1.64.0",
+    "@playwright/test": "1.64.1",
     "@testing-library/dom": "10.4.2",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",
     "@types/supertest": "7.2.1",
-    "@vitest/coverage-v8": "5.0.3",
+    "@vitest/coverage-v8": "5.0.4",
     "eslint": "10.12.0",
     "eslint-config-prettier": "10.1.8",
     "globals": "17.13.0",
     "jsdom": "30.1.2",
     "nanoid": "^6.0.2",
-    "oxlint": "1.87.0",
-    "prettier": "3.9.9",
+    "oxlint": "1.88.0",
+    "prettier": "3.9.10",
     "supertest": "7.3.1",
     "tsx": "4.23.15",
     "typescript": "^7.0.2",
-    "vitest": "5.0.3"
+    "vitest": "5.0.4"
   }
 }
