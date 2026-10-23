@@ -37,19 +37,19 @@ export interface EnvConfig {
 /**
  * 东方财富搜索 Token —— 全仓库唯一读取入口。
  *
- * 未配置（或仅为空白）时抛出带配置指引的错误，**不内置任何默认值**。
+ * **可选**：未配置（或仅空白）时返回 undefined，调用方据此省略该查询参数。
+ *
+ * 2026-10-24 实测 `searchapi.eastmoney.com/api/suggest/get` 对 token 参数
+ * **完全不校验**：不带 token、空 token、垃圾 token 返回的数据逐字相同
+ * （`600519 贵州茅台`、`300750 宁德时代` 均正常命中）。故本参数不再是必填项；
+ * 配置了就随请求带上（向后兼容，若上游日后恢复校验），没配置就干净省略。
  * 此前 env.ts 与 services/dataService.ts 各写了一份相同的硬编码默认 token，
  * 等同把凭据随源码公开；默认值既已泄露就失去了凭据意义，必须由使用者自行配置。
  * 调用方（股票搜索）据此向用户提示去 `.env` 填写，而不是静默用默认值联网。
  */
-export function requireEastmoneySearchToken(): string {
+export function getEastmoneySearchToken(): string | undefined {
   const token = process.env.EASTMONEY_SEARCH_TOKEN?.trim();
-  if (!token) {
-    throw new Error(
-      '未配置 EASTMONEY_SEARCH_TOKEN：请在 .env 中填写东方财富搜索 token（变量说明见 .env.example「外部数据源」一节）。',
-    );
-  }
-  return token;
+  return token || undefined;
 }
 
 /** 已校验的环境变量缓存 */

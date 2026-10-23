@@ -4,7 +4,7 @@ import { buildPeerComparison, resolveStockIndustry } from './peerService.js';
 import { loadStockMaster, fuzzyMatch } from './stockMaster.js';
 import { MOUTAI_INFO, MOUTAI_FINANCIAL, MOUTAI_VALUATION } from '../data/sampleData.js';
 import logger from '../utils/logger.js';
-import { requireEastmoneySearchToken } from '../utils/env.js';
+import { getEastmoneySearchToken } from '../utils/env.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -345,11 +345,12 @@ export async function getSupportedStocks(): Promise<
 export async function searchStocks(keyword: string): Promise<{ code: string; name: string }[]> {
   const kw = keyword.trim();
   const query = SEARCH_ALIASES[kw] ?? kw; // 品牌名别名改写
-  // token 只从 env 的单一入口读取：未配置时抛出明确错误（不再回落到内置默认值）。
-  const searchToken = requireEastmoneySearchToken();
+  // token 可选（接口当前不校验，见 utils/env.ts 注释）：配了就带上，没配就省略。
+  const searchToken = getEastmoneySearchToken();
+  const tokenParam = searchToken ? `&token=${encodeURIComponent(searchToken)}` : '';
   // 1. 东方财富 suggest（擅长代码/拼音/上市简称）
   try {
-    const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=${searchToken}&count=10`;
+    const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14${tokenParam}&count=10`;
     const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
     const data = (await response.json()) as {
       QuotationCodeTable?: { Data?: Array<{ MktNum: string; Code: string; Name: string }> };

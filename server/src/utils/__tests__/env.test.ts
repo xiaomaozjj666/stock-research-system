@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { loadEnv, getEnv, requireEastmoneySearchToken, _resetEnvCache } from '../env.js';
+import { loadEnv, getEnv, getEastmoneySearchToken, _resetEnvCache } from '../env.js';
 import { setLogLevel } from '../logger.js';
 
 describe('env 环境变量校验', () => {
@@ -145,22 +145,22 @@ describe('env 环境变量校验', () => {
     expect(env.llm.embeddingModel).toBe('text-embedding-3-small');
   });
 
-  it('东方财富搜索 Token 未配置时抛出配置指引错误（不再内置默认值）', () => {
+  it('东方财富搜索 Token 未配置时返回 undefined（接口不校验 token，见 env.ts 注释）', () => {
     delete process.env.EASTMONEY_SEARCH_TOKEN;
 
-    expect(() => requireEastmoneySearchToken()).toThrow('未配置 EASTMONEY_SEARCH_TOKEN');
+    expect(getEastmoneySearchToken()).toBeUndefined();
   });
 
   it('东方财富搜索 Token 仅空白时视为未配置', () => {
     process.env.EASTMONEY_SEARCH_TOKEN = '   ';
 
-    expect(() => requireEastmoneySearchToken()).toThrow('未配置 EASTMONEY_SEARCH_TOKEN');
+    expect(getEastmoneySearchToken()).toBeUndefined();
   });
 
   it('东方财富搜索 Token 可配置', () => {
     process.env.EASTMONEY_SEARCH_TOKEN = 'custom-token-123';
 
-    expect(requireEastmoneySearchToken()).toBe('custom-token-123');
+    expect(getEastmoneySearchToken()).toBe('custom-token-123');
   });
 
   it('getEnv 在未初始化时返回 null', () => {

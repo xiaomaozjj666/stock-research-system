@@ -38,8 +38,8 @@ describe('searchStocks', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
-    // 搜索已不再内置默认 token（见 utils/env.ts requireEastmoneySearchToken），
-    // 常规用例显式配置一个测试值；「未配置」分支在下面的用例里单独覆盖。
+    // token 已改为可选（见 utils/env.ts getEastmoneySearchToken）：常规用例显式配一个，
+    // 「未配置」与「已配置」两条分支在下面分别覆盖。
     process.env.EASTMONEY_SEARCH_TOKEN = 'test-token';
   });
   afterEach(() => {
@@ -48,13 +48,41 @@ describe('searchStocks', () => {
     else process.env.EASTMONEY_SEARCH_TOKEN = originalSearchToken;
   });
 
-  it('未配置 token 时抛出配置指引错误，且不发起任何网络请求', async () => {
+  it('未配置 token 时仍正常搜索，且请求 URL 不带 token 参数（接口不校验 token）', async () => {
     delete process.env.EASTMONEY_SEARCH_TOKEN;
-    const fetchSpy = vi.fn();
+    const fetchSpy = vi.fn(
+      async (_url: string | URL) =>
+        new Response(
+          JSON.stringify({
+            QuotationCodeTable: { Data: [{ MktNum: '1', Code: '600519', Name: '贵州茅台' }] },
+          }),
+          { status: 200 },
+        ),
+    );
     vi.stubGlobal('fetch', fetchSpy);
 
-    await expect(searchStocks('贵州茅台')).rejects.toThrow('未配置 EASTMONEY_SEARCH_TOKEN');
-    expect(fetchSpy).not.toHaveBeenCalled();
+    const r = await searchStocks('贵州茅台');
+
+    expect(r[0].code).toBe('600519');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0][0])).not.toContain('token=');
+  });
+
+  it('配置了 token 时请求 URL 带上 token 参数（向后兼容）', async () => {
+    const fetchSpy = vi.fn(
+      async (_url: string | URL) =>
+        new Response(
+          JSON.stringify({
+            QuotationCodeTable: { Data: [{ MktNum: '1', Code: '600519', Name: '贵州茅台' }] },
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await searchStocks('贵州茅台');
+
+    expect(String(fetchSpy.mock.calls[0][0])).toContain('token=test-token');
   });
 
   it('品牌名「长鑫存储」经别名改写后命中 688825，且名称规范化', async () => {
