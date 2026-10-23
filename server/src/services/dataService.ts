@@ -4,6 +4,7 @@ import { buildPeerComparison, resolveStockIndustry } from './peerService.js';
 import { loadStockMaster, fuzzyMatch } from './stockMaster.js';
 import { MOUTAI_INFO, MOUTAI_FINANCIAL, MOUTAI_VALUATION } from '../data/sampleData.js';
 import logger from '../utils/logger.js';
+import { requireEastmoneySearchToken } from '../utils/env.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -344,7 +345,8 @@ export async function getSupportedStocks(): Promise<
 export async function searchStocks(keyword: string): Promise<{ code: string; name: string }[]> {
   const kw = keyword.trim();
   const query = SEARCH_ALIASES[kw] ?? kw; // 品牌名别名改写
-  const searchToken = process.env.EASTMONEY_SEARCH_TOKEN || 'D43BF722C8E33BDC906FB84D85E326E8';
+  // token 只从 env 的单一入口读取：未配置时抛出明确错误（不再回落到内置默认值）。
+  const searchToken = requireEastmoneySearchToken();
   // 1. 东方财富 suggest（擅长代码/拼音/上市简称）
   try {
     const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=${searchToken}&count=10`;

@@ -7,6 +7,10 @@ dist/
 
 # Cache
 cache/
+# Python 产物（Baostock 等 Python 侧车可能产生）
+__pycache__/
+*.pyc
+.venv/
 # JSON artifacts (NOT package manifests or configs)
 coverage/
 *.coverage.json

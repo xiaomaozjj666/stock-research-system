@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-3429%20cases-brightgreen" alt="3429 测试用例" />
+  <img src="https://img.shields.io/badge/tests-3431%20cases-brightgreen" alt="3431 测试用例" />
   <a href="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml"><img src="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -169,19 +169,19 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3429 用例 / 249 个测试文件，行覆盖 93.71%）+ Playwright（E2E 16 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3431 用例 / 249 个测试文件，行覆盖 93.71% / statements 91.76% / functions 93.93% / branches 82.18%）+ Playwright（E2E 16 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
 
 ## 快速开始
 
 ```bash
-npm install --legacy-peer-deps --dangerously-allow-all-scripts
+npm ci --legacy-peer-deps
 npm run dev           # 一条命令同时拉起前后端（scripts/dev.mjs，日志带 [server]/[client] 前缀，Ctrl+C 一并退出）
 # 也可分开启动：
 npm run dev:server    # 后端 → http://localhost:3001
 npm run dev:client    # 前端 → http://localhost:5173
 ```
 
-> 安装说明：`--legacy-peer-deps` 用于绕过 TypeScript 7 与 typescript-eslint 的 peer 依赖冲突；`--dangerously-allow-all-scripts` 用于放行 esbuild 等构建工具的原生安装脚本（本仓库依赖无第三方 postinstall 恶意脚本，仅本机安装依赖时使用该参数）。
+> 安装说明：`--legacy-peer-deps` 用于绕过 TypeScript 7 与 typescript-eslint 的 peer 依赖冲突；依赖构建脚本由根 `.npmrc` 的 `allow-scripts` 白名单最小放行（当前仅 `esbuild@0.28.1`；lockfile 里另一个带安装脚本的 `fsevents` 是 darwin-only，Linux/Windows 不安装），因此不再需要 `--dangerously-allow-all-scripts`（该参数会整体绕过白名单，让任意依赖脚本都执行）。
 
 > 可选增强（Python 侧车）：Baostock 指数历史成分通道由 `server/scripts/baostock-sidecar.py` 提供，除标准库外**仅依赖 `baostock`**，需另行 `pip install baostock`；未安装时该增强通道优雅跳过，不影响其余功能。
 
@@ -286,7 +286,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（3429 用例 / 249 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（3431 用例 / 249 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（16 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src、e2e）
 npm run format:check  # Prettier 格式检查
@@ -297,7 +297,7 @@ npm run size:budget   # 打包体积预算（按 chunk 核对，超预算即失�
 
 - **CI 门禁**（GitHub Actions）：依赖审计 / lint / 格式 / 双端类型检查 / 双端 build /
   打包体积预算 / 全量测试 + 覆盖率阈值（lines ≥ 92% / statements ≥ 90% / functions ≥ 92% / branches ≥ 80%）/ Playwright E2E（`--retries=1`）。
-- **覆盖率统计口径**：`server/src/routes/**` **已纳入**分母（2026-09-28 起）。此前整目录被排除，等于体量最大的业务逻辑文件（`routes/quant.ts` 2100+ 行）不构成任何门禁；纳入后仅下降约 1.3 个点且四项阈值仍全部通过。当前基线 lines 93.83% / statements 91.92% / functions 94.00% / branches 82.25%。仍排除的只有 `index.ts`（入口组装）、`middleware.ts`（中间件）与真实网络/子进程模块。
+- **覆盖率统计口径**：`server/src/routes/**` **已纳入**分母（2026-09-28 起）。此前整目录被排除，等于体量最大的业务逻辑文件（`routes/quant.ts` 2100+ 行）不构成任何门禁；纳入后仅下降约 1.3 个点且四项阈值仍全部通过。当前基线 lines 93.71% / statements 91.76% / functions 93.93% / branches 82.18%。仍排除的只有 `index.ts`（入口组装）、`middleware.ts`（中间件）与真实网络/子进程模块。
 - **打包体积预算**（`client/scripts/check-bundle-size.mjs`）：逐 chunk 核对上限，echarts 626 kB 这类大头不再顶着 1000 kB 的 warning 阈值"静默增长"——warning 不会 fail，预算会。当前合计 1242.54 kB / 预算 1300 kB。
 - **受控评估**：`compareBacktests` 输出 DSR（扣除搜索偏差）与 Bootstrap 置信区间；`quant/cscv.ts` 以组合对称交叉验证计算过拟合概率（PBO）；`walkForward.ts` 以 OOS 夏普 < 70% × IS 夏普判定过拟合。
 - **改进闭环（RSI）**：`quant/improvementLoop.ts` 用历史实验台账**回放**候选采信判据——较早 70% 挑候选、较新 30% 做决策，且必须同时满足三条才落盘：验证集上**决策准确率**（采信了扛住样本外的因子、剔除了没扛住的，两者都算对）更高、样本外稳定的**绝对条数不减**、配对差异通过 **McNemar 精确检验**（双侧 p < 0.05）。每次改动连同改前改后指标、检验统计量（不一致对 b/c 与 p 值）、依据与试过的候选记入 `quant/improvementLedger.ts`；`/api/improvement/status|run|history` 可查、可演练（`dryRun` 不落盘）、可回滚（删除策略文件即回到出厂判据）。判据本身由 `quant/harnessPolicy.ts` 持有，默认值与改造前逐字一致。

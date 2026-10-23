@@ -34,11 +34,27 @@ describe('SEARCH_ALIASES', () => {
 });
 
 describe('searchStocks', () => {
+  const originalSearchToken = process.env.EASTMONEY_SEARCH_TOKEN;
+
   beforeEach(() => {
     vi.restoreAllMocks();
+    // 搜索已不再内置默认 token（见 utils/env.ts requireEastmoneySearchToken），
+    // 常规用例显式配置一个测试值；「未配置」分支在下面的用例里单独覆盖。
+    process.env.EASTMONEY_SEARCH_TOKEN = 'test-token';
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+    if (originalSearchToken === undefined) delete process.env.EASTMONEY_SEARCH_TOKEN;
+    else process.env.EASTMONEY_SEARCH_TOKEN = originalSearchToken;
+  });
+
+  it('未配置 token 时抛出配置指引错误，且不发起任何网络请求', async () => {
+    delete process.env.EASTMONEY_SEARCH_TOKEN;
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await expect(searchStocks('贵州茅台')).rejects.toThrow('未配置 EASTMONEY_SEARCH_TOKEN');
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('品牌名「长鑫存储」经别名改写后命中 688825，且名称规范化', async () => {

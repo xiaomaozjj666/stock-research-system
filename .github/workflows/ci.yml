@@ -36,25 +36,24 @@ jobs:
       - name: Setup Node.js 24
         uses: actions/setup-node@v7
         with:
-          # 与本地一致（本地 Node v24.19.0 / npm 12.0.2）。
-          # 当前 24.x 均捆绑 npm ≥12，可识别 --dangerously-allow-all-scripts 参数
+          # 与本地一致（本地 Node v24.20.0 / npm 12.2.0）。
+          # 依赖安装脚本由根 .npmrc 的 allow-scripts 白名单放行，无需额外 CLI 参数
           # （见下方 install 说明）。
           node-version: 24
           cache: npm
 
       - name: Install dependencies
         # 参照 ENGINEERING-NOTES 的安装命令（npm ci 按 lockfile 复刻，v3 锁文件）：
-        #   --legacy-peer-deps        绕过 TS7 的 peer 约束
-        #   --dangerously-allow-all-scripts  放行依赖构建脚本（esbuild 的 postinstall）。
-        #     注意：该参数是**覆盖**而非补充——npm 文档明确「bypass the allowScripts
-        #     policy entirely and run every dependency install script regardless of
-        #     whether it was approved or denied」（本机 npm 12.0.2 自带文档
-        #     .../npm/docs/content/using-npm/config.md 第 526-534 行），命令行优先级
-        #     高于 .npmrc，因此它会一并绕过根 .npmrc 里的 allow-scripts 白名单
-        #     （当前为 esbuild@0.28.1 / 0.21.5 / 0.25.12，lockfile 实际只有 0.28.1）。
-        #     保留该参数是因为它覆盖了白名单之外的一切依赖脚本；若只想放行白名单，
-        #     可评估去掉它——本仓库在未安装依赖的前提下无法离线验证，故不擅自改动。
-        run: npm ci --legacy-peer-deps --dangerously-allow-all-scripts --no-audit --no-fund
+        #   --legacy-peer-deps  绕过 TS7 的 peer 约束
+        # 依赖构建脚本（esbuild 的 postinstall）由根 .npmrc 的 allow-scripts 白名单放行
+        # （当前仅 esbuild@0.28.1）。不再使用 --dangerously-allow-all-scripts：npm 文档
+        # 明确该参数会「bypass the allowScripts policy entirely and run every dependency
+        # install script regardless of whether it was approved or denied」，且命令行
+        # 优先级高于 .npmrc，等于把白名单整体废掉。
+        # 2026-10-23 实测（npm 12.2.0）：去掉该参数后 npm ci 成功（322 包 / 44s），
+        # esbuild 0.28.1 可正常执行；lockfile 里带安装脚本的只有 esbuild 与 darwin-only
+        # 的 fsevents（Linux runner 不安装），白名单已覆盖。
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
 
       - name: Dependency security audit
         # 依赖安全门禁：--audit-level=high 只在 high/critical 时以非 0 退出（实测当前
@@ -180,7 +179,7 @@ jobs:
       #   playwright 包，以 ERR_MODULE_NOT_FOUND 失败。artifact 传递省的是「构建」，
       #   不是「安装」。）
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps --dangerously-allow-all-scripts --no-audit --no-fund
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
 
       # 浏览器必须显式安装并与 @playwright/test 版本对齐：runner 预装的是镜像发布时的
       # 版本，依赖升级后（1.62 → 1.63 需要 chromium v1243）会因可执行文件缺失而启动失败。
@@ -257,7 +256,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps --dangerously-allow-all-scripts --no-audit --no-fund
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
 
       - name: Full test suite (repeat to surface flakes)
         # 同一 job 内连跑 3 轮：单轮绿的 flaky 探测不到，而这正是本轮踩过的坑。

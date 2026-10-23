@@ -32,8 +32,24 @@ export interface EnvConfig {
     model?: string;
     embeddingModel?: string;
   };
-  /** 东方财富搜索 Token */
-  eastmoneySearchToken: string;
+}
+
+/**
+ * 东方财富搜索 Token —— 全仓库唯一读取入口。
+ *
+ * 未配置（或仅为空白）时抛出带配置指引的错误，**不内置任何默认值**。
+ * 此前 env.ts 与 services/dataService.ts 各写了一份相同的硬编码默认 token，
+ * 等同把凭据随源码公开；默认值既已泄露就失去了凭据意义，必须由使用者自行配置。
+ * 调用方（股票搜索）据此向用户提示去 `.env` 填写，而不是静默用默认值联网。
+ */
+export function requireEastmoneySearchToken(): string {
+  const token = process.env.EASTMONEY_SEARCH_TOKEN?.trim();
+  if (!token) {
+    throw new Error(
+      '未配置 EASTMONEY_SEARCH_TOKEN：请在 .env 中填写东方财富搜索 token（变量说明见 .env.example「外部数据源」一节）。',
+    );
+  }
+  return token;
 }
 
 /** 已校验的环境变量缓存 */
@@ -84,10 +100,6 @@ export function loadEnv(): EnvConfig {
     // 速率限制窗口
     const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS) || 60000;
 
-    // 东方财富搜索 Token（有默认值，非必填）
-    const eastmoneySearchToken =
-      process.env.EASTMONEY_SEARCH_TOKEN || 'D43BF722C8E33BDC906FB84D85E326E8';
-
     const config: EnvConfig = {
       nodeEnv,
       port,
@@ -101,7 +113,6 @@ export function loadEnv(): EnvConfig {
         model: process.env.LLM_MODEL || undefined,
         embeddingModel: process.env.EMBEDDING_MODEL || undefined,
       },
-      eastmoneySearchToken,
     };
 
     cachedConfig = config;
