@@ -1,5 +1,6 @@
-import type { StockInfo, FinancialData, ValuationData } from '../types.js';
+import type { FinancialData, StockInfo, ValuationData } from '../types.js';
 import { fetchJson } from '../utils/http.js';
+import logger from '../utils/logger.js';
 
 // ============ 工具函数 ============
 
@@ -20,9 +21,13 @@ async function fetchJsonWithTimeout(url: string, timeout = 10000): Promise<unkno
   return fetchJson(url, { timeoutMs: timeout });
 }
 
-/** 带超时的文本 fetch（用于新浪等非 JSON 端点） */
-async function fetchTextWithTimeout(url: string, timeout = 10000): Promise<string> {
-  const resp = await fetch(url, { signal: AbortSignal.timeout(timeout) });
+/** 带超时的文本 fetch（用于新浪等非 JSON 端点）；可选 headers 供 Referer 等防盗链头 */
+async function fetchTextWithTimeout(
+  url: string,
+  timeout = 10000,
+  headers?: Record<string, string>,
+): Promise<string> {
+  const resp = await fetch(url, { signal: AbortSignal.timeout(timeout), headers });
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
   return resp.text();
 }
@@ -60,7 +65,10 @@ async function fetchStockInfoFromSina(code: string): Promise<StockInfo | null> {
   try {
     const prefix = code.startsWith('6') ? 'sh' : 'sz';
     const url = `http://hq.sinajs.cn/list=${prefix}${code}`;
-    const text = await fetchTextWithTimeout(url);
+    // 新浪行情接口对无 Referer 的请求返回 403（防盗链）：必须携带其站点 Referer
+    const text = await fetchTextWithTimeout(url, 10000, {
+      Referer: 'https://finance.sina.com.cn',
+    });
 
     // 格式: var hq_str_sh600519="贵州茅台,1580.00,...";
     const match = text.match(/"([^"]+)"/);
@@ -283,7 +291,11 @@ async function fetchValuationFromEastMoney(code: string): Promise<ValuationData 
     // F1.2: push2 API 所有价格字段(f43-f48)均以分(cents)为单位，无条件除以100
     const currentPrice = priceField(d, 'f43'); // 最新价
     // F1.1: f167(PE), f164(PB) 作为原始回退值，实际会在 pipeline 中被覆盖
-    const pe = toNum(d.f167); // raw fallback, will be overridden in pipeline
+    // H-1: 负 PE（亏损股）没有估值含义，非正值不采信——置 0 并显式标注不可用，
+    // 防止下游把 -5.3 当成「历史最低估」参与估值分位与打分（反向错误）。
+    const peRaw = toNum(d.f167);
+    const peAvailable = peRaw > 0;
+    const pe = peAvailable ? peRaw : 0;
     const pb = toNum(d.f164); // raw fallback, will be overridden in pipeline
     const marketCap = yuanToYi(d.f116);
     const totalRevenue = yuanToYi(d.f173);
@@ -291,26 +303,32 @@ async function fetchValuationFromEastMoney(code: string): Promise<ValuationData 
     const ps = totalRevenue > 0 ? Math.round((marketCap / totalRevenue) * 100) / 100 : 0;
 
     // F1.5: 构建历史 PE 估算（基于当前PE + 行业典型波动范围，确定性随机）
-    // 注意：这是估算值，非真实历史PE数据，因免费API无法获取历史PE
+    // 注意：这是估算值，非真实历史PE数据，因免费API无法获取历史PE。
+    // PE 无效（亏损）时不生成：围绕无效 PE 估算出的序列全是垃圾值（Math.max(...,1) 会得到一排 1），
+    // 且会被误读为「当前 PE 处于历史极低位」。pipeline 会在 PE 修正成功后重新生成。
     const currentYear = new Date().getFullYear();
     const seed = parseInt(code.slice(-3)) || 42; // 用股票代码后三位作为种子
     const historicalPE: { year: string; pe: number; isEstimated: boolean }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const year = (currentYear - i).toString();
-      // 基于种子的确定性伪随机波动，范围 ±15%
-      const hash = ((seed * (i + 1) * 2654435761) >>> 0) % 1000;
-      const variation = ((hash - 500) / 500) * 0.15; // -15% ~ +15%
-      const trendFactor = 1 + (i - 2.5) * 0.03; // 轻微趋势
-      const estimatedPe = Math.round(pe * trendFactor * (1 + variation) * 10) / 10;
-      historicalPE.push({ year, pe: Math.max(estimatedPe, 1), isEstimated: true });
+    if (peAvailable) {
+      for (let i = 5; i >= 0; i--) {
+        const year = (currentYear - i).toString();
+        // 基于种子的确定性伪随机波动，范围 ±15%
+        const hash = ((seed * (i + 1) * 2654435761) >>> 0) % 1000;
+        const variation = ((hash - 500) / 500) * 0.15; // -15% ~ +15%
+        const trendFactor = 1 + (i - 2.5) * 0.03; // 轻微趋势
+        const estimatedPe = Math.round(pe * trendFactor * (1 + variation) * 10) / 10;
+        historicalPE.push({ year, pe: Math.max(estimatedPe, 1), isEstimated: true });
+      }
     }
 
     return {
       currentPrice,
-      pe: Math.round(pe * 100) / 100 || 0,
+      pe: Math.round(pe * 100) / 100,
       pb: Math.round(pb * 100) / 100 || 0,
       ps,
       marketCap: Math.round(marketCap),
+      source: 'push2',
+      peUnavailable: !peAvailable,
       historicalPE,
       peerComparison: [],
     };
@@ -430,16 +448,22 @@ async function fetchValuationFromDatacenter(code: string): Promise<ValuationData
   const currentPrice = toNum(row.CLOSE_PRICE);
   if (currentPrice <= 0) return null;
 
-  const pe = toNum(row.PE_TTM);
+  // H-1: PE_TTM 为负（亏损股）没有估值含义，非正值不采信——置 0 并标注不可用。
+  // 此前 -5.3 会原样通过，下游 pePercentile=0 判「历史低估」、peVsBenchmark 合意度 0.89，
+  // 亏损股反被当成全市场最便宜的标的（估值打分反向）。
+  const peRaw = toNum(row.PE_TTM);
+  const peAvailable = peRaw > 0;
   const pb = toNum(row.PB_MRQ);
   const marketCapYi = Math.round((toNum(row.TOTAL_MARKET_CAP) / 1e8) * 100) / 100; // 元 -> 亿元
 
   return {
     currentPrice: Math.round(currentPrice * 100) / 100,
-    pe: Math.round(pe * 100) / 100,
+    pe: peAvailable ? Math.round(peRaw * 100) / 100 : 0,
     pb: Math.round(pb * 100) / 100,
     ps: 0,
     marketCap: marketCapYi,
+    source: 'datacenter',
+    peUnavailable: !peAvailable,
     historicalPE: [],
     peerComparison: [],
   };
@@ -465,7 +489,10 @@ export async function fetchValuationData(code: string): Promise<ValuationData> {
   const dc = await fetchValuationFromDatacenter(code);
   if (dc && dc.currentPrice > 0) return dc;
 
-  // 兜底：东方财富 push2 实时行情
+  // 兜底：东方财富 push2 实时行情。
+  // M-3: 主备源价格口径不同（datacenter=收盘价，push2=实时价），降级必须留痕并可在
+  // 报告层辨识（source 字段），而不是静默混用两种口径让同一只股票的 PE 因取数路径而漂移。
+  logger.warn('估值主源(datacenter)不可用，降级为 push2 实时价口径', { code });
   const em = await fetchValuationFromEastMoney(code);
   if (em && em.currentPrice > 0) return em;
 
@@ -494,14 +521,15 @@ export function yuanToYi(v: unknown): number {
 
 /**
  * 转换为百分比数值（如 91.5 表示 91.5%）。
- * 东方财富财务比率字段（毛利率/净利率/ROE/负债率）均为**百分比形式**返回，
- * 故直接四舍五入即可；仅当值 < 1 时视为小数形式（如 0.915）乘以 100。
- * 注意：绝不能对所有值统一 ×100 —— 负债率等可能 ≥100（如 105%），
- * 若误判为小数会得到 10500 这种荒谬结果。
+ * 东方财富财务比率字段（XSJLL/XSMLL/ROEJQ/ZCFZL 及 push2 的 f188/f190/f191/f162）
+ * 均为**百分比形式**返回，直接四舍五入即可。
+ *
+ * M-1 修复：移除「|值|<1 视为小数形式 ×100」的启发式分支。东财这些字段不存在
+ * 小数形式，而真实百分比可能小于 1（如净利率 -0.5%、0.915% 的超低净利率）——
+ * 旧启发式会把 -0.5 放大成 -50，产生百倍失真的财务指标。全部调用方已核对：
+ * 仅本文件的东财百分比字段经此转换，无小数形式调用方。
  */
 export function toPercent(v: unknown): number {
   const n = toNum(v);
-  if (n === 0) return 0;
-  const value = Math.abs(n) < 1 ? n * 100 : n;
-  return Math.round(value * 100) / 100;
+  return Math.round(n * 100) / 100;
 }

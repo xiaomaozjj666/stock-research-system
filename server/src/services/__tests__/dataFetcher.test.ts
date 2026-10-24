@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // 隔离网络：dataFetcher 的所有 fetch* 函数都经由 fetchJsonWithTimeout -> fetchJson。
 // 直接 mock fetchJson 即可驱动每个解析分支，无需真实网络。
@@ -9,16 +9,16 @@ vi.mock('../../utils/http.js', () => ({
 
 import { fetchJson } from '../../utils/http.js';
 import {
-  fetchStockInfo,
-  fetchFinancialData,
-  fetchValuationData,
-  fetchBoardInfo,
   clearValueAnalysisCache,
+  fetchBoardInfo,
+  fetchFinancialData,
+  fetchStockInfo,
+  fetchValuationData,
+  toNum,
+  toPercent,
   valueAnalysisCacheMax,
   valueAnalysisNegativeTtlMs,
-  toNum,
   yuanToYi,
-  toPercent,
 } from '../dataFetcher.js';
 
 const mockFetchJson = vi.mocked(fetchJson);
@@ -60,7 +60,9 @@ describe('数值工具（toNum / yuanToYi / toPercent）', () => {
     expect(toPercent(0)).toBe(0);
     expect(toPercent(91.5)).toBe(91.5);
     expect(toPercent(105)).toBe(105);
-    expect(toPercent(0.915)).toBe(91.5); // 小数形式才 ×100
+    // M-1 新语义：|值|<1 不再视为小数形式——东财 XSJLL 等字段就是百分比数值，
+    // 0.915 表示 0.915%（旧启发式会百倍放大成 91.5）
+    expect(toPercent(0.915)).toBe(0.92);
     expect(toPercent('-')).toBe(0);
   });
 });
@@ -179,6 +181,46 @@ describe('fetchValuationData', () => {
     expect(v.marketCap).toBe(15000);
     expect(v.ps).toBe(0);
     expect(v.historicalPE).toEqual([]);
+    // M-3: 口径来源字段随主源标注为 datacenter（收盘价口径）
+    expect(v.source).toBe('datacenter');
+    expect(v.peUnavailable).toBe(false);
+  });
+
+  it('H-1: datacenter 返回负 PE（亏损股，如通威 PE_TTM=-5.3）不产出负 PE——置 0 并标注不可用', async () => {
+    mockFetchJson.mockResolvedValue({
+      result: {
+        data: [
+          {
+            CLOSE_PRICE: 21.5,
+            PE_TTM: -5.3,
+            PB_MRQ: 1.8,
+            TOTAL_MARKET_CAP: 9.7e10,
+            SECURITY_NAME_ABBR: '通威股份',
+            BOARD_NAME: '光伏设备',
+          },
+        ],
+      },
+    });
+    const v = await fetchValuationData('600438');
+    // 负 PE 没有估值含义：绝不原样通过（旧缺陷会让下游判「历史最低估」）
+    expect(v.pe).toBe(0);
+    expect(v.pe).not.toBeLessThan(0);
+    expect(v.peUnavailable).toBe(true);
+    expect(v.currentPrice).toBe(21.5);
+    expect(v.pb).toBe(1.8);
+    // 亏损股不生成历史 PE 序列（围绕无效 PE 的估算全是垃圾值）
+    expect(v.historicalPE).toEqual([]);
+  });
+
+  it('H-1: datacenter PE 缺失（PE_TTM 为空/非数值）同样视为不可用', async () => {
+    mockFetchJson.mockResolvedValue({
+      result: {
+        data: [{ CLOSE_PRICE: 100, PE_TTM: null, PB_MRQ: 2, TOTAL_MARKET_CAP: 1e10 }],
+      },
+    });
+    const v = await fetchValuationData('600438');
+    expect(v.pe).toBe(0);
+    expect(v.peUnavailable).toBe(true);
   });
 
   it('datacenter 不可达时回退到 push2 行情（价格字段以分计需 /100）', async () => {
@@ -202,6 +244,56 @@ describe('fetchValuationData', () => {
     expect(v.ps).toBeCloseTo(1500, 2); // 15000 / 10（市值/营收，量级正确即可）
     expect(v.historicalPE).toHaveLength(6); // 确定性伪随机历史 PE
     expect(v.historicalPE.every((h) => h.isEstimated)).toBe(true);
+    // M-3: 备源口径标注为 push2（实时价口径）
+    expect(v.source).toBe('push2');
+    expect(v.peUnavailable).toBe(false);
+  });
+
+  it('M-3: 主源失败降级备源时留 warning 日志（口径切换必须可观测）', async () => {
+    // 全局 setup 把日志级别静音到 error（见 server/src/test/setup.ts），
+    // 本用例要断言 warn 级输出，需临时恢复级别
+    const { setLogLevel } = await import('../../utils/logger.js');
+    const prevLevel = 'error';
+    setLogLevel('warn');
+    // logger 是零依赖 JSON logger：warn 走 process.stdout.write（见 utils/logger.ts）
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      mockFetchJson
+        .mockResolvedValueOnce({ result: { data: [] } }) // 主源空
+        .mockResolvedValueOnce({
+          data: { f43: 150000, f167: 30, f164: 8, f116: 1.5e12, f173: 1e9, f162: 50 },
+        });
+      const v = await fetchValuationData('600519');
+      expect(v.source).toBe('push2');
+      // 降级时必须留痕（静默混用两种价格口径不可接受）
+      const written = writeSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+      expect(written).toContain('datacenter');
+      expect(written).toContain('push2');
+    } finally {
+      writeSpy.mockRestore();
+      setLogLevel(prevLevel);
+    }
+  });
+
+  it('H-1: push2 备源的负 PE（f167 ≤ 0）同样过滤——置 0、标注不可用、不生成历史序列', async () => {
+    mockFetchJson
+      .mockResolvedValueOnce({ result: { data: [] } }) // 主源空
+      .mockResolvedValueOnce({
+        data: {
+          f43: 21500, // 215.00 元（分）
+          f167: -5.3, // 亏损股负 PE
+          f164: 1.8,
+          f116: 9.7e10,
+          f173: 1e11,
+          f162: 60,
+        },
+      });
+    const v = await fetchValuationData('600438');
+    expect(v.currentPrice).toBe(215);
+    expect(v.pe).toBe(0);
+    expect(v.peUnavailable).toBe(true);
+    expect(v.source).toBe('push2');
+    expect(v.historicalPE).toEqual([]);
   });
 
   it('两个数据源均无有效价格抛出', async () => {
@@ -224,6 +316,42 @@ describe('fetchBoardInfo', () => {
   it('无结果时返回 null', async () => {
     mockFetchJson.mockResolvedValue({ result: { data: [] } });
     expect(await fetchBoardInfo('688825')).toBeNull();
+  });
+});
+
+// ============================================================================
+// H-2：新浪行情备源必须携带 Referer（防盗链），否则恒 403 备源永久失效
+// 实证：无 Referer → 403；带 Referer: https://finance.sina.com.cn → 200
+// ============================================================================
+describe('fetchStockInfo 新浪备源（H-2 Referer）', () => {
+  it('发往 sinajs.cn 的请求携带 finance.sina.com.cn 的 Referer 头', async () => {
+    // 东财主源失败 → 走新浪文本 fetch（globalThis.fetch，非 fetchJson）
+    mockFetchJson.mockResolvedValueOnce({ rc: 0, data: null });
+    const sinaFetch = vi
+      .fn()
+      .mockResolvedValue(
+        new (globalThis.Response as new (b: string) => Response)(
+          'var hq_str_sh600519="贵州茅台,1580.00,...";',
+        ),
+      );
+    globalThis.fetch = sinaFetch as unknown as typeof fetch;
+
+    try {
+      const info = await fetchStockInfo('600519');
+      expect(info.name).toBe('贵州茅台'); // 新浪路径真正可达（带 Referer 后 200）
+
+      // 关键断言：请求 sinajs.cn 时 init.headers 携带 Referer
+      const sinaCall = sinaFetch.mock.calls.find((c) => String(c[0]).includes('sinajs.cn'));
+      expect(sinaCall).toBeDefined();
+      const init = (sinaCall![1] ?? {}) as RequestInit & { headers?: Record<string, string> };
+      expect(init.headers?.Referer).toBe('https://finance.sina.com.cn');
+    } finally {
+      // 还原为 beforeEach 的兜底 mock（afterAll 才恢复真实 fetch）
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve('var hq_str_sh600519=","'),
+      });
+    }
   });
 });
 

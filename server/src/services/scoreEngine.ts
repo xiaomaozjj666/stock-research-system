@@ -15,24 +15,24 @@
  *
  * 从 analysisPipeline 抽取，保持 calculateScores 签名稳定，可独立测试。
  */
-import type { FinancialData, ValuationData, StockInfo, ScoreDetail } from '../types.js';
+import { compositeZ, zToScore } from '../quant/factorAnalytics.js';
+import type { FinancialData, ScoreDetail, StockInfo, ValuationData } from '../types.js';
 import {
-  safeDiv,
-  scoreDebtRisk,
-  INDUSTRY_PE_BENCHMARK,
-  industryPEBenchmark,
-} from './scoringBasis.js';
-import {
-  extractFactors,
   buildFactorZScores,
+  extractFactors,
   groupFactorsByDimension,
   type FactorDef,
   type FactorDimension,
 } from './factors.js';
-import { compositeZ, zToScore } from '../quant/factorAnalytics.js';
+import {
+  INDUSTRY_PE_BENCHMARK,
+  industryPEBenchmark,
+  safeDiv,
+  scoreDebtRisk,
+} from './scoringBasis.js';
 
 // 与历史 scoreEngine.test.ts 兼容：继续从本模块导出基准符号
-export { scoreDebtRisk, INDUSTRY_PE_BENCHMARK };
+export { INDUSTRY_PE_BENCHMARK, scoreDebtRisk };
 
 export interface ScoreOptions {
   /**
@@ -137,10 +137,14 @@ export function calculateScores(
 
 /**
  * 从同业对比构造估值因子的截面样本（用于更严谨的截面 z 标准化）。
- * 目前 peers 提供 roe，因此仅对 roe 因子提供截面；其余估值因子走 logit 路径。
+ * peers 的 roe 可为 null（上游估值接口不提供同业 ROE）：
+ * 全部无效时不给 roe 提供截面样本，该因子自动退回 logit 路径（neutral 先验），
+ * 而不是把「无数据」当 0 拉低行业均值。
  */
 function buildValuationCrossSection(valuation: ValuationData): Record<string, number[]> {
-  const roes = valuation.peerComparison.map((p) => p.roe).filter((v) => isFinite(v));
+  const roes = valuation.peerComparison
+    .map((p) => p.roe)
+    .filter((v): v is number => v != null && isFinite(v));
   return roes.length > 0 ? { roe: roes } : {};
 }
 

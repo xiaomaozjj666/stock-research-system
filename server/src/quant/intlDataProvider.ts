@@ -35,7 +35,7 @@ export interface IntlStockFundamentals {
   market: IntlMarket;
   /** 证券名称 */
   name: string;
-  /** 市盈率 TTM */
+  /** 市盈率 TTM（0 = 缺失/未知，见 toNum 的决策注释） */
   pe: number;
   /** 市净率 */
   pb: number;
@@ -116,7 +116,14 @@ export function formatIntlCode(code: string, market: IntlMarket): string {
   return `107.${c.toUpperCase()}`;
 }
 
-/** 安全转数字；缺失 / "-" / NaN 归零（与 dataFetcher.toNum 同语义） */
+/**
+ * 安全转数字；缺失 / "-" / NaN 归零（与 dataFetcher.toNum 同语义）。
+ *
+ * Low 项决策（PE 缺失返回 0 而非 null）：IntlStockFundamentals.pe 声明为 number，
+ * 消费方（routes/intl.ts → 前端）直接透传该字段，改 null 会把 number | null 的
+ * 空值处理扩散到 services/routes 层（本次修复边界只含 server/src/quant/），
+ * 故保持 0 语义 =「缺失/未知」，消费方按 0 容忍（与 A 股 dataFetcher 同口径）。
+ */
 function toNum(v: unknown): number {
   if (v === null || v === undefined || v === '-') return 0;
   const n = Number(v);

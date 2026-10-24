@@ -3,6 +3,19 @@ import { promisify } from 'node:util';
 
 const execFileP = promisify(execFile);
 
+/**
+ * fetch 已收到响应但状态非 2xx（上游可达且明确拒绝）。
+ * M-4：此类失败**不落入 curl 回退**——fetch 侧已经确认网络可达、拿到上游应答，
+ * 用 curl 重发同一 URL 只会再被拒绝一次（双通道 × 重试 = 6 次放大请求）；
+ * 仅保留指数退避的 fetch 重试。网络层错误（fetch 本身 throw，如 ECONNREFUSED/
+ * TLS 重置）才走 curl 双通道。
+ */
+class HttpStatusError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+  }
+}
+
 export interface FetchJsonOptions {
   /** 请求头（会同时透传给 fetch 与 curl 回退） */
   headers?: Record<string, string>;
@@ -32,6 +45,7 @@ export async function fetchJson(url: string, opts: FetchJsonOptions = {}): Promi
     if (signal?.aborted) throw signal.reason ?? new Error('fetchJson 已中止');
 
     // 1) Node 原生 fetch（超时与外部中止取先到者）
+    let httpRejected = false; // 本轮 fetch 是否为「HTTP 状态拒绝」（非网络错误）
     try {
       const resp = await fetch(url, {
         signal: signal
@@ -39,13 +53,25 @@ export async function fetchJson(url: string, opts: FetchJsonOptions = {}): Promi
           : AbortSignal.timeout(timeoutMs),
         headers,
       });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+      if (!resp.ok) {
+        httpRejected = true;
+        throw new HttpStatusError(resp.status);
+      }
       const text = await resp.text();
       return JSON.parse(text);
     } catch (e) {
       // 外部中止不属于「可重试失败」：直接上抛，不再走 curl 回退
       if (signal?.aborted) throw e;
       lastErr = e;
+      // M-4: 4xx/5xx 是上游明确拒绝（fetch 已确认可达）——curl 重试同一 URL 无意义，
+      // 跳过 curl 双通道，直接进入退避重试（保持 fetch 重试语义）
+      if (httpRejected) {
+        if (attempt < retries) {
+          const base = Math.min(3000, 250 * 2 ** attempt);
+          await new Promise((r) => setTimeout(r, base * (0.5 + Math.random() * 0.5)));
+        }
+        continue;
+      }
     }
 
     // 2) curl 回退（绕过沙箱 TLS 重置）；execFile 的 signal 选项会在中止时杀死子进程

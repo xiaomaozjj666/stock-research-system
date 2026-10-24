@@ -75,7 +75,8 @@ export interface FinancialGraphData {
     sector: string;
     pe: number;
     pb: number;
-    roe: number;
+    /** 同业 ROE 上游缺失时为 null：对应指标节点不生成（而非记为 0 的假指标） */
+    roe: number | null;
     grossMargin: number;
   }>;
   sectors: Array<{
@@ -684,13 +685,18 @@ export function buildFinancialGraph(data: FinancialGraphData): KnowledgeGraph {
       graph.addEdge({ source: stockId, target: sectorId, type: 'belongs_to' });
     }
 
-    // has_indicator 指标节点
-    const indicators: Array<[string, number]> = [
-      ['pe', stock.pe],
-      ['pb', stock.pb],
-      ['roe', stock.roe],
-      ['grossMargin', stock.grossMargin],
-    ];
+    // has_indicator 指标节点（null/非有限值 = 上游缺失，跳过该指标而非记为假值 0）
+    const indicators: Array<[string, number]> = (
+      [
+        ['pe', stock.pe],
+        ['pb', stock.pb],
+        ['roe', stock.roe],
+        ['grossMargin', stock.grossMargin],
+      ] as Array<[string, number | null]>
+    ).filter((entry): entry is [string, number] => {
+      const v = entry[1];
+      return v != null && Number.isFinite(v);
+    });
     for (const [key, value] of indicators) {
       const indId = `ind:${stock.code}:${key}`;
       graph.addNode({

@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import * as fs from 'fs';
-import * as path from 'path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as path from 'path';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchOHLCVData, getBenchmarkCurve, marketOf, resolveSecid } from '../dataProvider.js';
 import type { OHLCVData } from '../types.js';
 
@@ -146,18 +146,20 @@ describe('fetchOHLCVData — 合并历史缓存与增量补尾', () => {
     expect(result.length).toBe(2);
   });
 
-  it('同日重复数据以新值覆盖（容纳当日盘中修订）', async () => {
+  it('同日重复数据以新值覆盖（小幅盘中修订不触发复权基准重拉）', async () => {
     writeKlineCache(code, [
       { date: '2024-01-02', open: 10, close: 10.5, high: 11, low: 9.8, volume: 12345 },
     ]);
 
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      json: async () => ({ data: { klines: ['2024-01-02,10.00,99.99,100.00,9.80,777'] } }),
+      json: async () => ({ data: { klines: ['2024-01-02,10.00,10.52,11.00,9.80,777'] } }),
     } as Response);
 
     const result = await fetchOHLCVData(code, start, end);
+    // H2：重叠段偏差 0.19% < 1% 阈值 → 走正常增量合并（新值覆盖），fetch 仅 1 次
     expect(result).toHaveLength(1);
-    expect(result[0].close).toBe(99.99);
+    expect(result[0].close).toBe(10.52);
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
   });
 });
 

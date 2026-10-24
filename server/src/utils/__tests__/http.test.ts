@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { promisify } from 'node:util';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchJson } from '../http.js';
 
 /**
@@ -95,15 +95,19 @@ describe('fetchJson', () => {
     expect(callLog.length).toBe(0);
   });
 
-  it('非 2xx 响应视为失败并回退 curl', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response('', { status: 500 })),
-    );
+  it('HTTP 错误状态（5xx）不回退 curl：退避重试后直接失败（M-4 放大请求防护）', async () => {
+    // M-4 新语义：fetch 已确认上游可达并明确拒绝（非 2xx）——curl 重发同一 URL
+    // 只会被再拒一次（双通道 × 重试 = 最多 6 次放大请求）。因此 HTTP 状态失败
+    // 仅保留 fetch 指数退避重试，全部失败后上抛原始 HTTP 错误；网络层错误
+    // （fetch 本身 throw）才走 curl 双通道（见下方「fetch 抛错时回退到 curl 子进程」）。
+    const fetchSpy = vi.fn(async () => new Response('', { status: 500 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    // 若实现误入 curl 回退，会 resolve 出 { fallback: true } 使 rejects 断言失败
     mockCurl(JSON.stringify({ fallback: true }));
-    const data = await fetchJson('https://example.com/api');
-    expect(callLog.some((c) => c.file === 'curl')).toBe(true);
-    expect(data).toEqual({ fallback: true });
+    await expect(fetchJson('https://example.com/api', { retries: 2 })).rejects.toThrow(/HTTP 500/);
+    // 放大举证：fetch 恰好重试满 retries+1 = 3 次，curl 一次都没被触发
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(callLog.length).toBe(0);
   });
 
   it('fetch 抛错时回退到 curl 子进程', async () => {

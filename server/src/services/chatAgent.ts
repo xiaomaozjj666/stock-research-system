@@ -11,19 +11,19 @@
  * 所有外部依赖通过 deps 注入，便于单测 mock；生产默认 deps 在文件底部组装。
  */
 import {
-  isLLMAvailable,
-  getLLMConfig,
   chat,
-  chatWithTools,
   chatJSON,
+  chatWithTools,
   embed,
+  getLLMConfig,
+  isLLMAvailable,
   type ChatMessage,
 } from '../llm/index.js';
-import { retrieveEvidence, type EvidenceDoc, type Embedder } from '../llm/rag.js';
-import { TOOL_DEFINITIONS, executeToolCall, type ToolDeps } from '../llm/tools.js';
+import { retrieveEvidence, type Embedder, type EvidenceDoc } from '../llm/rag.js';
 import { routeSkill, type SkillId } from '../llm/skillRouter.js';
+import { TOOL_DEFINITIONS, executeToolCall, type ToolDeps } from '../llm/tools.js';
 import { clampChatHistory } from '../utils/limitGate.js';
-import { loadHistory, appendTurn } from './chatMemory.js';
+import { appendTurn, loadHistory } from './chatMemory.js';
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -166,9 +166,9 @@ export interface ChatAgentDeps {
     code: string;
     assumptions?: { growthRate1?: number; discountRate?: number };
   }) => Promise<unknown>;
-  runDebate?: (analysisText: string) => Promise<DebateResult>;
+  runDebate?: (analysisText: string, signal?: AbortSignal) => Promise<DebateResult>;
   /** 风控三分视角辩论（激进/中性/保守）；不提供时用默认实现 */
-  runRiskDebate?: (analysisText: string) => Promise<RiskDebateResult>;
+  runRiskDebate?: (analysisText: string, signal?: AbortSignal) => Promise<RiskDebateResult>;
 }
 
 function buildSystemPrompt(evidenceText: string): string {
@@ -184,8 +184,10 @@ function buildSystemPrompt(evidenceText: string): string {
   ].join('\n');
 }
 
-function defaultDebate(deps: ChatAgentDeps): (text: string) => Promise<DebateResult> {
-  return async (analysisText: string) => {
+function defaultDebate(
+  deps: ChatAgentDeps,
+): (text: string, signal?: AbortSignal) => Promise<DebateResult> {
+  return async (analysisText, signal) => {
     const bull = await deps.chat(
       [
         {
@@ -195,7 +197,7 @@ function defaultDebate(deps: ChatAgentDeps): (text: string) => Promise<DebateRes
         },
         { role: 'user', content: analysisText },
       ],
-      { temperature: 0.5, maxTokens: 800, timeout: 40000 },
+      { temperature: 0.5, maxTokens: 800, timeout: 40000, signal },
     );
     const bear = await deps.chat(
       [
@@ -205,7 +207,7 @@ function defaultDebate(deps: ChatAgentDeps): (text: string) => Promise<DebateRes
         },
         { role: 'user', content: analysisText },
       ],
-      { temperature: 0.5, maxTokens: 800, timeout: 40000 },
+      { temperature: 0.5, maxTokens: 800, timeout: 40000, signal },
     );
     const synthesis = await deps.chat(
       [
@@ -215,15 +217,17 @@ function defaultDebate(deps: ChatAgentDeps): (text: string) => Promise<DebateRes
         },
         { role: 'user', content: `【看多】\n${bull}\n\n【看空】\n${bear}` },
       ],
-      { temperature: 0.3, maxTokens: 800, timeout: 40000 },
+      { temperature: 0.3, maxTokens: 800, timeout: 40000, signal },
     );
     return { bull, bear, synthesis };
   };
 }
 
 /** 默认风控三分视角辩论：激进/中性/保守三方各自给出风控视角，首席综合 */
-function defaultRiskDebate(deps: ChatAgentDeps): (text: string) => Promise<RiskDebateResult> {
-  return async (analysisText: string) => {
+function defaultRiskDebate(
+  deps: ChatAgentDeps,
+): (text: string, signal?: AbortSignal) => Promise<RiskDebateResult> {
+  return async (analysisText, signal) => {
     const aggressive = await deps.chat(
       [
         {
@@ -233,7 +237,7 @@ function defaultRiskDebate(deps: ChatAgentDeps): (text: string) => Promise<RiskD
         },
         { role: 'user', content: analysisText },
       ],
-      { temperature: 0.5, maxTokens: 600, timeout: 40000 },
+      { temperature: 0.5, maxTokens: 600, timeout: 40000, signal },
     );
     const neutral = await deps.chat(
       [
@@ -244,7 +248,7 @@ function defaultRiskDebate(deps: ChatAgentDeps): (text: string) => Promise<RiskD
         },
         { role: 'user', content: analysisText },
       ],
-      { temperature: 0.4, maxTokens: 600, timeout: 40000 },
+      { temperature: 0.4, maxTokens: 600, timeout: 40000, signal },
     );
     const conservative = await deps.chat(
       [
@@ -255,7 +259,7 @@ function defaultRiskDebate(deps: ChatAgentDeps): (text: string) => Promise<RiskD
         },
         { role: 'user', content: analysisText },
       ],
-      { temperature: 0.3, maxTokens: 600, timeout: 40000 },
+      { temperature: 0.3, maxTokens: 600, timeout: 40000, signal },
     );
     const synthesis = await deps.chat(
       [
@@ -269,7 +273,7 @@ function defaultRiskDebate(deps: ChatAgentDeps): (text: string) => Promise<RiskD
           content: `【激进】\n${aggressive}\n\n【中性】\n${neutral}\n\n【保守】\n${conservative}`,
         },
       ],
-      { temperature: 0.3, maxTokens: 800, timeout: 40000 },
+      { temperature: 0.3, maxTokens: 800, timeout: 40000, signal },
     );
     return { aggressive, neutral, conservative, synthesis };
   };
@@ -335,12 +339,12 @@ export function createChatAgent(deps: ChatAgentDeps) {
    * 规则表打上细分技能标签（quant_factor/backtest/news/compare/watchlist/chat）。
    * 技能标签是附加信息，不改变执行路径本身。
    */
-  async function planIntent(message: string): Promise<AgentPlan> {
-    const plan = await planIntentCore(message);
+  async function planIntent(message: string, signal?: AbortSignal): Promise<AgentPlan> {
+    const plan = await planIntentCore(message, signal);
     return { ...plan, skill: routeSkill(message).skill };
   }
 
-  async function planIntentCore(message: string): Promise<AgentPlan> {
+  async function planIntentCore(message: string, signal?: AbortSignal): Promise<AgentPlan> {
     // 显式辩论关键词快速命中，省一次 LLM 调用
     if (/辩论|多空|看多还是看空|bull.*bear|bear.*bull|debat/i.test(message)) {
       return { action: 'debate', reason: '用户显式要求多空辩论' };
@@ -360,7 +364,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
           },
           { role: 'user', content: message.slice(0, 500) },
         ],
-        { temperature: 0, maxTokens: 200, timeout: 15000, task: 'chat' },
+        { temperature: 0, maxTokens: 200, timeout: 15000, task: 'chat', signal },
       )) as { action?: string; reason?: string };
       const valid = ['direct', 'tools', 'debate'] as const;
       const action = valid.includes(raw.action as (typeof valid)[number])
@@ -385,6 +389,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
     answer: string,
     toolCalls: { name: string; args: Record<string, unknown> }[],
     evidence: EvidenceDoc[],
+    signal?: AbortSignal,
   ): Promise<AnswerVerification | null> {
     if (!deps.chatJSON) return null;
     if (!answer.trim()) return null;
@@ -419,7 +424,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
               `【可用证据】\n${evidenceText || '（无）'}`,
           },
         ],
-        { temperature: 0, maxTokens: 600, timeout: 25000, task: 'reasoning' },
+        { temperature: 0, maxTokens: 600, timeout: 25000, task: 'reasoning', signal },
       )) as {
         verified?: boolean;
         unverified?: unknown;
@@ -467,10 +472,15 @@ export function createChatAgent(deps: ChatAgentDeps) {
   /**
    * 流式执行：onEvent 逐阶段推送进度（真流式，替代"跑完才回"）。
    * onEvent 为空时等同于 run（供 POST /api/chat 非流式调用）。
+   *
+   * M-5: 可选 AbortSignal 用于「客户端断开即中止」——SSE 路由在 res close 时 abort，
+   * 信号透传到全部 LLM 调用点（规划/对话/工具回路/校验/辩论），不再白烧
+   * 最坏 7 次 LLM 调用（llm/client 的 options.signal 机制此前完备但无人传）。
    */
   async function runStream(
     req: ChatAgentRequest,
     onEvent?: (e: ChatStreamEvent) => void,
+    signal?: AbortSignal,
   ): Promise<ChatAgentResponse> {
     const emit = onEvent ?? (() => {});
     try {
@@ -503,7 +513,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
 
       // === 路由规划 ===
       emit({ phase: 'planning', message: '正在规划执行路径…' });
-      const plan = await planIntent(req.message);
+      const plan = await planIntent(req.message, signal);
 
       const system = buildSystemPrompt(evidenceText);
       const messages: ChatMessage[] = [{ role: 'system', content: system }];
@@ -540,6 +550,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
           maxTokens: 1500,
           timeout: 45000,
           task: 'chat',
+          signal,
         });
       } else {
         // tools / debate：先走工具回路拿真实数据
@@ -556,7 +567,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
               },
               toolDeps,
             ),
-          { temperature: 0.3, maxTokens: 2000, timeout: 60000, task: 'analysis' },
+          { temperature: 0.3, maxTokens: 2000, timeout: 60000, task: 'analysis', signal },
         );
         content = result.content;
         toolCalls = result.toolCalls;
@@ -564,7 +575,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
         // 幻觉防护：有工具结果/证据时校验回答中的事实断言（含计算型声明算术重构）
         if (content.trim()) {
           emit({ phase: 'verifying', message: '正在交叉验证回答中的事实与计算…' });
-          const v = await verifyClaims(content, toolCalls, evidence);
+          const v = await verifyClaims(content, toolCalls, evidence, signal);
           if (v) verification = v;
         }
 
@@ -572,7 +583,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
         if (plan.action === 'debate') {
           emit({ phase: 'debating', message: '正在进行多空辩论…' });
           try {
-            debate = await runDebate(content || evidenceText);
+            debate = await runDebate(content || evidenceText, signal);
           } catch {
             // 辩论失败不影响主回答
           }
@@ -582,7 +593,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
         if (plan.action === 'debate' || riskKeyword) {
           emit({ phase: 'risk_debating', message: '正在进行风控三分视角辩论…' });
           try {
-            riskDebate = await runRiskDebate(content || evidenceText);
+            riskDebate = await runRiskDebate(content || evidenceText, signal);
           } catch {
             // 风控辩论失败不影响主回答
           }
@@ -604,8 +615,17 @@ export function createChatAgent(deps: ChatAgentDeps) {
       emit({ phase: 'done', message: '完成', response: resp });
       return resp;
     } catch (err) {
+      // M-5: 外部 abort（SSE 客户端断开）不是错误——对端已不可达，error 事件无处投递，
+      // 也无需当成失败上抛给日志当 ERROR 级噪声；静默结束即可（路由层按 isClosed 分流）。
+      if (signal?.aborted) throw err;
       const msg = err instanceof Error ? err.message : '对话处理失败';
-      emit({ phase: 'error', message: msg });
+      // Low-3: emit 前先保护——SSE 已断开时 onEvent 内的 send 会抛错，
+      // 若不隔离会把原始错误吞掉、换成 emit 的二次错误（对齐 analysis.ts:150 的 isClosed 先例）
+      try {
+        emit({ phase: 'error', message: msg });
+      } catch {
+        /* 对端已断开：错误事件无处投递，保留原始错误继续上抛 */
+      }
       throw err;
     }
   }
@@ -622,19 +642,19 @@ export function createChatAgent(deps: ChatAgentDeps) {
 }
 
 // === 生产默认依赖（真实服务；仅在请求时拉起，避免测试期副作用） ===
+import { parseStrategyInput } from '../quant/agents/orchestrator.js';
+import { buildAnnouncementBrief } from '../quant/announcementProvider.js';
+import { runBacktest } from '../quant/backtestEngine.js';
+import { fetchOHLCVData } from '../quant/dataProvider.js';
+import { summarizeFactorExperiments } from '../quant/factorLedger.js';
+import { extractNewsSignal } from '../quant/newsSignal.js';
+import { listResearchDigests } from '../quant/researchDigest.js';
+import { readLatestScreenerRun } from '../quant/screener.js';
+import { analyzeTimeseries } from '../quant/timeseries/analyze.js';
+import type { BacktestResult, OHLCVData, StrategyConfig } from '../quant/types.js';
+import { runValuationModel } from '../quant/valuationModel.js';
 import { runAnalysis } from './analysisPipeline.js';
 import { getData } from './dataService.js';
-import { runBacktest } from '../quant/backtestEngine.js';
-import { parseStrategyInput } from '../quant/agents/orchestrator.js';
-import type { BacktestResult, OHLCVData, StrategyConfig } from '../quant/types.js';
-import { fetchOHLCVData } from '../quant/dataProvider.js';
-import { extractNewsSignal } from '../quant/newsSignal.js';
-import { readLatestScreenerRun } from '../quant/screener.js';
-import { summarizeFactorExperiments } from '../quant/factorLedger.js';
-import { analyzeTimeseries } from '../quant/timeseries/analyze.js';
-import { listResearchDigests } from '../quant/researchDigest.js';
-import { buildAnnouncementBrief } from '../quant/announcementProvider.js';
-import { runValuationModel } from '../quant/valuationModel.js';
 
 const productionDeps: ChatAgentDeps = {
   runAnalysis,

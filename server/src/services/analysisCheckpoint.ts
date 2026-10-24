@@ -1,14 +1,15 @@
 import * as fs from 'fs';
+import { promises as fsp } from 'fs';
 import * as path from 'path';
-import type {
-  FinancialData,
-  ValuationData,
-  StockInfo,
-  ExpertOpinion,
-  ControversyPoint,
-  PriceHistoryPoint,
-} from '../types.js';
 import type { NewsSignal } from '../quant/newsSignal.js';
+import type {
+  ControversyPoint,
+  ExpertOpinion,
+  FinancialData,
+  PriceHistoryPoint,
+  StockInfo,
+  ValuationData,
+} from '../types.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -134,21 +135,28 @@ export function loadCheckpoint(stockCode: string, runId?: string): AnalysisCheck
  * 合并写入断点（保留本代已有阶段产物，仅覆盖本次传入的字段）。
  * 写盘失败静默降级：断点只是优化手段，不影响分析正确性。
  *
+ * Low 修复：改用 fs/promises 异步 IO——此前 readFileSync/writeFileSync/renameSync
+ * 会在事件循环上同步阻塞（单文件 KB 级尚可，但 /api/analyze/stream、/api/chat/stream
+ * 都是长连接，事件循环一卡全体等；见 historyService 同类改法的注释）。
+ * 调用方（analysisPipeline.executeAnalysis）均在 async 上下文中 await 本函数。
+ *
  * @param runId 本代代次（由调用方在开跑时 newRunId 得到，续跑沿用它）。
  *              磁盘上残留的其他代断点**不参与合并**——否则并发两代会互相污染：
  *              A 的 experts 产物被 merge 进 B 的断点后，B 中断续跑会拿到
  *              「B 的数据 + A 的专家结论」拼成的报告。
  */
-export function saveCheckpoint(
+export async function saveCheckpoint(
   stockCode: string,
   patch: Omit<AnalysisCheckpoint, 'stockCode' | 'updatedAt' | 'runId'>,
   runId: string,
-): void {
+): Promise<void> {
+  const file = fileFor(stockCode);
+  // 临时名带代次：并发两代各写各的 tmp，不会互相踩到半写文件
+  const tmp = `${file}.${sanitizeRunId(runId)}.tmp`;
   try {
     const dir = getDir();
-    fs.mkdirSync(dir, { recursive: true });
-    const file = fileFor(stockCode);
-    const prev = loadCheckpointRaw(file);
+    await fsp.mkdir(dir, { recursive: true });
+    const prev = await loadCheckpointRawAsync(file);
     // 只有同代才作为合并基底；异代（或旧格式无 runId）一律从头开始，杜绝跨代混写
     const base = prev && prev.runId === runId ? prev : null;
     const next: AnalysisCheckpoint = {
@@ -158,11 +166,13 @@ export function saveCheckpoint(
       runId,
       updatedAt: new Date().toISOString(),
     };
-    // 临时名带代次：并发两代各写各的 tmp，不会互相踩到半写文件
-    const tmp = `${file}.${sanitizeRunId(runId)}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(next), 'utf-8');
-    fs.renameSync(tmp, file); // 原子替换，避免半写状态
+    await fsp.writeFile(tmp, JSON.stringify(next), 'utf-8');
+    await fsp.rename(tmp, file); // 原子替换，避免半写状态
   } catch (err) {
+    // Low 修复：rename 失败时 best-effort 清掉残留 tmp——
+    // 写 tmp 成功但 rename 失败（如目标被并发删除/权限抖动）会留下孤儿文件，
+    // 此前无任何清理，长期运行会持续堆积
+    await fsp.unlink(tmp).catch(() => {});
     logger.warn('分析断点写入失败，降级为不续跑', { stockCode, err: err as Error });
   }
 }
@@ -187,7 +197,17 @@ export function clearCheckpoint(stockCode: string, runId?: string): void {
   }
 }
 
-/** 读取原始断点内容（不做过期判断，供 saveCheckpoint 合并时使用） */
+/** 读取原始断点内容（不做过期判断；异步版供 saveCheckpoint 合并时使用） */
+async function loadCheckpointRawAsync(file: string): Promise<AnalysisCheckpoint | null> {
+  try {
+    const text = await fsp.readFile(file, 'utf-8');
+    return JSON.parse(text) as AnalysisCheckpoint;
+  } catch {
+    return null;
+  }
+}
+
+/** 读取原始断点内容（同步版：clearCheckpoint 的代次校验属轻量收尾路径，保持同步） */
 function loadCheckpointRaw(file: string): AnalysisCheckpoint | null {
   try {
     if (!fs.existsSync(file)) return null;

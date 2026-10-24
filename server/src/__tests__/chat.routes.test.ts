@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
+import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../services/chatAgent.js', () => ({
   chatAgent: {
@@ -15,9 +15,9 @@ vi.mock('../services/chatAgent.js', () => ({
 // 必须在 mock 之后导入 app
 // app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
 import { app as rawApp } from '../index.js';
+import { chatAgent } from '../services/chatAgent.js';
 import { withContract } from '../test/contractSupertest.js';
 const app = withContract(rawApp);
-import { chatAgent } from '../services/chatAgent.js';
 
 describe('POST /api/chat', () => {
   it('空内容返回 400', async () => {
@@ -51,10 +51,12 @@ describe('GET /api/chat/stream', () => {
     expect(r.headers['content-type']).toContain('text/event-stream');
     expect(r.text).toContain('data: ');
     expect(r.text).toContain('"phase":"done"');
-    // 路由把 message 正确透传给 runStream
+    // 路由把 message 正确透传给 runStream，并透传 M-5 的 AbortSignal
+    // （res close → abort 进行中的 LLM 调用；此处仅断言信号确实被传入 runStream）
     expect(chatAgent.runStream).toHaveBeenCalledWith(
       expect.objectContaining({ message: '分析 600519' }),
       expect.any(Function),
+      expect.any(AbortSignal),
     );
   });
 });

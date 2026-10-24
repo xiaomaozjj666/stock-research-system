@@ -1,12 +1,12 @@
-import type { StockInfo, FinancialData, ValuationData } from '../types.js';
-import { fetchStockInfo, fetchFinancialData, fetchValuationData } from './dataFetcher.js';
-import { buildPeerComparison, resolveStockIndustry } from './peerService.js';
-import { loadStockMaster, fuzzyMatch } from './stockMaster.js';
-import { MOUTAI_INFO, MOUTAI_FINANCIAL, MOUTAI_VALUATION } from '../data/sampleData.js';
-import logger from '../utils/logger.js';
-import { getEastmoneySearchToken } from '../utils/env.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { MOUTAI_FINANCIAL, MOUTAI_INFO, MOUTAI_VALUATION } from '../data/sampleData.js';
+import type { FinancialData, StockInfo, ValuationData } from '../types.js';
+import { getEastmoneySearchToken } from '../utils/env.js';
+import logger from '../utils/logger.js';
+import { fetchFinancialData, fetchStockInfo, fetchValuationData } from './dataFetcher.js';
+import { buildPeerComparison, resolveStockIndustry } from './peerService.js';
+import { fuzzyMatch, loadStockMaster } from './stockMaster.js';
 
 export interface StockDataSet {
   info: StockInfo;
@@ -246,6 +246,7 @@ async function fetchDataAndCache(stockCode: string): Promise<StockDataSet> {
         pb: p.pb,
         roe: p.roe,
         marketCap: p.marketCap,
+        peUnavailable: p.peUnavailable,
       }));
       logger.info('[peer] 同业对比填充完成', {
         count: valuation.peerComparison.length,

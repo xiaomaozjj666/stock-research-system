@@ -1,6 +1,6 @@
-import type { OHLCVData } from './types.js';
 import logger from '../utils/logger.js';
 import { isCacheFresh, readCacheEntry, writeCacheEntry } from './quantCache.js';
+import type { OHLCVData } from './types.js';
 
 function getSecId(code: string): string {
   return code.startsWith('6') ? `1.${code}` : `0.${code}`;
@@ -110,6 +110,31 @@ function mergeBars(existing: OHLCVData[], incoming: OHLCVData[]): OHLCVData[] {
 }
 
 /**
+ * H2：前复权基准漂移阈值（重叠段收盘价最大相对偏差）。
+ * fqt=1 前复权下，除权会使上游按新基准重算**整个历史序列**——正常增量补尾不会改变
+ * 重叠段价格；偏差超过该阈值即「两个复权基准混用」的信号（合并会在除权日出现假跳空）。
+ * 取 1%：足以容纳当日盘中小幅修订，又远低于任何真实除权的量级。
+ */
+const ADJUSTMENT_DRIFT_THRESHOLD = 0.01;
+
+/**
+ * H2：比较缓存与新增数据在重叠日期上的收盘价，返回最大相对偏差（|new-old|/old）。
+ * 无重叠日期或无可比基准价时返回 null（无法判定，不触发重拉）。
+ */
+function maxOverlapCloseDrift(existing: OHLCVData[], incoming: OHLCVData[]): number | null {
+  const oldClose = new Map<string, number>();
+  for (const b of existing) if (b.close > 0) oldClose.set(b.date, b.close);
+  let max: number | null = null;
+  for (const b of incoming) {
+    const old = oldClose.get(b.date);
+    if (old === undefined || !(old > 0) || !(b.close > 0)) continue;
+    const drift = Math.abs(b.close - old) / old;
+    if (max === null || drift > max) max = drift;
+  }
+  return max;
+}
+
+/**
  * 按 secid 获取 K 线（fetchOHLCVData 与指数基准共用内核）。
  *
  * 缓存策略（2026-09-05 重构）：按 cacheToken 存**合并后的完整历史**，请求时本地切片，
@@ -159,7 +184,32 @@ export async function fetchKlineBySecid(
     const fetched = await fetchKlineRange(secid, fetchStart, endDate, timeoutMs, signal);
     if (fetched !== null && fetched.length > 0) {
       merged = mergeBars(cachedBars, fetched);
-      writeCacheEntry(cacheKey, { bars: merged }, klineCacheTtlMs());
+      // H2：前复权基准一致性校验——除权后上游按新基准重算整个历史，旧缓存是旧基准、
+      // 新尾部是新基准，直接合并会在除权日出现假跳空（两基准混用）。
+      // 重叠段收盘价最大偏差超阈值 → 判定基准变更，放弃缓存全量重拉（fetchStart 移到
+      // 缓存最早日期），保证整段历史同一复权基准。
+      const drift = maxOverlapCloseDrift(cachedBars, fetched);
+      if (drift !== null && drift > ADJUSTMENT_DRIFT_THRESHOLD) {
+        const fullStart = cStart ?? startDate;
+        const refetched = await fetchKlineRange(secid, fullStart, endDate, timeoutMs, signal);
+        if (refetched !== null) {
+          // 全量重拉成功：整段以新基准为准（不再与旧缓存合并，防旧基准残留），回写缓存
+          merged = mergeBars([], refetched);
+          writeCacheEntry(cacheKey, { bars: merged }, klineCacheTtlMs());
+        } else {
+          // 全量重拉失败（网络错误）：返回已有的合并数据（可能混用两个复权基准）。
+          // 决策：不改 OHLCVData[] 返回结构——它被 fetchOHLCVData / 指数基准 / intl
+          // 通道与 services 层共用，加 staleAdjustment 字段侵入面大；logger.warning
+          // 是最小侵入方案，以 staleAdjustment 关键词标注便于告警检索。
+          // 同时不回写缓存：避免把混合基准固化，下次请求仍会重试全量重拉。
+          logger.warn(
+            '复权基准变更但全量重拉失败，返回数据可能混用两个前复权基准（staleAdjustment）',
+            { secid, fullStart, endDate, drift: Math.round(drift * 1000) / 1000 },
+          );
+        }
+      } else {
+        writeCacheEntry(cacheKey, { bars: merged }, klineCacheTtlMs());
+      }
     } else if (fetched === null && cachedBars.length === 0) {
       // 3. 真失败（网络/解析）且无历史 → 降级模拟数据（用于演示），绝不写入缓存
       // F1.6: 模拟数据标记 isSimulated=true，下游策略引擎应检查此标志
@@ -218,9 +268,15 @@ async function fetchKlineRange(
     const json = await response.json();
 
     if (json?.data?.klines) {
-      const data: OHLCVData[] = json.data.klines.map((line: string) => {
+      // H3 第一层防御（解析层行过滤）：open/close/high/low/volume 任一非有限
+      // （NaN/Infinity）或 close ≤ 0 的行直接丢弃——close=0 会把动量算成 Infinity
+      // 假信号、close=NaN 会污染整条权益曲线；宁可少一根 bar 也不让畸形值静默进回测
+      // （引擎入口 runBacktest 还有第二层 throw 兜底）。
+      const data: OHLCVData[] = [];
+      let dropped = 0;
+      for (const line of json.data.klines as string[]) {
         const parts = line.split(',');
-        return {
+        const row: OHLCVData = {
           date: parts[0],
           open: parseFloat(parts[1]),
           close: parseFloat(parts[2]),
@@ -228,7 +284,24 @@ async function fetchKlineRange(
           low: parseFloat(parts[4]),
           volume: parseFloat(parts[5]),
         };
-      });
+        const sane =
+          Number.isFinite(row.open) &&
+          Number.isFinite(row.close) &&
+          Number.isFinite(row.high) &&
+          Number.isFinite(row.low) &&
+          Number.isFinite(row.volume) &&
+          row.close > 0;
+        if (sane) data.push(row);
+        else dropped++;
+      }
+      if (dropped > 0) {
+        logger.warn('K线存在畸形行（非有限价格/量或 close≤0），已丢弃', {
+          secid,
+          startDate,
+          endDate,
+          dropped,
+        });
+      }
 
       // look-ahead 防御：剔除超出请求范围的行（API 边界行为不可控，本地二次校验兜底）
       const { data: filtered, trimmed } = filterOHLCVByRange(data, startDate, endDate);

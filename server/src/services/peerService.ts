@@ -1,13 +1,20 @@
-import { fetchValuationData, fetchBoardInfo } from './dataFetcher.js';
-import { resolveIndustry, getPeerCodes } from '../data/industryPeers.js';
+import { getPeerCodes, resolveIndustry } from '../data/industryPeers.js';
+import { fetchBoardInfo, fetchValuationData } from './dataFetcher.js';
 
 export interface PeerComparisonEntry {
   name: string;
   code: string;
   pe: number;
   pb: number;
-  roe: number;
+  /**
+   * 同业 ROE：上游估值接口（RPT_VALUEANALYSIS_DET）不提供该字段，恒为 null。
+   * 此前硬编码 0 会被下游当成「真实 ROE 为 0」参与截面统计（拉低行业均值），
+   * 消费方按 null 识别「无数据」并跳过（见 scoreEngine 的截面退化）。
+   */
+  roe: number | null;
   marketCap: number;
+  /** true = 该同业亏损（PE 为负，H-1 口径下 pe 置 0），展示层应披露「亏损」 */
+  peUnavailable?: boolean;
 }
 
 /**
@@ -50,10 +57,13 @@ export async function buildPeerComparison(
         return {
           name: board?.name || '',
           code,
-          pe: v.pe || 0,
-          pb: v.pb || 0,
-          roe: 0,
-          marketCap: v.marketCap || 0,
+          // M-2: pe 保留上游真实值（H-1 口径下亏损股为 0 + peUnavailable 标注），
+          // 不再 `v.pe || 0` 清零——负值/0 与「有真实 PE」必须可区分，报告层才能展示「亏损」。
+          pe: v.pe,
+          pb: v.pb,
+          roe: null, // 上游估值接口无同业 ROE 字段（见接口注释），显式 null 而非误导性的 0
+          marketCap: v.marketCap,
+          peUnavailable: v.peUnavailable,
         };
       } catch {
         return null;

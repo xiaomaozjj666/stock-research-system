@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { toNum, yuanToYi, toPercent } from '../dataFetcher.js';
+import { describe, expect, it } from 'vitest';
+import { toNum, toPercent, yuanToYi } from '../dataFetcher.js';
 
 describe('toNum', () => {
   it('null/undefined/"-" 归零', () => {
@@ -48,8 +48,15 @@ describe('toPercent', () => {
     expect(toPercent(105)).toBe(105);
     expect(toPercent(120.3)).toBe(120.3);
   });
-  it('小数形式（如 0.915）乘以 100', () => {
-    expect(toPercent(0.915)).toBe(91.5);
+  it('M-1 新语义：东财百分比字段原样返回，不再 ×100（0.915 表示 0.915%）', () => {
+    // 旧启发式把 |值|<1 当小数形式 ×100：真实净利率 -0.5% 会被放大成 -50（百倍失真）。
+    // 东财 XSJLL/XSMLL/ROEJQ/ZCFZL 均为百分比形式，全部调用方已核对，无小数形式来源。
+    expect(toPercent(0.915)).toBe(0.92);
+    expect(toPercent(0.915)).not.toBe(91.5);
+  });
+  it('真实形状回归：真实净利率 -0.5%（XSJLL）不被百倍放大成 -50', () => {
+    expect(toPercent(-0.5)).toBe(-0.5);
+    expect(toPercent(-0.5)).not.toBe(-50);
   });
   it('0 值返回 0', () => {
     expect(toPercent(0)).toBe(0);

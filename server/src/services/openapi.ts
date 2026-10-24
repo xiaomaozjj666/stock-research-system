@@ -2378,8 +2378,16 @@ export function buildOpenApiDocument() {
                   code: { type: 'string' },
                   pe: { type: 'number' },
                   pb: { type: 'number' },
-                  roe: { type: 'number' },
+                  roe: {
+                    type: ['number', 'null'],
+                    description:
+                      '同业 ROE：上游估值接口不提供该字段，无数据时为 null（非 0——0 会被当成真实 ROE 参与统计）',
+                  },
                   marketCap: { type: 'number' },
+                  peUnavailable: {
+                    type: 'boolean',
+                    description: 'true = 该同业亏损（PE 为负被置 0），展示层应披露「亏损」',
+                  },
                 },
                 required: ['name', 'code', 'pe', 'pb', 'roe', 'marketCap'],
               },

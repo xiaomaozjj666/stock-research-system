@@ -1,14 +1,15 @@
-import type { OHLCVData, StrategyConfig, BacktestResult, Trade, FactorOverlay } from './types.js';
-import { getBenchmarkCurve } from './dataProvider.js';
+import logger from '../utils/logger.js';
 import { computePerformance, type AnalyzerContext } from './analyzers.js';
 import {
   A_SHARE_COST_MODEL,
-  makeCostModel,
   buyCost,
-  sellProceeds,
+  makeCostModel,
   marketImpactCost,
+  sellProceeds,
   type CostModel,
 } from './costModel.js';
+import { getBenchmarkCurve } from './dataProvider.js';
+import type { BacktestResult, FactorOverlay, OHLCVData, StrategyConfig, Trade } from './types.js';
 
 /**
  * 新闻时效衰减半衰期（天）：与 newsSignal.NEWS_MODEL_CONSTANTS.HALF_LIFE_DAYS 保持一致。
@@ -116,6 +117,19 @@ export function runBacktest(
   strategy: StrategyConfig,
   costModelOverride?: CostModel,
 ): BacktestResult {
+  // H3 第二层防御（入口预检）：close 非有限（NaN/Infinity）或 ≤0 的 bar 一律拒绝。
+  // close=0 会把动量算成 Infinity 假信号、close=NaN 会污染权益曲线并让 totalReturn
+  // 静默显示 0——回测结果不可信时宁可报错（数据层 dataProvider 已做第一层行级丢弃，
+  // 此处兜底直接传入引擎的手工/外部数据）。带 index 与值便于定位脏数据。
+  for (let i = 0; i < data.length; i++) {
+    const c = data[i]?.close;
+    if (typeof c !== 'number' || !Number.isFinite(c) || c <= 0) {
+      throw new Error(
+        `回测输入包含非法收盘价（index=${i}, date=${data[i]?.date}, close=${c}）：close 必须为有限正数，回测结果不可信`,
+      );
+    }
+  }
+
   const initialCapital = strategy.initialCapital || 1000000;
   // 显式传 0（关掉费用做对照实验）必须生效，不能用 || 吞成默认万三
   const commission = strategy.commission ?? 0.0003; // 万三
@@ -157,6 +171,10 @@ export function runBacktest(
   let position = 0; // 持仓股数
   const trades: Trade[] = [];
   const equityCurve: { date: string; value: number }[] = [];
+  // M6：分析层用全精度权益序列（不预 round），展示层 equityCurve 才保留 2 位百分比。
+  // 预 round（2 位百分比）再差分算日收益，会把 ~1e-4 量级的舍入误差在低波动策略上
+  // 放大成夏普/索提诺的可观偏差；存储结构（BacktestResult.equityCurve）保持展示口径不变。
+  const equityCurveRaw: { date: string; value: number }[] = [];
 
   // 预计算收盘价前缀和，使 MA 查询从 O(period) 降为 O(1)，消除逐 bar 重复求和
   const prefixSum = new Float64Array(data.length + 1);
@@ -189,29 +207,60 @@ export function runBacktest(
         const price = bar.open * (1 + costModel.slippage);
         // 按新闻姿态缩放可用资金（强空新闻 posture→0 时不建仓）
         const deployable = cash * posture;
-        // A股100股整数倍；每股价按含买入费率估算（成交额×(1+openRate)，minCost 忽略以便整手取整）
-        const shares = Math.floor(deployable / (price * (1 + costModel.openRate)) / 100) * 100;
-        if (shares > 0) {
+        // H1：买入股数预算必须预扣冲击成本上界。冲击金额上界 = impactCost × 成交额
+        // （参与率 100% 封顶，见 marketImpactCost），最高可达成交额 10%（qlib 推荐 0.1），
+        // 远超整手取整的余量——旧口径分母只含 openRate，落账却扣 total + impact，
+        // 低流动性 bar 会击穿现金（实证：20000 资金买 1900 股 → cash = -1136）。
+        // A股100股整数倍；分母 = 价格 × (1 + openRate + 冲击上限率)，minCost 仍忽略
+        // （由落账前复核兜底）。impactCost 缺省的 simple 模型分母不变，行为与历史一致。
+        const impactCapRate = costModel.impactCost ?? 0;
+        let shares =
+          Math.floor(deployable / (price * (1 + costModel.openRate + impactCapRate)) / 100) * 100;
+        // H1 落账前复核：预算估算忽略 minCost（最低佣金），小额单笔费用占比可能超费率；
+        // total + impact > cash 时按可用现金比例降档股数（整手约束保留）重试。
+        // 比例降档严格递减（100 的倍数），循环必然终止；降档后不足一手则跳过本次买入。
+        let downgradedFrom = 0;
+        let executed = false;
+        while (shares >= 100) {
           const { total, fee } = buyCost(costModel, shares, price);
           // 二次方市场冲击成本（qlib Exchange）：impactCost × 参与率² × 成交额
           // （bar.volume 单位为手，×100 换算为股，与 shares 同单位）
           const impact = marketImpactCost(costModel, shares * price, bar.volume * 100, shares);
-          cash -= total + impact;
-          position = shares;
-          trades.push({
+          if (total + impact <= cash) {
+            cash -= total + impact;
+            position = shares;
+            trades.push({
+              date: bar.date,
+              type: 'buy',
+              price: Math.round(price * 100) / 100,
+              shares,
+              commission: Math.round((fee + impact) * 100) / 100,
+              reason:
+                getSignalReason(strategy, 'buy') +
+                (newsAware
+                  ? `（新闻姿态${(newsOverlayPostureAt(newsOverlay, bar.date) * 100).toFixed(0)}%）`
+                  : '') +
+                (factorAware
+                  ? `（因子姿态${(factorOverlayPostureAt(factorOverlay, bar.date) * 100).toFixed(0)}%）`
+                  : '') +
+                (downgradedFrom > 0 ? `（冲击成本预算降档：${downgradedFrom}→${shares}股）` : ''),
+            });
+            executed = true;
+            break;
+          }
+          downgradedFrom = shares;
+          const scale = cash / (total + impact); // < 1，保证 shares 严格递减
+          shares = Math.floor((shares * scale) / 100) * 100;
+        }
+        if (!executed && downgradedFrom > 0) {
+          // 降档后仍不足一手：现金连 100 股的「含冲击成本」支出都覆盖不了，放弃本次买入。
+          // 不产成交记录（tradeCount 语义为成交数），以 warn 告警留痕便于审计。
+          logger.warn('买入预算复核不足一手，跳过买入', {
             date: bar.date,
-            type: 'buy',
-            price: Math.round(price * 100) / 100,
-            shares,
-            commission: Math.round((fee + impact) * 100) / 100,
-            reason:
-              getSignalReason(strategy, 'buy') +
-              (newsAware
-                ? `（新闻姿态${(newsOverlayPostureAt(newsOverlay, bar.date) * 100).toFixed(0)}%）`
-                : '') +
-              (factorAware
-                ? `（因子姿态${(factorOverlayPostureAt(factorOverlay, bar.date) * 100).toFixed(0)}%）`
-                : ''),
+            stockCode: strategy.stockCode,
+            cash,
+            price,
+            downgradedFrom,
           });
         }
       }
@@ -241,8 +290,9 @@ export function runBacktest(
       pending = 'sell';
     }
 
-    // 3. 记录权益
+    // 3. 记录权益（M6：分析层全精度、展示层 2 位百分比，见 equityCurveRaw 声明处注释）
     const equity = cash + position * bar.close;
+    equityCurveRaw.push({ date: bar.date, value: (equity / initialCapital) * 100 });
     equityCurve.push({
       date: bar.date,
       value: Math.round((equity / initialCapital) * 10000) / 100,
@@ -251,7 +301,15 @@ export function runBacktest(
 
   // 绩效指标：由可插拔分析器集合计算（backtrader Analyzer 模式），
   // 新增指标只需追加分析器，无需改动引擎
-  const stats = computePerformance({ equityCurve, trades } satisfies AnalyzerContext);
+  const stats = computePerformance({
+    equityCurve: equityCurveRaw,
+    trades,
+    // M4：胜率费率与 CostModel 联动。口径：trades.price 是含滑点成交价
+    // （open × (1±slippage)），滑点已体现在价差里，此处仅传佣金/税费率，
+    // 去除旧常量 0.001（佣金+滑点）对已含滑点价格的二次计费；
+    // 买卖双边费率不同（卖出含印花税）时取双边均值。
+    costRate: (costModel.openRate + costModel.closeRate) / 2,
+  } satisfies AnalyzerContext);
   const round = (v: number) => Math.round(v * 100) / 100;
 
   return {
@@ -303,8 +361,9 @@ function maCrossSignal(
   params: Record<string, number>,
   maAt: (i: number, p: number) => number,
 ): 'buy' | 'sell' | 'hold' {
-  const shortPeriod = params.shortPeriod || 5;
-  const longPeriod = params.longPeriod || 20;
+  // 显式传 0（如 buyThreshold=0 表示动量>0 即买）必须生效，不能用 || 吞成默认值（对齐 commission 的 ?? 先例）
+  const shortPeriod = params.shortPeriod ?? 5;
+  const longPeriod = params.longPeriod ?? 20;
 
   if (index < longPeriod) return 'hold';
 
@@ -327,9 +386,10 @@ function momentumSignal(
   index: number,
   params: Record<string, number>,
 ): 'buy' | 'sell' | 'hold' {
-  const lookback = params.lookback || 20;
-  const buyThreshold = (params.buyThreshold || 5) / 100;
-  const sellThreshold = (params.sellThreshold || -3) / 100;
+  // 显式传 0（如 buyThreshold=0 表示动量>0 即买）必须生效，不能用 || 吞成默认值（对齐 commission 的 ?? 先例）
+  const lookback = params.lookback ?? 20;
+  const buyThreshold = (params.buyThreshold ?? 5) / 100;
+  const sellThreshold = (params.sellThreshold ?? -3) / 100;
 
   if (index < lookback) return 'hold';
 
@@ -349,9 +409,10 @@ function meanReversionSignal(
   params: Record<string, number>,
   maAt: (i: number, p: number) => number,
 ): 'buy' | 'sell' | 'hold' {
-  const maPeriod = params.maPeriod || 20;
-  const buyDev = (params.buyDeviation || -3) / 100;
-  const sellDev = (params.sellDeviation || 3) / 100;
+  // 显式传 0（如 sellDeviation=0 表示偏离均线即卖）必须生效，不能用 || 吞成默认值（对齐 commission 的 ?? 先例）
+  const maPeriod = params.maPeriod ?? 20;
+  const buyDev = (params.buyDeviation ?? -3) / 100;
+  const sellDev = (params.sellDeviation ?? 3) / 100;
 
   if (index < maPeriod) return 'hold';
 

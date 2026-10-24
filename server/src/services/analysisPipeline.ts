@@ -1,51 +1,51 @@
-import type {
-  AnalysisResult,
-  ExpertOpinion,
-  ExpertDegradeReason,
-  DataSource,
-  SectorRotationSignal,
-  PriceHistoryPoint,
-  ControversyPoint,
-} from '../types.js';
-import { getData } from './dataService.js';
-import { fundamentalExpert } from './experts/fundamentalExpert.js';
-import { valuationExpert } from './experts/valuationExpert.js';
-import { industryExpert, type IndustryExpertResult } from './experts/industryExpert.js';
-import { riskExpert } from './experts/riskExpert.js';
-import { capitalFlowExpert } from './experts/capitalFlowExpert.js';
-import { policyExpert } from './experts/policyExpert.js';
-import { hotMoneyExpert } from './experts/hotMoneyExpert.js';
-import { unlockExpert } from './experts/unlockExpert.js';
-import { arbitrationExpert } from './experts/arbitrationExpert.js';
-import { runExpertsWithDegradation } from './expertRunner.js';
-import { isDegradedOpinion, getDegradeReason } from '../llm/expertRunner.js';
-import {
-  loadCheckpoint,
-  saveCheckpoint,
-  clearCheckpoint,
-  newRunId,
-  stageLabel,
-} from './analysisCheckpoint.js';
-import { evaluateOutcomes, getRatingAccuracy, formatAccuracyHint } from './outcomeTracker.js';
-import { generateScenarios } from './scenarioEngine.js';
-import { generateStrategyList } from './strategyListEngine.js';
-import { safeDiv } from './safeDiv.js';
-import { calculateScores } from './scoreEngine.js';
-import { fetchOHLCVData } from '../quant/dataProvider.js';
-import { extractNewsSignal, earliestNewsDate, type NewsSignal } from '../quant/newsSignal.js';
-import { auditDataAccess, auditLLMCall, auditTradeSignal } from './auditLog.js';
+import { getDegradeReason, isDegradedOpinion } from '../llm/expertRunner.js';
 import { buildFinancialGraph } from '../llm/knowledgeGraph.js';
-import { calculateSectorRotation, type SectorData } from '../quant/sectorRotation.js';
+import { buildAnnouncementBrief } from '../quant/announcementProvider.js';
 import {
   fetchConsensusSnapshot,
   formatConsensusBrief,
   type ConsensusSnapshot,
 } from '../quant/consensusProvider.js';
-import { buildAnnouncementBrief } from '../quant/announcementProvider.js';
-import { styleFactorExposures, decomposeRisk } from '../quant/riskAttribution.js';
-import { withTimeout, withAbortableTimeout } from '../utils/timeout.js';
-import { buildReflectionNotes, extractOpposeRisks } from './analysisReflection.js';
+import { fetchOHLCVData } from '../quant/dataProvider.js';
+import { earliestNewsDate, extractNewsSignal, type NewsSignal } from '../quant/newsSignal.js';
+import { decomposeRisk, styleFactorExposures } from '../quant/riskAttribution.js';
+import { calculateSectorRotation, type SectorData } from '../quant/sectorRotation.js';
+import type {
+  AnalysisResult,
+  ControversyPoint,
+  DataSource,
+  ExpertDegradeReason,
+  ExpertOpinion,
+  PriceHistoryPoint,
+  SectorRotationSignal,
+} from '../types.js';
 import logger from '../utils/logger.js';
+import { withAbortableTimeout, withTimeout } from '../utils/timeout.js';
+import {
+  clearCheckpoint,
+  loadCheckpoint,
+  newRunId,
+  saveCheckpoint,
+  stageLabel,
+} from './analysisCheckpoint.js';
+import { buildReflectionNotes, extractOpposeRisks } from './analysisReflection.js';
+import { auditDataAccess, auditLLMCall, auditTradeSignal } from './auditLog.js';
+import { getData } from './dataService.js';
+import { runExpertsWithDegradation } from './expertRunner.js';
+import { arbitrationExpert } from './experts/arbitrationExpert.js';
+import { capitalFlowExpert } from './experts/capitalFlowExpert.js';
+import { fundamentalExpert } from './experts/fundamentalExpert.js';
+import { hotMoneyExpert } from './experts/hotMoneyExpert.js';
+import { industryExpert, type IndustryExpertResult } from './experts/industryExpert.js';
+import { policyExpert } from './experts/policyExpert.js';
+import { riskExpert } from './experts/riskExpert.js';
+import { unlockExpert } from './experts/unlockExpert.js';
+import { valuationExpert } from './experts/valuationExpert.js';
+import { evaluateOutcomes, formatAccuracyHint, getRatingAccuracy } from './outcomeTracker.js';
+import { safeDiv } from './safeDiv.js';
+import { generateScenarios } from './scenarioEngine.js';
+import { calculateScores } from './scoreEngine.js';
+import { generateStrategyList } from './strategyListEngine.js';
 
 /** 特异波动经验基准（%）：无残差收益序列时使用（A 股中位单股波动水平） */
 const SPECIFIC_RISK_BASELINE = 25;
@@ -311,7 +311,7 @@ async function executeAnalysis(
     if (ck.runId !== runId) {
       // 旧格式断点（无 runId）：把本次采用的上游产物显式落到本代。
       // 否则后续 saveCheckpoint 会因代次不符拒绝 merge，续跑链的产物断在原地。
-      saveCheckpoint(
+      await saveCheckpoint(
         stockCode,
         {
           stage: ck.stage,
@@ -370,7 +370,7 @@ async function executeAnalysis(
     priceHistory = fetchedPrices;
     // 落盘保存「未经 PE/PB 修正」的原始数据：后续修正是确定性纯计算，
     // 续跑时重放得到同样结果，避免修正被重复叠加。
-    saveCheckpoint(
+    await saveCheckpoint(
       stockCode,
       {
         stage: 'data',
@@ -404,6 +404,8 @@ async function executeAnalysis(
   if (latestEps > 0 && price > 0) {
     // PE = 股价 / 每股收益
     valuation.pe = Math.round((price / latestEps) * 100) / 100;
+    // 修正成功 → PE 有效：清除数据层的「亏损/不可用」标注（下游据此恢复估值分位判定）
+    valuation.peUnavailable = false;
 
     // PB = 股价 / 每股净资产
     // 从 netProfit(亿元) 和 eps(元/股) 反推总股本: totalShares = netProfit*1e8 / eps
@@ -417,10 +419,13 @@ async function executeAnalysis(
   } else if (latestNetProfit > 0 && valuation.marketCap > 0) {
     // EPS不可用时回退到市值/净利润
     valuation.pe = Math.round((valuation.marketCap / latestNetProfit) * 100) / 100;
+    valuation.peUnavailable = false;
     if (latestEquity > 0) {
       valuation.pb = Math.round((valuation.marketCap / latestEquity) * 100) / 100;
     }
   }
+  // H-1: 两条修正路径都不可用（亏损股，eps≤0 且净利润≤0）时保持 dataFetcher 的
+  // 「PE 为负/不可用」标注（pe=0 + peUnavailable）——下游跳过估值分位判定并显式披露。
 
   // 修正历史PE估算，基于修正后的当前PE
   // 说明：免费API无法获取真实历史PE，此处为确定性估算。
@@ -546,7 +551,7 @@ async function executeAnalysis(
     expertOpinions = expertOutcome.opinions;
     degradedExperts = expertOutcome.degradedExperts;
     expertByKey = expertOutcome.byKey;
-    saveCheckpoint(
+    await saveCheckpoint(
       stockCode,
       { stage: 'experts', expertOpinions, degradedExperts, expertByKey },
       runId,
@@ -588,7 +593,7 @@ async function executeAnalysis(
     });
     controversies = arbitration.controversies;
     finalOpinion = arbitration.finalOpinion;
-    saveCheckpoint(stockCode, { stage: 'arbitration', controversies, finalOpinion }, runId);
+    await saveCheckpoint(stockCode, { stage: 'arbitration', controversies, finalOpinion }, runId);
   }
 
   const allOpinions = [...expertOpinions, finalOpinion];
@@ -643,9 +648,14 @@ async function executeAnalysis(
       : 0;
 
   // PE 历史分位
+  // H-1: PE 无效（亏损，pe=0/负）或无历史序列时不做分位判定，取中性 50——
+  // 旧逻辑 safeDiv(0,0)*100=0 会让亏损股被判「历史最低估」。
+  // 空 historicalPE 口径与 factors.ts 统一为 50（中性），两处不再一个判 0 一个判 50。
   const peValues = valuation.historicalPE.map((h) => h.pe).sort((a, b) => a - b);
   const pePercentile =
-    safeDiv(peValues.filter((p) => p <= valuation.pe).length, peValues.length) * 100;
+    valuation.pe > 0 && peValues.length > 0
+      ? safeDiv(peValues.filter((p) => p <= valuation.pe).length, peValues.length) * 100
+      : 50;
 
   // 4. 双层自省
   // 文案与阈值已抽到 services/analysisReflection.ts：那里是无 IO 的纯函数，
@@ -691,8 +701,12 @@ async function executeAnalysis(
   });
 
   // 7. 估值水平判断
+  // H-1: PE 无效（亏损股，PE 为负被数据层置 0）→ 显式「不可用」态，
+  // 绝不落入分位判定（任何分位阈值都会把 0 分位判成「历史低估」，方向完全相反）。
   let valuationLevel: string;
-  if (pePercentile <= 20) valuationLevel = '历史低估';
+  if (valuation.pe <= 0) {
+    valuationLevel = '亏损（PE 为负，估值分位不可用）';
+  } else if (pePercentile <= 20) valuationLevel = '历史低估';
   else if (pePercentile <= 40) valuationLevel = '偏低估';
   else if (pePercentile <= 60) valuationLevel = '合理';
   else if (pePercentile <= 80) valuationLevel = '偏高估';
@@ -706,8 +720,13 @@ async function executeAnalysis(
       : fundamentalSentiment === 'bearish'
         ? '偏弱'
         : '中等';
+  // H-1: 亏损股 PE 无效，正文显式披露「亏损、估值分位不可用」，不再拼出「当前PE 0x（历史低估）」
+  const pePhrase =
+    valuation.pe > 0
+      ? `当前PE ${valuation.pe}x（${valuationLevel}）`
+      : '当前处于亏损状态（PE 为负，估值分位不可用）';
   const coreSummary =
-    `${info.name}（${info.code}）属于${info.industry}行业，当前PE ${valuation.pe}x（${valuationLevel}）。` +
+    `${info.name}（${info.code}）属于${info.industry}行业，${pePhrase}。` +
     `盈利质量${sentimentWord}（毛利率${financial.grossMargin[n - 1]}%、ROE ${financial.roe[n - 1]}%），` +
     `最新营收增速${revenueGrowthLatest.toFixed(1)}%、利润增速${profitGrowthLatest.toFixed(1)}%。` +
     `综合评分${totalScore}/100，评级：${rating}。`;
@@ -762,6 +781,12 @@ async function executeAnalysis(
   }
 
   // 11. 数据来源（动态，基于实际数据年份）
+  // M-3: 估值取数降级到 push2（实时价口径）时如实披露，收盘价与实时价的 PE/PB
+  // 在盘中可能明显不同，读者需要知道本报告的估值数字用的是哪种口径。
+  const valuationSourceNote =
+    valuation.source === 'push2'
+      ? '（降级说明：估值主源不可用，PE/PB/市值采用 push2 实时价口径，非收盘价）'
+      : '';
   const dataSources: DataSource[] = [
     {
       name: '年度财务报告',
@@ -771,7 +796,7 @@ async function executeAnalysis(
     },
     {
       name: '实时行情数据',
-      description: '东方财富/新浪财经实时行情接口',
+      description: `东方财富/新浪财经实时行情接口${valuationSourceNote}`,
       confidence: 85,
       coverage: 'K线图 / 回测价格 / 资金筹码专家',
     },
@@ -883,6 +908,8 @@ async function executeAnalysis(
   try {
     const peers = valuation.peerComparison ?? [];
     if (peers.length > 0) {
+      // M-2: 同业 roe 可为 null（上游无该字段）——图谱按「有效样本」统计行业均值，
+      // 无效样本不进 reduce（null 参与 + 会得到 NaN 并污染整张图）。
       const graphStocks = [
         {
           code: info.code,
@@ -903,6 +930,10 @@ async function executeAnalysis(
           grossMargin: 0, // 同业无毛利率数据，置 0 避免 NaN
         })),
       ];
+      const validRoeStocks = graphStocks.filter(
+        (s): s is (typeof graphStocks)[number] & { roe: number } =>
+          s.roe != null && isFinite(s.roe),
+      );
       const graph = buildFinancialGraph({
         stocks: graphStocks,
         sectors: [
@@ -917,8 +948,8 @@ async function executeAnalysis(
               graphStocks.length,
             ),
             avgROE: safeDiv(
-              graphStocks.reduce((s, x) => s + x.roe, 0),
-              graphStocks.length,
+              validRoeStocks.reduce((s, x) => s + x.roe, 0),
+              validRoeStocks.length,
             ),
           },
         ],

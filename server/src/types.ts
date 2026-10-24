@@ -9,8 +9,8 @@ export interface StockInfo {
 }
 
 // 最新消息情绪信号（来自 quant/newsSignal）
-import type { NewsSignal, NewsItem } from './quant/newsSignal.js';
-export type { NewsSignal, NewsItem };
+import type { NewsItem, NewsSignal } from './quant/newsSignal.js';
+export type { NewsItem, NewsSignal };
 
 // 机构一致预期快照（来自 quant/consensusProvider；快照口径，不做回测因子）
 import type { ConsensusSnapshot } from './quant/consensusProvider.js';
@@ -50,14 +50,32 @@ export interface ValuationData {
   pb: number;
   ps: number;
   marketCap: number;
+  /**
+   * 估值数据口径来源：datacenter（收盘价）/ push2（实时价）。
+   * 主备源价格口径不同（收盘 vs 实时），降级时必须可辨识，供报告层披露，
+   * 而不是静默混用两种口径。
+   */
+  source?: 'datacenter' | 'push2';
+  /**
+   * true = PE 因亏损（PE_TTM 为负）或缺失而不可用，此时 pe 为 0 占位。
+   * 负 PE 没有估值含义（通威 PE=-5.3 不代表「历史最低估」），
+   * 消费方必须跳过估值分位/估值水平判定，改走「亏损/不可用」披露语义。
+   */
+  peUnavailable?: boolean;
   historicalPE: { year: string; pe: number; isEstimated?: boolean }[];
   peerComparison: {
     name: string;
     code: string;
     pe: number;
     pb: number;
-    roe: number;
+    /**
+     * 同业 ROE：上游估值接口不提供该字段，无数据时为 null（而非硬编码 0——
+     * 0 会被评分/展示层当成「真实 ROE 为 0」参与统计）。
+     */
+    roe: number | null;
     marketCap: number;
+    /** true = 该同业亏损（PE 为负被置 0），展示层应披露「亏损」而非 PE 0 */
+    peUnavailable?: boolean;
   }[];
 }
 

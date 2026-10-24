@@ -12,8 +12,8 @@ import * as path from 'path';
  *  - 限价买单：收盘价 ≤ 限价 成交，限价卖单：收盘价 ≥ 限价 成交，均按收盘价成交；
  *  - 限价单当日收盘未成交则自动过期；
  *  - 整手约束：下单数量向下取整到 100 股整数倍；
- *  - 交易成本：佣金默认万三（可配），卖出加收印花税 0.1%；
- *  - A 股硬规则：T+1（当日买入次日才可卖）、涨跌停拒单（主板 ±10%，可配）、停牌/无收盘价拒单。
+ *  - 交易成本：佣金默认万三（可配），卖出加收印花税 0.05%（2023-08-28 起万5）；
+ *  - A 股硬规则：T+1（当日买入次日才可卖）、涨跌停拒单（主板 ±10% 可配，创业板/科创板 ±20%，见 limitPctForCode）、停牌/无收盘价拒单。
  *
  * 持久化方案选型说明：
  *  项目当前无任何 sqlite 依赖；Node 24 的 node:sqlite 仍标记为实验性（API 可能变动），
@@ -27,8 +27,21 @@ import * as path from 'path';
 const DEFAULTS = {
   commissionRate: 0.0003, // 佣金率：万三
   stampDutyRate: 0.0005, // 卖出印花税：万5（2023-08-28 起，与 costModel A_SHARE_COST_MODEL 一致）
-  limitPct: 0.1, // 涨跌停幅度：主板 ±10%
+  limitPct: 0.1, // 主板涨跌停幅度：±10%（创业板/科创板固定 ±20%，见 limitPctForCode）
 };
+
+/**
+ * M2：按代码前缀取该板块的涨跌停幅度。
+ * - 创业板（300/301）与科创板（688/689）±20%（注册制硬规则，优先于可配置的主板幅度）；
+ * - 其余（主板等）用账户配置的 limitPct（默认 ±10%）。
+ * 已知限制：ST ±5% 需要证券名称才能判定，而 PaperAccount 的订单/收盘价通道只有
+ * 代码（closePrices: Map<code, number>），拿不到名称——ST 判定暂不实现，
+ * ST 股按其上市板块幅度（主板 ±10%）处理，待上游接入名称数据后补充。
+ */
+export function limitPctForCode(code: string, basePct: number): number {
+  if (/^(300|301|688|689)/.test(code)) return 0.2;
+  return basePct;
+}
 
 // 默认持久化文件（测试可通过构造参数或 PAPER_TRADING_FILE 重定向）
 const DEFAULT_FILE = path.join(import.meta.dirname, '..', 'data', 'paperTrading.json');
@@ -123,8 +136,8 @@ export interface PaperStats {
 export interface PaperTradingOptions {
   filePath?: string; // 持久化文件路径；缺省用 env PAPER_TRADING_FILE 或默认文件
   commissionRate?: number; // 佣金率，默认万三
-  stampDutyRate?: number; // 卖出印花税率，默认 0.1%
-  limitPct?: number; // 涨跌停幅度，默认 0.1
+  stampDutyRate?: number; // 卖出印花税率，默认 0.05%（万5，2023-08-28 起）
+  limitPct?: number; // 主板涨跌停幅度，默认 0.1（创业板/科创板固定 0.2，不受此配置影响）
   initialDate?: string; // 初始交易日 YYYY-MM-DD
   autoSave?: boolean; // 每次 settleDay 后自动落盘（默认 false）
 }
@@ -331,10 +344,11 @@ export class PaperAccount {
       }
       const prevClose = prevClosePrices?.get(order.code) ?? this.lastClose.get(order.code);
 
-      // 涨跌停拒单：涨停拒买、跌停拒卖
+      // 涨跌停拒单：涨停拒买、跌停拒卖（幅度按板块区分：创业板/科创板 ±20%，主板按配置，见 limitPctForCode）
       if (prevClose !== undefined && prevClose > 0) {
-        const limitUp = Math.round(prevClose * (1 + this.opts.limitPct) * 100) / 100;
-        const limitDown = Math.round(prevClose * (1 - this.opts.limitPct) * 100) / 100;
+        const limitPct = limitPctForCode(order.code, this.opts.limitPct);
+        const limitUp = Math.round(prevClose * (1 + limitPct) * 100) / 100;
+        const limitDown = Math.round(prevClose * (1 - limitPct) * 100) / 100;
         if (order.side === 'buy' && close >= limitUp - 1e-9) {
           this.rejectAt(order, '涨停拒买：收盘价触及涨停');
           continue;

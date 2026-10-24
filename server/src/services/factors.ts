@@ -9,13 +9,13 @@
  * 这一步是「评分/预测使用严格数学模型」的归一化基础；最优加权由 factorAnalytics
  * 的 selectOptimalFactors 完成。
  */
-import type { FinancialData, ValuationData, StockInfo } from '../types.js';
+import type { FinancialData, StockInfo, ValuationData } from '../types.js';
 import {
-  safeDiv,
   calculateVolatility,
-  safeCAGR,
-  scoreDebtRisk,
   industryPEBenchmark,
+  safeCAGR,
+  safeDiv,
+  scoreDebtRisk,
 } from './scoringBasis.js';
 
 export type FactorDirection = 1 | -1; // 1=越高越好, -1=越低越好
@@ -125,22 +125,32 @@ export function extractFactors(
   const growthStability = avgRevGrowth > 0 ? growthStabilityRaw : 0;
 
   // —— 估值 ——
+  // H-1: PE 无效（亏损股 pe=0/负）时估值类因子一律中性，不得反向加分。
+  // 旧逻辑 pePercentile=safeDiv(0,0)*100=0 → 亏损股被判「历史最低估」、估值维度得分最高。
+  const peValid = valuation.pe > 0;
   const peValues = valuation.historicalPE.map((h) => h.pe).sort((a, b) => a - b);
-  const pePercentile = peValues.length
-    ? (peValues.filter((p) => p <= valuation.pe).length / peValues.length) * 100
-    : 50;
-  const hasPeer = valuation.peerComparison.length > 0;
-  const peerAvgPE = hasPeer
+  // 空 historicalPE 的口径与 analysisPipeline 统一为 50（中性）：
+  // 「没有历史数据」不代表「处于历史最低位」。
+  const pePercentile =
+    peValid && peValues.length
+      ? (peValues.filter((p) => p <= valuation.pe).length / peValues.length) * 100
+      : 50;
+
+  // 同业 PE 只统计有效值（亏损同业 pe=0/负），否则 peerAvgPE 被无效值拉低，
+  // 「本股 PE / 同业均值」会反向高估本股相对便宜程度。
+  const validPeerPEs = valuation.peerComparison.filter((p) => p.pe > 0).map((p) => p.pe);
+  const peerAvgPE = validPeerPEs.length
     ? safeDiv(
-        valuation.peerComparison.reduce((s, p) => s + p.pe, 0),
-        valuation.peerComparison.length,
+        validPeerPEs.reduce((s, v) => s + v, 0),
+        validPeerPEs.length,
       )
     : valuation.pe;
-  const peerPEratio =
-    isFinite(peerAvgPE / valuation.pe) && valuation.pe > 0 ? peerAvgPE / valuation.pe : 1;
+  const peerPEratio = peValid && isFinite(peerAvgPE / valuation.pe) ? peerAvgPE / valuation.pe : 1;
   const benchmarkPE = industryPEBenchmark(info.industry);
-  const peVsBenchmark = safeDiv(valuation.pe, benchmarkPE);
-  const peg = latestProfitGrowth > 0 ? safeDiv(valuation.pe, latestProfitGrowth) : 1;
+  // pe 无效（亏损）→ 1 恰为该因子 neutral（合意度 0.5，方向既不加分也不减分）
+  const peVsBenchmark = peValid ? safeDiv(valuation.pe, benchmarkPE) : 1;
+  // PE 无效时 PEG 无意义（0/正增速=0 反向最优），同样回落 neutral=1
+  const peg = peValid && latestProfitGrowth > 0 ? safeDiv(valuation.pe, latestProfitGrowth) : 1;
   const peSorted = [...peValues];
   const peMedian = peSorted.length ? peSorted[Math.floor(peSorted.length / 2)] : valuation.pe;
   const peMomentum = peMedian > 0 ? (peMedian - valuation.pe) / peMedian : 0;

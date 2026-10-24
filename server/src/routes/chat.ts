@@ -5,10 +5,10 @@ import { Router } from 'express';
 import { chatLimiter, circuitBreakerGuard, respondIfQueueTimeout } from '../middleware.js';
 import { chatAgent } from '../services/chatAgent.js';
 import { clearHistory, isValidSessionId } from '../services/chatMemory.js';
-import { validateChatHistory, isQueueTimeoutError } from '../utils/limitGate.js';
-import { createSseChannel } from '../utils/sse.js';
 import { errorDetail } from '../utils/errorDetail.js';
+import { isQueueTimeoutError, validateChatHistory } from '../utils/limitGate.js';
 import logger from '../utils/logger.js';
+import { createSseChannel } from '../utils/sse.js';
 
 const router = Router();
 
@@ -61,6 +61,14 @@ router.get('/api/chat/stream', chatLimiter, circuitBreakerGuard, async (req, res
   // 断开感知：客户端关闭页面后，下一次 emit 抛错使对话在阶段边界提前中止
   const sse = createSseChannel(req, res);
 
+  // M-5: close 即主动 abort 进行中的 LLM 调用（对齐 analysis.ts:150 的 isClosed 分流先例）。
+  // 只靠「下一次 emit 抛错」是被动感知：工具回路/辩论阶段最坏 7 次 LLM 调用
+  // 期间没有任何 emit，客户端早已断开、费用照烧。AbortSignal 经 runStream 透传到
+  // 全部 LLM 调用点，中断在 HTTP 层真正发生。正常结束时 close 也会触发，
+  // 但彼时 runStream 已返回，abort 一个已完成的调用无副作用。
+  const llmAbort = new AbortController();
+  res.on('close', () => llmAbort.abort());
+
   try {
     await chatAgent.runStream(
       {
@@ -68,6 +76,7 @@ router.get('/api/chat/stream', chatLimiter, circuitBreakerGuard, async (req, res
         sessionId: typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined,
       },
       (event) => sse.send(event),
+      llmAbort.signal,
     );
   } catch (error) {
     if (sse.isClosed()) {

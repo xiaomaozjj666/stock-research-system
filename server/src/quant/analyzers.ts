@@ -13,12 +13,20 @@ import type { Trade } from './types.js';
 
 /** 分析器输入：回测过程产物（权益曲线 + 交易记录） */
 export interface AnalyzerContext {
-  /** 归一化权益曲线（起始 100） */
+  /** 权益曲线（起始 100；分析口径应传全精度序列，预 round 会放大差分误差） */
   equityCurve: { date: string; value: number }[];
   /** 全部成交记录（含买入与卖出） */
   trades: Trade[];
   /** 年化交易日数 */
   tradingDaysPerYear?: number;
+  /**
+   * 胜率口径的费率（M4）：单边佣金/税费率，买边加成、卖边扣减。
+   * 口径说明——trades.price 是**已含滑点**的成交价（引擎按 open×(1±slippage) 落账），
+   * 滑点已体现在买卖价差中，故此费率只覆盖佣金/税费（不再叠加滑点，避免双重计费）；
+   * 缺省 0.001 保持与历史实现数值一致（向后兼容），调用方持 CostModel 时应传
+   * (openRate + closeRate) / 2 的实际双边均值费率。
+   */
+  costRate?: number;
 }
 
 /** 分析器：命名 + 纯函数计算（可插拔/可替换/可独立测试） */
@@ -27,7 +35,7 @@ export interface PerformanceAnalyzer {
   compute(ctx: AnalyzerContext): number;
 }
 
-/** 单次交易成本率（佣金+滑点），用于胜率口径（与原实现一致） */
+/** 单次交易费率缺省值（M4 后语义为纯佣金/税费率，不含滑点；缺省数值与原实现一致以保持向后兼容） */
 const TRANSACTION_COST_RATE = 0.001;
 /** 无风险利率（中国 10 年期国债收益率），用于夏普/索提诺（与原实现一致） */
 const RISK_FREE_RATE = 0.025;
@@ -110,13 +118,15 @@ export const maxDrawdownAnalyzer: PerformanceAnalyzer = {
 export const winRateAnalyzer: PerformanceAnalyzer = {
   name: 'winRate',
   compute: (ctx) => {
+    // M4 口径：费率可由调用方注入（ctx.costRate），缺省 0.001 向后兼容。
+    // trades.price 已含滑点（引擎按 open×(1±slippage) 落账），滑点已体现在价差中，
+    // 故只按纯佣金/税费率调整双边，不再对已含滑点的价格二次计费。
+    const rate = ctx.costRate ?? TRANSACTION_COST_RATE;
     const sellTrades = ctx.trades.filter((t) => t.type === 'sell');
     const buyTrades = ctx.trades.filter((t) => t.type === 'buy');
     let wins = 0;
     for (let i = 0; i < Math.min(buyTrades.length, sellTrades.length); i++) {
-      const netReturn =
-        sellTrades[i].price * (1 - TRANSACTION_COST_RATE) -
-        buyTrades[i].price * (1 + TRANSACTION_COST_RATE);
+      const netReturn = sellTrades[i].price * (1 - rate) - buyTrades[i].price * (1 + rate);
       if (netReturn > 0) wins++;
     }
     return sellTrades.length > 0 ? (wins / sellTrades.length) * 100 : 0;

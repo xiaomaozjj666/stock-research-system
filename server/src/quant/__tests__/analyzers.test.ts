@@ -1,9 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   computePerformance,
   defaultAnalyzers,
-  totalReturnAnalyzer,
   maxDrawdownAnalyzer,
+  totalReturnAnalyzer,
   winRateAnalyzer,
   type AnalyzerContext,
   type PerformanceAnalyzer,
@@ -43,10 +43,27 @@ function maConfig(): StrategyConfig {
 }
 
 describe('回测绩效分析器（backtrader Analyzer 模式）', () => {
-  it('引擎输出与分析器独立计算完全一致（重构无行为变化）', () => {
+  it('引擎输出与分析器独立计算完全一致（M6 后：分析层用全精度权益序列）', () => {
     const r = runBacktest(ohlcv, maConfig());
-    const ctx: AnalyzerContext = { equityCurve: r.equityCurve, trades: r.trades };
-    const stats = computePerformance(ctx);
+    // 复算引擎同款全精度权益序列（M6：差分算收益不受预 round 误差影响）：
+    // uptrend 行情一路上涨只触发一次金叉买入、无死叉卖出，故买入 bar 之后
+    // equity = cash + shares × close，cash 在买入后固定（默认成本模型：
+    // fee = gross × 0.0003，minCost=0、无冲击）。
+    const buy = r.trades.find((t) => t.type === 'buy')!;
+    expect(buy).toBeDefined();
+    const buyIdx = ohlcv.findIndex((b) => b.date === buy.date);
+    expect(buyIdx).toBeGreaterThan(0);
+    const fillPrice = ohlcv[buyIdx].open * 1.001; // 引擎口径：open × (1+滑点)
+    const cashAfter = 1_000_000 - buy.shares * fillPrice * 1.0003;
+    const rawCurve = ohlcv.map((b, i) => ({
+      date: b.date,
+      value: i < buyIdx ? 100 : ((cashAfter + buy.shares * b.close) / 1_000_000) * 100,
+    }));
+    const stats = computePerformance({
+      equityCurve: rawCurve,
+      trades: r.trades,
+      costRate: 0.0003, // 引擎口径：默认模型双边费率均值 (0.0003+0.0003)/2
+    } satisfies AnalyzerContext);
     // 引擎对 analyzer 原始输出做 2 位小数 round，此处按同口径比较
     const round = (v: number) => Math.round(v * 100) / 100;
 

@@ -1,23 +1,32 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import * as fs from 'fs';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { partial } from '../../test/partial.js';
+import type { AnalysisResult } from '../../types.js';
 import {
-  saveHistoryEntry,
-  listHistory,
-  getHistoryItem,
-  deleteHistoryItem,
-  getPreviousAnalysis,
   computeVsPrevious,
-  resetHistoryStoreCache,
+  deleteHistoryItem,
+  getHistoryItem,
+  getPreviousAnalysis,
+  listHistory,
   MAX_HISTORY_ITEMS,
   MAX_TIMELINE_POINTS,
+  resetHistoryStoreCache,
+  saveHistoryEntry,
   type HistoryEntryInput,
   type HistoryItem,
   type HistorySummary,
 } from '../historyService.js';
-import type { AnalysisResult } from '../../types.js';
-import { partial } from '../../test/partial.js';
+
+// ESM 模块命名空间不可配置，vi.spyOn(fs, 'renameSync') 会抛
+// "Module namespace is not configurable"。用工厂把 fs 的导出展开成
+// 普通对象——spyOn 可生效且行为与真模块一致（仅引用形态变化）。
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return { ...actual };
+});
 
 // 落盘重定向到进程专属临时文件（HISTORY_FILE env，与 watchlist/paper/audit 同模式）
 const tmpDir = mkdtempSync(join(tmpdir(), 'history-svc-'));
@@ -256,6 +265,54 @@ describe('historyService 研究历史', () => {
     for (let i = 1; i <= 5; i++) saveHistoryEntry(makeEntry(String(600000 + i)));
     expect(listHistory(0)).toHaveLength(1); // 下限 1
     expect(listHistory(2)).toHaveLength(2);
+  });
+
+  /* ==========================================================================
+   * Windows 瞬态锁定（EPERM/EBUSY）：rename 重试 + 写失败不回滚内存
+   * ------------------------------------------------------------------------
+   * 杀毒/索引服务会短暂锁定刚写出的 tmp 文件，renameSync 偶发 EPERM。
+   * 此前写失败会清内存缓存，下次读盘从旧内容重建——已完成的条目/时间线
+   * 更新被静默回滚（偶发丢一条研究历史/丢一个时间线点，属高频 flaky）。
+   * ========================================================================*/
+  it('rename 瞬态 EPERM 经短暂重试后成功：数据正常保存', () => {
+    const realRename = fs.renameSync;
+    let calls = 0;
+    const spy = vi.spyOn(fs, 'renameSync').mockImplementation(((
+      from: fs.PathLike,
+      to: fs.PathLike,
+    ) => {
+      calls += 1;
+      if (calls <= 2) {
+        const e = new Error('被另一进程占用') as NodeJS.ErrnoException;
+        e.code = 'EPERM';
+        throw e;
+      }
+      return realRename(from, to);
+    }) as typeof fs.renameSync);
+    try {
+      const saved = saveHistoryEntry(makeEntry('600519', { totalScore: 80 }));
+      expect(saved).not.toBeNull(); // 第三次重试成功
+      expect(listHistory()[0]!.totalScore).toBe(80);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(calls).toBe(3);
+  });
+
+  it('rename 持续失败：返回 null 但内存不回滚，恢复后下一次写入补齐全部数据', () => {
+    const spy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      const e = new Error('持续锁定') as NodeJS.ErrnoException;
+      e.code = 'EPERM';
+      throw e;
+    });
+    // 三次重试全部失败 → 写失败降级返回 null（调用方语义不变）
+    expect(saveHistoryEntry(makeEntry('600519', { totalScore: 80 }))).toBeNull();
+    spy.mockRestore();
+    // 恢复后再次保存同股票：80 那次的时间线点没有被读盘回滚丢掉
+    saveHistoryEntry(makeEntry('600519', { totalScore: 95 }));
+    const item = listHistory()[0]!;
+    expect(item.totalScore).toBe(95);
+    expect(item.timeline!.map((p) => p.score)).toEqual([80, 95]);
   });
 
   /* ==========================================================================

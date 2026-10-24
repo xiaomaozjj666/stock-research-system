@@ -1795,8 +1795,11 @@ export type ValuationData = {
     code: string;
     pe: number;
     pb: number;
-    roe: number;
+    /** 同业 ROE：上游估值接口不提供该字段，无数据时为 null（非 0——0 会被当成真实 ROE 参与统计） */
+    roe: number | null;
     marketCap: number;
+    /** true = 该同业亏损（PE 为负被置 0），展示层应披露「亏损」 */
+    peUnavailable?: boolean;
   }[];
 };
 

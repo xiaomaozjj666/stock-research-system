@@ -162,12 +162,22 @@ const DEFAULT_MAX_FILES = 2000;
 const DEFAULT_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
+ * M5：rename 前崩溃残留的临时文件（`*.tmp`）的清理年龄门槛。
+ * writeCacheEntry 先写 `${file}.${pid}.${rand}.tmp` 再 rename——rename 前崩溃会留下
+ * 永不收敛的 tmp 残留（旧 prune 只扫 *.json）。取 1 小时：远大于单次写盘耗时，
+ * 防止误删并发写入中（尚未 rename）的 tmp；又足以让陈年残留被周期性清走。
+ */
+const TMP_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
  * 清理量化缓存目录：
  * 1. 逐文件按自身 ttlMs 判断是否过期（缺失 ttlMs 的旧量化分片视为过期，自愈式淘汰）；
  * 2. **异类条目（services/dataService 的股票缓存）一律跳过**：它们没有 ttlMs，
  *    若按本规则判定会被整批删除，导致共享 DATA_CACHE_DIR 时股票缓存静默失效、反复全量重拉；
  * 3. 损坏/不可解析文件直接删除（无法判定归属，且对两侧都无价值）；
- * 4. 存活数量超过上限时按写入时间从最旧开始淘汰（只统计本类）。
+ * 4. **超过年龄门槛的 `*.tmp` 残留一并清理**（M5）：writeCacheEntry 原子写的中断残留，
+ *    旧逻辑只扫 *.json 导致 tmp 无界累积；新 tmp（正在写）不删；
+ * 5. 存活数量超过上限时按写入时间从最旧开始淘汰（只统计本类）。
  * best-effort：任何 IO 失败静默降级，不影响主流程。
  */
 export async function pruneQuantCache(
@@ -179,7 +189,25 @@ export async function pruneQuantCache(
   let removed = 0;
   try {
     const dir = getQuantCacheDir();
-    const files = (await fs.promises.readdir(dir)).filter((f) => f.endsWith('.json'));
+    const allFiles = await fs.promises.readdir(dir);
+    const files = allFiles.filter((f) => f.endsWith('.json'));
+
+    // M5：rename 前崩溃残留的临时文件——超过 TMP_MAX_AGE_MS 的删掉，新 tmp 保留
+    //（可能是并发写入中尚未 rename 的半成品，误删会让读者读到半截 JSON）。
+    const tmpFiles = allFiles.filter((f) => f.endsWith('.tmp'));
+    for (const f of tmpFiles) {
+      const full = path.join(dir, f);
+      try {
+        const stat = await fs.promises.stat(full);
+        if (Date.now() - stat.mtimeMs > TMP_MAX_AGE_MS) {
+          await fs.promises.unlink(full);
+          removed += 1;
+        }
+      } catch {
+        // stat/unlink 失败（并发删除等）：跳过，下轮再清
+      }
+    }
+
     const alive: { file: string; timestamp: number }[] = [];
     for (const f of files) {
       const full = path.join(dir, f);

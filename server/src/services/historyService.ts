@@ -129,18 +129,55 @@ function readStore(): HistoryStore {
   return store;
 }
 
+/**
+ * rename 的瞬态失败重试（Windows 专属痛点）。
+ * 杀毒/搜索索引服务会短暂锁定刚写出的 tmp 或目标文件，renameSync 随即
+ * EPERM/EBUSY——数百毫秒后自动放手。graceful-fs 对同类问题的标准处置就是
+ * 短暂重试；不重试的话单次锁定就会触发整条「写失败」降级路径（历史上还伴随
+ * 清缓存读盘回滚，把已完成的更新静默丢掉）。非锁定类错误（EINVAL/ENOENT 等）
+ * 不属于瞬态，直接上抛由调用方降级。
+ */
+function renameWithRetry(tmp: string, file: string): void {
+  const transient = new Set(['EPERM', 'EBUSY', 'EACCES']);
+  let lastErr: unknown;
+  for (const delay of [0, 50, 100]) {
+    if (delay > 0) {
+      // 同步 sleep（writeStore 是同步路径，不能 await 拆成异步）
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+    }
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (!transient.has((e as NodeJS.ErrnoException).code ?? '')) throw e;
+    }
+  }
+  throw lastErr;
+}
+
 function writeStore(store: HistoryStore): boolean {
   const file = getHistoryFile();
+  const tmp = `${file}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf-8');
-    fs.renameSync(tmp, file); // 原子替换，避免半写状态
+    renameWithRetry(tmp, file); // 原子替换，避免半写状态；瞬态锁定重试见函数注释
     storeCache = { file, store }; // 写后更新缓存：后续读直接命中内存
     return true;
   } catch {
-    // 写失败：落盘内容与缓存可能不一致（tmp 残留等），清缓存让下次读盘重建
-    storeCache = null;
+    // 写失败（重试后仍失败）：**保留内存 store 作为权威**，不清缓存。
+    // rename 失败时盘上旧文件未被动过（原子替换要么成功要么没发生），
+    // 此前清缓存会让下次 readStore 从旧盘重建——本次已完成的条目新增/
+    // 去重更新/时间线追加被静默回滚（丢用户研究历史）；保留缓存则盘暂时
+    // 滞后一条，下一次 writeStore 全量重写时自动追上。tmp 残留一并
+    // best-effort 清理（不影响正确性，只是不留孤儿文件）。
+    storeCache = { file, store };
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* tmp 可能尚未创建 */
+    }
     return false;
   }
 }

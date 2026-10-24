@@ -1,7 +1,7 @@
-import type { FinancialData, ValuationData, StockInfo, ExpertOpinion } from '../../types.js';
-import { safeDiv } from '../safeDiv.js';
 import { runExpertWithLLM } from '../../llm/expertRunner.js';
 import { formatContext } from '../../llm/prompts.js';
+import type { ExpertOpinion, FinancialData, StockInfo, ValuationData } from '../../types.js';
+import { safeDiv } from '../safeDiv.js';
 
 export interface IndustryExpertResult extends ExpertOpinion {
   industryScoreSuggestion: number;
@@ -186,13 +186,13 @@ function industryExpertRule(
       });
     }
 
-    // ROE 同业对比需同业 ROE 数据可用（当前行情接口未提供同业 ROE，全为0时跳过，避免误判"领先同业"）
-    const hasPeerRoe = valuation.peerComparison.some((p) => p.roe > 0);
-    if (hasPeerRoe) {
-      const peerAvgROE = safeDiv(
-        valuation.peerComparison.reduce((s, p) => s + p.roe, 0),
-        valuation.peerComparison.length,
-      );
+    // ROE 同业对比需同业 ROE 数据可用（上游估值接口不提供同业 ROE：null/无正数样本时跳过，
+    // 避免误判"领先同业"；均值也只统计有效样本，null 不折算成 0 拉低基准）
+    const validPeerRoes = valuation.peerComparison
+      .map((p) => p.roe)
+      .filter((r): r is number => r != null && r > 0);
+    if (validPeerRoes.length > 0) {
+      const peerAvgROE = validPeerRoes.reduce((s, r) => s + r, 0) / validPeerRoes.length;
       const avgROE = financial.roe.reduce((a, b) => a + b, 0) / n;
       if (avgROE > peerAvgROE * 1.3) {
         arguments_.push({

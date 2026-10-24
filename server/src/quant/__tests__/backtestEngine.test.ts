@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { newsOverlayPostureAt, factorOverlayPostureAt, runBacktest } from '../backtestEngine.js';
+import { describe, expect, it } from 'vitest';
+import { factorOverlayPostureAt, newsOverlayPostureAt, runBacktest } from '../backtestEngine.js';
 import { A_SHARE_COST_MODEL, makeCostModel, marketImpactCost } from '../costModel.js';
-import type { OHLCVData, StrategyConfig, FactorOverlay } from '../types.js';
+import type { FactorOverlay, OHLCVData, StrategyConfig } from '../types.js';
 
 /** 构造前段走平、后段上行行情，使均线交叉策略在区间内产生金叉买入 */
 function uptrendSeries(n = 80, flat = 25, low = 100, high = 220): OHLCVData[] {
@@ -248,9 +248,9 @@ describe('runBacktest 可插拔成本模型', () => {
     }
   });
 
-  it('市场冲击经引擎路径生效：成交参与率高时费用更高（qlib 二次方冲击）', () => {
+  it('市场冲击经引擎路径生效：成交参与率高时费用率更高（qlib 二次方冲击）', () => {
     // 低成交量行情（2 万手 = 2e6 股）：成交 ~1 万股 → 参与率 ~0.5% →
-    // 冲击 = 0.1 × 0.005² × 100 万 ≈ 2.5 元/笔，低于默认费率但显著可测
+    // 冲击 = 0.1 × 0.005² × 成交额，低于默认费率但显著可测
     const thin = osc.map((b) => ({ ...b, volume: 20_000 }));
     const withImpact = runBacktest(
       thin,
@@ -259,11 +259,16 @@ describe('runBacktest 可插拔成本模型', () => {
     );
     const withoutImpact = runBacktest(thin, maConfig());
     expect(withImpact.tradeCount).toBe(withoutImpact.tradeCount);
-    // 冲击金额（~2.5 元/笔）低于权益曲线 0.01% 的展示精度，用逐笔费用断言验证
     expect(withImpact.totalReturn).toBeLessThanOrEqual(withoutImpact.totalReturn);
-    // 冲击成本逐笔计入 commission 字段
+    // H1 修复后买入股数按「费率 + 冲击上限」预算取整（持仓 ~9% 更小），费用绝对值
+    // 随股数变化不再逐笔可比；改为费用率（费用/成交额）口径——冲击启用时每笔
+    // 费用率 = 佣金率 + 0.1×参与率² 严格高于无冲击模型，与股数无关。
     for (let i = 0; i < withImpact.trades.length; i++) {
-      expect(withImpact.trades[i].commission).toBeGreaterThan(withoutImpact.trades[i].commission);
+      const a = withImpact.trades[i];
+      const b = withoutImpact.trades[i];
+      expect(a.commission / (a.shares * a.price)).toBeGreaterThan(
+        b.commission / (b.shares * b.price),
+      );
     }
   });
 

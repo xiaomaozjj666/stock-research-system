@@ -5,14 +5,19 @@ interface ValuationData {
   pb?: number;
   ps?: number;
   marketCap?: number;
+  /** true = 本股亏损（PE 为负被服务端置 0），PE 展示「亏损」而非误导性的 0 */
+  peUnavailable?: boolean;
   historicalPE?: { year: string; pe: number }[];
   peerComparison?: {
     name: string;
     code: string;
     pe: number;
     pb: number;
-    roe: number;
+    /** 同业 ROE 上游缺失时为 null（展示「—」，不当作 0） */
+    roe: number | null;
     marketCap: number;
+    /** true = 该同业亏损（PE 为负被服务端置 0） */
+    peUnavailable?: boolean;
   }[];
 }
 
@@ -40,8 +45,9 @@ function formatCap(cap?: number) {
   return cap.toFixed(0) + '亿';
 }
 
-/** 估值倍数：非有限值（NaN/Infinity）当缺失处理（`NaN.toFixed()` 会原样输出 "NaN"） */
-function formatRatio(v: number | undefined, digits: number) {
+/** 估值倍数：非有限值（NaN/Infinity）当缺失处理（`NaN.toFixed()` 会原样输出 "NaN"）；亏损（PE 无效）显示「亏损」 */
+function formatRatio(v: number | undefined, digits: number, unavailable?: boolean) {
+  if (unavailable) return '亏损';
   return v != null && Number.isFinite(v) ? v.toFixed(digits) : '—';
 }
 
@@ -65,7 +71,7 @@ function ValuationSection({ data, valuation_level, stockName }: ValuationSection
       <div className="val-cards">
         <div className="val-card">
           <div className="val-card-label">PE (TTM)</div>
-          <div className="val-card-value">{formatRatio(data.pe, 1)}</div>
+          <div className="val-card-value">{formatRatio(data.pe, 1, data.peUnavailable)}</div>
         </div>
         <div className="val-card">
           <div className="val-card-label">PB</div>
@@ -99,7 +105,7 @@ function ValuationSection({ data, valuation_level, stockName }: ValuationSection
             <tbody>
               <tr className="highlight">
                 <td>{stockName || '标的'}</td>
-                <td>{formatRatio(data.pe, 1)}</td>
+                <td>{formatRatio(data.pe, 1, data.peUnavailable)}</td>
                 <td>{formatRatio(data.pb, 2)}</td>
                 <td>—</td>
                 <td>{formatCap(data.marketCap)}</td>
@@ -107,7 +113,7 @@ function ValuationSection({ data, valuation_level, stockName }: ValuationSection
               {data.peerComparison.map((p) => (
                 <tr key={p.code}>
                   <td>{p.name}</td>
-                  <td>{formatRatio(p.pe, 1)}</td>
+                  <td>{formatRatio(p.pe, 1, p.peUnavailable)}</td>
                   <td>{formatRatio(p.pb, 2)}</td>
                   <td>
                     {p.roe != null && Number.isFinite(p.roe) && p.roe > 0

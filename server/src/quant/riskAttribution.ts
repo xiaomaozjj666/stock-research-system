@@ -77,14 +77,12 @@ export function styleFactorExposures(
   const meanCap = bm.mean.marketCap;
   const stdCap = bm.std.marketCap;
   return {
-    // 规模：log(市值) 缩小量纲后标准化（大市值 → 高暴露）
+    // 规模：标准 z-score（(x-mean)/std）。旧实现分母用 log(std) 与分子的 log(市值)
+    // 量纲不一致（log 后的 std 不再是「1 个标准差的位移」），暴露被系统性压缩/扭曲；
+    // 改为直接对市值做标准化，与 momentum/roe/leverage 的口径统一。
     size:
-      input.marketCap !== undefined &&
-      meanCap !== undefined &&
-      meanCap > 0 &&
-      stdCap !== undefined &&
-      stdCap > 0
-        ? (Math.log(Math.max(input.marketCap, 1)) - Math.log(meanCap)) / Math.log(stdCap)
+      input.marketCap !== undefined && meanCap !== undefined && stdCap !== undefined && stdCap > 0
+        ? (input.marketCap - meanCap) / stdCap
         : 0,
     // 价值：1/PE（低 PE = 高价值暴露）
     value:

@@ -6,10 +6,10 @@
  * 上一代的 experts/arbitration 产物会混入新生成的断点——新分析若在 experts 完成
  * 前中断，后续 resume 会把新取的数据与旧代专家结论拼在一起（跨代错配）。
  */
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync, readdirSync, readFileSync } from 'node:fs';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../expertRunner.js', () => ({
   // 注入「全部专家失败」：让流水线在 data 断点已落盘、experts 未完成的窗口中断
@@ -80,15 +80,15 @@ vi.mock('../../quant/consensusProvider.js', () => ({
   formatConsensusBrief: vi.fn(() => ''),
 }));
 
-import { runAnalysis } from '../analysisPipeline.js';
-import type { CheckpointDataPayload } from '../analysisCheckpoint.js';
 import type { ExpertOpinion } from '../../types.js';
-import { saveCheckpoint, loadCheckpoint, clearCheckpoint } from '../analysisCheckpoint.js';
+import type { CheckpointDataPayload } from '../analysisCheckpoint.js';
+import { clearCheckpoint, loadCheckpoint, saveCheckpoint } from '../analysisCheckpoint.js';
+import { runAnalysis } from '../analysisPipeline.js';
 
 describe('断点跨代隔离（全新分析不继承残留断点）', () => {
   it('全新分析中断后，磁盘断点只含本代 data 产物，无上一代 experts 结论', async () => {
     // 上一代断点：experts 阶段完成，带哨兵结论
-    saveCheckpoint(
+    await saveCheckpoint(
       '600519',
       {
         stage: 'experts',
@@ -160,11 +160,11 @@ describe('断点代次隔离（并发两代互不 merge、互不误删）', () =
     clearCheckpoint('600519');
   });
 
-  it('两代并发写同一股票：代次不符不 merge，各自只能读回本代断点', () => {
+  it('两代并发写同一股票：代次不符不 merge，各自只能读回本代断点', async () => {
     // A 代落 data 阶段（模拟双标签页/compare 并发触发的那一轮）
-    saveCheckpoint('600519', { stage: 'data', data: ckData() }, 'gen-A');
+    await saveCheckpoint('600519', { stage: 'data', data: ckData() }, 'gen-A');
     // B 代并发落 experts 阶段：绝不能把 A 代的 data 合并进 B 代文件
-    saveCheckpoint(
+    await saveCheckpoint(
       '600519',
       { stage: 'experts', expertOpinions: [opinionFor('B代专家')] },
       'gen-B',
@@ -179,15 +179,15 @@ describe('断点代次隔离（并发两代互不 merge、互不误删）', () =
     expect(loadCheckpoint('600519', 'gen-A')).toBeNull();
   });
 
-  it('代 A 在文件被 B 覆盖后追加写，仍不会读到 B 的产物', () => {
-    saveCheckpoint('600519', { stage: 'data', data: ckData() }, 'gen-A');
-    saveCheckpoint(
+  it('代 A 在文件被 B 覆盖后追加写，仍不会读到 B 的产物', async () => {
+    await saveCheckpoint('600519', { stage: 'data', data: ckData() }, 'gen-A');
+    await saveCheckpoint(
       '600519',
       { stage: 'experts', expertOpinions: [opinionFor('B代专家')] },
       'gen-B',
     );
     // A 代继续写自己的 arbitration：base 代次不符 → 只保留本次 patch
-    saveCheckpoint('600519', { stage: 'arbitration', controversies: [] }, 'gen-A');
+    await saveCheckpoint('600519', { stage: 'arbitration', controversies: [] }, 'gen-A');
 
     const forA = loadCheckpoint('600519', 'gen-A');
     expect(forA).not.toBeNull();
@@ -195,13 +195,13 @@ describe('断点代次隔离（并发两代互不 merge、互不误删）', () =
     expect(forA!.data).toBeUndefined(); // A 代旧产物已被 B 代覆盖，不反向 merge
   });
 
-  it('续跑链共享代次：resume 采用断点 runId，后续同代 merge 不被拒绝', () => {
-    saveCheckpoint('600519', { stage: 'data', data: ckData() }, 'gen-A');
+  it('续跑链共享代次：resume 采用断点 runId，后续同代 merge 不被拒绝', async () => {
+    await saveCheckpoint('600519', { stage: 'data', data: ckData() }, 'gen-A');
     // 续跑方不知道上一代 id：不带 runId 读取 → 采用文件里的代次
     const adopted = loadCheckpoint('600519');
     expect(adopted?.runId).toBe('gen-A');
 
-    saveCheckpoint(
+    await saveCheckpoint(
       '600519',
       { stage: 'experts', expertOpinions: [opinionFor('续跑专家')] },
       adopted!.runId!,
@@ -211,9 +211,9 @@ describe('断点代次隔离（并发两代互不 merge、互不误删）', () =
     expect(ck?.expertOpinions).toHaveLength(1);
   });
 
-  it('临时文件名带代次：并发写不互踩，且不留残留临时文件', () => {
-    saveCheckpoint('600519', { stage: 'data', data: ckData() }, 'gen-A');
-    saveCheckpoint('600519', { stage: 'data', data: ckData() }, 'gen-B');
+  it('临时文件名带代次：并发写不互踩，且不留残留临时文件', async () => {
+    await saveCheckpoint('600519', { stage: 'data', data: ckData() }, 'gen-A');
+    await saveCheckpoint('600519', { stage: 'data', data: ckData() }, 'gen-B');
 
     expect(readdirSync(join(tmpDir, 'ck')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
     // 原子替换后内容完整可解析，且属于最后写入的那一代

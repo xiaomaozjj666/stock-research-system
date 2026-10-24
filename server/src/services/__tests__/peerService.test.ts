@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { resolveStockIndustry, buildPeerComparison } from '../peerService.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildPeerComparison, resolveStockIndustry } from '../peerService.js';
 
 // 路径与 dataService.getData.test.ts 保持一致的模式：从测试文件出发解析到真实模块
 vi.mock('../dataFetcher.js', () => ({
@@ -26,8 +26,8 @@ vi.mock('../../data/industryPeers.js', () => ({
   ),
 }));
 
-import { fetchValuationData, fetchBoardInfo } from '../dataFetcher.js';
-import { resolveIndustry, getPeerCodes } from '../../data/industryPeers.js';
+import { getPeerCodes, resolveIndustry } from '../../data/industryPeers.js';
+import { fetchBoardInfo, fetchValuationData } from '../dataFetcher.js';
 const mockFetchValuation = vi.mocked(fetchValuationData);
 const mockFetchBoard = vi.mocked(fetchBoardInfo);
 const mockResolveIndustry = vi.mocked(resolveIndustry);
@@ -85,7 +85,9 @@ describe('buildPeerComparison', () => {
     });
     const peers = await buildPeerComparison('688825', '半导体');
     expect(peers).toHaveLength(2);
-    expect(peers[0]).toMatchObject({ code: '688981', pe: 30, pb: 4, marketCap: 1000, roe: 0 });
+    // M-2 后 roe 恒为 null（上游估值接口无同业 ROE 字段，0 会拉低行业均值），
+    // pe 保留上游真实值 30（不再 `v.pe || 0` 清零）
+    expect(peers[0]).toMatchObject({ code: '688981', pe: 30, pb: 4, marketCap: 1000, roe: null });
     expect(peers[0].name).toBe('公司688981');
     expect(mockFetchValuation).toHaveBeenCalledTimes(2);
   });
