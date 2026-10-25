@@ -1,5 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { DATA_ROOT } from '../dataRoot.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -17,7 +19,7 @@ import logger from '../utils/logger.js';
  *   缓存指向同一目录时，dataService 的 24h pruner 与本模块的逐条 TTL 不会互相删对方的条目；
  * - 所有 IO 失败静默降级：缓存是加速器，不是数据源，读不到就当未命中。
  */
-const DEFAULT_QUANT_CACHE_DIR = path.join(import.meta.dirname, 'cache');
+const DEFAULT_QUANT_CACHE_DIR = path.join(DATA_ROOT, 'quant', 'cache');
 
 /** 本模块条目的归属标记 */
 const QUANT_KIND = 'quant';

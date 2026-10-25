@@ -1,5 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { DATA_ROOT } from '../dataRoot.js';
 import { fetchOHLCVData } from '../quant/dataProvider.js';
 import type { RatingAccuracy } from '../types.js';
 import logger from '../utils/logger.js';
@@ -53,7 +55,7 @@ interface OutcomeStore {
   items: OutcomeRecord[];
 }
 
-const DEFAULT_FILE = path.join(import.meta.dirname, '..', 'data', 'outcomes.json');
+const DEFAULT_FILE = path.join(DATA_ROOT, 'outcomes.json');
 
 function getFile(): string {
   const env = process.env.OUTCOME_FILE;

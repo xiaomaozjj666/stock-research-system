@@ -17,6 +17,8 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { DATA_ROOT } from '../dataRoot.js';
 import type { HarnessPolicy } from './harnessPolicy.js';
 
 /** 改进对象。目前只有因子采信判据；留成联合类型以便将来扩展（如筛选阈值、专家权重） */
@@ -101,7 +103,7 @@ interface LedgerStore {
   items: ImprovementRecord[];
 }
 
-const DEFAULT_LEDGER_FILE = path.join(import.meta.dirname, '..', 'data', 'improvements.json');
+const DEFAULT_LEDGER_FILE = path.join(DATA_ROOT, 'improvements.json');
 
 /**
  * 台账容量上限。改进循环每天最多一轮，500 条足够回溯一年多；

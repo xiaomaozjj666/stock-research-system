@@ -22,6 +22,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { DATA_ROOT } from '../dataRoot.js';
+
 /**
  * 因子采信判据。
  *
@@ -124,7 +126,7 @@ interface PolicyStore {
   lastChange: string | null;
 }
 
-const DEFAULT_POLICY_FILE = path.join(import.meta.dirname, '..', 'data', 'harnessPolicy.json');
+const DEFAULT_POLICY_FILE = path.join(DATA_ROOT, 'harnessPolicy.json');
 
 /** 策略文件路径（env 可重定向，测试隔离用） */
 function getPolicyFile(): string {

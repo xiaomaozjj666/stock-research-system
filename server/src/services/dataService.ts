@@ -1,5 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { DATA_ROOT } from '../dataRoot.js';
 import { MOUTAI_FINANCIAL, MOUTAI_INFO, MOUTAI_VALUATION } from '../data/sampleData.js';
 import type { FinancialData, StockInfo, ValuationData } from '../types.js';
 import { getEastmoneySearchToken } from '../utils/env.js';
@@ -15,7 +17,7 @@ export interface StockDataSet {
 }
 
 // 缓存目录可被 DATA_CACHE_DIR 重定向（测试据此隔离到临时目录，避免污染真实缓存）
-const DEFAULT_CACHE_DIR = path.join(import.meta.dirname, '..', 'data', 'cache');
+const DEFAULT_CACHE_DIR = path.join(DATA_ROOT, 'cache');
 
 /**
  * 股票数据缓存目录（DATA_CACHE_DIR 可重定向；惰性解析以便测试/运维在运行期切换，

@@ -13,6 +13,8 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { DATA_ROOT } from '../dataRoot.js';
 import type { AnalysisResult } from '../types.js';
 
 /** 评分/评级时间线单点（精简：只留回看"观点怎么变的"所需字段，不带完整 result） */
@@ -62,7 +64,7 @@ export interface HistoryStore {
   items: HistoryItem[];
 }
 
-const DEFAULT_HISTORY_FILE = path.join(import.meta.dirname, '..', 'data', 'history.json');
+const DEFAULT_HISTORY_FILE = path.join(DATA_ROOT, 'history.json');
 /** 历史记录容量上限：超出后淘汰最旧记录 */
 export const MAX_HISTORY_ITEMS = 100;
 /** 每只股票保留的时间线长度上限：只留最近 N 次，避免列表响应体随使用时长膨胀 */

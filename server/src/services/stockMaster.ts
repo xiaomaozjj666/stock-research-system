@@ -1,5 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { DATA_ROOT } from '../dataRoot.js';
 import { fetchJson } from '../utils/http.js';
 
 export interface SecurityMasterEntry {
@@ -8,7 +10,7 @@ export interface SecurityMasterEntry {
   industry?: string;
 }
 
-const DEFAULT_MASTER_CACHE = path.join(import.meta.dirname, '..', 'data', 'stockMaster.json');
+const DEFAULT_MASTER_CACHE = path.join(DATA_ROOT, 'stockMaster.json');
 const MASTER_TTL = 24 * 60 * 60 * 1000; // 1 天
 
 /**

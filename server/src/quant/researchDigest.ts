@@ -14,6 +14,8 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { DATA_ROOT } from '../dataRoot.js';
 import { readLatestScreenerRun, type ScreenerRunResult } from './screener.js';
 import { summarizeFactorExperiments } from './factorLedger.js';
 
@@ -51,7 +53,7 @@ interface DigestStore {
   items: ResearchDigest[];
 }
 
-const DEFAULT_DIGEST_FILE = path.join(import.meta.dirname, '..', 'data', 'researchDigests.json');
+const DEFAULT_DIGEST_FILE = path.join(DATA_ROOT, 'researchDigests.json');
 
 function getDigestFile(): string {
   return process.env.RESEARCH_DIGEST_FILE && process.env.RESEARCH_DIGEST_FILE.length > 0

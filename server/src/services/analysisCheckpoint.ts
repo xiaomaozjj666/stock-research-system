@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import { promises as fsp } from 'fs';
 import * as path from 'path';
+
+import { DATA_ROOT } from '../dataRoot.js';
 import type { NewsSignal } from '../quant/newsSignal.js';
 import type {
   ControversyPoint,
@@ -67,7 +69,7 @@ export interface AnalysisCheckpoint {
   finalOpinion?: ExpertOpinion;
 }
 
-const DEFAULT_DIR = path.join(import.meta.dirname, '..', 'data', 'checkpoints');
+const DEFAULT_DIR = path.join(DATA_ROOT, 'checkpoints');
 
 /** 代次序号：同一毫秒内多次新建也能得到不同 id */
 let runSeq = 0;

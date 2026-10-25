@@ -15,23 +15,9 @@ __pycache__/
 # JSON artifacts (NOT package manifests or configs)
 coverage/
 *.coverage.json
-server/src/data/cache/*.json
-server/src/quant/cache/*.json
-server/src/data/stockMaster.json
-# 对话长期记忆（运行时生成，不入库）
-server/src/data/chatHistory.json
-server/data/chatHistory.json
-# 合规审计日志（运行时生成，不入库）
-server/src/data/audit.log
-# 研究历史记录（运行时生成，不入库）
-server/src/data/history.json
-# 因子实验台账与模型校准数据（运行时生成，不入库）
-server/src/data/factorExperiments.json
-server/src/data/modelCalibration.json
-# 分析断点续跑中间产物（运行时生成，不入库）
-server/src/data/checkpoints/
-# 评级事后校准台账（运行时生成，不入库）
-server/src/data/outcomes.json
+# 运行时数据统一落在源码树外的 server/data/（2026-10-26 迁移，
+# 见 server/src/dataRoot.ts）——整个目录忽略，server/src/data 只剩源码
+server/data/
 .coverage_tmp/
 
 # Test artifacts

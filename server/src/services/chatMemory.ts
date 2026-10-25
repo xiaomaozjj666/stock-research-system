@@ -7,12 +7,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { DATA_ROOT } from '../dataRoot.js';
+
 export interface ChatTurn {
   role: 'user' | 'assistant';
   content: string;
 }
 
-const DEFAULT_HISTORY_FILE = path.join(import.meta.dirname, '..', 'data', 'chatHistory.json');
+const DEFAULT_HISTORY_FILE = path.join(DATA_ROOT, 'chatHistory.json');
 /** 每个 session 保留的最大轮次数（1 轮 = user+assistant） */
 export const MAX_TURNS = 40;
 /** 最多保留的 session 数：超出时淘汰最旧的 session，防止文件被无限刷大 */

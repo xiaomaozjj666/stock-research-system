@@ -12,6 +12,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { DATA_ROOT } from '../dataRoot.js';
+
 /** 假设来源：截面标准因子 / 自定义表达式 / LLM 生成的假设 */
 export type FactorExperimentSource = 'cross-section' | 'expression' | 'hypothesis';
 
@@ -78,7 +80,7 @@ interface LedgerStore {
   items: FactorExperiment[];
 }
 
-const DEFAULT_LEDGER_FILE = path.join(import.meta.dirname, '..', 'data', 'factorExperiments.json');
+const DEFAULT_LEDGER_FILE = path.join(DATA_ROOT, 'factorExperiments.json');
 /** 台账容量上限：超出后淘汰最旧记录 */
 export const MAX_LEDGER_ITEMS = 500;
 

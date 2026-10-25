@@ -5,6 +5,8 @@ import { Router } from 'express';
 import type { Request } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { DATA_ROOT } from '../dataRoot.js';
 import { PaperAccount } from '../quant/paperTrading.js';
 import { auditTradeSignal } from '../services/auditLog.js';
 import { getReqTraceContext } from '../services/telemetry.js';
@@ -19,7 +21,7 @@ let _paperAccount: PaperAccount | null = null;
 function paperStoreFile(): string {
   return process.env.PAPER_TRADING_FILE && process.env.PAPER_TRADING_FILE.length > 0
     ? process.env.PAPER_TRADING_FILE
-    : path.join(import.meta.dirname, '..', 'data', 'paperTrading.json');
+    : path.join(DATA_ROOT, 'paperTrading.json');
 }
 function getPaperAccount(): PaperAccount {
   if (!_paperAccount) {

@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { DATA_ROOT } from '../dataRoot.js';
+
 /**
  * 自建 A 股模拟盘撮合引擎（PaperAccount）
  * ----------------------------------------------------------------------------
@@ -44,7 +46,7 @@ export function limitPctForCode(code: string, basePct: number): number {
 }
 
 // 默认持久化文件（测试可通过构造参数或 PAPER_TRADING_FILE 重定向）
-const DEFAULT_FILE = path.join(import.meta.dirname, '..', 'data', 'paperTrading.json');
+const DEFAULT_FILE = path.join(DATA_ROOT, 'paperTrading.json');
 
 /** 持仓（单代码一档：最近一次买入日用于 T+1 校验） */
 export interface Position {

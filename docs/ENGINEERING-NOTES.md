@@ -94,7 +94,7 @@
 - A 股硬规则：T+1（当日买入次日才可卖，`buyDate` 校验）、涨跌停拒单（主板 ±10%，`limitPct` 可配）、整手约束（数量向下取整到 100 股整数倍）、停牌/无收盘价拒单。
 - 费用：佣金默认万三（`commissionRate` 0.0003）、卖出加收印花税 0.1%（`stampDutyRate` 0.001），金额保留 2 位小数。
 - 绩效 `computeStats()`：累计收益 / 最大回撤 / 简单年化夏普（日频收益、无风险利率 2.5%、至少 2 个日收益点）。
-- 持久化：`server/src/data/paperTrading.json`（`PAPER_TRADING_FILE` env 可重定向），「临时文件 + 原子 rename」写入，无 sqlite 依赖；初始资金取 `PAPER_INITIAL_CAPITAL` env（默认 100,000）。
+- 持久化：`server/data/paperTrading.json`（`PAPER_TRADING_FILE` env 可重定向；2026-10-26 起运行时数据统一在源码树外，见 `server/src/dataRoot.ts`），「临时文件 + 原子 rename」写入，无 sqlite 依赖；初始资金取 `PAPER_INITIAL_CAPITAL` env（默认 100,000）。
 
 ## 受控评估（DSR / CSCV / Walk-Forward）
 
@@ -114,7 +114,7 @@
 此前标注"完成待接线"的模块现已接入运行管线/服务，均为可选增强或降级安全（try/catch 包裹，失败不阻断主流程）：
 
 - `services/telemetry.ts`（全链路追踪）：`index.ts` 挂 `expressTracerMiddleware()`，为每个 HTTP 请求注入 `X-Trace-Id` root span，`configureTracer({ exportHook })` 将完成的 span 输出到 debug 级日志（`LOG_LEVEL=debug` 可见）；`llm/client.ts` 经 `recordLLMUsage → tracer.recordLLMCall` 记录 LLM span 及成本/token。
-- `services/auditLog.ts`（金融监管 8 号文合规审计）：全局 `auditLogger` 配 `filePersistenceHook` 落盘为 `server/src/data/audit.log`（JSON 行追加，IO 失败静默降级）；`analysisPipeline.ts` 在数据访问 / LLM 专家调用 / 交易信号三处埋审计点；`GET /api/audit` 支持 category/riskLevel/startTime/endTime/sessionId 过滤查询。熔断 `checkCircuitBreaker` 已于 2026-08-11 接线为中间件 `circuitBreakerGuard`，挂在 analyze/compare/chat/chat/stream/compare/backtest/evaluate/research 等分析类路由（tripped 时 503 + Retry-After）。
+- `services/auditLog.ts`（金融监管 8 号文合规审计）：全局 `auditLogger` 配 `filePersistenceHook` 落盘为 `server/data/audit.log`（JSON 行追加，IO 失败静默降级）；`analysisPipeline.ts` 在数据访问 / LLM 专家调用 / 交易信号三处埋审计点；`GET /api/audit` 支持 category/riskLevel/startTime/endTime/sessionId 过滤查询。熔断 `checkCircuitBreaker` 已于 2026-08-11 接线为中间件 `circuitBreakerGuard`，挂在 analyze/compare/chat/chat/stream/compare/backtest/evaluate/research 等分析类路由（tripped 时 503 + Retry-After）。
 - `llm/knowledgeGraph.ts`、`quant/sectorRotation.ts`、`llm/mcpClient.ts`：作为 `analysisPipeline` 的可选增强接入——知识图谱（步骤 14，当前股票 + 同业可比数据构图）、板块轮动（步骤 15，单行业截面，rank 恒 1 仅作参考）默认启用，失败降级为无字段；MCP（步骤 16）仅当设 `MCP_SERVER_URL` 时启用。
 - `quant/intlDataProvider.ts`（港美股财务估值）：数据源已换 `datacenter.eastmoney.com` RPT 网关（见「数据源约束」），接入 `GET /api/intl/fundamentals?code=&market=`。
 - `utils/env.ts`（环境变量校验）：已于 2026-08-11 接入 `index.ts` 启动流程（全部 import 之后调用 `loadEnv()`，非法 PORT / CACHE_TTL_HOURS 快速失败）。
@@ -222,7 +222,7 @@
 
 ## 2026-08-14 研究历史记录功能落地记录
 
-- **后端**：`services/historyService.ts`——分析结果落盘 `server/src/data/history.json`（`HISTORY_FILE` env 可重定向，与 watchlist/paper/audit 同模式）；**同股票代码去重更新**（id 保留、createdAt 刷新，每只股票仅一条最新记录）；容量上限 `MAX_HISTORY_ITEMS=100`（超出按 createdAt 倒序淘汰最旧）；"临时文件 + 原子 rename"写入；损坏文件/写盘失败静默降级。列表接口瘦身（不含完整 result），详情接口返回 `result` 供前端恢复研究报告渲染。
+- **后端**：`services/historyService.ts`——分析结果落盘 `server/data/history.json`（`HISTORY_FILE` env 可重定向，与 watchlist/paper/audit 同模式）；**同股票代码去重更新**（id 保留、createdAt 刷新，每只股票仅一条最新记录）；容量上限 `MAX_HISTORY_ITEMS=100`（超出按 createdAt 倒序淘汰最旧）；"临时文件 + 原子 rename"写入；损坏文件/写盘失败静默降级。列表接口瘦身（不含完整 result），详情接口返回 `result` 供前端恢复研究报告渲染。
 - **自动入库**：`/api/analyze` 与 `/api/analyze/stream` 成功路径均调用 `persistAnalysisHistory()`（从 `result.stock_pool[0]` 提取摘要；任何失败静默，不阻断分析响应）。
 - **路由**：`GET /api/history?limit=`（列表倒序）、`GET /api/history/:id`（详情含 result）、`DELETE /api/history/:id`；OpenAPI 契约同步补齐（`/api/history` + `/api/history/{id}`）。
 - **前端**：新增「历史」tab（第 7 个，懒加载 `pages/history/HistoryPage.tsx`）——列表（名称/代码/行业/评级徽章/评分/时间）、「查看」拉取详情并恢复完整研究报告（切回深度研究页渲染）、「删除」即时移除；评级徽章用语义色（优先跟踪=绿 / 持续观察=蓝 / 谨慎观望=黄 / 建议规避=红）。
@@ -359,11 +359,11 @@ backtrader 主循环事实：Cerebro 只做组装与广播，**撮合真相在 B
 
 **判据改动的三个落盘文件**（都可用 env 重定向，测试隔离靠它）：
 
-| 文件                                     | env                       | 内容                                    |
-| ---------------------------------------- | ------------------------- | --------------------------------------- |
-| `server/src/data/factorExperiments.json` | `FACTOR_LEDGER_FILE`      | 因子实验台账（含 `evidence` 判据输入）  |
-| `server/src/data/improvements.json`      | `IMPROVEMENT_LEDGER_FILE` | 改进台账（改了什么/依据/指标/否掉了谁） |
-| `server/src/data/harnessPolicy.json`     | `HARNESS_POLICY_FILE`     | 当前生效的采信判据                      |
+| 文件                                 | env                       | 内容                                    |
+| ------------------------------------ | ------------------------- | --------------------------------------- |
+| `server/data/factorExperiments.json` | `FACTOR_LEDGER_FILE`      | 因子实验台账（含 `evidence` 判据输入）  |
+| `server/data/improvements.json`      | `IMPROVEMENT_LEDGER_FILE` | 改进台账（改了什么/依据/指标/否掉了谁） |
+| `server/data/harnessPolicy.json`     | `HARNESS_POLICY_FILE`     | 当前生效的采信判据                      |
 
 - **回放只认带 `evidence` 的记录**。该字段自 2026-09-19 起才落盘，**存量记录一律跳过**：
   残缺证据会让回放把「字段缺失」当成「数值为 0」，那是在编数据。→ 新部署上

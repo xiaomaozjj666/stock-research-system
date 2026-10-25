@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import logger from '../utils/logger.js';
+import { DATA_ROOT } from '../dataRoot.js';
 
 /** 审计条目类别 */
 export type AuditCategory =
@@ -304,7 +305,7 @@ export class AuditLogger {
 }
 
 /** 审计日志默认落盘路径（JSON 行追加） */
-const DEFAULT_AUDIT_LOG_FILE = path.join(import.meta.dirname, '..', 'data', 'audit.log');
+const DEFAULT_AUDIT_LOG_FILE = path.join(DATA_ROOT, 'audit.log');
 
 /** 单文件大小上限默认值（字节，5MB）：超过即轮转，防止 audit.log 无限增长撑爆磁盘 */
 const AUDIT_LOG_MAX_BYTES_DEFAULT = 5 * 1024 * 1024;

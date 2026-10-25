@@ -15,6 +15,8 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { DATA_ROOT } from '../dataRoot.js';
 import { loadStockMaster, type SecurityMasterEntry } from '../services/stockMaster.js';
 import { fetchOHLCVData } from './dataProvider.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
@@ -50,7 +52,7 @@ export interface ScreenerRunResult {
   durationMs: number;
 }
 
-const DEFAULT_RESULT_FILE = path.join(import.meta.dirname, '..', 'data', 'screenerLatest.json');
+const DEFAULT_RESULT_FILE = path.join(DATA_ROOT, 'screenerLatest.json');
 const RPS_THRESHOLD = 0.87;
 const CONCURRENCY = 12;
 /** 「最近触发」窗口：事件日落在最后 N 个交易日内才算当期命中 */

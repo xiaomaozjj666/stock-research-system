@@ -1,5 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { DATA_ROOT } from '../dataRoot.js';
 import type { WatchlistAlert } from './alerts.js';
 import logger from '../utils/logger.js';
 import { normalizeAShareCode } from '../utils/stockCode.js';
@@ -26,7 +28,7 @@ import { normalizeAShareCode } from '../utils/stockCode.js';
  * 两者同属自选股监控域，合并在一处可避免为一个字段级存储再开模块。
  */
 
-const DEFAULT_FILE = path.join(import.meta.dirname, '..', 'data', 'watchlist.json');
+const DEFAULT_FILE = path.join(DATA_ROOT, 'watchlist.json');
 
 function storeFile(): string {
   return process.env.WATCHLIST_FILE && process.env.WATCHLIST_FILE.length > 0
@@ -288,7 +290,7 @@ export interface WatchlistAlertsSnapshot {
 /** 单份快照的预警条数上限：文件大小不随自选股/新闻量无限增长 */
 export const MAX_ALERTS_PER_SNAPSHOT = 200;
 
-const DEFAULT_ALERTS_FILE = path.join(import.meta.dirname, '..', 'data', 'watchlistAlerts.json');
+const DEFAULT_ALERTS_FILE = path.join(DATA_ROOT, 'watchlistAlerts.json');
 
 /** 快照文件路径：每次调用时解析，测试用 WATCHLIST_ALERTS_FILE 重定向到临时文件 */
 function alertsFile(): string {
