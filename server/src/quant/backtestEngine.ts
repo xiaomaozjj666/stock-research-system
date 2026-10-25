@@ -9,6 +9,7 @@ import {
   type CostModel,
 } from './costModel.js';
 import { getBenchmarkCurve } from './dataProvider.js';
+import { limitPctForCode } from './paperTrading.js';
 import type { BacktestResult, FactorOverlay, OHLCVData, StrategyConfig, Trade } from './types.js';
 
 /**
@@ -199,8 +200,47 @@ export function runBacktest(
     // 1. 先执行上一 bar 生成的信号（本 bar 开盘价成交）。
     //    停牌 bar（volume=0）无法撮合：信号顺延到下一根有成交的 bar（市场单语义），
     //    避免停牌日照常按 open 成交、系统性高估可成交性
+    //    涨跌停可成交性（与 paperTrading 的涨跌停拒单同一套规则，limitPctForCode
+    //    按板块区分幅度）：涨停 open 拒买、跌停 open 拒卖。停牌解决的是"无报价"，
+    //    涨跌停解决的是"有报价但买不到/卖不出"——涨停开盘照常买入会系统性高估
+    //    动量类策略的可成交性。无法成交的信号按市价单当日失效处理（丢弃并告警），
+    //    与模拟盘的"拒单"语义一致；上一 bar 的 close 即本 bar 的前收盘价。
+    const prevClose = i > 0 ? data[i - 1].close : undefined;
+    const limitPct = limitPctForCode(strategy.stockCode ?? '', 0.1);
+    const limitUp =
+      prevClose !== undefined ? Math.round(prevClose * (1 + limitPct) * 100) / 100 : undefined;
+    const limitDown =
+      prevClose !== undefined ? Math.round(prevClose * (1 - limitPct) * 100) / 100 : undefined;
     const tradable = bar.volume > 0;
-    if (tradable && pending === 'buy' && position === 0) {
+    const buyRejected =
+      tradable &&
+      pending === 'buy' &&
+      position === 0 &&
+      limitUp !== undefined &&
+      bar.open >= limitUp - 1e-9;
+    const sellRejected =
+      tradable &&
+      pending === 'sell' &&
+      position > 0 &&
+      limitDown !== undefined &&
+      bar.open <= limitDown + 1e-9;
+    if (buyRejected) {
+      logger.warn('涨停开盘拒买，信号失效', {
+        date: bar.date,
+        stockCode: strategy.stockCode,
+        open: bar.open,
+        limitUp,
+      });
+      pending = null;
+    } else if (sellRejected) {
+      logger.warn('跌停开盘拒卖，信号失效', {
+        date: bar.date,
+        stockCode: strategy.stockCode,
+        open: bar.open,
+        limitDown,
+      });
+      pending = null;
+    } else if (tradable && pending === 'buy' && position === 0) {
       // 本 bar 的新闻姿态：严格时序（已知新闻加权）或旧口径（since 起常数），无叠加时为 1
       const posture = postureAt(bar.date);
       if (posture > 0) {

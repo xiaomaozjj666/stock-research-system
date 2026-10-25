@@ -230,3 +230,81 @@ describe('M6：夏普等指标改用全精度权益序列计算', () => {
     }
   });
 });
+
+describe('涨跌停可成交性（与 paperTrading 涨跌停拒单同一套规则）', () => {
+  /**
+   * 连板行情：每日收盘对前收 +10%（主板涨停收盘），bar2 起开盘价 = 当日涨停价
+   * （前收 × 1.1）——买入信号每天生成、每天在涨停开盘被拒，全程无法建仓。
+   * round(×100)/100 与引擎的 limitUp 公式逐位一致，保证 open === limitUp。
+   */
+  function limitUpBars(n = 6): OHLCVData[] {
+    const out: OHLCVData[] = [];
+    const base = new Date('2025-01-01').getTime();
+    let close = 10;
+    for (let i = 0; i < n; i++) {
+      if (i > 0) close = Math.round(close * 1.1 * 100) / 100;
+      out.push({
+        date: new Date(base + i * 86400000).toISOString().slice(0, 10),
+        open: i >= 2 ? close : 10,
+        close,
+        high: close + 0.2,
+        low: 9.8,
+        volume: 100,
+      });
+    }
+    return out;
+  }
+
+  it('主板股票涨停开盘拒买：不产生成交，信号按市价单当日失效', () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockReturnValue(undefined);
+    const bars = limitUpBars();
+    const r = runBacktest(bars, momentumCfg());
+
+    // bar1 动量 +10% > 0 → bar2 开盘 11 = limitUp(10×1.1) → 拒买
+    expect(r.trades).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '涨停开盘拒买，信号失效',
+      expect.objectContaining({ date: bars[2].date, limitUp: 12.1 }),
+    );
+  });
+
+  it('创业板股票按 ±20% 判定：同样的价格不构成涨停，照常成交', () => {
+    vi.spyOn(logger, 'warn').mockReturnValue(undefined);
+    const bars = limitUpBars();
+    const r = runBacktest(bars, momentumCfg({ stockCode: '300001' }));
+
+    // 前收 10 的涨停价是 12，开盘 11 未触板 → 正常买入
+    expect(r.trades.length).toBeGreaterThanOrEqual(1);
+    expect(r.trades[0].type).toBe('buy');
+    expect(r.trades[0].date).toBe(bars[2].date);
+  });
+
+  it('跌停开盘拒卖：持仓在跌停开盘日无法卖出', () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockReturnValue(undefined);
+    // bar0 收 10（建立基准）；bar1 收 9（动量 -10% 触发卖出信号，需先持仓——
+    // 用两段数据：先涨后崩，买入发生在高位，崩盘日开盘 8.1 = 前收 9 × 0.9 跌停）
+    const bars: OHLCVData[] = [];
+    const base = new Date('2025-01-01').getTime();
+    const closes = [10, 12, 9, 8.1, 8.1]; // bar1 收 12 → 动量+20% 买；bar2 收 9 → 动量-25% 卖
+    const opens = [10, 10, 12, 8.1, 8.1]; // bar3 开盘 8.1 = 前收 9 × 0.9 → 跌停开盘
+    for (let i = 0; i < closes.length; i++) {
+      bars.push({
+        date: new Date(base + i * 86400000).toISOString().slice(0, 10),
+        open: opens[i],
+        close: closes[i],
+        high: Math.max(closes[i], opens[i]) + 0.2,
+        low: Math.min(closes[i], opens[i]) - 0.2,
+        volume: 100,
+      });
+    }
+    const r = runBacktest(bars, momentumCfg({ initialCapital: 100000 }));
+
+    // bar3 跌停开盘拒卖：持仓保留（没有卖出成交发生在 bar3）
+    const sellAtLimit = r.trades.find((t) => t.type === 'sell' && t.date === bars[3].date);
+    expect(sellAtLimit).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(
+      '跌停开盘拒卖，信号失效',
+      expect.objectContaining({ date: bars[3].date, limitDown: 8.1 }),
+    );
+  });
+});

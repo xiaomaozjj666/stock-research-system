@@ -36,8 +36,6 @@ import type * as Hand from '../types';
  * 不需要任何值；declare 不产生运行时代码，也就不会进 bundle。
  */
 
-/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-declare */
-
 // --- AnalysisResult（/api/analyze 的 200） ---
 declare const _ar_g: Generated.AnalysisResult;
 declare const _ar_h: Hand.AnalysisResult;

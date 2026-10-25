@@ -5,8 +5,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Cache
-cache/
+# Cache（显式路径：任意层级的 cache/ 会让未来同名源码目录被静默忽略）
+server/src/cache/
+server/src/quant/cache/
 # Python 产物（Baostock 等 Python 侧车可能产生）
 __pycache__/
 *.pyc
