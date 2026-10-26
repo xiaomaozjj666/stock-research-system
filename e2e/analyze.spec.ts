@@ -110,4 +110,80 @@ test.describe('分析流程失败路径', () => {
     await expect(analyzeBtn).toBeDisabled({ timeout: 10_000 });
     expect(attempts).toBe(0);
   });
+
+  test('真实浏览器创建预注册实验并经真实 API 持久化冻结口径', async ({ page, request }) => {
+    await page.route('**/api/analyze/stream**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: `data: ${JSON.stringify({
+          phase: 'done',
+          result: {
+            stock_pool: [
+              {
+                stock_code: '600519',
+                stock_name: '贵州茅台',
+                industry: '白酒',
+                core_summary: '测试论点',
+                total_score: 66,
+                rating: '持续观察',
+                score_detail: {},
+                strengths: [],
+                risk_list: [],
+                controversy_points: [],
+                finance_metrics: {
+                  years: [],
+                  revenue: [],
+                  netProfit: [],
+                  roe: [],
+                  grossMargin: [],
+                },
+                valuation: {
+                  currentPrice: 100,
+                  pe: 20,
+                  pb: 5,
+                  ps: 8,
+                  marketCap: 1000,
+                  historicalPE: [],
+                  peerComparison: [],
+                },
+                valuation_level: '合理',
+                expert_opinions: [],
+                reflection_notes: [],
+                chart_list: [],
+                follow_up_indicators: ['跟踪净利润'],
+                scenarios: [],
+                strategyList: [],
+              },
+            ],
+            data_sources: [],
+            research_confidence: '中',
+            limitation_explain: '仅供研究',
+          },
+        })}\n\n`,
+      });
+    });
+    await page.goto('/');
+    await page.getByPlaceholder(/输入股票代码或名称/).fill('600519');
+    await page.getByRole('button', { name: /^开始分析/ }).click();
+    await expect(page.getByRole('heading', { name: '可证伪预注册实验' })).toBeVisible({
+      timeout: 20_000,
+    });
+    await page.getByLabel('投资论点').fill('跌破证伪线则撤销');
+    await page.getByRole('button', { name: '冻结并创建实验' }).click();
+    await expect(page.getByText('跌破证伪线则撤销')).toBeVisible();
+    await expect(page.getByText('未到期或未评估，口径已冻结')).toBeVisible();
+    const response = await request.get('/api/theses?stockCode=600519');
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      status: 'active',
+      threshold: -5,
+      horizonDays: 20,
+      benchmarkCode: '000300',
+    });
+    await page.getByRole('button', { name: '按冻结口径评估' }).click();
+    await expect(page.getByText('未到期或未评估，口径已冻结')).toBeVisible();
+  });
 });

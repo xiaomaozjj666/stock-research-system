@@ -1026,6 +1026,9 @@ function App() {
                     key={stockData.stock_code}
                     data={stockData.follow_up_indicators}
                     stockCode={stockData.stock_code}
+                    enableThesis
+                    rating={stockData.rating}
+                    entryPrice={stockData.valuation.currentPrice}
                   />
                 </ErrorBoundary>
               </RevealSection>

@@ -1749,6 +1749,92 @@ tr:hover td {
   flex-shrink: 0;
 }
 
+.thesis-panel {
+  margin-top: var(--space-lg);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border-default);
+}
+.thesis-panel h3 {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--text-h2);
+}
+.thesis-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+.thesis-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+}
+.thesis-form label:first-child,
+.thesis-form label:nth-child(6) {
+  grid-column: 1 / -1;
+}
+.thesis-form input,
+.thesis-form select {
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+.thesis-form .btn-primary {
+  align-self: end;
+  min-height: 34px;
+}
+.thesis-list {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+.thesis-record {
+  padding: var(--space-md);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+.thesis-record-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+.thesis-record p {
+  margin: var(--space-sm) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+}
+.thesis-status {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--text-caption);
+}
+.thesis-status-active {
+  color: var(--color-info);
+  background: var(--bg-card-hover);
+}
+.thesis-status-invalidated {
+  color: var(--color-danger);
+  background: var(--bg-card-hover);
+}
+.thesis-status-expired {
+  color: var(--text-secondary);
+  background: var(--bg-card-hover);
+}
+.thesis-evidence {
+  color: var(--color-warning) !important;
+}
+.thesis-record .btn-ghost {
+  margin-top: var(--space-sm);
+}
+
 /* === 风险归因（风格因子暴露 + 系统/特异风险分解） === */
 .risk-attribution {
   margin-top: 14px;

@@ -23,6 +23,10 @@ import type {
   POSTApiCostResetResponse as OkResponse,
   POSTApiChatHistoryClearResponse as ClearHistoryResponse,
   DELETEApiHistoryIdResponse as DeleteHistoryResponse,
+  GETApiThesesResponse as ThesisListResponse,
+  POSTApiThesesRequestBody as CreateThesisRequest,
+  POSTApiThesesResponse as CreateThesisResponse,
+  POSTApiThesesIdEvaluateResponse as EvaluateThesisResponse,
 } from './generated';
 import type {
   AnalysisResult,
@@ -1205,5 +1209,37 @@ export async function fetchWatchlistAlerts(): Promise<WatchlistAlertsSnapshot> {
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '最近监控记录读取失败');
+  }
+}
+
+export async function getTheses(stockCode: string): Promise<ThesisListResponse> {
+  try {
+    const response = await api.get<ThesisListResponse>('/theses', {
+      params: { stockCode },
+      timeout: 15000,
+    });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '预注册实验读取失败');
+  }
+}
+
+export async function createThesis(input: CreateThesisRequest): Promise<CreateThesisResponse> {
+  try {
+    const response = await api.post<CreateThesisResponse>('/theses', input, { timeout: 15000 });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '预注册创建失败');
+  }
+}
+
+export async function evaluateThesis(id: string): Promise<EvaluateThesisResponse> {
+  try {
+    const response = await api.post<EvaluateThesisResponse>(`/theses/${id}/evaluate`, undefined, {
+      timeout: 30000,
+    });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '预注册评估失败');
   }
 }

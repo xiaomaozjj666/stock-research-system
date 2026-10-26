@@ -1745,6 +1745,88 @@ export type StrategyRecommendation = {
   };
 };
 
+export type ThesisInput = {
+  /**
+   * 6 位 A 股股票代码，如 600519
+   * 约束：需匹配 ^\d{6}$
+   */
+  stockCode: string;
+  /** 可证伪投资论点（最长 500 字） */
+  thesis: string;
+  /** 创建时冻结的评级 */
+  rating: string;
+  /** 创建时评分（可选） */
+  totalScore?: number;
+  metric: 'close_price' | 'return_pct' | 'excess_return_pct';
+  comparator: 'gt' | 'gte' | 'lt' | 'lte';
+  threshold: number;
+  /** 约束：最小 1；最大 3650 */
+  horizonDays: number;
+  evidenceSource: 'real_ohlcv';
+  /** 失效后动作（最长 200 字） */
+  invalidationAction: string;
+  /**
+   * 6 位 A 股股票代码，如 600519
+   * 约束：需匹配 ^\d{6}$
+   */
+  benchmarkCode: string;
+  execution: {
+    side: 'buy';
+    orderType: 'market' | 'limit';
+    entryPrice: number;
+    quantity: number;
+    limitPrice?: number;
+    commissionRate: number;
+    stampDutyRate: number;
+  };
+};
+
+export type ThesisRecord = {
+  id: string;
+  /**
+   * 6 位 A 股股票代码，如 600519
+   * 约束：需匹配 ^\d{6}$
+   */
+  stockCode: string;
+  thesis: string;
+  rating: string;
+  totalScore?: number;
+  metric: 'close_price' | 'return_pct' | 'excess_return_pct';
+  comparator: 'gt' | 'gte' | 'lt' | 'lte';
+  threshold: number;
+  horizonDays: number;
+  evidenceSource: 'real_ohlcv';
+  invalidationAction: string;
+  /**
+   * 6 位 A 股股票代码，如 600519
+   * 约束：需匹配 ^\d{6}$
+   */
+  benchmarkCode: string;
+  execution: {
+    side: 'buy';
+    orderType: 'market' | 'limit';
+    entryPrice: number;
+    quantity: number;
+    limitPrice?: number;
+    commissionRate: number;
+    stampDutyRate: number;
+  };
+  /** 约束：格式 date-time */
+  createdAt: string;
+  /** 约束：格式 date-time */
+  dueAt: string;
+  status: 'active' | 'invalidated' | 'expired';
+  evidenceStatus: 'pending' | 'sufficient' | 'insufficient_evidence' | 'no_execution';
+  /** 约束：格式 date-time */
+  evaluatedAt?: string;
+  /** 约束：格式 date */
+  observedAt?: string;
+  observedValue?: number;
+  returnPct?: number;
+  excessPct?: number;
+  reason?: 'threshold_met' | 'threshold_not_met' | 'insufficient_evidence' | 'no_execution';
+};
+
 export type TimeseriesAnalyzeResult = {
   test: 'adf' | 'garch' | 'coint' | 'arima' | 'kalman-beta';
   code: string | string[];
@@ -3100,6 +3182,95 @@ export type GETApiStocksSearchResponse = {
  */
 export type GETApiStocksSearchParams = {
   keyword: string;
+};
+
+/**
+ * 查询可证伪投资论点预注册
+ * 成功响应（HTTP 200）
+ * 端点：GET /api/theses
+ */
+export type GETApiThesesResponse = {
+  items: ThesisRecord[];
+};
+
+/**
+ * 查询可证伪投资论点预注册
+ * 路径/查询参数
+ * 端点：GET /api/theses
+ */
+export type GETApiThesesParams = {
+  /** 约束：需匹配 ^\d{6}$ */
+  stockCode?: string;
+};
+
+/**
+ * 创建可证伪投资论点预注册
+ * POST/PUT 等请求体
+ * 端点：POST /api/theses
+ */
+export type POSTApiThesesRequestBody = {
+  /**
+   * 6 位 A 股股票代码，如 600519
+   * 约束：需匹配 ^\d{6}$
+   */
+  stockCode: string;
+  /** 可证伪投资论点（最长 500 字） */
+  thesis: string;
+  /** 创建时冻结的评级 */
+  rating: string;
+  /** 创建时评分（可选） */
+  totalScore?: number;
+  metric: 'close_price' | 'return_pct' | 'excess_return_pct';
+  comparator: 'gt' | 'gte' | 'lt' | 'lte';
+  threshold: number;
+  /** 约束：最小 1；最大 3650 */
+  horizonDays: number;
+  evidenceSource: 'real_ohlcv';
+  /** 失效后动作（最长 200 字） */
+  invalidationAction: string;
+  /**
+   * 6 位 A 股股票代码，如 600519
+   * 约束：需匹配 ^\d{6}$
+   */
+  benchmarkCode: string;
+  execution: {
+    side: 'buy';
+    orderType: 'market' | 'limit';
+    entryPrice: number;
+    quantity: number;
+    limitPrice?: number;
+    commissionRate: number;
+    stampDutyRate: number;
+  };
+};
+
+/**
+ * 创建可证伪投资论点预注册
+ * 创建时冻结论点、证伪条件、期限、基准与成交规则；不提供修改口径的接口。
+ * 成功响应（HTTP 201）
+ * 端点：POST /api/theses
+ */
+export type POSTApiThesesResponse = {
+  thesis: ThesisRecord;
+};
+
+/**
+ * 按冻结口径评估预注册实验
+ * 到期前保持 active；到期后仅用真实且已完成的 K 线判定 invalidated/expired。
+ * 成功响应（HTTP 200）
+ * 端点：POST /api/theses/{id}/evaluate
+ */
+export type POSTApiThesesIdEvaluateResponse = {
+  thesis: ThesisRecord;
+};
+
+/**
+ * 按冻结口径评估预注册实验
+ * 路径/查询参数
+ * 端点：POST /api/theses/{id}/evaluate
+ */
+export type POSTApiThesesIdEvaluateParams = {
+  id: string;
 };
 
 /**

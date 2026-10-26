@@ -33,6 +33,7 @@ export default defineConfig({
       // 数据隔离：E2E 不触碰真实自选股/模拟盘/缓存/审计日志/研究历史数据
       WATCHLIST_FILE: path.join(E2E_TMP, 'watchlist.json'),
       PAPER_TRADING_FILE: path.join(E2E_TMP, 'paperTrading.json'),
+      THESIS_FILE: path.join(E2E_TMP, 'theses.json'),
       DATA_CACHE_DIR: path.join(E2E_TMP, 'cache'),
       AUDIT_LOG_FILE: path.join(E2E_TMP, 'audit.log'),
       HISTORY_FILE: path.join(E2E_TMP, 'history.json'),

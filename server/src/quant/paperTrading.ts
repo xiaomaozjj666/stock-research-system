@@ -167,6 +167,46 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** 收盘撮合与费用的纯函数：模拟盘和预注册实验共用同一成交/成本口径。 */
+export function resolveCloseFill(input: {
+  side: 'buy' | 'sell';
+  type: 'market' | 'limit';
+  close: number;
+  price?: number;
+  quantity: number;
+}): { filled: boolean; fillPrice: number | null; quantity: number } {
+  const quantity = Math.floor(input.quantity / 100) * 100;
+  const fillPrice =
+    input.type === 'market'
+      ? input.close
+      : input.price !== undefined &&
+          ((input.side === 'buy' && input.close <= input.price + 1e-9) ||
+            (input.side === 'sell' && input.close >= input.price - 1e-9))
+        ? input.close
+        : null;
+  return {
+    filled: quantity > 0 && fillPrice !== null,
+    fillPrice: fillPrice === null ? null : round2(fillPrice),
+    quantity,
+  };
+}
+
+export function calculateExecutionCosts(
+  side: 'buy' | 'sell',
+  quantity: number,
+  price: number,
+  commissionRate: number,
+  stampDutyRate: number,
+): { cashFlow: number; commission: number; stampDuty: number } {
+  const commission = round2(quantity * price * commissionRate);
+  const stampDuty = side === 'sell' ? round2(quantity * price * stampDutyRate) : 0;
+  return {
+    cashFlow: round2(quantity * price + (side === 'buy' ? commission : -commission - stampDuty)),
+    commission,
+    stampDuty,
+  };
+}
+
 /** 空白的净值累计统计（新账户 / 旧快照回填起点） */
 function emptyEquitySummary(): EquitySummary {
   return {
@@ -361,21 +401,28 @@ export class PaperAccount {
         }
       }
 
-      // 撮合判定
-      let fillPrice: number | null = null;
-      if (order.type === 'market') {
-        fillPrice = close;
-      } else if (order.price !== undefined) {
-        if (order.side === 'buy' && close <= order.price + 1e-9) fillPrice = close;
-        else if (order.side === 'sell' && close >= order.price - 1e-9) fillPrice = close;
-      }
-      if (fillPrice === null) continue; // 限价单未触发，日终统一过期
+      // 与预注册实验共用收盘撮合及费用纯函数，避免两套口径漂移
+      const fill = resolveCloseFill({
+        side: order.side,
+        type: order.type,
+        close,
+        price: order.price,
+        quantity: order.quantity,
+      });
+      if (!fill.filled || fill.fillPrice === null) continue; // 限价单未触发，日终统一过期
 
-      const fprice = Math.round(fillPrice * 100) / 100;
-      const commission = round2(order.quantity * fprice * this.opts.commissionRate);
+      const fprice = fill.fillPrice;
+      const costs = calculateExecutionCosts(
+        order.side,
+        order.quantity,
+        fprice,
+        this.opts.commissionRate,
+        this.opts.stampDutyRate,
+      );
+      const { commission, stampDuty } = costs;
 
       if (order.side === 'buy') {
-        const cost = round2(order.quantity * fprice + commission);
+        const cost = costs.cashFlow;
         if (this.cash + 1e-9 < cost) {
           this.rejectAt(order, '资金不足');
           continue;
@@ -411,8 +458,7 @@ export class PaperAccount {
           this.rejectAt(order, '成交时持仓不足');
           continue;
         }
-        const stampDuty = round2(order.quantity * fprice * this.opts.stampDutyRate);
-        const revenue = round2(order.quantity * fprice - commission - stampDuty);
+        const revenue = costs.cashFlow;
         this.cash = round2(this.cash + revenue);
         pos.quantity -= order.quantity;
         if (pos.quantity <= 0) this.positions.delete(order.code);

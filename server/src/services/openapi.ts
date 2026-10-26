@@ -50,6 +50,49 @@ const horizonsSchema = {
   description: '持有期档位（交易日）：1-504 的整数，最多 8 档，缺省 [21, 63]；非法即 400',
 };
 
+const thesisInputSchema = {
+  type: 'object',
+  properties: {
+    stockCode: stockCodeSchema,
+    thesis: { type: 'string', description: '可证伪投资论点（最长 500 字）' },
+    rating: { type: 'string', description: '创建时冻结的评级' },
+    totalScore: { type: 'number', description: '创建时评分（可选）' },
+    metric: { type: 'string', enum: ['close_price', 'return_pct', 'excess_return_pct'] },
+    comparator: { type: 'string', enum: ['gt', 'gte', 'lt', 'lte'] },
+    threshold: { type: 'number' },
+    horizonDays: { type: 'integer', minimum: 1, maximum: 3650 },
+    evidenceSource: { type: 'string', enum: ['real_ohlcv'] },
+    invalidationAction: { type: 'string', description: '失效后动作（最长 200 字）' },
+    benchmarkCode: stockCodeSchema,
+    execution: {
+      type: 'object',
+      properties: {
+        side: { type: 'string', enum: ['buy'] },
+        orderType: { type: 'string', enum: ['market', 'limit'] },
+        entryPrice: { type: 'number' },
+        quantity: { type: 'integer' },
+        limitPrice: { type: 'number' },
+        commissionRate: { type: 'number' },
+        stampDutyRate: { type: 'number' },
+      },
+      required: ['side', 'orderType', 'entryPrice', 'quantity', 'commissionRate', 'stampDutyRate'],
+    },
+  },
+  required: [
+    'stockCode',
+    'thesis',
+    'rating',
+    'metric',
+    'comparator',
+    'threshold',
+    'horizonDays',
+    'evidenceSource',
+    'invalidationAction',
+    'benchmarkCode',
+    'execution',
+  ],
+};
+
 const jsonBody = (schema: unknown, description?: string) => ({
   description,
   required: true,
@@ -1898,6 +1941,64 @@ export function buildOpenApiDocument() {
           },
         },
       },
+      '/api/theses': {
+        post: {
+          tags: ['analysis'],
+          summary: '创建可证伪投资论点预注册',
+          description: '创建时冻结论点、证伪条件、期限、基准与成交规则；不提供修改口径的接口。',
+          requestBody: jsonBody(thesisInputSchema),
+          responses: {
+            201: jsonOk(
+              { description: '已创建的 active 预注册记录' },
+              {
+                type: 'object',
+                properties: { thesis: { $ref: '#/components/schemas/ThesisRecord' } },
+                required: ['thesis'],
+              },
+            ),
+            400: errorResponse('预注册参数无效'),
+            500: errorResponse('预注册创建失败'),
+          },
+        },
+        get: {
+          tags: ['analysis'],
+          summary: '查询可证伪投资论点预注册',
+          parameters: [{ name: 'stockCode', in: 'query', schema: stockCodeSchema }],
+          responses: {
+            200: jsonOk(
+              { description: '预注册记录（可按股票代码过滤）' },
+              {
+                type: 'object',
+                properties: {
+                  items: { type: 'array', items: { $ref: '#/components/schemas/ThesisRecord' } },
+                },
+                required: ['items'],
+              },
+            ),
+            400: errorResponse('股票代码无效'),
+          },
+        },
+      },
+      '/api/theses/{id}/evaluate': {
+        post: {
+          tags: ['analysis'],
+          summary: '按冻结口径评估预注册实验',
+          description: '到期前保持 active；到期后仅用真实且已完成的 K 线判定 invalidated/expired。',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: jsonOk(
+              { description: '评估后的预注册记录（终态重复评估幂等）' },
+              {
+                type: 'object',
+                properties: { thesis: { $ref: '#/components/schemas/ThesisRecord' } },
+                required: ['thesis'],
+              },
+            ),
+            404: errorResponse('预注册实验不存在'),
+            500: errorResponse('预注册评估失败'),
+          },
+        },
+      },
     },
     /**
      * 复用组件。**新增端点时优先引用这里的具名组件**，而不是内联展开：
@@ -1910,6 +2011,78 @@ export function buildOpenApiDocument() {
      */
     components: {
       schemas: {
+        ThesisInput: thesisInputSchema,
+        ThesisRecord: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            stockCode: stockCodeSchema,
+            thesis: { type: 'string' },
+            rating: { type: 'string' },
+            totalScore: { type: 'number' },
+            metric: { type: 'string', enum: ['close_price', 'return_pct', 'excess_return_pct'] },
+            comparator: { type: 'string', enum: ['gt', 'gte', 'lt', 'lte'] },
+            threshold: { type: 'number' },
+            horizonDays: { type: 'integer' },
+            evidenceSource: { type: 'string', enum: ['real_ohlcv'] },
+            invalidationAction: { type: 'string' },
+            benchmarkCode: stockCodeSchema,
+            execution: {
+              type: 'object',
+              properties: {
+                side: { type: 'string', enum: ['buy'] },
+                orderType: { type: 'string', enum: ['market', 'limit'] },
+                entryPrice: { type: 'number' },
+                quantity: { type: 'integer' },
+                limitPrice: { type: 'number' },
+                commissionRate: { type: 'number' },
+                stampDutyRate: { type: 'number' },
+              },
+              required: [
+                'side',
+                'orderType',
+                'entryPrice',
+                'quantity',
+                'commissionRate',
+                'stampDutyRate',
+              ],
+            },
+            createdAt: { type: 'string', format: 'date-time' },
+            dueAt: { type: 'string', format: 'date-time' },
+            status: { type: 'string', enum: ['active', 'invalidated', 'expired'] },
+            evidenceStatus: {
+              type: 'string',
+              enum: ['pending', 'sufficient', 'insufficient_evidence', 'no_execution'],
+            },
+            evaluatedAt: { type: 'string', format: 'date-time' },
+            observedAt: { type: 'string', format: 'date' },
+            observedValue: { type: 'number' },
+            returnPct: { type: 'number' },
+            excessPct: { type: 'number' },
+            reason: {
+              type: 'string',
+              enum: ['threshold_met', 'threshold_not_met', 'insufficient_evidence', 'no_execution'],
+            },
+          },
+          required: [
+            'id',
+            'stockCode',
+            'thesis',
+            'rating',
+            'metric',
+            'comparator',
+            'threshold',
+            'horizonDays',
+            'evidenceSource',
+            'invalidationAction',
+            'benchmarkCode',
+            'execution',
+            'createdAt',
+            'dueAt',
+            'status',
+            'evidenceStatus',
+          ],
+        },
         /**
          * 策略配置（quant/types.ts 的 StrategyConfig）。
          *

@@ -9,6 +9,9 @@ import App from './App';
 const apiMock = vi.hoisted(() => ({ analyzeStockStream: vi.fn() }));
 vi.mock('./api/client', () => ({
   analyzeStockStream: apiMock.analyzeStockStream,
+  getTheses: vi.fn(async () => ({ items: [] })),
+  createThesis: vi.fn(),
+  evaluateThesis: vi.fn(),
   AnalysisCancelledError: class AnalysisCancelledError extends Error {
     constructor(message = '分析已取消') {
       super(message);
