@@ -27,7 +27,9 @@ const DEFAULT_DIST = resolve(scriptDir, '..', 'dist');
  *
  * 基线实测（Vite 8.3.0，2026-09 构建产物）：
  *   echarts-vendor 626.48 / react-vendor 218.97 / index 90.68 /
- *   QuantPage 77.66 / vendor 50.00 / index.css 99.63
+ *   QuantPage 77.66 / index.css 99.63
+ *   vendor 50.00 → 57.33（axios 1.20→1.21 进 vendor chunk，PR #37 实测，
+ *   2026-11-04 据此把预算 55 放宽到 62）
  * 预算值在实测值上留了约 8% 余量：够吸收压缩波动和小改动，又能在体积真的
  * 膨胀时立刻失败。改预算 = 承认一次增长，应该在 PR 里说明原因。
  */
@@ -35,7 +37,7 @@ const CHUNK_BUDGETS_KB = {
   'echarts-vendor': 680,
   'react-vendor': 240,
   QuantPage: 85,
-  vendor: 55,
+  vendor: 62,
   index: 100,
 };
 
