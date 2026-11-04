@@ -10,7 +10,7 @@
     "check:bundle": "node scripts/check-bundle-size.mjs"
   },
   "dependencies": {
-    "axios": "1.20.0",
+    "axios": "1.21.0",
     "echarts": "6.1.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
