@@ -4,31 +4,6 @@ import axios from 'axios';
 // 重新生成会被 `npm run check:api-types`（CI 门禁）拦下——这正是本项目此前
 // 「契约与前端各写一份、必然分叉」的解法。
 import type {
-  ChatAgentResponse as GeneratedChatAgentResponse,
-  ChatEvidence as GeneratedChatEvidence,
-  DocumentInsight as GeneratedDocumentInsight,
-  ValuationModelResult as GeneratedValuationModelResult,
-  IntlKline as GeneratedIntlKline,
-  GETApiStocksResponse as StockListResponse,
-  GETApiWatchlistResponse as WatchlistResponse,
-  POSTApiAutonomousStopResponse as AutonomousStopResponse,
-  GETApiStocksSearchResponse as StockSearchResponse,
-  POSTApiPaperSettleResponse as PaperSettleResponse,
-  GETApiAuditResponse as AuditQueryResponse,
-  GETApiHistoryResponse as HistoryListResponse,
-  GETApiIntlKlinesResponse as IntlKlinesResponse,
-  GETApiDocumentsResponse as DocumentListResponse,
-  GETApiModelsResponse as ModelRoutingResponse,
-  GETApiCostResponse as CostResponse,
-  POSTApiCostResetResponse as OkResponse,
-  POSTApiChatHistoryClearResponse as ClearHistoryResponse,
-  DELETEApiHistoryIdResponse as DeleteHistoryResponse,
-  GETApiThesesResponse as ThesisListResponse,
-  POSTApiThesesRequestBody as CreateThesisRequest,
-  POSTApiThesesResponse as CreateThesisResponse,
-  POSTApiThesesIdEvaluateResponse as EvaluateThesisResponse,
-} from './generated';
-import type {
   AnalysisResult,
   AuditQueryFilter,
   CompareResponse,
@@ -42,6 +17,31 @@ import type {
   PaperStats,
   WatchlistMonitorResult,
 } from '../types';
+import type {
+  GETApiAuditResponse as AuditQueryResponse,
+  POSTApiAutonomousStopResponse as AutonomousStopResponse,
+  POSTApiChatHistoryClearResponse as ClearHistoryResponse,
+  GETApiCostResponse as CostResponse,
+  POSTApiThesesRequestBody as CreateThesisRequest,
+  POSTApiThesesResponse as CreateThesisResponse,
+  DELETEApiHistoryIdResponse as DeleteHistoryResponse,
+  GETApiDocumentsResponse as DocumentListResponse,
+  POSTApiThesesIdEvaluateResponse as EvaluateThesisResponse,
+  ChatAgentResponse as GeneratedChatAgentResponse,
+  ChatEvidence as GeneratedChatEvidence,
+  DocumentInsight as GeneratedDocumentInsight,
+  IntlKline as GeneratedIntlKline,
+  ValuationModelResult as GeneratedValuationModelResult,
+  GETApiHistoryResponse as HistoryListResponse,
+  GETApiIntlKlinesResponse as IntlKlinesResponse,
+  GETApiModelsResponse as ModelRoutingResponse,
+  POSTApiCostResetResponse as OkResponse,
+  POSTApiPaperSettleResponse as PaperSettleResponse,
+  GETApiStocksResponse as StockListResponse,
+  GETApiStocksSearchResponse as StockSearchResponse,
+  GETApiThesesResponse as ThesisListResponse,
+  GETApiWatchlistResponse as WatchlistResponse,
+} from './generated';
 // 量化三类响应体由页面层定义（页面才是消费方），此处只引用不复制，
 // 避免同一形状在两处各写一遍后悄悄分叉。
 import type {
@@ -89,38 +89,91 @@ api.interceptors.response.use(
 );
 
 /**
+ * 带服务端排障元数据的 API 错误。
+ * 文案（message）面向用户；requestId/code/retryAfter 面向排障与程序化重试——
+ * 此前 normalizeApiError 只保留文案，服务端 429 的 Retry-After、错误体的
+ * requestId/code 全被丢掉，排查时无法把前端报错与服务端日志对起来。
+ */
+export class ApiError extends Error {
+  /** 服务端请求 ID（X-Request-ID 响应头优先，其次错误体 requestId） */
+  requestId?: string;
+  /** 机器可读错误码（如 ANALYSIS_IN_FLIGHT、LLM 排队超时 code） */
+  code?: string;
+  /** 建议重试等待秒数（Retry-After 响应头或错误体 retryAfter，按 HTTP 语义以秒计） */
+  retryAfter?: number;
+}
+
+interface AxiosErrorLike {
+  code?: string;
+  message?: string;
+  response?: {
+    status?: number;
+    headers?: Record<string, unknown> & { get?: (name: string) => unknown };
+    data?: {
+      error?: string;
+      message?: string;
+      requestId?: string;
+      code?: string;
+      retryAfter?: number;
+    };
+  };
+}
+
+/** 从响应头/错误体提取排障元数据并挂到错误对象上（不改变文案语义） */
+function attachErrorMetadata(err: ApiError, e: AxiosErrorLike): ApiError {
+  const headers = e.response?.headers;
+  const data = e.response?.data;
+  const header = (name: string): unknown =>
+    typeof headers?.get === 'function' ? headers.get(name) : headers?.[name];
+  const requestId = header('x-request-id') ?? data?.requestId;
+  if (typeof requestId === 'string' && requestId) err.requestId = requestId;
+  if (typeof data?.code === 'string' && data.code) err.code = data.code;
+  const retryAfterRaw = header('retry-after') ?? data?.retryAfter;
+  const retryAfter = Number(retryAfterRaw);
+  if (retryAfterRaw !== undefined && retryAfterRaw !== null && Number.isFinite(retryAfter)) {
+    err.retryAfter = retryAfter;
+  }
+  return err;
+}
+
+/**
  * 把 axios 的原始错误翻译成用户能理解、能行动的中文提示。
  * 后端未启动时 axios 只会抛 "Network Error"，对用户毫无意义。
  */
-export function normalizeApiError(error: unknown, fallback = '请求失败'): Error {
-  const e = error as {
-    code?: string;
-    message?: string;
-    response?: { status?: number; data?: { error?: string; message?: string } };
-  };
+export function normalizeApiError(error: unknown, fallback = '请求失败'): ApiError {
+  const e = error as AxiosErrorLike;
 
-  if (e?.code === 'ERR_CANCELED') return new Error('请求已取消');
+  if (e?.code === 'ERR_CANCELED') return new ApiError('请求已取消');
   if (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message ?? '')) {
-    return new Error('请求超时：分析耗时超过预期，请稍后重试或换一只标的');
+    return new ApiError('请求超时：分析耗时超过预期，请稍后重试或换一只标的');
   }
   if (e?.code === 'ERR_NETWORK' || !e?.response) {
-    return new Error(
+    return new ApiError(
       '无法连接后端服务（localhost:3001）。请确认服务已启动，或运行「启动系统.bat」后重试',
     );
   }
 
   const status = e.response.status;
   const serverMsg = e.response.data?.error || e.response.data?.message;
-  if (serverMsg) return new Error(serverMsg);
-  if (status === 404) return new Error('接口不存在（404），请确认前后端版本一致');
+  if (serverMsg) return attachErrorMetadata(new ApiError(serverMsg), e);
+  if (status === 404) {
+    return attachErrorMetadata(new ApiError('接口不存在（404），请确认前后端版本一致'), e);
+  }
   // 鉴权：只在服务端确实回 401 时提示"输令牌"。未启用鉴权时不存在这个状态码，
   // 所以本地开发不会看到这条提示。
   // 文案不写"右上角"这类方位词——解锁条的位置可能调整，写位置就等于给自己埋一个
   // 会过期的说明；只说"页面上的解锁条"，位置变了也不用改这句。
-  if (status === 401) return new Error('需要访问令牌：请在页面上的解锁条中填入 API_AUTH_TOKEN');
-  if (status === 429) return new Error('请求过于频繁，请稍后再试');
-  if (status && status >= 500) return new Error(`后端服务异常（${status}），请查看服务端日志`);
-  return new Error(fallback);
+  if (status === 401) {
+    return attachErrorMetadata(
+      new ApiError('需要访问令牌：请在页面上的解锁条中填入 API_AUTH_TOKEN'),
+      e,
+    );
+  }
+  if (status === 429) return attachErrorMetadata(new ApiError('请求过于频繁，请稍后再试'), e);
+  if (status && status >= 500) {
+    return attachErrorMetadata(new ApiError(`后端服务异常（${status}），请查看服务端日志`), e);
+  }
+  return attachErrorMetadata(new ApiError(fallback), e);
 }
 
 let currentController: AbortController | null = null;
@@ -611,8 +664,17 @@ export function chatWithAgentStream(
       const data = JSON.parse(e.data) as ChatStreamEvent;
       if (data.phase === 'done' || data.phase === 'error') finish(data);
       else onEvent(data);
-    } catch {
-      /* 忽略偶发解析错误 */
+    } catch (err) {
+      // 解析失败不再静默吞掉：记录原始帧（截断防刷屏）并给出**可见错误事件**，
+      // 但不 settle——单个坏帧不应终止后续正常事件流
+      console.error('[chatStream] SSE 帧 JSON 解析失败', {
+        raw: String(e.data).slice(0, 200),
+        err,
+      });
+      onEvent({
+        phase: 'error',
+        message: '对话数据解析失败：收到无法解码的服务端帧（详情见控制台），可重试',
+      });
     }
   };
   es.onerror = () => {
@@ -736,8 +798,17 @@ export function analyzeStockStream(
         } else {
           onStage(data);
         }
-      } catch {
-        // 忽略偶发解析错误
+      } catch (err) {
+        // 解析失败不再静默吞掉：记录原始帧并回调可见错误事件；
+        // 不 finish——单个坏帧不应让整次分析以失败收尾
+        console.error('[analyzeStream] SSE 帧 JSON 解析失败', {
+          raw: String(event.data).slice(0, 200),
+          err,
+        });
+        onStage({
+          phase: 'error',
+          message: '分析进度数据解析失败：收到无法解码的服务端帧（详情见控制台）',
+        });
       }
     };
 

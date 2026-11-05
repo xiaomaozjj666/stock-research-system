@@ -1,42 +1,42 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  addToWatchlist,
   AnalysisCancelledError,
   analyzeStock,
   analyzeStockStream,
-  getStockList,
-  searchStocks,
-  runQuantAnalysis,
-  runBatchCompositeAlpha,
-  getUniverseBoards,
-  runCrossSectionEvaluation,
-  compareStocks,
-  getWatchlist,
-  addToWatchlist,
-  removeFromWatchlist,
-  runWatchlistNewsBacktest,
   chatWithAgentStream,
-  listDocuments,
-  getCostReport,
-  resetCostReport,
-  stopAutonomous,
+  compareStocks,
+  deleteHistoryItem,
+  fetchHistoryDetail,
+  fetchHistoryList,
+  fetchWatchlistAlerts,
   getAutonomousStatus,
-  getPaperPortfolio,
-  placePaperOrder,
-  settlePaperDay,
-  getPaperStats,
+  getCostReport,
   getFactorExperiments,
-  getResearchDigests,
-  runResearchDigestNow,
-  getQuantHealth,
   getIntlFundamentals,
   getIntlKlines,
-  runValuationModelApi,
-  fetchHistoryList,
-  fetchHistoryDetail,
-  deleteHistoryItem,
+  getPaperPortfolio,
+  getPaperStats,
+  getQuantHealth,
+  getResearchDigests,
+  getStockList,
+  getUniverseBoards,
+  getWatchlist,
+  listDocuments,
   monitorWatchlist,
-  fetchWatchlistAlerts,
   normalizeApiError,
+  placePaperOrder,
+  removeFromWatchlist,
+  resetCostReport,
+  runBatchCompositeAlpha,
+  runCrossSectionEvaluation,
+  runQuantAnalysis,
+  runResearchDigestNow,
+  runValuationModelApi,
+  runWatchlistNewsBacktest,
+  searchStocks,
+  settlePaperDay,
+  stopAutonomous,
   type ChatStreamEvent,
 } from '../client.js';
 
@@ -710,13 +710,26 @@ describe('chatWithAgentStream —— 事件式 SSE 对话', () => {
     expect(events).toEqual([{ phase: 'error', message: '模型不可用' }]);
   });
 
-  it('单条事件 JSON 坏掉不影响后续事件（不让一次脏包毁掉整轮对话）', () => {
+  it('单条事件 JSON 坏掉：产生可见错误事件并记录，不影响后续事件（不让一次脏包毁掉整轮对话）', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const events: ChatStreamEvent[] = [];
     chatWithAgentStream('hi', (e) => events.push(e));
     const es = FakeEventSource.instances[0];
     es.emitRaw('{ 这不是 JSON');
     es.emit({ phase: 'retrieving', message: '检索中' });
-    expect(events).toEqual([{ phase: 'retrieving', message: '检索中' }]);
+    // 新语义（DX 整改）：坏帧不再静默吞掉——先给可见错误事件，后续正常事件继续
+    expect(events).toEqual([
+      {
+        phase: 'error',
+        message: '对话数据解析失败：收到无法解码的服务端帧（详情见控制台），可重试',
+      },
+      { phase: 'retrieving', message: '检索中' },
+    ]);
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[chatStream] SSE 帧 JSON 解析失败',
+      expect.objectContaining({ raw: '{ 这不是 JSON' }),
+    );
+    errorSpy.mockRestore();
   });
 
   it('连接中断 → 明确告知"对话未完成，请重试"', () => {
