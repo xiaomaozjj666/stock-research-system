@@ -247,14 +247,26 @@ export async function pruneQuantCache(
   return { removed };
 }
 
+/** 定期清理定时器（模块级保存，供优雅关闭统一停止；此前是局部变量，关闭流程停不掉） */
+let prunerTimer: NodeJS.Timeout | null = null;
+
 /**
  * 启动定期清理（对齐 services/dataService 的 H-05 模式）：启动清一次 + 每小时兜底。
  * 测试环境（NODE_ENV=test）不起定时器，避免改动测试隔离目录。
- * 由 server/src/index.ts 显式调用，模块导入本身无副作用。
+ * 由 server/src/index.ts 显式调用，模块导入本身无副作用；重复调用幂等。
  */
 export function startQuantCachePruner(intervalMs = DEFAULT_PRUNE_INTERVAL_MS): void {
   if (process.env.NODE_ENV === 'test') return;
+  if (prunerTimer) return;
   void pruneQuantCache();
-  const timer = setInterval(() => void pruneQuantCache(), intervalMs);
-  if (typeof timer.unref === 'function') timer.unref();
+  prunerTimer = setInterval(() => void pruneQuantCache(), intervalMs);
+  if (typeof prunerTimer.unref === 'function') prunerTimer.unref();
+}
+
+/** 停止定期清理（优雅关闭时经 schedulerRegistry 统一调用）；未启动时为安全空操作 */
+export function stopQuantCachePruner(): void {
+  if (prunerTimer) {
+    clearInterval(prunerTimer);
+    prunerTimer = null;
+  }
 }

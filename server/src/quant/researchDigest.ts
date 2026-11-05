@@ -16,8 +16,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { DATA_ROOT } from '../dataRoot.js';
-import { readLatestScreenerRun, type ScreenerRunResult } from './screener.js';
 import { summarizeFactorExperiments } from './factorLedger.js';
+import { readLatestScreenerRun, type ScreenerRunResult } from './screener.js';
 
 const MAX_DIGESTS = 60;
 
@@ -192,17 +192,29 @@ export function listResearchDigests(limit = 20): ResearchDigest[] {
  * 由 server/src/index.ts 显式调用；启动时不立即跑（避免与预热/预检抢上游），
  * 手动触发走 POST /api/quant/digests/run。
  */
+/** 定时简报定时器（模块级保存，供优雅关闭统一停止；此前是局部变量，关闭流程停不掉） */
+let digestTimer: NodeJS.Timeout | null = null;
+
 export function startDigestScheduler(): void {
   const raw = Number(process.env.QUANT_DIGEST_INTERVAL_HOURS);
   if (!Number.isFinite(raw) || raw <= 0) return;
   const intervalMs = Math.max(raw * 3_600_000, 60_000);
   if (process.env.NODE_ENV === 'test') return;
-  const timer = setInterval(() => {
+  if (digestTimer) return; // 幂等：重复启动不叠加定时器
+  digestTimer = setInterval(() => {
     try {
       runResearchDigest();
     } catch {
       // 简报是辅助产物：定时失败静默，下个周期再试
     }
   }, intervalMs);
-  if (typeof timer.unref === 'function') timer.unref();
+  if (typeof digestTimer.unref === 'function') digestTimer.unref();
+}
+
+/** 停止定时简报（优雅关闭时经 schedulerRegistry 统一调用）；未启动时为安全空操作 */
+export function stopDigestScheduler(): void {
+  if (digestTimer) {
+    clearInterval(digestTimer);
+    digestTimer = null;
+  }
 }
