@@ -80,6 +80,18 @@ jobs:
         # 「契约与前端各写一份、必然分叉」的机制性缺陷。此处只比对不写入。
         run: npm run check:api-types
 
+      - name: Dependency direction (quant/shared must not import services)
+        # 包级循环防线：quant/shared 反向 import services 即 fail（scripts/
+        # check-dependency-direction.mts）。曾因此出现 fundamentalCache ↔
+        # analysisPipeline 的包级双向依赖，此处防止回潮。
+        run: npm run check:deps
+
+      - name: OpenAPI artifact is in sync with domain modules
+        # 契约按域模块（services/openapi/paths|schemas）是源，docs/openapi.json 是
+        # 生成物：改了域模块忘记重新生成即 fail（scripts/generate-openapi.mts --check，
+        # 键序规范化后的确定性比对）。
+        run: npm run check:openapi
+
       - name: TypeCheck (server)
         run: npx tsc --noEmit -p server/tsconfig.json
 

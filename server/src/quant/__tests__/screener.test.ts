@@ -1,21 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { loadStockMaster } from '../../services/stockMaster.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchOHLCVData } from '../../quant/dataProvider.js';
-import {
-  runMarketScreener,
-  readLatestScreenerRun,
-  selectScreenerUniverse,
-  parseScreenerDateRange,
-  ScreenerParamError,
-  MAX_SCREENER_SPAN_DAYS,
-} from '../screener.js';
 import type { OHLCVData } from '../../quant/types.js';
-import type { SecurityMasterEntry } from '../../services/stockMaster.js';
+import type { SecurityMasterEntry } from '../../shared/stockMaster.js';
+import { loadStockMaster } from '../../shared/stockMaster.js';
+import {
+  MAX_SCREENER_SPAN_DAYS,
+  parseScreenerDateRange,
+  readLatestScreenerRun,
+  runMarketScreener,
+  ScreenerParamError,
+  selectScreenerUniverse,
+} from '../screener.js';
 
-vi.mock('../../services/stockMaster.js', () => ({ loadStockMaster: vi.fn() }));
+vi.mock('../../shared/stockMaster.js', () => ({ loadStockMaster: vi.fn() }));
 vi.mock('../../quant/dataProvider.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../quant/dataProvider.js')>();
   return { ...actual, fetchOHLCVData: vi.fn() };

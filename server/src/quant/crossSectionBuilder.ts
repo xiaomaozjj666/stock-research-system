@@ -20,26 +20,26 @@
  * 诚实边界：截面框架的统计功效取决于横截面宽度（股票数）。同行业 peer group
  * 通常只有几只，样本 < minStocks 的日期会被丢弃，报告的 sampleSize 会如实反映。
  */
-import type { OHLCVData } from './types.js';
+import type { QuarterlySeries } from '../shared/quarterlyTypes.js';
 import type { FinancialData } from '../types.js';
-import type { QuarterlySeries } from '../services/quarterlyFinancials.js';
+import type { StockEventBundle } from './eventProvider.js';
+import type { FactorObservation } from './factorEvaluation.js';
+import {
+  buildPitSnapshots,
+  type PitSnapshot,
+  type QuarterlyFactorName,
+} from './fundamentalDepth.js';
+import {
+  MARGIN_FACTOR_NAMES,
+  marginFactorValues,
+  type MarginFactorName,
+  type MarginRow,
+} from './marginProvider.js';
 import {
   computePriceVolumeFactorSeries,
   type PriceVolumeFactorContext,
 } from './priceVolumeFactors.js';
-import {
-  buildPitSnapshots,
-  type QuarterlyFactorName,
-  type PitSnapshot,
-} from './fundamentalDepth.js';
-import type { FactorObservation } from './factorEvaluation.js';
-import type { StockEventBundle } from './eventProvider.js';
-import {
-  marginFactorValues,
-  MARGIN_FACTOR_NAMES,
-  type MarginFactorName,
-  type MarginRow,
-} from './marginProvider.js';
+import type { OHLCVData } from './types.js';
 
 /** 基本面截面因子名（全部为 PIT 口径，吃公告日门控的季度快照） */
 export type FundamentalFactorName =

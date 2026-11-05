@@ -9,10 +9,10 @@
  * 求值语义：表达式在「单只股票的时间序列」上求值，返回逐日数值序列；由调用方
  * 装配成截面观测（date / symbol / value / 远期收益）后交给既有评估器。
  */
-import type { OHLCVData } from './types.js';
+import type { QuarterlySeries } from '../shared/quarterlyTypes.js';
 import type { FinancialData } from '../types.js';
-import type { QuarterlySeries } from '../services/quarterlyFinancials.js';
 import { buildPitSnapshots, type PitSnapshot } from './fundamentalDepth.js';
+import type { OHLCVData } from './types.js';
 
 const SERIES_IDENTS = ['open', 'high', 'low', 'close', 'volume', 'ret'] as const;
 const SCALAR_IDENTS = ['roe', 'grossMargin', 'netProfitGrowth', 'debtRatio'] as const;

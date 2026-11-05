@@ -16,10 +16,10 @@
  * 全部纯函数、无副作用；数值口径：净利/营收为亿元，同比/斜率为百分比。
  */
 
-import type { OHLCVData } from './types.js';
-import type { QuarterlyReport, QuarterlySeries } from '../services/quarterlyFinancials.js';
-import type { FactorObservation } from './factorEvaluation.js';
+import type { QuarterlyReport, QuarterlySeries } from '../shared/quarterlyTypes.js';
 import { buildEventObservations } from './eventPanels.js';
+import type { FactorObservation } from './factorEvaluation.js';
+import type { OHLCVData } from './types.js';
 
 /** 单季（差分后）盈利点 */
 export interface SingleQuarterPoint {

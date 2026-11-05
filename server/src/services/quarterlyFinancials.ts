@@ -16,38 +16,14 @@
  * 相应因子如实跳过，绝不编造）。
  */
 
+import type { QuarterlyReport, QuarterlySeries } from '../shared/quarterlyTypes.js';
 import { fetchJson } from '../utils/http.js';
-import { yuanToYi } from './dataFetcher.js';
 import logger from '../utils/logger.js';
+import { yuanToYi } from './dataFetcher.js';
 
-/** 单个报告期（累计口径）的季度财务快照 */
-export interface QuarterlyReport {
-  /** 报告期（YYYY-MM-DD，如 2026-06-30 = 中报） */
-  reportDate: string;
-  /** 公告日（YYYY-MM-DD）；接口缺失时为 null（该期不参与事件因子） */
-  noticeDate: string | null;
-  /** 营业总收入（累计，亿元） */
-  revenue: number | null;
-  /** 归母净利润（累计，亿元） */
-  netProfit: number | null;
-  /** 加权 ROE（累计，%） */
-  roe: number | null;
-  /** 毛利率（%） */
-  grossMargin: number | null;
-  /** 资产负债率（%） */
-  debtRatio: number | null;
-  /** 营收累计同比（%） */
-  revenueYoY: number | null;
-  /** 归母净利累计同比（%） */
-  netProfitYoY: number | null;
-}
-
-export interface QuarterlySeries {
-  code: string;
-  /** 按报告期升序 */
-  reports: QuarterlyReport[];
-  source: 'eastmoney_f10';
-}
+// 类型定义已下沉到 shared/quarterlyTypes.ts（quant 与 services 共用，打破包级循环）；
+// 此处 re-export 保持既有 import 路径与 vi.mock 兼容。
+export type { QuarterlyReport, QuarterlySeries } from '../shared/quarterlyTypes.js';
 
 /** null 感知的数值解析：接口缺失（null/'-'/非数值）→ null，绝不洗成 0 */
 function numOrNull(v: unknown): number | null {

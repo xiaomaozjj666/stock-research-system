@@ -1,5 +1,4 @@
-import { fetchFinancialData } from '../services/dataFetcher.js';
-import { fetchQuarterlyFinancials } from '../services/quarterlyFinancials.js';
+import { resolveFundamentalFetchers } from '../shared/fundamentalFetchers.js';
 import { withQuantCache } from './quantCache.js';
 
 /**
@@ -12,6 +11,10 @@ import { withQuantCache } from './quantCache.js';
  * 财报是低频数据（季度更新），本模块把 3N 降到 1N（只剩 K 线的尾部补拉）。
  * 只在量化链路加缓存、不改 services 层共享函数——避免影响主分析流水线的
  * 数据新鲜度语义与既有测试。
+ *
+ * 依赖方向（2026-11 架构整改）：不再静态 import services 层，改经
+ * shared/fundamentalFetchers 注册表解析（组合根显式注入；测试走动态 import，
+ * vi.mock 语义不变），quant → services 的反向静态依赖就此消除。
  */
 
 /**
@@ -37,6 +40,7 @@ function ttlFromEnv(key: string, defaultHours: number): number {
 export async function fetchFinancialDataCached(code: string, signal?: AbortSignal) {
   // 已中止就不必再发起（在途的冷拉由其自身超时收尾，不再级联进 services 层）
   if (signal?.aborted) throw signal.reason ?? new Error('财务数据拉取已中止');
+  const { fetchFinancialData } = await resolveFundamentalFetchers();
   return withQuantCache(
     `financial_${code}`,
     ttlFromEnv('QUANT_FINANCIAL_CACHE_TTL_HOURS', 24),
@@ -54,6 +58,7 @@ export async function fetchQuarterlyFinancialsCached(
   signal?: AbortSignal,
 ) {
   if (signal?.aborted) throw signal.reason ?? new Error('季度财报拉取已中止');
+  const { fetchQuarterlyFinancials } = await resolveFundamentalFetchers();
   return withQuantCache(
     `quarterly_${code}_${limit}`,
     ttlFromEnv('QUANT_QUARTERLY_CACHE_TTL_HOURS', 168),

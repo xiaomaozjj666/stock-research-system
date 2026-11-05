@@ -8,13 +8,20 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import * as fs from 'fs';
 import helmet from 'helmet';
 import * as path from 'path';
-import { startQuantCachePruner } from './quant/quantCache.js';
-import { startDigestScheduler } from './quant/researchDigest.js';
-import { startImprovementScheduler } from './services/improvementScheduler.js';
+import { startQuantCachePruner, stopQuantCachePruner } from './quant/quantCache.js';
+import { startDigestScheduler, stopDigestScheduler } from './quant/researchDigest.js';
+import { fetchFinancialData } from './services/dataFetcher.js';
+import {
+  startImprovementScheduler,
+  stopImprovementScheduler,
+} from './services/improvementScheduler.js';
 import { httpMetricsMiddleware } from './services/metrics.js';
 import { startOutcomeRefresher, stopOutcomeRefresher } from './services/outcomeTracker.js';
+import { fetchQuarterlyFinancials } from './services/quarterlyFinancials.js';
+import { createShutdownHandler, registerScheduler } from './services/schedulerRegistry.js';
 import { loadStockMaster } from './services/stockMaster.js';
 import { configureTracer, expressTracerMiddleware } from './services/telemetry.js';
+import { registerFundamentalFetchers } from './shared/fundamentalFetchers.js';
 import { loadEnv } from './utils/env.js';
 import { errorDetail } from './utils/errorDetail.js';
 import logger from './utils/logger.js';
@@ -40,6 +47,10 @@ import watchlistRouter from './routes/watchlist.js';
 // 启动即校验环境变量（H-04）：非法 PORT / CACHE_TTL_HOURS 等直接快速失败，
 // 避免以错误的默认值静默运行。生产环境关键配置缺失会打 warn 提示。
 loadEnv();
+
+// 依赖倒置装配（打破 quant ↔ services 包级循环）：quant 侧的基本面缓存经
+// shared/fundamentalFetchers 注册表取数，组合根在此显式注入生产实现。
+registerFundamentalFetchers({ fetchFinancialData, fetchQuarterlyFinancials });
 
 export const app = express();
 
@@ -340,49 +351,29 @@ if (process.env.NODE_ENV !== 'test') {
     loadStockMaster().catch((err) =>
       logger.warn('[stockMaster] 预热失败，首次搜索将按需加载', { err: err as Error }),
     );
+    // 后台调度器统一「启动即注册停止函数」：关闭流程经 schedulerRegistry 全量清理，
+    // 新增调度器时只要照此登记，就不会再出现"只停了其中一个"的遗漏。
     // 评级结果定时回填：无人分析时台账也能按期评估，命中率统计不失真
     startOutcomeRefresher();
+    registerScheduler('outcomeRefresher', stopOutcomeRefresher);
     // 量化缓存（K线合并历史 + 基本面）定期清理：此前该目录无清理机制，磁盘无界增长
     startQuantCachePruner();
+    registerScheduler('quantCachePruner', stopQuantCachePruner);
     // 研究简报定时生成：QUANT_DIGEST_INTERVAL_HOURS 控制（默认 0 = 关闭）
     startDigestScheduler();
+    registerScheduler('digestScheduler', stopDigestScheduler);
     // 改进循环周期调度（RSI · L2）：无人值守地按期用历史实验回放调采信判据。
     // IMPROVEMENT_INTERVAL_HOURS 控制（默认 6 小时；0 = 关闭，此时不注册任何定时器）。
     // 首次运行延迟 10 分钟，避开启动预热；单轮失败退避、连续失败自动停止，
     // 全程记日志——判据是被自动改写的东西，必须留下可追溯的痕迹。
     startImprovementScheduler();
+    registerScheduler('improvementScheduler', stopImprovementScheduler);
   });
 
-  // === Graceful Shutdown ===
-  let isShuttingDown = false;
-
-  function gracefulShutdown(signal: string) {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
-
-    logger.info('收到关闭信号，开始优雅关闭', { signal });
-    logger.info('[Shutdown] 等待进行中的请求完成');
-
-    // 停止后台定时任务，避免关闭期间再触发回填
-    stopOutcomeRefresher();
-
-    // 30 秒后强制退出，避免长连接阻塞关闭
-    const forceExit = setTimeout(() => {
-      logger.error('[Shutdown] 30秒超时，强制关闭');
-      process.exit(1);
-    }, 30000);
-
-    // server.close 的回调在所有现有连接关闭后触发
-    server.close((err) => {
-      clearTimeout(forceExit);
-      if (err) {
-        logger.error('[Shutdown] 关闭出错', { err });
-        process.exit(1);
-      }
-      logger.info('[Shutdown] 所有连接已关闭，优雅关闭完成');
-      process.exit(0);
-    });
-  }
+  // === Graceful Shutdown：停全部调度器 → 等连接关闭 → 超时强退（可单测，见 registry） ===
+  const gracefulShutdown = createShutdownHandler({
+    closeServer: (callback) => server.close(callback),
+  });
 
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
