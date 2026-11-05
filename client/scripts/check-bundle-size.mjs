@@ -26,10 +26,12 @@ const DEFAULT_DIST = resolve(scriptDir, '..', 'dist');
  * 各 chunk 的体积预算（单位 kB，按 1000 进制，与 vite 构建日志口径一致）。
  *
  * 基线实测（Vite 8.3.0，2026-09 构建产物）：
- *   echarts-vendor 626.48 / react-vendor 218.97 / index 90.68 /
+ *   echarts-vendor 626.48 / react-vendor 218.97 /
  *   QuantPage 77.66 / index.css 99.63
  *   vendor 50.00 → 57.33（axios 1.20→1.21 进 vendor chunk，PR #37 实测，
  *   2026-11-04 据此把预算 55 放宽到 62）
+ *   index 90.68 → 100.99（API 错误完整携带 requestId/code/retryAfter、
+ *   SSE 解析失败可见化，2026-11-05 据此把预算 100 放宽到 109）
  * 预算值在实测值上留了约 8% 余量：够吸收压缩波动和小改动，又能在体积真的
  * 膨胀时立刻失败。改预算 = 承认一次增长，应该在 PR 里说明原因。
  */
@@ -38,7 +40,7 @@ const CHUNK_BUDGETS_KB = {
   'react-vendor': 240,
   QuantPage: 85,
   vendor: 62,
-  index: 100,
+  index: 109,
 };
 
 /** 名单外的 chunk（例如新页面）一律按这个上限卡：超了就得先拆分再合入 */
