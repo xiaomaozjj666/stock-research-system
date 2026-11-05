@@ -97,6 +97,29 @@ describe('fetchStockInfo', () => {
       .mockResolvedValueOnce({}); // 新浪解析失败
     await expect(fetchStockInfo('600519')).rejects.toThrow(/无法获取股票基本信息/);
   });
+
+  it('东财与新浪的全部行情请求均使用 HTTPS', async () => {
+    const sinaFetch = vi
+      .fn()
+      .mockResolvedValue(new Response('var hq_str_sh600519="贵州茅台,1580.00,...";'));
+    globalThis.fetch = sinaFetch as unknown as typeof fetch;
+    mockFetchJson
+      .mockResolvedValueOnce({ rc: 0, data: null }) // 股票信息主源，转新浪
+      .mockResolvedValueOnce({ success: false, result: { data: [] } }) // 财务主源
+      .mockResolvedValueOnce({ data: { f173: 1e9, f187: 1e8 } }) // 财务 push2 备源
+      .mockResolvedValueOnce({ result: { data: [] } }) // 估值 datacenter
+      .mockResolvedValueOnce({ data: { f43: 150000, f167: 30 } }); // 估值 push2 备源
+
+    await fetchStockInfo('600519');
+    await fetchFinancialData('600519');
+    await fetchValuationData('600519');
+
+    const urls = mockFetchJson.mock.calls.map((call) => String(call[0]));
+    expect(urls).toHaveLength(5);
+    expect(urls.every((url) => url.startsWith('https://'))).toBe(true);
+    expect(urls.filter((url) => url.includes('push2.eastmoney.com'))).toHaveLength(3);
+    expect(String(sinaFetch.mock.calls[0][0])).toMatch(/^https:\/\/hq\.sinajs\.cn\//);
+  });
 });
 
 describe('fetchFinancialData', () => {

@@ -2,7 +2,8 @@
  * LLM Prompt 工具
  * 把结构化财务/估值数据压缩为 LLM 可读摘要，并定义统一的专家输出 schema。
  */
-import type { FinancialData, ValuationData, StockInfo, ExpertOpinion } from '../types.js';
+import { hasEstimatedHistoricalPE, historicalPEPercentile } from '../services/valuationHistory.js';
+import type { ExpertOpinion, FinancialData, StockInfo, ValuationData } from '../types.js';
 
 /** 将财务数据格式化为 LLM 易读的多年序列摘要 */
 export function formatFinancialBrief(financial: FinancialData): string {
@@ -63,10 +64,16 @@ export function formatValuationBrief(valuation: ValuationData): string {
   lines.push(`总市值(亿): ${valuation.marketCap.toFixed(0)}`);
   if (valuation.historicalPE.length > 0) {
     const peArr = valuation.historicalPE.map((h) => h.pe);
-    lines.push(`历史PE(近${peArr.length}年): ${peArr.join('、')}`);
-    const sorted = [...peArr].sort((a, b) => a - b);
-    const pct = (sorted.filter((p) => p <= valuation.pe).length / sorted.length) * 100;
-    lines.push(`当前PE历史分位: ${pct.toFixed(0)}%`);
+    const estimated = hasEstimatedHistoricalPE(valuation);
+    lines.push(
+      `${estimated ? '历史PE估算（仅供展示，不参与分位与评级）' : '历史PE'}(近${peArr.length}年): ${peArr.join('、')}`,
+    );
+    const pct = historicalPEPercentile(valuation);
+    lines.push(
+      `当前PE历史分位: ${pct === null ? '数据不足（真实历史样本少于2个）' : `${pct.toFixed(0)}%`}`,
+    );
+  } else {
+    lines.push('历史PE数据不足: 无真实历史序列，不参与分位与评级');
   }
   if (valuation.peerComparison.length > 0) {
     const peerAvgPE =
@@ -105,7 +112,7 @@ export function formatContext(
 export const EXPERT_OUTPUT_SCHEMA = `请严格返回如下 JSON 结构（不要输出任何其他内容）：
 {
   "arguments": [
-    { "text": "论点描述（一句话）", "confidence": 0到100的整数, "type": "support"或"oppose", "evidenceType": "fact"或"inference"或"hypothesis" }
+    { "text": "论点描述（一句话）", "confidence": 0到100的整数, "type": "support"或"oppose", "evidenceType": "fact"或"inference"或"hypothesis"或"assumption" }
   ],
   "overallSentiment": "bullish"或"neutral"或"bearish",
   "confidence": 0到100的整数,
@@ -133,7 +140,7 @@ export function normalizeExpertOpinion(raw: {
     : 'neutral';
 
   const validTypes = ['support', 'oppose'] as const;
-  const validEvidence = ['fact', 'inference', 'hypothesis'] as const;
+  const validEvidence = ['fact', 'inference', 'hypothesis', 'assumption'] as const;
   const arguments_ = Array.isArray(raw.arguments)
     ? raw.arguments
         .map((a) => {
@@ -144,7 +151,7 @@ export function normalizeExpertOpinion(raw: {
           const evidenceType = validEvidence.includes(
             arg.evidenceType as (typeof validEvidence)[number],
           )
-            ? (arg.evidenceType as 'fact' | 'inference' | 'hypothesis')
+            ? (arg.evidenceType as 'fact' | 'inference' | 'hypothesis' | 'assumption')
             : 'inference';
           return {
             text: String(arg.text || ''),

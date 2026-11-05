@@ -2,10 +2,10 @@ import { memo } from 'react';
 // 图表渲染统一走自研轻量封装 EChart（替代 echarts-for-react@3.0.7：
 // 该版本被 npm 标记 "published in error"，生产构建下 default 互操作会得到模块对象，
 // 导致 "Element type is invalid: got object" 渲染崩溃）
-import EChart from './EChart';
-import PriceTrendChart from './PriceTrendChart';
 import { useReducedMotion } from '../hooks/useReducedMotion';
 import type { PricePoint } from '../types';
+import EChart from './EChart';
+import PriceTrendChart from './PriceTrendChart';
 
 export interface StockData {
   stock_name?: string;
@@ -20,7 +20,7 @@ export interface StockData {
   };
   valuation?: {
     pe?: number;
-    historicalPE?: { year: string; pe: number }[];
+    historicalPE?: { year: string; pe: number; isEstimated?: boolean }[];
     peerComparison?: { name: string; code: string; pe: number }[];
   };
   score_detail?: {
@@ -420,6 +420,11 @@ function ChartsSection({ data }: ChartsSectionProps) {
         {hasPeData && (
           <div className="chart-card">
             <h4>历史 PE 走势</h4>
+            {historicalPE.some((point) => point.isEstimated === true) && (
+              <p role="note" className="chart-data-disclosure">
+                含估算数据：由当前 PE 反推，仅用于展示，不是真实历史行情，不参与分位与评级。
+              </p>
+            )}
             <EChart option={peChart} style={{ height: 280 }} />
           </div>
         )}

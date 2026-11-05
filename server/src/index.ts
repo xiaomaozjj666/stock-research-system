@@ -2,40 +2,40 @@
  * 服务入口（组合根）：装配 app 级中间件、挂载路由模块、静态托管与优雅关闭。
  * 业务路由已拆到 routes/ 各模块，本文件不再承载具体接口逻辑。
  */
-import 'dotenv/config';
-import { loadEnv } from './utils/env.js';
-import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
+import 'dotenv/config';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import * as fs from 'fs';
+import helmet from 'helmet';
 import * as path from 'path';
-import { loadStockMaster } from './services/stockMaster.js';
-import { startOutcomeRefresher, stopOutcomeRefresher } from './services/outcomeTracker.js';
-import { startImprovementScheduler } from './services/improvementScheduler.js';
 import { startQuantCachePruner } from './quant/quantCache.js';
 import { startDigestScheduler } from './quant/researchDigest.js';
-import { configureTracer, expressTracerMiddleware } from './services/telemetry.js';
+import { startImprovementScheduler } from './services/improvementScheduler.js';
 import { httpMetricsMiddleware } from './services/metrics.js';
+import { startOutcomeRefresher, stopOutcomeRefresher } from './services/outcomeTracker.js';
+import { loadStockMaster } from './services/stockMaster.js';
+import { configureTracer, expressTracerMiddleware } from './services/telemetry.js';
+import { loadEnv } from './utils/env.js';
+import { errorDetail } from './utils/errorDetail.js';
 import logger from './utils/logger.js';
 import { sanitizeUrlForLog } from './utils/logSanitize.js';
-import { errorDetail } from './utils/errorDetail.js';
 
 // 路由模块
-import healthRouter from './routes/health.js';
-import analysisRouter from './routes/analysis.js';
-import marketRouter from './routes/market.js';
-import quantRouter from './routes/quant.js';
-import watchlistRouter from './routes/watchlist.js';
-import chatRouter from './routes/chat.js';
-import paperRouter from './routes/paper.js';
-import thesisRouter from './routes/thesis.js';
-import auditRouter from './routes/audit.js';
-import intlRouter from './routes/intl.js';
-import documentsRouter, { INGEST_PATH } from './routes/documents.js';
-import costRouter from './routes/cost.js';
-import autonomousRouter from './routes/autonomous.js';
-import improvementRouter from './routes/improvement.js';
 import { apiAuthGuard } from './middleware.js';
+import analysisRouter from './routes/analysis.js';
+import auditRouter from './routes/audit.js';
+import autonomousRouter from './routes/autonomous.js';
+import chatRouter from './routes/chat.js';
+import costRouter from './routes/cost.js';
+import documentsRouter, { INGEST_PATH } from './routes/documents.js';
+import healthRouter from './routes/health.js';
+import improvementRouter from './routes/improvement.js';
+import intlRouter from './routes/intl.js';
+import marketRouter from './routes/market.js';
+import paperRouter from './routes/paper.js';
+import quantRouter from './routes/quant.js';
+import thesisRouter from './routes/thesis.js';
+import watchlistRouter from './routes/watchlist.js';
 
 // 启动即校验环境变量（H-04）：非法 PORT / CACHE_TTL_HOURS 等直接快速失败，
 // 避免以错误的默认值静默运行。生产环境关键配置缺失会打 warn 提示。
@@ -64,18 +64,31 @@ if (trustProxyRaw) {
   logger.info('[env] trust proxy 已配置', { trustProxy });
 }
 
-// === CORS 配置：生产环境限制来源，开发环境允许所有 ===
+// === CORS 配置：所有环境均使用白名单，开发环境仅额外放行本机来源 ===
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
   : null;
+
+/** 开发白名单：仅本机 HTTP(S) 来源，不能用 origin:true 反射任意恶意网页。 */
+export function isDevelopmentOriginAllowed(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+    );
+  } catch {
+    return false;
+  }
+}
 
 app.use(
   // 函数形式：cors 会把 req 传入，便于判断同源（SPA 由本服务托管时浏览器会带自己的 Origin）
   cors((req, callback) => {
     const baseOptions = { credentials: true, maxAge: 86400 }; // 预检请求缓存 24 小时
     const origin = req.headers.origin;
-    // 开发环境或无 origin（如 curl/测试）时允许
-    if (process.env.NODE_ENV !== 'production' || !origin) {
+    // 非浏览器客户端通常无 Origin，不涉及跨域网页读写，保持 curl/测试可用。
+    if (!origin) {
       callback(null, { ...baseOptions, origin: true });
       return;
     }
@@ -87,10 +100,12 @@ app.use(
         return;
       }
     } catch {
-      // origin 非法，继续走白名单
+      // origin 非法，继续走白名单并最终拒绝
     }
-    // 生产环境：白名单校验
-    if (allowedOrigins && allowedOrigins.includes(origin)) {
+    const explicitlyAllowed = allowedOrigins?.includes(origin) === true;
+    const developmentAllowed =
+      process.env.NODE_ENV !== 'production' && isDevelopmentOriginAllowed(origin);
+    if (explicitlyAllowed || developmentAllowed) {
       callback(null, { ...baseOptions, origin: true });
     } else {
       callback(new Error('Not allowed by CORS'));

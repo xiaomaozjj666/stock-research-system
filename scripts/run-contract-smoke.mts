@@ -9,18 +9,18 @@
  * 端口用 3477（避开开发常用的 3001/3100）；PORT 环境变量会被 server 读取。
  */
 import { spawn } from 'node:child_process';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 const PORT = Number(process.env.SMOKE_PORT ?? 3477);
 const BASE = `http://127.0.0.1:${PORT}`;
 const repoRoot = resolve(import.meta.dirname ?? '.', '..');
 
 function fail(msg: string): never {
-  console.error(`[smoke:contract] ${msg}`);
-  process.exit(1);
+  // 通过异常进入顶层 catch/finally；process.exit 会跳过服务进程清理并留下孤儿。
+  throw new Error(msg);
 }
 
 // 1) 代理必须绕过：本机设了 HTTP_PROXY 但没有 NO_PROXY，127.0.0.1 走代理会 502
@@ -118,7 +118,7 @@ async function waitReady(timeoutMs = 30_000): Promise<boolean> {
   return false;
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<number> {
   if (!(await waitReady())) {
     fail(`服务在 30s 内未就绪。最后日志：\n${serverLog.slice(-1200)}`);
   }
@@ -128,8 +128,10 @@ async function main(): Promise<void> {
     env: { ...process.env, SMOKE_BASE: BASE, SMOKE_HISTORY_ID },
     stdio: 'inherit',
   });
-  const code = await new Promise<number>((r) => smoke.on('exit', (c) => r(c ?? 1)));
-  process.exit(code);
+  return new Promise<number>((resolve) => {
+    smoke.once('error', () => resolve(1));
+    smoke.once('exit', (code) => resolve(code ?? 1));
+  });
 }
 
 /**
@@ -154,11 +156,29 @@ async function buildFirst(): Promise<void> {
   if (code !== 0) fail('server 构建失败，冒烟中止（避免拿旧产物校验）');
 }
 
+/** 所有成功/失败路径统一在这里回收服务，且等待退出而不是仅发一个信号就离开。 */
+async function stopServer(): Promise<void> {
+  const child = server;
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  child.kill();
+  await Promise.race([exited, sleep(5000)]);
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGKILL');
+    await Promise.race([exited, sleep(1000)]);
+  }
+}
+
+let exitCode = 1;
 try {
   // 顺序很重要：先构建，再起服务。构建会清 dist，所以不能先起进程。
   await buildFirst();
   startServer();
-  await main();
+  exitCode = await main();
+} catch (error) {
+  console.error(`[smoke:contract] ${error instanceof Error ? error.message : String(error)}`);
+  exitCode = 1;
 } finally {
-  server?.kill();
+  await stopServer();
 }
+process.exitCode = exitCode;

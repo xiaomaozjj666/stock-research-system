@@ -1,13 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { FinancialData, ValuationData, StockInfo } from '../../types.js';
-import { fundamentalExpert } from '../experts/fundamentalExpert.js';
-import { valuationExpert } from '../experts/valuationExpert.js';
-import { industryExpert, type IndustryExpertResult } from '../experts/industryExpert.js';
-import { riskExpert } from '../experts/riskExpert.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FinancialData, StockInfo, ValuationData } from '../../types.js';
 import { capitalFlowExpert } from '../experts/capitalFlowExpert.js';
-import { policyExpert } from '../experts/policyExpert.js';
+import { fundamentalExpert } from '../experts/fundamentalExpert.js';
 import { hotMoneyExpert } from '../experts/hotMoneyExpert.js';
+import { industryExpert, type IndustryExpertResult } from '../experts/industryExpert.js';
+import { policyExpert } from '../experts/policyExpert.js';
+import { riskExpert } from '../experts/riskExpert.js';
 import { unlockExpert } from '../experts/unlockExpert.js';
+import { valuationExpert } from '../experts/valuationExpert.js';
 
 function makeFinancial(overrides: Partial<FinancialData> = {}): FinancialData {
   return {
@@ -115,6 +115,41 @@ describe('专家规则引擎（LLM 不可用时的降级路径）', () => {
   it('valuationExpert 高 PE 偏谨慎', async () => {
     const op = await valuationExpert(makeFinancial(), makeValuation({ pe: 80 }), info);
     assertValidOpinion(op);
+  });
+
+  it('valuationExpert 历史 PE 为空时返回中性数据不足结果而非 NaN/无条件利好', async () => {
+    const op = await valuationExpert(
+      makeFinancial(),
+      makeValuation({ historicalPE: [], peerComparison: [] }),
+      info,
+    );
+    assertValidOpinion(op);
+    expect(op.overallSentiment).toBe('neutral');
+    expect(op.confidence).toBeLessThanOrEqual(40);
+    expect(op.arguments[0].text).toContain('历史PE数据不足');
+    expect(op.arguments[0].evidenceType).toBe('assumption');
+    expect(JSON.stringify(op)).not.toContain('NaN');
+    expect(JSON.stringify(op)).not.toContain('安全边际较高');
+    expect(JSON.stringify(op)).not.toContain('低于1.0');
+  });
+
+  it('valuationExpert 估算历史序列明确披露且不得生成分位结论', async () => {
+    const op = await valuationExpert(
+      makeFinancial(),
+      makeValuation({
+        historicalPE: [
+          { year: '2024', pe: 50, isEstimated: true },
+          { year: '2025', pe: 40, isEstimated: true },
+          { year: '2026', pe: 30, isEstimated: false },
+        ],
+      }),
+      info,
+    );
+    expect(op.overallSentiment).toBe('neutral');
+    expect(op.confidence).toBeLessThanOrEqual(40);
+    expect(op.arguments[0].text).toContain('估算值');
+    expect(op.arguments[0].text).toContain('不参与分位与评级');
+    expect(op.arguments[0].evidenceType).toBe('assumption');
   });
 
   it('industryExpert 返回 0-20 区间的行业景气度评分', async () => {

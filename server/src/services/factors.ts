@@ -17,6 +17,7 @@ import {
   safeDiv,
   scoreDebtRisk,
 } from './scoringBasis.js';
+import { actualHistoricalPEValues, historicalPEPercentile } from './valuationHistory.js';
 
 export type FactorDirection = 1 | -1; // 1=越高越好, -1=越低越好
 export type FactorDimension = 'profit' | 'growth' | 'valuation' | 'industry' | 'risk';
@@ -128,13 +129,9 @@ export function extractFactors(
   // H-1: PE 无效（亏损股 pe=0/负）时估值类因子一律中性，不得反向加分。
   // 旧逻辑 pePercentile=safeDiv(0,0)*100=0 → 亏损股被判「历史最低估」、估值维度得分最高。
   const peValid = valuation.pe > 0;
-  const peValues = valuation.historicalPE.map((h) => h.pe).sort((a, b) => a - b);
-  // 空 historicalPE 的口径与 analysisPipeline 统一为 50（中性）：
-  // 「没有历史数据」不代表「处于历史最低位」。
-  const pePercentile =
-    peValid && peValues.length
-      ? (peValues.filter((p) => p <= valuation.pe).length / peValues.length) * 100
-      : 50;
+  // 估算历史 PE 只用于展示，不得进入估值因子；真实数据不足时全部回落中性。
+  const peValues = actualHistoricalPEValues(valuation);
+  const pePercentile = historicalPEPercentile(valuation) ?? 50;
 
   // 同业 PE 只统计有效值（亏损同业 pe=0/负），否则 peerAvgPE 被无效值拉低，
   // 「本股 PE / 同业均值」会反向高估本股相对便宜程度。
@@ -152,7 +149,7 @@ export function extractFactors(
   // PE 无效时 PEG 无意义（0/正增速=0 反向最优），同样回落 neutral=1
   const peg = peValid && latestProfitGrowth > 0 ? safeDiv(valuation.pe, latestProfitGrowth) : 1;
   const peSorted = [...peValues];
-  const peMedian = peSorted.length ? peSorted[Math.floor(peSorted.length / 2)] : valuation.pe;
+  const peMedian = peSorted.length >= 2 ? peSorted[Math.floor(peSorted.length / 2)] : valuation.pe;
   const peMomentum = peMedian > 0 ? (peMedian - valuation.pe) / peMedian : 0;
 
   // —— 行业景气 ——

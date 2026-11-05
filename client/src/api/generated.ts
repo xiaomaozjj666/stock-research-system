@@ -581,7 +581,7 @@ export type ExpertOpinion = {
     confidence: number;
     type: 'support' | 'oppose';
     /** 论据性质 */
-    evidenceType?: 'fact' | 'inference' | 'hypothesis';
+    evidenceType?: 'fact' | 'inference' | 'hypothesis' | 'assumption';
   }[];
   overallSentiment: 'bullish' | 'neutral' | 'bearish';
   confidence: number;

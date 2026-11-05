@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { buildReflectionNotes, extractOpposeRisks } from '../analysisReflection.js';
+import { describe, expect, it } from 'vitest';
 import type { ExpertOpinion } from '../../types.js';
+import { buildReflectionNotes, extractOpposeRisks } from '../analysisReflection.js';
 
 /**
  * 自省阈值与动态风险提取的行为契约。
@@ -130,13 +130,20 @@ describe('buildReflectionNotes — 第二层：逻辑闭环', () => {
     expect(note(notes, '【逻辑闭环②】')).toContain('未知风险');
   });
 
-  it('闭环③三个分位区间给出不同措辞', () => {
+  it('闭环③三个分位区间给出不同措辞，数据不足不得伪装成合理区间', () => {
     const low = buildReflectionNotes({ ...baseInput, pePercentile: 10 });
     const mid = buildReflectionNotes({ ...baseInput, pePercentile: 50 });
     const high = buildReflectionNotes({ ...baseInput, pePercentile: 95 });
+    const insufficient = buildReflectionNotes({
+      ...baseInput,
+      pePercentile: 50,
+      peDataAvailable: false,
+    });
     expect(note(low, '【逻辑闭环③】')).toContain('充分反映悲观预期');
     expect(note(mid, '【逻辑闭环③】')).toContain('合理区间');
     expect(note(high, '【逻辑闭环③】')).toContain('充分定价');
+    expect(note(insufficient, '【逻辑闭环③】')).toContain('真实历史PE数据不足');
+    expect(note(insufficient, '【逻辑闭环③】')).not.toContain('合理区间');
   });
 
   it('闭环④行业看空优先于估值看空', () => {

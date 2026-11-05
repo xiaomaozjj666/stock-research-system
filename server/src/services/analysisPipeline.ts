@@ -46,6 +46,7 @@ import { safeDiv } from './safeDiv.js';
 import { generateScenarios } from './scenarioEngine.js';
 import { calculateScores } from './scoreEngine.js';
 import { generateStrategyList } from './strategyListEngine.js';
+import { historicalPEPercentile } from './valuationHistory.js';
 
 /** 特异波动经验基准（%）：无残差收益序列时使用（A 股中位单股波动水平） */
 const SPECIFIC_RISK_BASELINE = 25;
@@ -427,19 +428,20 @@ async function executeAnalysis(
   // H-1: 两条修正路径都不可用（亏损股，eps≤0 且净利润≤0）时保持 dataFetcher 的
   // 「PE 为负/不可用」标注（pe=0 + peUnavailable）——下游跳过估值分位判定并显式披露。
 
-  // 修正历史PE估算，基于修正后的当前PE
-  // 说明：免费API无法获取真实历史PE，此处为确定性估算。
-  // 采用"历史中枢略高于当前PE"的假设（A股估值中枢长期下移，历史平均通常高于当前），
-  // 最新年份使用真实当前PE，历史年份围绕中枢波动，使 pePercentile 能反映当前估值相对历史的位置。
-  // 估算系数（确定性经验值，调整会影响 pePercentile 的分布）：
-  const HISTORICAL_PE_CENTER_RATIO = 1.18; // 历史中枢 = 当前PE × 1.18（中枢略高于当前）
-  const HISTORICAL_PE_YEARS = 5; // 回溯估算的历史年份数（不含当前年）
-  const HISTORICAL_PE_TREND_SLOPE = 0.02; // 每年轻微趋势系数（越早的年份估值越高）
-  const HISTORICAL_PE_NOISE_AMPLITUDE = 0.25; // 围绕中枢的确定性波动幅度（±25%）
-  if (valuation.pe > 0) {
+  // 免费 API 无真实历史 PE 时，仅生成带 isEstimated 标识的展示序列。
+  // 这些点由当前 PE 反推，绝不能参与历史分位、评分或评级；至少两个真实观测才保留为历史序列。
+  const HISTORICAL_PE_CENTER_RATIO = 1.18;
+  const HISTORICAL_PE_YEARS = 5;
+  const HISTORICAL_PE_TREND_SLOPE = 0.02;
+  const HISTORICAL_PE_NOISE_AMPLITUDE = 0.25;
+  const hasActualHistoricalPE =
+    valuation.historicalPE.filter(
+      (point) => point.isEstimated !== true && Number.isFinite(point.pe) && point.pe > 0,
+    ).length >= 2;
+  if (valuation.pe > 0 && !hasActualHistoricalPE) {
     const currentYear = new Date().getFullYear();
     const seed = parseInt(stockCode.slice(-3)) || 42;
-    const center = valuation.pe * HISTORICAL_PE_CENTER_RATIO; // 历史中枢：略高于当前
+    const center = valuation.pe * HISTORICAL_PE_CENTER_RATIO;
     const historicalPE: { year: string; pe: number; isEstimated: boolean }[] = [];
     for (let i = HISTORICAL_PE_YEARS; i >= 0; i--) {
       const year = (currentYear - i).toString();
@@ -447,8 +449,8 @@ async function executeAnalysis(
         historicalPE.push({ year, pe: valuation.pe, isEstimated: false });
       } else {
         const hash = ((seed * (i + 1) * 2654435761) >>> 0) % 1000;
-        const variation = (hash - 500) / 500; // -1 ~ 1
-        const trend = 1 + (i - HISTORICAL_PE_YEARS / 2) * HISTORICAL_PE_TREND_SLOPE; // 轻微时间趋势
+        const variation = (hash - 500) / 500;
+        const trend = 1 + (i - HISTORICAL_PE_YEARS / 2) * HISTORICAL_PE_TREND_SLOPE;
         const estimatedPe =
           Math.round(center * trend * (1 + variation * HISTORICAL_PE_NOISE_AMPLITUDE) * 10) / 10;
         historicalPE.push({ year, pe: Math.max(estimatedPe, 1), isEstimated: true });
@@ -647,15 +649,9 @@ async function executeAnalysis(
       ? Math.max(...financial.grossMargin) - Math.min(...financial.grossMargin)
       : 0;
 
-  // PE 历史分位
-  // H-1: PE 无效（亏损，pe=0/负）或无历史序列时不做分位判定，取中性 50——
-  // 旧逻辑 safeDiv(0,0)*100=0 会让亏损股被判「历史最低估」。
-  // 空 historicalPE 口径与 factors.ts 统一为 50（中性），两处不再一个判 0 一个判 50。
-  const peValues = valuation.historicalPE.map((h) => h.pe).sort((a, b) => a - b);
-  const pePercentile =
-    valuation.pe > 0 && peValues.length > 0
-      ? safeDiv(peValues.filter((p) => p <= valuation.pe).length, peValues.length) * 100
-      : 50;
+  // 仅真实历史 PE 参与分位；估算序列/空数组统一中性降级，且估值水平显式披露数据不足。
+  const actualPEPercentile = historicalPEPercentile(valuation);
+  const pePercentile = actualPEPercentile ?? 50;
 
   // 4. 双层自省
   // 文案与阈值已抽到 services/analysisReflection.ts：那里是无 IO 的纯函数，
@@ -668,6 +664,7 @@ async function executeAnalysis(
     cashFlowRatio,
     grossMarginRange,
     pePercentile,
+    peDataAvailable: actualPEPercentile !== null,
     degradedExperts,
     accuracySummary,
     expertTotal: EXPERT_TOTAL,
@@ -706,6 +703,8 @@ async function executeAnalysis(
   let valuationLevel: string;
   if (valuation.pe <= 0) {
     valuationLevel = '亏损（PE 为负，估值分位不可用）';
+  } else if (actualPEPercentile === null) {
+    valuationLevel = '数据不足（真实历史PE不足，分位不可用）';
   } else if (pePercentile <= 20) valuationLevel = '历史低估';
   else if (pePercentile <= 40) valuationLevel = '偏低估';
   else if (pePercentile <= 60) valuationLevel = '合理';

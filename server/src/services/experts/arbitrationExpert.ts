@@ -1,17 +1,18 @@
-import type {
-  FinancialData,
-  ValuationData,
-  StockInfo,
-  ExpertOpinion,
-  ControversyPoint,
-} from '../../types.js';
-import { safeDiv } from '../safeDiv.js';
-import { isLLMAvailable, chatJSON, type ChatMessage } from '../../llm/index.js';
-import { formatContext } from '../../llm/prompts.js';
 import { markDegraded } from '../../llm/expertRunner.js';
+import { chatJSON, isLLMAvailable, type ChatMessage } from '../../llm/index.js';
+import { formatContext } from '../../llm/prompts.js';
+import type {
+  ControversyPoint,
+  ExpertDegradeReason,
+  ExpertOpinion,
+  FinancialData,
+  StockInfo,
+  ValuationData,
+} from '../../types.js';
 import { isQueueTimeoutError } from '../../utils/limitGate.js';
-import type { ExpertDegradeReason } from '../../types.js';
 import logger from '../../utils/logger.js';
+import { safeDiv } from '../safeDiv.js';
+import { historicalPEPercentile } from '../valuationHistory.js';
 
 export interface ArbitrationInput {
   financial: FinancialData;
@@ -77,11 +78,9 @@ function arbitrationExpertRule(input: ArbitrationInput): {
   }
 
   // === 预计算公共指标 ===
-  const peValues = valuation.historicalPE.map((h) => h.pe).sort((a, b) => a - b);
-  const pePercentile =
-    peValues.length > 0
-      ? safeDiv(peValues.filter((p) => p <= valuation.pe).length, peValues.length) * 100
-      : 50;
+  const actualPEPercentile = historicalPEPercentile(valuation);
+  const hasPEHistory = actualPEPercentile !== null;
+  const pePercentile = actualPEPercentile ?? 50;
 
   const latestGrowth =
     financial.netProfit[n - 2] !== 0
@@ -129,12 +128,14 @@ function arbitrationExpertRule(input: ArbitrationInput): {
   const controversies: ControversyPoint[] = [];
 
   // === 争议1：估值水平是否合理 ===
-  const peSafeMargin = pePercentile <= 30;
-  const peHighRisk = pePercentile >= 70;
-  const peMidRange = !peSafeMargin && !peHighRisk;
+  const peSafeMargin = hasPEHistory && pePercentile <= 30;
+  const peHighRisk = hasPEHistory && pePercentile >= 70;
+  const peMidRange = hasPEHistory && !peSafeMargin && !peHighRisk;
 
   let bullValuation: string;
-  if (peSafeMargin) {
+  if (!hasPEHistory) {
+    bullValuation = `当前PE ${valuation.pe}x缺少真实历史序列，不能据此主张历史低估或安全边际。`;
+  } else if (peSafeMargin) {
     bullValuation = `PE ${valuation.pe}x处于历史${pePercentile.toFixed(0)}%分位，估值已充分反映悲观预期，安全边际较高。`;
   } else if (peMidRange) {
     bullValuation = `PE ${valuation.pe}x处于合理区间，估值与基本面匹配度尚可。`;
@@ -143,7 +144,9 @@ function arbitrationExpertRule(input: ArbitrationInput): {
   }
 
   let bearValuation: string;
-  if (peHighRisk) {
+  if (!hasPEHistory) {
+    bearValuation = '真实历史PE数据不足，无法排除当前估值处于历史高位的风险。';
+  } else if (peHighRisk) {
     bearValuation = `PE ${valuation.pe}x处于历史${pePercentile.toFixed(0)}%分位高位，估值泡沫风险不容忽视。`;
   } else if (hasPeerData) {
     bearValuation = `${info.industry}同业平均PE仅${peerAvgPE.toFixed(1)}x，估值中枢可能进一步下移。`;
@@ -151,7 +154,9 @@ function arbitrationExpertRule(input: ArbitrationInput): {
     bearValuation = `${info.industry}行业估值中枢可能下移，当前未必是底。`;
   }
 
-  let arbValuation = `PE历史分位${pePercentile.toFixed(0)}%，${peSafeMargin ? '具备一定安全边际' : peHighRisk ? '估值偏高需注意风险' : '估值处于合理区间'}。`;
+  let arbValuation = hasPEHistory
+    ? `PE历史分位${pePercentile.toFixed(0)}%，${peSafeMargin ? '具备一定安全边际' : peHighRisk ? '估值偏高需注意风险' : '估值处于合理区间'}。`
+    : '历史PE数据不足，估值分位与安全边际暂不可判定。';
   if (hasPeerData) {
     arbValuation +=
       valuation.pe > peerAvgPE
@@ -164,7 +169,7 @@ function arbitrationExpertRule(input: ArbitrationInput): {
     bullishView: bullValuation,
     bearishView: bearValuation,
     arbitration: arbValuation,
-    confidence: Math.round(60 + Math.abs(50 - pePercentile) * 0.2),
+    confidence: hasPEHistory ? Math.round(60 + Math.abs(50 - pePercentile) * 0.2) : 25,
   });
 
   // === 争议2：盈利增长可持续性 ===
@@ -372,7 +377,7 @@ const ARBITRATION_SCHEMA = `请严格返回如下 JSON 结构（不要输出任�
     { "topic": "争议议题", "bullishView": "看多观点", "bearishView": "看空观点", "arbitration": "仲裁结论", "confidence": 0到100的整数 }
   ],
   "finalOpinion": {
-    "arguments": [{ "text": "论点", "confidence": 0-100, "type": "support"或"oppose", "evidenceType": "fact"或"inference"或"hypothesis" }],
+    "arguments": [{ "text": "论点", "confidence": 0-100, "type": "support"或"oppose", "evidenceType": "fact"或"inference"或"hypothesis"或"assumption" }],
     "overallSentiment": "bullish"或"neutral"或"bearish",
     "confidence": 0-100,
     "keyPoints": ["要点"]
@@ -442,7 +447,7 @@ function normalizeArbitration(raw: RawArbitration): {
   };
   const validSentiments = ['bullish', 'neutral', 'bearish'] as const;
   const validTypes = ['support', 'oppose'] as const;
-  const validEvidence = ['fact', 'inference', 'hypothesis'] as const;
+  const validEvidence = ['fact', 'inference', 'hypothesis', 'assumption'] as const;
 
   const controversies: ControversyPoint[] = Array.isArray(raw.controversies)
     ? raw.controversies
@@ -471,7 +476,7 @@ function normalizeArbitration(raw: RawArbitration): {
               ? (arg.type as 'support' | 'oppose')
               : 'support',
             evidenceType: validEvidence.includes(arg.evidenceType as (typeof validEvidence)[number])
-              ? (arg.evidenceType as 'fact' | 'inference' | 'hypothesis')
+              ? (arg.evidenceType as 'fact' | 'inference' | 'hypothesis' | 'assumption')
               : 'inference',
           };
         })

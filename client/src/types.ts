@@ -19,59 +19,59 @@
 // 只写后者是不够的：`export … from` 只做转发，不把名字引入本模块作用域，
 // 本文件内部引用 NewsSignal / StrategyRecommendation 会报 TS2304。
 import type {
+  AnalysisResult,
+  AuditEntry,
   CompareResponse,
-  FinancialData,
-  ValuationData,
+  ConsensusSnapshot,
   DataSource,
   ExpertOpinion,
-  ScenarioResult,
-  StrategyRecommendation,
-  NewsSignal,
-  WatchlistNewsBacktestReport,
-  WatchlistAlert,
-  WatchlistMonitorResult,
-  StockPoolItem,
-  AnalysisResult,
-  HistorySummary,
+  FinancialData,
   HistoryItem,
-  PaperPosition,
-  PaperOrder,
-  PaperEquityPoint,
-  PaperPortfolio,
-  PaperStats,
-  AuditEntry,
+  HistorySummary,
   IntlFundamentals,
   IntlFundamentalsResult,
-  ConsensusSnapshot,
+  NewsSignal,
+  PaperEquityPoint,
+  PaperOrder,
+  PaperPortfolio,
+  PaperPosition,
+  PaperStats,
+  ScenarioResult,
+  StockPoolItem,
+  StrategyRecommendation,
+  ValuationData,
+  WatchlistAlert,
+  WatchlistMonitorResult,
+  WatchlistNewsBacktestReport,
 } from './api/generated';
 
 // 保持既有公共面：全项目此前从 '../types' 导入这些名字，改成 import 后必须原样再导出，
 // 否则 40+ 个引用点会一起断（而且断得很难看出是这里引起的）。
 export type {
+  AnalysisResult,
+  AuditEntry,
   CompareResponse,
-  FinancialData,
-  ValuationData,
+  ConsensusSnapshot,
   DataSource,
   ExpertOpinion,
-  ScenarioResult,
-  StrategyRecommendation,
-  NewsSignal,
-  WatchlistNewsBacktestReport,
-  WatchlistAlert,
-  WatchlistMonitorResult,
-  StockPoolItem,
-  AnalysisResult,
-  HistorySummary,
+  FinancialData,
   HistoryItem,
-  PaperPosition,
-  PaperOrder,
-  PaperEquityPoint,
-  PaperPortfolio,
-  PaperStats,
-  AuditEntry,
+  HistorySummary,
   IntlFundamentals,
   IntlFundamentalsResult,
-  ConsensusSnapshot,
+  NewsSignal,
+  PaperEquityPoint,
+  PaperOrder,
+  PaperPortfolio,
+  PaperPosition,
+  PaperStats,
+  ScenarioResult,
+  StockPoolItem,
+  StrategyRecommendation,
+  ValuationData,
+  WatchlistAlert,
+  WatchlistMonitorResult,
+  WatchlistNewsBacktestReport,
 };
 
 // 数据质量标记（server/src/types.ts 的 DataQualityFlags：两个字段都是必填）
@@ -110,7 +110,7 @@ export interface ExpertArgument {
   text: string;
   confidence: number;
   type: 'support' | 'oppose';
-  evidenceType?: 'fact' | 'inference' | 'hypothesis';
+  evidenceType?: 'fact' | 'inference' | 'hypothesis' | 'assumption';
 }
 
 // 专家观点

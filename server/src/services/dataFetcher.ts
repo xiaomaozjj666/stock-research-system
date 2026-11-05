@@ -37,7 +37,7 @@ async function fetchTextWithTimeout(
 async function fetchStockInfoFromEastMoney(code: string): Promise<StockInfo | null> {
   try {
     const secid = getSecId(code);
-    const url = `http://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f57,f58,f127,f162,f173,f187,f188,f190,f191,f192,f193&ut=fa5fd1943c7b386f172d6893dbbd1`;
+    const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f57,f58,f127,f162,f173,f187,f188,f190,f191,f192,f193&ut=fa5fd1943c7b386f172d6893dbbd1`;
     const data = (await fetchJsonWithTimeout(url)) as {
       rc?: number;
       data?: Record<string, unknown>;
@@ -64,7 +64,7 @@ async function fetchStockInfoFromEastMoney(code: string): Promise<StockInfo | nu
 async function fetchStockInfoFromSina(code: string): Promise<StockInfo | null> {
   try {
     const prefix = code.startsWith('6') ? 'sh' : 'sz';
-    const url = `http://hq.sinajs.cn/list=${prefix}${code}`;
+    const url = `https://hq.sinajs.cn/list=${prefix}${code}`;
     // 新浪行情接口对无 Referer 的请求返回 403（防盗链）：必须携带其站点 Referer
     const text = await fetchTextWithTimeout(url, 10000, {
       Referer: 'https://finance.sina.com.cn',
@@ -222,7 +222,7 @@ async function fetchFinancialFromEastMoney(code: string): Promise<FinancialData 
 async function fetchFinancialFallback(code: string): Promise<FinancialData | null> {
   try {
     const secid = getSecId(code);
-    const url = `http://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f57,f58,f162,f167,f173,f187,f188,f190,f191,f192,f193&ut=fa5fd1943c7b386f172d6893dbbd1`;
+    const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f57,f58,f162,f167,f173,f187,f188,f190,f191,f192,f193&ut=fa5fd1943c7b386f172d6893dbbd1`;
     const data = (await fetchJsonWithTimeout(url)) as { data?: Record<string, unknown> } | null;
 
     if (!data?.data) return null;
@@ -282,7 +282,7 @@ export async function fetchFinancialData(code: string): Promise<FinancialData> {
 async function fetchValuationFromEastMoney(code: string): Promise<ValuationData | null> {
   try {
     const secid = getSecId(code);
-    const url = `http://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f55,f57,f58,f116,f117,f162,f163,f164,f167,f170,f171,f173,f183,f184,f185,f186,f187,f188,f190,f191,f192,f193,f292&ut=fa5fd1943c7b386f172d6893dbbd1`;
+    const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f55,f57,f58,f116,f117,f162,f163,f164,f167,f170,f171,f173,f183,f184,f185,f186,f187,f188,f190,f191,f192,f193,f292&ut=fa5fd1943c7b386f172d6893dbbd1`;
     const data = (await fetchJsonWithTimeout(url)) as { data?: Record<string, unknown> } | null;
 
     if (!data?.data) return null;

@@ -1,5 +1,4 @@
-import type { ExpertOpinion } from '../types.js';
-import type { RatingAccuracy } from '../types.js';
+import type { ExpertOpinion, RatingAccuracy } from '../types.js';
 
 /**
  * 分析结论的「双层自省 + 逻辑闭环」文案生成。
@@ -30,8 +29,10 @@ export interface ReflectionInput {
   cashFlowRatio: number;
   /** 毛利率极差（百分点） */
   grossMarginRange: number;
-  /** 当前 PE 在历史区间中的分位（0~100） */
+  /** 当前 PE 在历史区间中的分位（0~100）；无真实数据时调用方传中性占位 50 */
   pePercentile: number;
+  /** false = 真实历史样本不足，禁止把中性占位分位描述为“合理区间”；缺省兼容既有调用 */
+  peDataAvailable?: boolean;
   /** 完全失败被剔除的专家名（与"部分降级"不是一回事） */
   degradedExperts: string[];
   /** 事后校准统计；null 或无样本时不披露 */
@@ -136,8 +137,12 @@ export function buildReflectionNotes(input: ReflectionInput): string[] {
   const topRisk = preComputedRisks[0] || '未知风险';
   notes.push(`【逻辑闭环②】最可能的"看错"场景：${topRisk}。`);
 
-  // 逻辑闭环③：市场是否已 price in（基于 PE 历史分位）
-  if (pePercentile <= 20) {
+  // 逻辑闭环③：市场是否已 price in（仅基于真实 PE 历史分位）
+  if (input.peDataAvailable === false) {
+    notes.push(
+      '【逻辑闭环③】真实历史PE数据不足，无法判断当前估值是否已充分定价；估算序列不参与该结论。',
+    );
+  } else if (pePercentile <= 20) {
     notes.push(
       `【逻辑闭环③】当前PE处于历史${pePercentile.toFixed(0)}%分位，市场可能已充分反映悲观预期。`,
     );

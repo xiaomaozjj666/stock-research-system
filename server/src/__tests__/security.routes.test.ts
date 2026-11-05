@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
 import { app as rawApp } from '../index.js';
 import { withContract } from '../test/contractSupertest.js';
@@ -73,14 +73,24 @@ describe('安全中间件', () => {
   });
 
   describe('CORS', () => {
-    it('开发环境允许所有来源', async () => {
+    it('开发环境仅放行 localhost/127.0.0.1 本机来源', async () => {
       process.env.NODE_ENV = 'development';
-      const origin = 'http://any-origin.com';
-      const res = await request(app).get('/api/health').set('Origin', origin);
-      // cors 包在 origin=true 时会回显请求的 Origin（而非返回 *）
-      // 只要返回了该 origin 就表示允许
-      const acao = res.headers['access-control-allow-origin'];
-      expect(acao === '*' || acao === origin).toBe(true);
+      for (const origin of ['http://localhost:5173', 'http://127.0.0.1:4173']) {
+        const res = await request(app).get('/api/health').set('Origin', origin);
+        expect(res.status).toBe(200);
+        expect(res.headers['access-control-allow-origin']).toBe(origin);
+        expect(res.headers['access-control-allow-credentials']).toBe('true');
+      }
+    });
+
+    it('开发环境拒绝反射恶意网页 Origin', async () => {
+      process.env.NODE_ENV = 'development';
+      for (const origin of ['http://any-origin.com', 'http://localhost.evil.com:5173']) {
+        const res = await request(app).get('/api/health').set('Origin', origin);
+        expect(res.status).toBe(403);
+        expect(res.headers['access-control-allow-origin']).toBeUndefined();
+        expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+      }
     });
 
     it('预检请求返回 204', async () => {

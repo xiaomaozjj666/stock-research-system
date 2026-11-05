@@ -202,19 +202,42 @@ jobs:
 
       # globalSetup 在 server/dist/index.js 存在时跳过构建，随后 webServer 以生产模式
       # 启动 Express（同源托管 client/dist），跑真实浏览器冒烟。
-      # --retries=1：仅在 CI 打开 1 次重试以暴露（而非掩盖）flaky——verbose 的 final
-      # status 会标出 "flaky"；playwright.config.mts 的 retries: 0 是本地默认值，
-      # 该配置不在本次可改清单内，故用 CLI 参数在 CI 侧覆盖（Playwright 优先 CLI）。
+      # 重试后通过仍是 flaky：JSON 报告供下一步显式告警并写入 job summary，不能只看最终绿灯。
       - name: Run E2E smoke tests
-        run: npx playwright test --retries=1
+        id: e2e
+        run: 'npx playwright test --retries=1 --reporter=html,json'
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: playwright-report/results.json
+
+      - name: Annotate flaky retries in job summary
+        if: always()
+        shell: bash
+        run: |
+          REPORT=playwright-report/results.json
+          if [[ ! -f "$REPORT" ]]; then
+            echo "::warning::Playwright JSON 报告缺失，无法判定 flaky"
+            # 测试命令成功却没有报告属于门禁故障；原本失败时保留其失败状态，不重复掩盖日志。
+            [[ "${{ steps.e2e.outcome }}" == "success" ]] && exit 1 || exit 0
+          fi
+          FLAKY=$(node -e "const r=require('./'+process.argv[1]); console.log(Number(r.stats?.flaky ?? 0))" "$REPORT")
+          {
+            echo "## E2E 重试与 flaky 检测"
+            echo
+            echo "- 重试后通过（flaky）用例数：**${FLAKY}**"
+            echo "- 原始报告：playwright-report artifact（results.json + HTML）"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$FLAKY" -gt 0 ]]; then
+            echo "::warning::${FLAKY} 个 E2E 用例重试后才通过；本次虽为绿色，仍须按 flaky 跟踪修复"
+          fi
 
       - name: Upload Playwright report
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+          if-no-files-found: warn
 
   # ==========================================================================
   # 夜间全量（flaky 探测）

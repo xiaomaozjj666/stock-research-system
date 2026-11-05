@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
-import ChartsSection from '../ChartsSection';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StockData } from '../ChartsSection';
+import ChartsSection from '../ChartsSection';
 
 // mock 按需 echarts：init 返回可控实例（真实 echarts 在 jsdom 下无法 init）
 const echartsMock = vi.hoisted(() => ({ init: vi.fn() }));
@@ -69,6 +69,23 @@ describe('ChartsSection', () => {
     const { getByText } = render(<ChartsSection data={makeData()} />);
     expect(getByText('营收与利润趋势')).toBeInTheDocument();
     expect(getByText('历史 PE 走势')).toBeInTheDocument();
+  });
+
+  it('估算历史 PE 必须显示醒目的数据披露', () => {
+    const data = makeData();
+    data.valuation!.historicalPE = [
+      { year: '2024', pe: 25, isEstimated: true },
+      { year: '2025', pe: 30, isEstimated: false },
+    ];
+    const { getByRole } = render(<ChartsSection data={data} />);
+    expect(getByRole('note')).toHaveTextContent('含估算数据');
+    expect(getByRole('note')).toHaveTextContent('不是真实历史行情');
+    expect(getByRole('note')).toHaveTextContent('不参与分位与评级');
+  });
+
+  it('真实历史 PE 不显示估算披露', () => {
+    const { queryByRole } = render(<ChartsSection data={makeData()} />);
+    expect(queryByRole('note')).not.toBeInTheDocument();
   });
 
   it('空数据（无财务/估值）时按设计返回 null', () => {

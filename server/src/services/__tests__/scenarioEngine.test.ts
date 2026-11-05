@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import type { ExpertOpinion, FinancialData, StockInfo, ValuationData } from '../../types.js';
 import { generateScenarios } from '../scenarioEngine.js';
-import type { ExpertOpinion, FinancialData, ValuationData, StockInfo } from '../../types.js';
 
 function makeFinancial(overrides: Partial<FinancialData> = {}): FinancialData {
   const years = ['2020', '2021', '2022', '2023', '2024', '2025'];
@@ -136,5 +136,29 @@ describe('generateScenarios', () => {
     const a = generateScenarios([opinion('neutral')], makeFinancial(), undervalued, info);
     const b = generateScenarios([opinion('neutral')], makeFinancial(), undervalued, info);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it('三情景基于不同假设产生有区分度的目标价区间', () => {
+    const scenarios = generateScenarios([opinion('neutral')], makeFinancial(), undervalued, info);
+    const [optimistic, neutral, pessimistic] = scenarios;
+    expect(optimistic.targetPriceRange.low).toBeGreaterThan(neutral.targetPriceRange.low);
+    expect(neutral.targetPriceRange.low).toBeGreaterThan(pessimistic.targetPriceRange.low);
+    expect(optimistic.targetPriceRange.high).toBeGreaterThan(neutral.targetPriceRange.high);
+    expect(neutral.targetPriceRange.high).toBeGreaterThan(pessimistic.targetPriceRange.high);
+    expect(new Set(scenarios.map((s) => JSON.stringify(s.targetPriceRange))).size).toBe(3);
+    expect(optimistic.keyAssumptions.join('')).toContain('基准收益+10个百分点');
+    expect(pessimistic.keyAssumptions.join('')).toContain('基准收益-10个百分点');
+  });
+
+  it('估算历史 PE 与空历史数据一样中性降级，不影响情景结果', () => {
+    const estimated: ValuationData = {
+      ...undervalued,
+      historicalPE: undervalued.historicalPE.map((point) => ({ ...point, isEstimated: true })),
+    };
+    const empty: ValuationData = { ...undervalued, historicalPE: [] };
+    const a = generateScenarios([opinion('neutral')], makeFinancial(), estimated, info);
+    const b = generateScenarios([opinion('neutral')], makeFinancial(), empty, info);
+    expect(a).toEqual(b);
+    expect(a[1].keyAssumptions.join('')).toContain('真实历史PE数据不足');
   });
 });

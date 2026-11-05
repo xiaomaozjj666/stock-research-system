@@ -3,7 +3,7 @@ interface ExpertArgument {
   text: string;
   confidence: number;
   type: 'support' | 'oppose';
-  evidenceType?: 'fact' | 'inference' | 'hypothesis';
+  evidenceType?: 'fact' | 'inference' | 'hypothesis' | 'assumption';
 }
 
 interface ExpertOpinion {

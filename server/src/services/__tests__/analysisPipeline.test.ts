@@ -1,11 +1,11 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runAnalysis } from '../analysisPipeline.js';
-import type { StockDataSet, FinancialData, ValuationData, StockInfo } from '../../types.js';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildFinancialGraph, type KnowledgeGraph } from '../../llm/knowledgeGraph.js';
-import { partial } from '../../test/partial.js';
 import { calculateSectorRotation } from '../../quant/sectorRotation.js';
+import { partial } from '../../test/partial.js';
+import type { FinancialData, StockDataSet, StockInfo, ValuationData } from '../../types.js';
+import { runAnalysis } from '../analysisPipeline.js';
 
 // 用可控的样例数据替掉真实的网络数据获取，验证流水线装配正确性
 const sampleFinancial: FinancialData = {
@@ -87,10 +87,10 @@ vi.mock('../../llm/expertRunner.js', async (importOriginal) => {
 });
 
 // 静态取 mock 的 getData（vi.mock hoisted），供 beforeEach 重置默认返回值
-import { getData } from '../dataService.js';
 import { runExpertWithLLM } from '../../llm/expertRunner.js';
-import { extractNewsSignal } from '../../quant/newsSignal.js';
 import { fetchOHLCVData } from '../../quant/dataProvider.js';
+import { extractNewsSignal } from '../../quant/newsSignal.js';
+import { getData } from '../dataService.js';
 
 // 强制 LLM 不可用：宿主若带有 OPENAI_API_KEY 会让 runExpertWithLLM 走真实网络（超时且结果不可控）。
 // 清空双 key 后 isLLMAvailable()=false，所有专家/仲裁自动降级到确定性的规则引擎，保证离线可跑、结果稳定。
@@ -150,8 +150,11 @@ describe('runAnalysis 流水线', () => {
     // PE 已基于 股价/eps 修正
     expect(stock.valuation.pe).toBeCloseTo(1800 / 2.5, 1);
 
-    // 历史 PE 含 6 年
+    // 无真实历史数据时：5 个估算点仅供展示，当前真实 PE 单独标识，且不伪造历史分位结论
     expect(stock.valuation.historicalPE.length).toBe(6);
+    expect(stock.valuation.historicalPE.filter((point) => point.isEstimated)).toHaveLength(5);
+    expect(stock.valuation.historicalPE.at(-1)?.isEstimated).toBe(false);
+    expect(stock.core_summary).toContain('数据不足（真实历史PE不足，分位不可用）');
 
     // 自省/跟踪/数据来源均有内容
     expect(stock.reflection_notes.length).toBeGreaterThan(0);

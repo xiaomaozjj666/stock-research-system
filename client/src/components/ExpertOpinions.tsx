@@ -4,13 +4,14 @@ interface ExpertArgument {
   text: string;
   confidence: number;
   type: 'support' | 'oppose';
-  evidenceType?: 'fact' | 'inference' | 'hypothesis';
+  evidenceType?: 'fact' | 'inference' | 'hypothesis' | 'assumption';
 }
 
 function evidenceTagLabel(type?: string): string {
   if (type === 'fact') return '[事实]';
   if (type === 'inference') return '[推演]';
   if (type === 'hypothesis') return '[假设]';
+  if (type === 'assumption') return '[数据不足/假设]';
   return '';
 }
 

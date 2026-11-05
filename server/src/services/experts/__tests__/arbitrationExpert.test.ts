@@ -10,8 +10,8 @@
  * 全程不打真实网络：llm/index.js（isLLMAvailable / chatJSON）与 llm/prompts.js（formatContext）
  * 均为完整替身；safeDiv 用真实实现（纯函数）。
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { FinancialData, ValuationData, StockInfo, ExpertOpinion } from '../../../types.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ExpertOpinion, FinancialData, StockInfo, ValuationData } from '../../../types.js';
 import logger from '../../../utils/logger.js';
 
 const llmMock = vi.hoisted(() => ({ isLLMAvailable: vi.fn(), chatJSON: vi.fn() }));
@@ -292,13 +292,13 @@ describe('规则引擎：估值分位分支', () => {
     expect(c.arbitration).toContain('当前估值低于白酒同业均值140.0x，存在折价。');
   });
 
-  it('历史 PE 为空 → 分位退化为 50，按中位区间处理', async () => {
+  it('历史 PE 为空 → 明确数据不足并降低仲裁置信度', async () => {
     const res = await runRule({
       valuation: makeValuation({ historicalPE: [], peerComparison: [] }),
     });
     const c = pick(res.controversies, '当前估值水平是否合理');
-    expect(c.arbitration).toBe('PE历史分位50%，估值处于合理区间。');
-    expect(c.confidence).toBe(60);
+    expect(c.arbitration).toBe('历史PE数据不足，估值分位与安全边际暂不可判定。');
+    expect(c.confidence).toBe(25);
   });
 });
 

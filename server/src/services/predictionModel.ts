@@ -17,9 +17,10 @@
  *
  *   验证：validatePredictionModel 在样本面板上回测方向准确率与 RMSE。
  */
-import type { FinancialData, ValuationData, StockInfo } from '../types.js';
-import { extractFactors, buildFactorZScores } from './factors.js';
 import { compositeZ, crossSectionalZScore } from '../quant/factorAnalytics.js';
+import type { FinancialData, StockInfo, ValuationData } from '../types.js';
+import { buildFactorZScores, extractFactors } from './factors.js';
+import { historicalPEPercentile } from './valuationHistory.js';
 
 /** 每单位合成 z 对应的年化期望收益贡献（保守，0.12 → z=1 约 +12%） */
 const FACTOR_GAIN = 0.12;
@@ -110,10 +111,7 @@ export function expectedForwardReturnFromData(
 ): ExpectedReturnResult {
   const factors = extractFactors(financial, valuation, info);
   const zByFactor = buildFactorZScores(factors);
-  const peValues = valuation.historicalPE.map((h) => h.pe).sort((a, b) => a - b);
-  const pePercentile = peValues.length
-    ? (peValues.filter((p) => p <= valuation.pe).length / peValues.length) * 100
-    : 50;
+  const pePercentile = historicalPEPercentile(valuation) ?? 50;
   return expectedForwardReturn({ zByFactor, pePercentile, weights, newsZ });
 }
 

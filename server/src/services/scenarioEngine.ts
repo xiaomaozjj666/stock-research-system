@@ -7,12 +7,13 @@
  *   - 目标价区间 = targetPriceRange（当前价 × (1+E[r]) × (1±band)）。
  * 不再使用原先的 0.4/0.3/0.3 魔法权重与 0.9/1.2 等随意目标价倍数。
  */
-import type { ExpertOpinion, FinancialData, ValuationData, StockInfo } from '../types.js';
+import type { ExpertOpinion, FinancialData, StockInfo, ValuationData } from '../types.js';
 import {
   expectedForwardReturnFromData,
   scenarioProbabilities,
   targetPriceRange,
 } from './predictionModel.js';
+import { historicalPEPercentile } from './valuationHistory.js';
 
 export interface ScenarioResult {
   name: '乐观' | '中性' | '悲观';
@@ -53,12 +54,9 @@ export function generateScenarios(
   // 专家情绪微调：限制在 [−0.3, 0.3]，避免掩盖量化模型信号
   const sentimentTilt = Math.max(-0.3, Math.min(0.3, (bullishRatio - 0.5) * 0.6));
 
-  // 2. PE 历史分位
-  const peValues = valuation.historicalPE.map((h) => h.pe).sort((a, b) => a - b);
-  const pePercentile =
-    peValues.length > 0
-      ? (peValues.filter((p) => p <= valuation.pe).length / peValues.length) * 100
-      : 50;
+  // 2. 真实 PE 历史分位；估算序列不参与概率或目标价模型
+  const actualPEPercentile = historicalPEPercentile(valuation);
+  const pePercentile = actualPEPercentile ?? 50;
 
   // 3. 严谨期望收益（因子模型 + 估值均值回复，可选叠加最新消息情绪 z）
   const { expectedReturn } = expectedForwardReturnFromData(
@@ -90,20 +88,45 @@ export function generateScenarios(
       .map((a) => ({ expert: o.expert, text: a.text, confidence: a.confidence })),
   );
 
-  // 6. 目标价区间（当前价 × (1+E[r]) × (1±band)）
-  const { low, high } = targetPriceRange(valuation.currentPrice, expectedReturn);
+  // 6. 三情景采用显式不同的收益与波动假设，避免同一目标价区间复制三次。
+  // 乐观/悲观分别在基准收益上加减 10 个百分点，并采用不同的不确定性带宽。
+  const scenarioParameters = {
+    optimistic: { returnAdjustment: 0.1, band: 0.15, label: '基准收益+10个百分点，区间半宽15%' },
+    neutral: { returnAdjustment: 0, band: 0.2, label: '基准收益不变，区间半宽20%' },
+    pessimistic: { returnAdjustment: -0.1, band: 0.25, label: '基准收益-10个百分点，区间半宽25%' },
+  } as const;
+  const ranges = {
+    optimistic: targetPriceRange(
+      valuation.currentPrice,
+      expectedReturn + scenarioParameters.optimistic.returnAdjustment,
+      scenarioParameters.optimistic.band,
+    ),
+    neutral: targetPriceRange(
+      valuation.currentPrice,
+      expectedReturn,
+      scenarioParameters.neutral.band,
+    ),
+    pessimistic: targetPriceRange(
+      valuation.currentPrice,
+      expectedReturn + scenarioParameters.pessimistic.returnAdjustment,
+      scenarioParameters.pessimistic.band,
+    ),
+  };
 
-  // 7. 关键假设（动态提取）
+  // 7. 关键假设（动态提取），并披露目标价计算所用参数。
   const optimisticAssumptions = extractKeyAssumptions(supportArgs, financial, n, 'optimistic');
   const pessimisticAssumptions = extractKeyAssumptions(opposeArgs, financial, n, 'pessimistic');
   const neutralAssumptions = generateNeutralAssumptions(financial, valuation, n);
+  optimisticAssumptions.push(`目标价假设：${scenarioParameters.optimistic.label}`);
+  neutralAssumptions.push(`目标价假设：${scenarioParameters.neutral.label}`);
+  pessimisticAssumptions.push(`目标价假设：${scenarioParameters.pessimistic.label}`);
 
   return [
     {
       name: '乐观',
       probability: norm.optimistic,
       keyAssumptions: optimisticAssumptions,
-      targetPriceRange: { low, high },
+      targetPriceRange: ranges.optimistic,
       supportingArguments: supportArgs.slice(0, 5),
       preconditions: ['宏观经济稳定', '行业政策无重大变化', '公司战略执行顺利'],
     },
@@ -111,7 +134,7 @@ export function generateScenarios(
       name: '中性',
       probability: norm.neutral,
       keyAssumptions: neutralAssumptions,
-      targetPriceRange: { low, high },
+      targetPriceRange: ranges.neutral,
       supportingArguments: [],
       preconditions: ['当前经营趋势延续', '估值中枢不发生重大迁移'],
     },
@@ -119,7 +142,7 @@ export function generateScenarios(
       name: '悲观',
       probability: norm.pessimistic,
       keyAssumptions: pessimisticAssumptions,
-      targetPriceRange: { low, high },
+      targetPriceRange: ranges.pessimistic,
       supportingArguments: opposeArgs.slice(0, 5),
       preconditions: ['行业景气度持续下行', '政策利空兑现', '市场竞争加剧'],
     },
@@ -191,14 +214,13 @@ function generateNeutralAssumptions(
         100
       : 0;
   const avgGM = financial.grossMargin.reduce((a, b) => a + b, 0) / n;
-  const pePercentile =
-    valuation.historicalPE.length > 0
-      ? (valuation.historicalPE.filter((h) => h.pe <= valuation.pe).length /
-          valuation.historicalPE.length) *
-        100
-      : 50;
+  const pePercentile = historicalPEPercentile(valuation);
   assumptions.push(`利润增速维持当前水平（${latestGrowth.toFixed(1)}%）`);
   assumptions.push(`毛利率保持稳定（均值${avgGM.toFixed(1)}%）`);
-  assumptions.push(`估值处于历史${pePercentile.toFixed(0)}%分位，中枢暂无明显迁移`);
+  assumptions.push(
+    pePercentile === null
+      ? '真实历史PE数据不足，估值中枢不作历史分位判断'
+      : `估值处于历史${pePercentile.toFixed(0)}%分位，中枢暂无明显迁移`,
+  );
   return assumptions;
 }

@@ -2600,7 +2600,7 @@ export function buildOpenApiDocument() {
                   type: { type: 'string', enum: ['support', 'oppose'] },
                   evidenceType: {
                     type: 'string',
-                    enum: ['fact', 'inference', 'hypothesis'],
+                    enum: ['fact', 'inference', 'hypothesis', 'assumption'],
                     description: '论据性质',
                   },
                 },

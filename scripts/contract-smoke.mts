@@ -27,8 +27,8 @@ import { loadContractFromDist } from './contract-from-dist.mjs';
 // 校验器实现在 server/src/test/contractSchema.ts：与路由测试共用同一份，
 // 避免「两处规则不一致 → A 处过 B 处红」这种无法排查的灵异事件。
 import {
-  validateAgainstSchema,
   okSchemaOf as okSchemaOfRaw,
+  validateAgainstSchema,
 } from '../server/src/test/contractSchema.js';
 
 // 服务地址由启动器传入（它负责起进程）
@@ -41,32 +41,48 @@ const schemas = doc.components?.schemas ?? {};
 function okSchemaOf(path: string, method: string): unknown {
   return okSchemaOfRaw(doc as never, path, method);
 }
+
+/** 核心路径的确定性错误响应也必须按契约校验，不能因非 2xx 被静默跳过。 */
+function responseSchemaOf(path: string, method: string, status: number): unknown {
+  const paths = doc.paths as Record<string, Record<string, any>>;
+  return paths[path]?.[method]?.responses?.[status]?.content?.['application/json']?.schema;
+}
+
 /** 按 schema 校验实际响应（委托给公共实现） */
 function validate(schema: unknown, value: unknown): string[] {
   return validateAgainstSchema(schema, value, schemas);
 }
 
-/** 极简 JSON Schema 校验器：只支持本项目契约实际用到的关键字 */
 let failed = 0;
 let checked = 0;
+const MIN_CHECKED = 15;
 
-/** 打一次请求并校验；返回 'ok' | 'skipped:<原因>' */
+interface CheckOptions {
+  /** 指定期望的非 2xx 状态；状态不符直接计失败，绝不跳过。 */
+  expectedStatus?: number;
+  query?: string;
+}
+
+/** 打一次请求并校验；返回 'ok' | 'skipped:<原因>'。 */
 async function check(
   method: string,
   p: string,
   body?: unknown,
   pathParams: Record<string, string> = {},
+  options: CheckOptions = {},
 ): Promise<'ok' | string> {
-  const schema = okSchemaOf(p, method);
-  if (!schema) return '契约无 2xx schema';
+  const expectedStatus = options.expectedStatus;
+  const schema =
+    expectedStatus === undefined
+      ? okSchemaOf(p, method)
+      : responseSchemaOf(p, method, expectedStatus);
+  if (!schema) {
+    failed++;
+    return `契约无 ${expectedStatus ?? '2xx'} 响应 schema`;
+  }
   let res: Response;
-  // 契约里的 path 是模板（如 '/api/history/{id}'），请求前必须把占位符**替换**掉，
-  // 不能原样拼在后面 —— 拼成 '/api/history/{id}/xxx' 会稳定 404，且极易被误读成
-  // 「服务端有问题」。subPath 用于 DELETE 这类带路径参数、且要替换而非追加的场景。
-  // 契约里的 path 是模板（如 '/api/history/{id}'），请求前必须把占位符**替换**掉，
-  // 不能原样拼在后面 —— 拼成 '/api/history/{id}/xxx' 会稳定 404，且极易被误读成
-  // 「服务端有问题」（本轮实际踩过这个坑，排查了半天才发现是脚本自己的错）。
-  const url = `${BASE}${p}`.replace(/\{(\w+)\}/g, (_, key) => pathParams[key] ?? '');
+  const url =
+    `${BASE}${p}`.replace(/\{(\w+)\}/g, (_, key) => pathParams[key] ?? '') + (options.query ?? '');
   try {
     res = await fetch(url, {
       method: method.toUpperCase(),
@@ -75,15 +91,25 @@ async function check(
         : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
     });
   } catch (e) {
-    return `请求失败：${e.message}`;
+    if (expectedStatus !== undefined) failed++;
+    return `请求失败：${e instanceof Error ? e.message : String(e)}`;
   }
-  // 非 2xx 说明该端点依赖上游/环境或入参不合法，跳过并说明，不算失败
-  if (!res.ok) return `HTTP ${res.status}（依赖上游或入参不合法）`;
+  if (expectedStatus !== undefined && res.status !== expectedStatus) {
+    failed++;
+    console.log(
+      `  ✗ ${method.toUpperCase()} ${url.replace(BASE, '')}：期望 HTTP ${expectedStatus}，实际 ${res.status}`,
+    );
+    return 'ok';
+  }
+  // 普通端点的环境型非 2xx 仍会明示跳过，但最终必须越过 MIN_CHECKED 门禁。
+  if (expectedStatus === undefined && !res.ok) return `HTTP ${res.status}（依赖上游或入参不合法）`;
   const json = await res.json();
   const errs = validate(schema, json);
   checked++;
   if (errs.length === 0) {
-    console.log(`  ✓ ${method.toUpperCase()} ${url.replace(BASE, '')}`);
+    console.log(
+      `  ✓ ${method.toUpperCase()} ${url.replace(BASE, '')}${expectedStatus === undefined ? '' : `（预期 HTTP ${expectedStatus}）`}`,
+    );
     return 'ok';
   }
   failed++;
@@ -192,7 +218,41 @@ async function check(
     if (r2 !== 'ok') console.log(`  跳过 DELETE /api/history/{id}（${r2}）`);
   }
 
+  // ── 核心 analyze / SSE 的确定性负向契约 ──
+  // 离线环境不能依赖真实行情跑出 200，但无效股票代码必然返回 400。这里显式校验 400
+  // 状态与 ErrorResponse；500/404/200 都计失败，不再沿用“非 2xx 就跳过”的假绿路径。
+  console.log('\n  ── 核心 analyze / SSE（确定性 400 契约）──');
+  const analyzeResult = await check(
+    'post',
+    '/api/analyze',
+    { stockCode: 'invalid' },
+    {},
+    { expectedStatus: 400 },
+  );
+  if (analyzeResult !== 'ok') {
+    failed++;
+    console.log(`  ✗ POST /api/analyze（${analyzeResult}）`);
+  }
+  const streamResult = await check(
+    'get',
+    '/api/analyze/stream',
+    undefined,
+    {},
+    {
+      expectedStatus: 400,
+      query: '?stockCode=invalid',
+    },
+  );
+  if (streamResult !== 'ok') {
+    failed++;
+    console.log(`  ✗ GET /api/analyze/stream（${streamResult}）`);
+  }
+
+  if (checked < MIN_CHECKED) {
+    failed++;
+    console.error(`  ✗ 有效校验数不足：${checked}/${MIN_CHECKED}，禁止以大量跳过形成假绿灯`);
+  }
   console.log(`\n真实进程校验：${checked} 个端点，${failed} 个与契约不符`);
 }
 
-process.exit(failed > 0 ? 1 : 0);
+process.exitCode = failed > 0 ? 1 : 0;
