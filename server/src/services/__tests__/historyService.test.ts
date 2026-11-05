@@ -1,5 +1,5 @@
-import * as fs from 'fs';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import * as fsp from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,11 +20,11 @@ import {
   type HistorySummary,
 } from '../historyService.js';
 
-// ESM 模块命名空间不可配置，vi.spyOn(fs, 'renameSync') 会抛
-// "Module namespace is not configurable"。用工厂把 fs 的导出展开成
+// ESM 模块命名空间不可配置，vi.spyOn(fsp, 'rename') 会抛
+// "Module namespace is not configurable"。用工厂把 fs/promises 的导出展开成
 // 普通对象——spyOn 可生效且行为与真模块一致（仅引用形态变化）。
-vi.mock('fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('fs')>();
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
   return { ...actual };
 });
 
@@ -44,7 +44,7 @@ afterAll(() => {
 
 /**
  * 直接改写落盘文件（绕过服务）后必须让内存 store 缓存失效：
- * 服务读盘走模块级内存缓存（写后更新），夹具直接写文件时只有重置缓存才会被重读。
+ * 常规外部改写由 mtime 校验自动发现；这里仍显式重置，保证用例从确定的空状态开始。
  */
 function seedFile(raw: string): void {
   writeFileSync(tmpFile, raw, 'utf-8');
@@ -71,11 +71,11 @@ describe('historyService 研究历史', () => {
     seedFile(JSON.stringify({ items: [] }));
   });
 
-  it('保存新增条目，列表返回摘要（不含 result）', () => {
-    saveHistoryEntry(makeEntry('600519', { totalScore: 88 }));
-    saveHistoryEntry(makeEntry('000001', { totalScore: 55 }));
+  it('保存新增条目，列表返回摘要（不含 result）', async () => {
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 88 }));
+    await saveHistoryEntry(makeEntry('000001', { totalScore: 55 }));
 
-    const list = listHistory();
+    const list = await listHistory();
     expect(list).toHaveLength(2);
     // 注意：快速连续保存可能落在同一毫秒（createdAt 相同），此时排序是稳定序，
     // 顺序断言不可靠——这里只断言内容，排序语义由下方 fixture 用例验证
@@ -86,7 +86,7 @@ describe('historyService 研究历史', () => {
     expect(list[0]).not.toHaveProperty('result'); // 列表瘦身（不含完整 result）
   });
 
-  it('列表按 createdAt 倒序（最新在前）', () => {
+  it('列表按 createdAt 倒序（最新在前）', async () => {
     // 用明确 createdAt 的 fixture 验证排序，不依赖 saveHistoryEntry 的毫秒精度
     seedFile(
       JSON.stringify({
@@ -112,26 +112,28 @@ describe('historyService 研究历史', () => {
         ],
       }),
     );
-    const list = listHistory();
+    const list = await listHistory();
     expect(list.map((i) => i.id)).toEqual(['new', 'old']);
   });
 
-  it('同股票代码去重更新（id 保留、createdAt 刷新、不新增条目）', () => {
-    const first = saveHistoryEntry(makeEntry('600519', { totalScore: 80 }));
+  it('同股票代码去重更新（id 保留、createdAt 刷新、不新增条目）', async () => {
+    const first = await saveHistoryEntry(makeEntry('600519', { totalScore: 80 }));
     expect(first).not.toBeNull();
 
     // 再次分析同一代码 → 更新而非新增
-    const second = saveHistoryEntry(makeEntry('600519', { totalScore: 95, rating: '优先跟踪' }));
+    const second = await saveHistoryEntry(
+      makeEntry('600519', { totalScore: 95, rating: '优先跟踪' }),
+    );
 
-    expect(listHistory()).toHaveLength(1);
+    expect(await listHistory()).toHaveLength(1);
     expect(second!.id).toBe(first!.id);
-    const detail = getHistoryItem(first!.id)!;
+    const detail = (await getHistoryItem(first!.id))!;
     expect(detail.totalScore).toBe(95);
     expect(detail.rating).toBe('优先跟踪');
   });
 
-  it('详情返回完整 result（可恢复研究报告渲染）', () => {
-    const saved = saveHistoryEntry(
+  it('详情返回完整 result（可恢复研究报告渲染）', async () => {
+    const saved = await saveHistoryEntry(
       makeEntry('300750', {
         result: partial<AnalysisResult>({
           stock_pool: [
@@ -143,23 +145,23 @@ describe('historyService 研究历史', () => {
         }),
       }),
     );
-    const detail = getHistoryItem(saved!.id);
+    const detail = await getHistoryItem(saved!.id);
     expect(detail).not.toBeNull();
     expect((detail!.result as { stock_pool: unknown[] }).stock_pool).toHaveLength(1);
   });
 
-  it('删除条目；不存在时返回 false', () => {
-    const saved = saveHistoryEntry(makeEntry('600519'));
-    expect(deleteHistoryItem(saved!.id)).toBe(true);
-    expect(getHistoryItem(saved!.id)).toBeNull();
-    expect(deleteHistoryItem('no-such-id')).toBe(false);
+  it('删除条目；不存在时返回 false', async () => {
+    const saved = await saveHistoryEntry(makeEntry('600519'));
+    expect(await deleteHistoryItem(saved!.id)).toBe(true);
+    expect(await getHistoryItem(saved!.id)).toBeNull();
+    expect(await deleteHistoryItem('no-such-id')).toBe(false);
   });
 
-  it('getPreviousAnalysis：无记录返回 null；有记录返回上次分析摘要（不含 result）', () => {
-    expect(getPreviousAnalysis('999999')).toBeNull();
+  it('getPreviousAnalysis：无记录返回 null；有记录返回上次分析摘要（不含 result）', async () => {
+    expect(await getPreviousAnalysis('999999')).toBeNull();
 
-    saveHistoryEntry(makeEntry('600519', { totalScore: 80, rating: '持续观察' }));
-    const prev = getPreviousAnalysis('600519');
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 80, rating: '持续观察' }));
+    const prev = await getPreviousAnalysis('600519');
     expect(prev).not.toBeNull();
     expect(prev!.stockCode).toBe('600519');
     expect(prev!.totalScore).toBe(80);
@@ -167,15 +169,15 @@ describe('historyService 研究历史', () => {
     expect(prev).not.toHaveProperty('result'); // 摘要不携带完整结果
   });
 
-  it('getPreviousAnalysis 在保存前调用 = 上一次分析（记忆闭环语义）', () => {
+  it('getPreviousAnalysis 在保存前调用 = 上一次分析（记忆闭环语义）', async () => {
     // 第一次分析 → 无上次
-    saveHistoryEntry(makeEntry('600036', { totalScore: 70, rating: '持续观察' }));
+    await saveHistoryEntry(makeEntry('600036', { totalScore: 70, rating: '持续观察' }));
     // 第二次分析前读取 → 返回第一次的 70 分
-    const prev1 = getPreviousAnalysis('600036');
+    const prev1 = await getPreviousAnalysis('600036');
     expect(prev1!.totalScore).toBe(70);
     // 保存第二次 → 之后再读返回第二次
-    saveHistoryEntry(makeEntry('600036', { totalScore: 85, rating: '优先跟踪' }));
-    const prev2 = getPreviousAnalysis('600036');
+    await saveHistoryEntry(makeEntry('600036', { totalScore: 85, rating: '优先跟踪' }));
+    const prev2 = await getPreviousAnalysis('600036');
     expect(prev2!.totalScore).toBe(85);
     expect(prev2!.rating).toBe('优先跟踪');
   });
@@ -218,68 +220,68 @@ describe('historyService 研究历史', () => {
     expect(vs!.previous_date).toBe('2026-07-01'); // createdAt 取日期部分
   });
 
-  // 写 MAX+5 条、每条全文件重写（O(n²)），常态 ~730ms；显式放宽超时防极端负载误判。
-  it('容量超上限时淘汰最旧记录（保留最新 MAX_HISTORY_ITEMS 条）', { timeout: 30000 }, () => {
+  // 写 MAX+5 条、每条全文件重写（O(n²)）；异步 IO 下常态 1-3s，显式放宽超时防极端负载误判。
+  it('容量超上限时淘汰最旧记录（保留最新 MAX_HISTORY_ITEMS 条）', { timeout: 30000 }, async () => {
     // createdAt 由服务端单调时钟保证严格递增（同毫秒保存也 +1ms），
     // 因此"最早保存 = createdAt 最小 = 必被淘汰"的语义恒定成立
-    const first = saveHistoryEntry(makeEntry('600001'));
+    const first = await saveHistoryEntry(makeEntry('600001'));
     let last: HistoryItem | null = null;
     for (let i = 2; i <= MAX_HISTORY_ITEMS + 5; i++) {
-      last = saveHistoryEntry(makeEntry(String(600000 + i)));
+      last = await saveHistoryEntry(makeEntry(String(600000 + i)));
     }
-    const list = listHistory(200);
+    const list = await listHistory(200);
     expect(list).toHaveLength(MAX_HISTORY_ITEMS);
     expect(list.some((i) => i.id === first!.id)).toBe(false); // 最旧的 600001 被淘汰
     expect(list.some((i) => i.id === last!.id)).toBe(true); // 最新保存的保留
     expect(list[list.length - 1].stockCode).toBe('600006'); // 最旧的保留项精确可断
   });
 
-  it('快速连续保存 createdAt 严格递增（毫秒级单调时钟）', () => {
+  it('快速连续保存 createdAt 严格递增（毫秒级单调时钟）', async () => {
     // 此前 Date.now() 在同一毫秒内返回相同值，createdAt 相同会让淘汰语义
     // 依赖数组稳定序而错误（淘汰后保存的）；此用例锁定单调性
-    const a = saveHistoryEntry(makeEntry('600001'))!;
-    const b = saveHistoryEntry(makeEntry('600002'))!;
-    const c = saveHistoryEntry(makeEntry('600003'))!;
+    const a = (await saveHistoryEntry(makeEntry('600001')))!;
+    const b = (await saveHistoryEntry(makeEntry('600002')))!;
+    const c = (await saveHistoryEntry(makeEntry('600003')))!;
     expect(a.createdAt < b.createdAt).toBe(true);
     expect(b.createdAt < c.createdAt).toBe(true);
   });
 
-  it('文件损坏时安全降级为空历史（不抛错）', () => {
+  it('文件损坏时安全降级为空历史（不抛错）', async () => {
     seedFile('{ not valid json');
-    expect(listHistory()).toEqual([]);
+    expect(await listHistory()).toEqual([]);
     // 损坏后仍可正常写入新条目
-    const saved = saveHistoryEntry(makeEntry('600519'));
+    const saved = await saveHistoryEntry(makeEntry('600519'));
     expect(saved).not.toBeNull();
-    expect(listHistory()).toHaveLength(1);
+    expect(await listHistory()).toHaveLength(1);
   });
 
-  it('写盘失败时返回 null（不阻断主流程）', () => {
+  it('写盘失败时返回 null（不阻断主流程）', async () => {
     // 把 HISTORY_FILE 指向一个目录路径，写文件必然失败
     process.env.HISTORY_FILE = tmpDir;
-    const r = saveHistoryEntry(makeEntry('600519'));
+    const r = await saveHistoryEntry(makeEntry('600519'));
     expect(r).toBeNull();
     process.env.HISTORY_FILE = tmpFile;
   });
 
-  it('limit 参数钳制在 [1, 200]', () => {
-    for (let i = 1; i <= 5; i++) saveHistoryEntry(makeEntry(String(600000 + i)));
-    expect(listHistory(0)).toHaveLength(1); // 下限 1
-    expect(listHistory(2)).toHaveLength(2);
+  it('limit 参数钳制在 [1, 200]', async () => {
+    for (let i = 1; i <= 5; i++) await saveHistoryEntry(makeEntry(String(600000 + i)));
+    expect(await listHistory(0)).toHaveLength(1); // 下限 1
+    expect(await listHistory(2)).toHaveLength(2);
   });
 
   /* ==========================================================================
-   * Windows 瞬态锁定（EPERM/EBUSY）：rename 重试 + 写失败不回滚内存
+   * Windows 瞬态锁定（EPERM/EBUSY）：异步 rename 重试 + 写失败不回滚内存
    * ------------------------------------------------------------------------
-   * 杀毒/索引服务会短暂锁定刚写出的 tmp 文件，renameSync 偶发 EPERM。
-   * 此前写失败会清内存缓存，下次读盘从旧内容重建——已完成的条目/时间线
-   * 更新被静默回滚（偶发丢一条研究历史/丢一个时间线点，属高频 flaky）。
+   * 杀毒/索引服务会短暂锁定刚写出的 tmp 文件，rename 偶发 EPERM。
+   * 重试间隔必须让出事件循环（旧实现的 Atomics.wait 同步 sleep 已移除），
+   * 且写失败不能清内存缓存——否则已完成的条目/时间线更新被静默回滚。
    * ========================================================================*/
-  it('rename 瞬态 EPERM 经短暂重试后成功：数据正常保存', () => {
-    const realRename = fs.renameSync;
+  it('rename 瞬态 EPERM 经短暂重试后成功：数据正常保存，且重试不阻塞事件循环', async () => {
+    const realRename = fsp.rename;
     let calls = 0;
-    const spy = vi.spyOn(fs, 'renameSync').mockImplementation(((
-      from: fs.PathLike,
-      to: fs.PathLike,
+    const spy = vi.spyOn(fsp, 'rename').mockImplementation((async (
+      from: Parameters<typeof fsp.rename>[0],
+      to: Parameters<typeof fsp.rename>[1],
     ) => {
       calls += 1;
       if (calls <= 2) {
@@ -288,29 +290,36 @@ describe('historyService 研究历史', () => {
         throw e;
       }
       return realRename(from, to);
-    }) as typeof fs.renameSync);
+    }) as typeof fsp.rename);
     try {
-      const saved = saveHistoryEntry(makeEntry('600519', { totalScore: 80 }));
+      const pending = saveHistoryEntry(makeEntry('600519', { totalScore: 80 }));
+      // 事件循环探针：重试间隔若仍是 Atomics.wait 同步 sleep（共 150ms），
+      // 这个 10ms 定时器要等阻塞结束才能触发；异步重试下应立即按点触发。
+      const timerStart = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const elapsed = Date.now() - timerStart;
+      const saved = await pending;
       expect(saved).not.toBeNull(); // 第三次重试成功
-      expect(listHistory()[0]!.totalScore).toBe(80);
+      expect(elapsed).toBeLessThan(140); // 未被 150ms 的同步 sleep 卡住
+      expect((await listHistory())[0]!.totalScore).toBe(80);
     } finally {
       spy.mockRestore();
     }
     expect(calls).toBe(3);
   });
 
-  it('rename 持续失败：返回 null 但内存不回滚，恢复后下一次写入补齐全部数据', () => {
-    const spy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+  it('rename 持续失败：返回 null 但内存不回滚，恢复后下一次写入补齐全部数据', async () => {
+    const spy = vi.spyOn(fsp, 'rename').mockImplementation(async () => {
       const e = new Error('持续锁定') as NodeJS.ErrnoException;
       e.code = 'EPERM';
       throw e;
     });
     // 三次重试全部失败 → 写失败降级返回 null（调用方语义不变）
-    expect(saveHistoryEntry(makeEntry('600519', { totalScore: 80 }))).toBeNull();
+    expect(await saveHistoryEntry(makeEntry('600519', { totalScore: 80 }))).toBeNull();
     spy.mockRestore();
     // 恢复后再次保存同股票：80 那次的时间线点没有被读盘回滚丢掉
-    saveHistoryEntry(makeEntry('600519', { totalScore: 95 }));
-    const item = listHistory()[0]!;
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 95 }));
+    const item = (await listHistory())[0]!;
     expect(item.totalScore).toBe(95);
     expect(item.timeline!.map((p) => p.score)).toEqual([80, 95]);
   });
@@ -319,40 +328,40 @@ describe('historyService 研究历史', () => {
    * 评分/评级时间线：去重覆盖后仍能回答"观点怎么变的"
    * ========================================================================*/
 
-  it('首次保存：时间线只有当次一个点', () => {
-    saveHistoryEntry(makeEntry('600519', { totalScore: 88, rating: '优先跟踪' }));
-    const item = listHistory()[0];
+  it('首次保存：时间线只有当次一个点', async () => {
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 88, rating: '优先跟踪' }));
+    const item = (await listHistory())[0];
     expect(item.timeline).toHaveLength(1);
     expect(item.timeline![0]).toMatchObject({ score: 88, rating: '优先跟踪' });
     expect(item.timeline![0].date).toMatch(/^\d{4}-\d{2}-\d{2}$/); // YYYY-MM-DD
   });
 
-  it('同股票重复保存：时间线按时间累积（由旧到新），最新点即当前评分', () => {
-    saveHistoryEntry(makeEntry('600519', { totalScore: 80, rating: '持续观察' }));
-    saveHistoryEntry(makeEntry('600519', { totalScore: 87, rating: '优先跟踪' }));
-    saveHistoryEntry(makeEntry('600519', { totalScore: 69, rating: '谨慎观望' }));
+  it('同股票重复保存：时间线按时间累积（由旧到新），最新点即当前评分', async () => {
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 80, rating: '持续观察' }));
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 87, rating: '优先跟踪' }));
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 69, rating: '谨慎观望' }));
 
-    const item = listHistory()[0];
+    const item = (await listHistory())[0];
     expect(item.totalScore).toBe(69);
     expect(item.timeline!.map((p) => p.score)).toEqual([80, 87, 69]);
     expect(item.timeline!.map((p) => p.rating)).toEqual(['持续观察', '优先跟踪', '谨慎观望']);
     // 时间线在同一个 id / 同一条记录内累积，不新增历史条目
-    expect(listHistory()).toHaveLength(1);
+    expect(await listHistory()).toHaveLength(1);
   });
 
-  it('时间线裁剪：只保留最近 MAX_TIMELINE_POINTS 个点（最早的被丢弃）', () => {
+  it('时间线裁剪：只保留最近 MAX_TIMELINE_POINTS 个点（最早的被丢弃）', async () => {
     const total = MAX_TIMELINE_POINTS + 5;
     for (let i = 0; i < total; i++) {
-      saveHistoryEntry(makeEntry('600519', { totalScore: 50 + i }));
+      await saveHistoryEntry(makeEntry('600519', { totalScore: 50 + i }));
     }
-    const points = listHistory()[0].timeline!;
+    const points = (await listHistory())[0].timeline!;
     expect(points).toHaveLength(MAX_TIMELINE_POINTS);
     // 保留了最后 MAX_TIMELINE_POINTS 次：分数从 55 到 74
     expect(points[0].score).toBe(50 + (total - MAX_TIMELINE_POINTS));
     expect(points[points.length - 1].score).toBe(50 + total - 1);
   });
 
-  it('旧数据兼容：没有 timeline 字段的记录正常列出（不抛、不返回空数组）', () => {
+  it('旧数据兼容：没有 timeline 字段的记录正常列出（不抛、不返回空数组）', async () => {
     seedFile(
       JSON.stringify({
         items: [
@@ -370,15 +379,15 @@ describe('historyService 研究历史', () => {
       }),
     );
 
-    const list = listHistory();
+    const list = await listHistory();
     expect(list).toHaveLength(1);
     expect(list[0].totalScore).toBe(70);
     // 关键：无时间线时字段就是 undefined（不是 []），前端据此不渲染变化量、也不会出现空括号
     expect(list[0].timeline).toBeUndefined();
-    expect(getPreviousAnalysis('600519')!.timeline).toBeUndefined();
+    expect((await getPreviousAnalysis('600519'))!.timeline).toBeUndefined();
   });
 
-  it('旧数据兼容：老记录首次被更新时自动补种起点，立刻可算出变化', () => {
+  it('旧数据兼容：老记录首次被更新时自动补种起点，立刻可算出变化', async () => {
     seedFile(
       JSON.stringify({
         items: [
@@ -395,14 +404,14 @@ describe('historyService 研究历史', () => {
       }),
     );
 
-    saveHistoryEntry(makeEntry('600519', { totalScore: 85, rating: '优先跟踪' }));
-    const points = listHistory()[0].timeline!;
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 85, rating: '优先跟踪' }));
+    const points = (await listHistory())[0].timeline!;
     expect(points).toHaveLength(2);
     expect(points[0]).toMatchObject({ date: '2026-08-01', score: 70, rating: '持续观察' });
     expect(points[1]).toMatchObject({ score: 85, rating: '优先跟踪' });
   });
 
-  it('脏时间线被净化：非法点丢弃，非法字段收敛（不炸列表接口）', () => {
+  it('脏时间线被净化：非法点丢弃，非法字段收敛（不炸列表接口）', async () => {
     seedFile(
       JSON.stringify({
         items: [
@@ -425,15 +434,15 @@ describe('historyService 研究历史', () => {
       }),
     );
 
-    const points = listHistory()[0].timeline!;
+    const points = (await listHistory())[0].timeline!;
     expect(points).toHaveLength(1);
     expect(points[0]).toEqual({ date: '2026-07-01', score: 60, rating: '持续观察' });
   });
 
-  it('时间线不携带完整 result（列表响应体不膨胀）', () => {
-    saveHistoryEntry(makeEntry('600519', { totalScore: 80 }));
-    saveHistoryEntry(makeEntry('600519', { totalScore: 90 }));
-    const item = listHistory()[0];
+  it('时间线不携带完整 result（列表响应体不膨胀）', async () => {
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 80 }));
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 90 }));
+    const item = (await listHistory())[0];
     expect(item).not.toHaveProperty('result');
     const keys = Object.keys(item.timeline![0]).sort();
     expect(keys).toEqual(['date', 'rating', 'score']);

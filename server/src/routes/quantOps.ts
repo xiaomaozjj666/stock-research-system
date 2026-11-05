@@ -1,51 +1,46 @@
 import { Router } from 'express';
 
-import { isAShareCode } from '../utils/stockCode.js';
-import {
-  quantLimiter,
-  watchlistLimiter,
-  circuitBreakerGuard,
-  respondIfQueueTimeout,
-} from '../middleware.js';
-import { parseStrategyInput } from '../quant/agents/orchestrator.js';
-import type { StrategyConfig } from '../quant/types.js';
-import { extractNewsSignal, earliestNewsDate } from '../quant/newsSignal.js';
-import { evaluateFactor, type FactorObservation } from '../quant/factorEvaluation.js';
-import { type StockPanelInput } from '../quant/crossSectionBuilder.js';
-import { runPreflight } from '../quant/preflight.js';
-import { isTushareConfigured, fetchStockBasicCached } from '../quant/tushareAdapter.js';
-import { baostockHealth } from '../quant/baostockBridge.js';
-import { runMarketScreener, readLatestScreenerRun, ScreenerParamError } from '../quant/screener.js';
 import { buildResearchMemory } from '../llm/researchMemory.js';
 import {
-  recordFactorExperiments,
+  circuitBreakerGuard,
+  quantLimiter,
+  respondIfQueueTimeout,
+  watchlistLimiter,
+} from '../middleware.js';
+import { parseStrategyInput } from '../quant/agents/orchestrator.js';
+import { fetchAnnouncementContent, fetchAnnouncementList } from '../quant/announcementProvider.js';
+import { runBacktest } from '../quant/backtestEngine.js';
+import { baostockHealth } from '../quant/baostockBridge.js';
+import { type StockPanelInput } from '../quant/crossSectionBuilder.js';
+import { fetchOHLCVData } from '../quant/dataProvider.js';
+import { evaluateFactor, type FactorObservation } from '../quant/factorEvaluation.js';
+import {
+  buildExpressionContext,
+  evaluateFactorSeries,
+  parseFactorExpression,
+  type ExprNode,
+} from '../quant/factorExpression.js';
+import {
   listFactorExperiments,
+  recordFactorExperiments,
   summarizeFactorExperiments,
   type FactorExperimentInput,
   type FactorExperimentSource,
 } from '../quant/factorLedger.js';
-import {
-  parseFactorExpression,
-  buildExpressionContext,
-  evaluateFactorSeries,
-  type ExprNode,
-} from '../quant/factorExpression.js';
+import { earliestNewsDate, extractNewsSignal } from '../quant/newsSignal.js';
 import {
   runPortfolioBacktest,
   type PortfolioBacktestOptions,
   type PortfolioBacktestResult,
 } from '../quant/portfolioBacktest.js';
-import { analyzeTimeseries } from '../quant/timeseries/analyze.js';
+import { runPreflight } from '../quant/preflight.js';
 import { listResearchDigests, runResearchDigest } from '../quant/researchDigest.js';
-import { fetchAnnouncementList, fetchAnnouncementContent } from '../quant/announcementProvider.js';
+import { readLatestScreenerRun, runMarketScreener, ScreenerParamError } from '../quant/screener.js';
+import { analyzeTimeseries } from '../quant/timeseries/analyze.js';
+import { fetchStockBasicCached, isTushareConfigured } from '../quant/tushareAdapter.js';
+import type { StrategyConfig } from '../quant/types.js';
 import { runValuationModel } from '../quant/valuationModel.js';
 import { getData } from '../services/dataService.js';
-import { fetchOHLCVData } from '../quant/dataProvider.js';
-import { runBacktest } from '../quant/backtestEngine.js';
-import { withAbortableTimeout } from '../utils/timeout.js';
-import { abortOnClientClose } from '../utils/clientAbort.js';
-import { errorDetail } from '../utils/errorDetail.js';
-import logger from '../utils/logger.js';
 import {
   datesOrReject,
   fetchPanelInputs,
@@ -58,6 +53,11 @@ import {
   resolveUniverse,
   runSnapshot,
 } from '../services/quant/panelService.js';
+import { abortOnClientClose } from '../utils/clientAbort.js';
+import { errorDetail } from '../utils/errorDetail.js';
+import logger from '../utils/logger.js';
+import { isAShareCode } from '../utils/stockCode.js';
+import { withAbortableTimeout } from '../utils/timeout.js';
 
 /**
  * 量化运营端点（初筛 / 时序 / 记忆 / 简报 / 公告 / 估值 / 健康 / 台账 / 受控评估）
@@ -239,13 +239,13 @@ router.post(
 );
 
 /** 研究记忆：同股票的历史结论 + 已验证因子，作为本次研究的先验 */
-router.get('/api/quant/research-memory/:code', quantLimiter, (req, res) => {
+router.get('/api/quant/research-memory/:code', quantLimiter, async (req, res) => {
   try {
     const code = String(req.params.code ?? '').trim();
     if (!isAShareCode(code)) {
       return res.status(400).json({ error: '请提供 6 位股票代码' });
     }
-    res.json(buildResearchMemory(code));
+    res.json(await buildResearchMemory(code));
   } catch (error) {
     logger.error('Research memory error', {
       route: '/api/quant/research-memory',

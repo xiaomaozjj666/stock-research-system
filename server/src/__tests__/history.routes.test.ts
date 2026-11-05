@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import request from 'supertest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import request from 'supertest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
 import { app as rawApp } from '../index.js';
-import { withContract } from '../test/contractSupertest.js';
 import { analysisResult } from '../test/contractFixtures.js';
+import { withContract } from '../test/contractSupertest.js';
 const app = withContract(rawApp);
 
 import { saveHistoryEntry } from '../services/historyService.js';
@@ -32,7 +32,7 @@ describe('GET /api/history 研究历史路由', () => {
   });
 
   it('列表返回摘要条目（含股票/时间/评级/评分）', async () => {
-    const saved = saveHistoryEntry({
+    const saved = await saveHistoryEntry({
       stockCode: '600519',
       stockName: '贵州茅台',
       industry: '白酒',
@@ -54,7 +54,7 @@ describe('GET /api/history 研究历史路由', () => {
   });
 
   it('详情返回完整 result', async () => {
-    const saved = saveHistoryEntry({
+    const saved = await saveHistoryEntry({
       stockCode: '000001',
       stockName: '平安银行',
       rating: '持续观察',
@@ -72,7 +72,7 @@ describe('GET /api/history 研究历史路由', () => {
   });
 
   it('删除后详情 404，重复删除 404', async () => {
-    const saved = saveHistoryEntry({
+    const saved = await saveHistoryEntry({
       stockCode: '300750',
       stockName: '宁德时代',
       rating: '优先跟踪',

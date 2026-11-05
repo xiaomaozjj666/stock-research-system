@@ -8,11 +8,22 @@
  *
  * 持久化：单 JSON 文件（HISTORY_FILE env 可重定向，与 watchlist/paper/audit 同模式），
  * "临时文件 + 原子 rename"写入；容量超上限时淘汰最旧记录；所有 IO 错误静默降级。
- * 读取走模块级内存 store（写后更新），同一请求只读一次写一次——历史库满额时
- * 单次 JSON.parse ≈ 38ms，重复读会在长连接（SSE）场景下阻塞事件循环。
+ *
+ * 异步化（2026-11 架构整改）：
+ * 此前读写全部走同步 fs（readFileSync/writeFileSync/renameSync），rename 瞬态失败
+ * 还用 Atomics.wait 做同步 sleep。历史库满额（100 条 ≈ 14.7MB）时单次 JSON.parse
+ * ≈ 38ms、单次写回数十毫秒，/api/analyze/stream、/api/chat/stream 都是长连接，
+ * 事件循环一卡全体等。现在：
+ * - 所有 fs 操作一律走 node:fs/promises（含瞬态重试的 sleep 也改为 setTimeout），
+ *   模块内不存在任何阻塞事件循环的路径；
+ * - 进程内缓存带 mtime 失效：命中缓存时只做一次异步 stat（微秒级），mtime 不变
+ *   直接返回内存快照，变了（含外部删除）自动重读——外部（测试夹具/运维手工）
+ *   改写落盘文件不再需要手动 resetHistoryStoreCache()；
+ * - 「读-改-写」经进程内串行队列执行：并发保存/删除不会交错成丢失更新。
+ * API 语义不变：导出函数 Promise 化，返回结构、去重/淘汰/时间线/降级规则逐字保持。
  */
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fsp from 'node:fs/promises';
+import * as path from 'node:path';
 
 import { DATA_ROOT } from '../dataRoot.js';
 import type { AnalysisResult } from '../types.js';
@@ -81,74 +92,113 @@ function getHistoryFile(): string {
 }
 
 /**
- * 模块级内存 store（单进程单写者）。
+ * 模块级内存 store（单进程单写者）+ mtime 失效。
  * ----------------------------------------------------------------------------
- * 此前每次分析收尾都要「读文件 + JSON.parse 整份历史库」两遍：routes/analysis.ts 先调
- * getPreviousAnalysis()（读一次），再调 saveHistoryEntry()（内部又读一次）。实测
- * server/src/data/history.json 达 199KB（单条可达 66KB，因为 result 是整份报告），
- * 库满（100 条）时约 14.7MB、单次 JSON.parse ≈ 38ms，于是每次收尾白阻塞事件循环
- * 0.14–0.18s；而 /api/analyze/stream、/api/chat/stream 都是长连接，事件循环一卡全体等。
- *
- * 现在：读走内存、写后更新缓存（脏标记即缓存本身是否有效），同一请求只读一次写一次。
- * 不做 mtime 校验——本模块是 history.json 的唯一写者；外部（测试夹具/运维手工）直接改写
- * 落盘文件后，调用 resetHistoryStoreCache() 强制重读即可。
+ * 读走内存、写后更新缓存；命中时仅用一次异步 stat 校验 mtime——不读全量文件、
+ * 不 JSON.parse。外部直接改写/删除落盘文件后 mtime 变化（或 stat 失败），缓存自动
+ * 失效重读；resetHistoryStoreCache() 仍保留，供"内容变了但 mtime 被刻意保持"等
+ * 极端场景强制重读。
  */
-let storeCache: { file: string; store: HistoryStore } | null = null;
+interface StoreCacheEntry {
+  file: string;
+  store: HistoryStore;
+  /**
+   * 建立缓存时落盘文件的 mtime（毫秒）；null 表示建立缓存时文件不存在（ENOENT）
+   * 或写盘后 stat 失败——两种情况下次读都会重新加载，不会把过期内容钉在内存里。
+   */
+  mtimeMs: number | null;
+  /**
+   * 写盘失败后的「内存权威」标记：盘上内容已落后于内存（原子替换要么成功要么
+   * 没发生，旧文件未动），此时 mtime 校验必然失配，若据此重读会把已完成的更新
+   * 静默回滚。标记期间跳过校验，直到下一次成功写盘。
+   */
+  memoryAuthoritative: boolean;
+}
+let storeCache: StoreCacheEntry | null = null;
 
 /**
- * 清空内存缓存：供测试隔离、或外部直接改写了落盘文件后强制重读（生产路径无需调用）。
+ * 清空内存缓存：供测试隔离、或外部直接改写了落盘文件且 mtime 未变时强制重读
+ * （常规外部改写由 mtime 校验自动发现，生产路径无需调用）。
  */
 export function resetHistoryStoreCache(): void {
   storeCache = null;
 }
 
 /**
- * 读取历史库快照（内存缓存命中则不读盘、不 parse）。
+ * 读取历史库快照（内存缓存命中且 mtime 未变则不读盘、不 parse）。
  * 同一请求内可「读一次、复用给 saveHistoryEntry(input, store)」，让整条链路只读一次写一次。
  * 注意：返回的是浅拷贝，可自由读；但同一份快照不要跨多次写入复用（后一次会覆盖前一次）。
  */
-export function readHistoryStore(): HistoryStore {
-  return { items: [...readStore().items] };
+export async function readHistoryStore(): Promise<HistoryStore> {
+  return { items: [...(await readStore()).items] };
 }
 
-function readStore(): HistoryStore {
-  const file = getHistoryFile();
-  if (storeCache && storeCache.file === file) return storeCache.store; // 缓存命中：不读盘
+/** 从盘加载并建立缓存；损坏/不可读返回空历史且**不写缓存**（下次调用重试）。 */
+async function loadFromDisk(file: string): Promise<HistoryStore> {
   let store: HistoryStore;
   try {
-    if (!fs.existsSync(file)) {
+    const raw = await fsp.readFile(file, 'utf-8');
+    const parsed = JSON.parse(raw) as HistoryStore;
+    store = parsed && Array.isArray(parsed.items) ? parsed : { items: [] };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      // 文件不存在 = 确定的空历史（不是故障），可以缓存；外部新建文件后 mtime
+      // 校验会发现"建立缓存时无文件、现在有"，自动重读。
       store = { items: [] };
-    } else {
-      const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as HistoryStore;
-      store = parsed && Array.isArray(parsed.items) ? parsed : { items: [] };
+      storeCache = { file, store, mtimeMs: null, memoryAuthoritative: false };
+      return store;
     }
-  } catch {
     // 文件损坏/不可读：视为空历史（不阻断）。**不写缓存**——一次瞬时读失败不该把
     // 「空历史」钉在内存里（否则下一次写入会把整份历史覆盖为空），下次调用重试读盘。
     return { items: [] };
   }
-  storeCache = { file, store };
+  let mtimeMs: number | null = null;
+  try {
+    mtimeMs = (await fsp.stat(file)).mtimeMs;
+  } catch {
+    // 读到内容却 stat 失败（极端竞态）：保持 null，下次读重新加载，绝不误信缓存
+  }
+  storeCache = { file, store, mtimeMs, memoryAuthoritative: false };
   return store;
+}
+
+async function readStore(): Promise<HistoryStore> {
+  const file = getHistoryFile();
+  const cached = storeCache;
+  if (cached && cached.file === file) {
+    if (cached.memoryAuthoritative) return cached.store; // 写失败后内存是权威，不回滚
+    try {
+      const st = await fsp.stat(file);
+      if (cached.mtimeMs !== null && st.mtimeMs === cached.mtimeMs) {
+        return cached.store; // 缓存命中：mtime 未变，不读盘
+      }
+    } catch {
+      // 文件被外部删除：建立缓存时本就无文件（ENOENT 缓存）则仍然有效
+      if (cached.mtimeMs === null) return cached.store;
+    }
+    // mtime 变化 / 文件被删 / 出现新文件：落到下方重读
+  }
+  return loadFromDisk(file);
 }
 
 /**
  * rename 的瞬态失败重试（Windows 专属痛点）。
- * 杀毒/搜索索引服务会短暂锁定刚写出的 tmp 或目标文件，renameSync 随即
+ * 杀毒/搜索索引服务会短暂锁定刚写出的 tmp 或目标文件，rename 随即
  * EPERM/EBUSY——数百毫秒后自动放手。graceful-fs 对同类问题的标准处置就是
- * 短暂重试；不重试的话单次锁定就会触发整条「写失败」降级路径（历史上还伴随
- * 清缓存读盘回滚，把已完成的更新静默丢掉）。非锁定类错误（EINVAL/ENOENT 等）
+ * 短暂重试；不重试的话单次锁定就会触发整条「写失败」降级路径。
+ * 重试间隔用 setTimeout 让出事件循环（此前的 Atomics.wait 同步 sleep 会把
+ * 所有在途请求一起卡住，已随异步化彻底移除）。非锁定类错误（EINVAL/ENOENT 等）
  * 不属于瞬态，直接上抛由调用方降级。
  */
-function renameWithRetry(tmp: string, file: string): void {
+async function renameWithRetry(tmp: string, file: string): Promise<void> {
   const transient = new Set(['EPERM', 'EBUSY', 'EACCES']);
   let lastErr: unknown;
   for (const delay of [0, 50, 100]) {
     if (delay > 0) {
-      // 同步 sleep（writeStore 是同步路径，不能 await 拆成异步）
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
     try {
-      fs.renameSync(tmp, file);
+      await fsp.rename(tmp, file);
       return;
     } catch (e) {
       lastErr = e;
@@ -158,30 +208,52 @@ function renameWithRetry(tmp: string, file: string): void {
   throw lastErr;
 }
 
-function writeStore(store: HistoryStore): boolean {
+async function writeStore(store: HistoryStore): Promise<boolean> {
   const file = getHistoryFile();
   const tmp = `${file}.tmp`;
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf-8');
-    renameWithRetry(tmp, file); // 原子替换，避免半写状态；瞬态锁定重试见函数注释
-    storeCache = { file, store }; // 写后更新缓存：后续读直接命中内存
+    await fsp.mkdir(path.dirname(file), { recursive: true });
+    await fsp.writeFile(tmp, JSON.stringify(store, null, 2), 'utf-8');
+    await renameWithRetry(tmp, file); // 原子替换，避免半写状态；瞬态锁定重试见函数注释
+    let mtimeMs: number | null = null;
+    try {
+      mtimeMs = (await fsp.stat(file)).mtimeMs;
+    } catch {
+      /* stat 失败则 mtimeMs=null，下次读重新加载（多一次读盘，正确性不受影响） */
+    }
+    storeCache = { file, store, mtimeMs, memoryAuthoritative: false }; // 写后更新缓存
     return true;
   } catch {
-    // 写失败（重试后仍失败）：**保留内存 store 作为权威**，不清缓存。
+    // 写失败（重试后仍失败）：**保留内存 store 作为权威**，并跳过 mtime 校验。
     // rename 失败时盘上旧文件未被动过（原子替换要么成功要么没发生），
     // 此前清缓存会让下次 readStore 从旧盘重建——本次已完成的条目新增/
     // 去重更新/时间线追加被静默回滚（丢用户研究历史）；保留缓存则盘暂时
     // 滞后一条，下一次 writeStore 全量重写时自动追上。tmp 残留一并
     // best-effort 清理（不影响正确性，只是不留孤儿文件）。
-    storeCache = { file, store };
+    storeCache = { file, store, mtimeMs: null, memoryAuthoritative: true };
     try {
-      fs.unlinkSync(tmp);
+      await fsp.unlink(tmp);
     } catch {
       /* tmp 可能尚未创建 */
     }
     return false;
   }
+}
+
+/**
+ * 「读-改-写」串行队列：saveHistoryEntry/deleteHistoryItem 都是先读快照、内存修改、
+ * 再全量写回。异步化后若不做串行化，两个并发保存会在 await 点交错——各自拿着
+ * 旧快照写回，后写覆盖先写（丢失更新）。队列把整个变更操作串行执行，读操作
+ * （list/get/getPrevious）不进队列，保持并发吞吐。
+ */
+let mutationQueue: Promise<unknown> = Promise.resolve();
+function enqueueMutation<T>(op: () => Promise<T>): Promise<T> {
+  const run = mutationQueue.then(op, op); // 前序失败不阻塞后续变更
+  mutationQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
 function makeId(): string {
@@ -262,50 +334,52 @@ function toSummary(item: HistoryItem): HistorySummary {
 export function saveHistoryEntry(
   input: HistoryEntryInput,
   reuseStore?: HistoryStore,
-): HistoryItem | null {
-  const store = reuseStore && Array.isArray(reuseStore.items) ? reuseStore : readStore();
-  const now = monotonicNowIso();
-  const existing = store.items.find((it) => it.stockCode === input.stockCode);
+): Promise<HistoryItem | null> {
+  return enqueueMutation(async () => {
+    const store = reuseStore && Array.isArray(reuseStore.items) ? reuseStore : await readStore();
+    const now = monotonicNowIso();
+    const existing = store.items.find((it) => it.stockCode === input.stockCode);
 
-  let saved: HistoryItem;
-  if (existing) {
-    // 时间线必须先按"被覆盖前"的值计算，再覆盖其余字段
-    existing.timeline = appendTimeline(existing, now, input);
-    existing.stockName = input.stockName;
-    existing.industry = input.industry;
-    existing.rating = input.rating;
-    existing.totalScore = input.totalScore;
-    existing.result = input.result;
-    existing.createdAt = now;
-    saved = existing;
-  } else {
-    saved = {
-      id: makeId(),
-      stockCode: input.stockCode,
-      stockName: input.stockName,
-      industry: input.industry,
-      rating: input.rating,
-      totalScore: input.totalScore,
-      createdAt: now,
-      timeline: [{ date: now.slice(0, 10), score: input.totalScore, rating: input.rating }],
-      result: input.result,
-    };
-    store.items.push(saved);
-  }
+    let saved: HistoryItem;
+    if (existing) {
+      // 时间线必须先按"被覆盖前"的值计算，再覆盖其余字段
+      existing.timeline = appendTimeline(existing, now, input);
+      existing.stockName = input.stockName;
+      existing.industry = input.industry;
+      existing.rating = input.rating;
+      existing.totalScore = input.totalScore;
+      existing.result = input.result;
+      existing.createdAt = now;
+      saved = existing;
+    } else {
+      saved = {
+        id: makeId(),
+        stockCode: input.stockCode,
+        stockName: input.stockName,
+        industry: input.industry,
+        rating: input.rating,
+        totalScore: input.totalScore,
+        createdAt: now,
+        timeline: [{ date: now.slice(0, 10), score: input.totalScore, rating: input.rating }],
+        result: input.result,
+      };
+      store.items.push(saved);
+    }
 
-  // 容量上限：按时间倒序保留最新 MAX_HISTORY_ITEMS 条
-  if (store.items.length > MAX_HISTORY_ITEMS) {
-    store.items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    store.items = store.items.slice(0, MAX_HISTORY_ITEMS);
-  }
+    // 容量上限：按时间倒序保留最新 MAX_HISTORY_ITEMS 条
+    if (store.items.length > MAX_HISTORY_ITEMS) {
+      store.items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      store.items = store.items.slice(0, MAX_HISTORY_ITEMS);
+    }
 
-  if (!writeStore(store)) return null;
-  return saved;
+    if (!(await writeStore(store))) return null;
+    return saved;
+  });
 }
 
 /** 历史列表（倒序，最新在前；不含完整 result，仅摘要字段 + 精简时间线） */
-export function listHistory(limit = 50): HistorySummary[] {
-  const store = readStore();
+export async function listHistory(limit = 50): Promise<HistorySummary[]> {
+  const store = await readStore();
   return store.items
     .slice()
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -318,8 +392,8 @@ export function listHistory(limit = 50): HistorySummary[] {
  * 在 saveHistoryEntry 之前调用，返回同股票当前最新记录（即"上一次分析"）；
  * 无记录返回 null。
  */
-export function getPreviousAnalysis(stockCode: string): HistorySummary | null {
-  const store = readStore();
+export async function getPreviousAnalysis(stockCode: string): Promise<HistorySummary | null> {
+  const store = await readStore();
   const prev = store.items.find((it) => it.stockCode === stockCode);
   if (!prev) return null;
   return toSummary(prev);
@@ -351,16 +425,18 @@ export function computeVsPrevious(
 }
 
 /** 历史详情（含完整 result，供前端恢复研究报告） */
-export function getHistoryItem(id: string): HistoryItem | null {
-  const store = readStore();
+export async function getHistoryItem(id: string): Promise<HistoryItem | null> {
+  const store = await readStore();
   return store.items.find((it) => it.id === id) ?? null;
 }
 
 /** 删除一条历史记录；返回是否删除成功 */
-export function deleteHistoryItem(id: string): boolean {
-  const store = readStore();
-  const next = store.items.filter((it) => it.id !== id);
-  if (next.length === store.items.length) return false;
-  store.items = next;
-  return writeStore(store);
+export function deleteHistoryItem(id: string): Promise<boolean> {
+  return enqueueMutation(async () => {
+    const store = await readStore();
+    const next = store.items.filter((it) => it.id !== id);
+    if (next.length === store.items.length) return false;
+    store.items = next;
+    return writeStore(store);
+  });
 }

@@ -2,28 +2,28 @@
  * 核心分析：多专家研判 / SSE 流式 / 研究历史。
  */
 import { Router } from 'express';
-import { isAShareCode } from '../utils/stockCode.js';
 import {
   analyzeLimiter,
-  metaLimiter,
   circuitBreakerGuard,
+  metaLimiter,
   respondIfQueueTimeout,
 } from '../middleware.js';
-import { isQueueTimeoutError } from '../utils/limitGate.js';
 import { runAnalysis } from '../services/analysisPipeline.js';
 import {
-  saveHistoryEntry,
-  getPreviousAnalysis,
   computeVsPrevious,
-  listHistory,
-  getHistoryItem,
   deleteHistoryItem,
+  getHistoryItem,
+  getPreviousAnalysis,
+  listHistory,
+  saveHistoryEntry,
 } from '../services/historyService.js';
 import { recordAnalysis } from '../services/outcomeTracker.js';
-import { createSseChannel } from '../utils/sse.js';
 import type { AnalysisResult } from '../types.js';
 import { errorDetail } from '../utils/errorDetail.js';
+import { isQueueTimeoutError } from '../utils/limitGate.js';
 import logger from '../utils/logger.js';
+import { createSseChannel } from '../utils/sse.js';
+import { isAShareCode } from '../utils/stockCode.js';
 
 const router = Router();
 
@@ -61,7 +61,7 @@ function isAnalysisInFlightError(error: unknown): boolean {
  * 把评级/评分变化（vs_previous）附加到结果，随报告一同呈现——
  * 让每次分析都能对照历史观点，看到观点演化而非孤立快照。
  */
-function persistAnalysisHistory(result: AnalysisResult): void {
+async function persistAnalysisHistory(result: AnalysisResult): Promise<void> {
   try {
     // 调用方两处都是 runAnalysis 的返回值（Promise<AnalysisResult>），
     // 形参声明 unknown 会把这份类型信息丢掉、逼出后面的 `as never`。
@@ -69,14 +69,14 @@ function persistAnalysisHistory(result: AnalysisResult): void {
     const item = result?.stock_pool?.[0] as Record<string, unknown> | undefined;
     if (!item || typeof item.stock_code !== 'string') return;
 
-    const prev = getPreviousAnalysis(item.stock_code);
+    const prev = await getPreviousAnalysis(item.stock_code);
     const vsPrevious = computeVsPrevious(
       { rating: String(item.rating ?? ''), totalScore: Number(item.total_score) || 0 },
       prev,
     );
     if (vsPrevious) item.vs_previous = vsPrevious;
 
-    saveHistoryEntry({
+    await saveHistoryEntry({
       stockCode: item.stock_code,
       stockName: String(item.stock_name ?? item.stock_code),
       industry: typeof item.industry === 'string' ? item.industry : undefined,
@@ -108,7 +108,7 @@ router.post('/api/analyze', analyzeLimiter, circuitBreakerGuard, async (req, res
     }
     // resume：上次分析中断时，从最后一个成功阶段续跑（省去已支付过的 LLM 成本）
     const result = await runAnalysis(stockCode, undefined, { resume: resume === true });
-    persistAnalysisHistory(result); // 分析完成自动入库（失败静默，不影响响应）
+    await persistAnalysisHistory(result); // 分析完成自动入库（失败静默，不影响响应）
     res.json(result);
   } catch (error) {
     logger.error('Analysis error', {
@@ -144,7 +144,7 @@ router.get('/api/analyze/stream', analyzeLimiter, circuitBreakerGuard, async (re
     // resume=1：上次分析中断（如客户端断开）时，从最后一个成功阶段续跑
     const resume = req.query.resume === '1' || req.query.resume === 'true';
     const result = await runAnalysis(stockCode, (stage) => sse.send(stage), { resume });
-    persistAnalysisHistory(result); // 分析完成自动入库（失败静默）
+    await persistAnalysisHistory(result); // 分析完成自动入库（失败静默）
     sse.trySend({ phase: 'done', message: '分析完成', result });
   } catch (error) {
     if (sse.isClosed()) {
@@ -184,19 +184,19 @@ router.get('/api/analyze/stream', analyzeLimiter, circuitBreakerGuard, async (re
 // 中间件插入而退化，前缀挂载既覆盖三条路由，又不影响各处理函数的类型推断。
 router.use('/api/history', metaLimiter);
 
-router.get('/api/history', (req, res) => {
+router.get('/api/history', async (req, res) => {
   const limit = Number(req.query.limit) || 50;
-  res.json({ items: listHistory(limit) });
+  res.json({ items: await listHistory(limit) });
 });
 
-router.get('/api/history/:id', (req, res) => {
-  const item = getHistoryItem(req.params.id);
+router.get('/api/history/:id', async (req, res) => {
+  const item = await getHistoryItem(req.params.id);
   if (!item) return res.status(404).json({ error: '历史记录不存在' });
   res.json(item);
 });
 
-router.delete('/api/history/:id', (req, res) => {
-  const ok = deleteHistoryItem(req.params.id);
+router.delete('/api/history/:id', async (req, res) => {
+  const ok = await deleteHistoryItem(req.params.id);
   if (!ok) return res.status(404).json({ error: '历史记录不存在' });
   res.json({ deleted: true });
 });

@@ -8,8 +8,8 @@
  * 数据来源全部是本地已有资产（historyService 的历史分析 + factorLedger 的
  * 实验台账），不引入新的外部依赖；任何一项缺失都只让记忆变短，不报错。
  */
-import { getPreviousAnalysis, listHistory } from '../services/historyService.js';
 import { listFactorExperiments } from '../quant/factorLedger.js';
+import { getPreviousAnalysis, listHistory } from '../services/historyService.js';
 
 export interface ResearchMemory {
   stockCode: string;
@@ -25,10 +25,10 @@ export interface ResearchMemory {
   summary: string | null;
 }
 
-export function buildResearchMemory(stockCode: string): ResearchMemory {
+export async function buildResearchMemory(stockCode: string): Promise<ResearchMemory> {
   const code = String(stockCode ?? '').trim();
-  const previousRaw = code ? getPreviousAnalysis(code) : null;
-  const history = code ? listHistory(200) : [];
+  const previousRaw = code ? await getPreviousAnalysis(code) : null;
+  const history = code ? await listHistory(200) : [];
   const own = history.filter((h) => h.stockCode === code);
   const scoreTrend = own
     .slice(0, 5)

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { getPreviousAnalysis, listHistory } from '../../services/historyService.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { listFactorExperiments } from '../../quant/factorLedger.js';
+import { getPreviousAnalysis, listHistory } from '../../services/historyService.js';
 import { buildResearchMemory } from '../researchMemory.js';
 
 vi.mock('../../services/historyService.js', () => ({
@@ -17,21 +17,21 @@ beforeEach(() => {
   mockedPrev.mockReset();
   mockedList.mockReset();
   mockedLedger.mockReset();
-  mockedPrev.mockReturnValue(null);
-  mockedList.mockReturnValue([]);
+  mockedPrev.mockResolvedValue(null);
+  mockedList.mockResolvedValue([]);
   mockedLedger.mockReturnValue([]);
 });
 
 describe('buildResearchMemory', () => {
-  it('无任何历史 → summary 为 null（不编造记忆）', () => {
-    const m = buildResearchMemory('600519');
+  it('无任何历史 → summary 为 null（不编造记忆）', async () => {
+    const m = await buildResearchMemory('600519');
     expect(m.summary).toBeNull();
     expect(m.previous).toBeNull();
     expect(m.historyCount).toBe(0);
   });
 
-  it('带上一次分析结论', () => {
-    mockedPrev.mockReturnValue({
+  it('带上一次分析结论', async () => {
+    mockedPrev.mockResolvedValue({
       id: 'x',
       stockCode: '600519',
       stockName: '贵州茅台',
@@ -39,16 +39,16 @@ describe('buildResearchMemory', () => {
       rating: '增持',
       totalScore: 78,
     });
-    const m = buildResearchMemory('600519');
+    const m = await buildResearchMemory('600519');
     expect(m.previous?.rating).toBe('增持');
     expect(m.summary).toContain('上次分析');
     expect(m.summary).toContain('增持');
   });
 
-  it('评分趋势按由旧到新排列（最多 5 条）', () => {
+  it('评分趋势按由旧到新排列（最多 5 条）', async () => {
     // listHistory 真实返回是时间倒序（最新在前）；这里同步模拟，
     // 最新一次评分最高 → 反转后趋势应为递增
-    mockedList.mockReturnValue(
+    mockedList.mockResolvedValue(
       Array.from({ length: 8 }, (_, i) => ({
         id: `id-${i}`,
         stockCode: '600519',
@@ -58,14 +58,14 @@ describe('buildResearchMemory', () => {
         totalScore: 67 - i,
       })),
     );
-    const m = buildResearchMemory('600519');
+    const m = await buildResearchMemory('600519');
     expect(m.historyCount).toBe(8);
     expect(m.scoreTrend).toHaveLength(5);
     // listHistory 按时间倒序 → 取前 5 再反转 = 由旧到新
     expect(m.scoreTrend[0]).toBeLessThan(m.scoreTrend[4]);
   });
 
-  it('并入台账中已通过验证的因子', () => {
+  it('并入台账中已通过验证的因子', async () => {
     mockedLedger.mockReturnValue([
       {
         id: 'e1',
@@ -81,7 +81,7 @@ describe('buildResearchMemory', () => {
         kept: true,
       },
     ]);
-    const m = buildResearchMemory('600519');
+    const m = await buildResearchMemory('600519');
     expect(m.validatedFactors).toHaveLength(1);
     expect(m.summary).toContain('cs_roe');
     expect(m.summary).toContain('0.061');
