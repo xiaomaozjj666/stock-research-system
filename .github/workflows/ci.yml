@@ -74,27 +74,6 @@ jobs:
         # package.json 的 format:check 已纳入 e2e/**、scripts/**。
         run: npm run format:check
 
-      - name: Generated API types are up to date
-        # 契约（services/openapi.ts）是 API 形状的唯一权威来源，前端类型由它生成。
-        # 改了契约却忘了重新生成，前端类型就会静默过期——这正是本项目此前
-        # 「契约与前端各写一份、必然分叉」的机制性缺陷。此处只比对不写入。
-        run: npm run check:api-types
-
-      - name: Dependency direction (quant/shared must not import services)
-        # 包级循环防线：quant/shared 反向 import services 即 fail（scripts/
-        # check-dependency-direction.mts）。曾因此出现 fundamentalCache ↔
-        # analysisPipeline 的包级双向依赖，此处防止回潮。
-        run: npm run check:deps
-
-      - name: OpenAPI artifact is in sync with domain modules
-        # 契约按域模块（services/openapi/paths|schemas）是源，docs/openapi.json 是
-        # 生成物：改了域模块忘记重新生成即 fail（scripts/generate-openapi.mts --check，
-        # 键序规范化后的确定性比对）。
-        run: npm run check:openapi
-
-      - name: TypeCheck (server)
-        run: npx tsc --noEmit -p server/tsconfig.json
-
       - name: TypeCheck (client tests)
         # 客户端主配置刻意排除测试文件（测试要 jsdom / node 类型，见 tsconfig.test.json
         # 注释），代价是**测试夹具的类型漂移无人看守**。实测踩到过：把
@@ -103,20 +82,10 @@ jobs:
         # 检查范围内，CI 全绿而类型早已不一致。本步补齐这个盲区。
         run: npm run typecheck:tests
 
-      - name: TypeCheck & Build (client)
-        # client build = `tsc -b && vite build`（tsc -b 即 client 的类型检查门禁）
-        run: npm run build --workspace=client
-
-      - name: Bundle size budget
-        # 打包体积门禁：按 chunk 逐个核对预算（client/scripts/check-bundle-size.mjs）。
-        # 为什么不靠 vite 的 chunkSizeWarningLimit：它只是 warning，不fail；
-        # 现状是 echarts 626 kB 顶着 1000 kB 的阈值从不报警，体积可以一路涨。
-        # 预算取当前实测值 + 约 8% 余量，因此今天的构建通过，后续增长会被拦下。
-        run: node client/scripts/check-bundle-size.mjs
-
-      - name: Build (server)
-        # server build = `tsc`（NodeNext 编译产出 dist）
-        run: npm run build --workspace=server
+      - name: Release gates
+        # 统一入口依次校验前端 API 类型、依赖方向、OpenAPI 生成物、客户端构建与
+        # 体积预算、真实进程端点契约、内置样本快照；其中两端构建产出供下方上传。
+        run: npm run check:release-gates
 
       - name: Upload build artifacts
         # 两端 dist 供 e2e job 复用，消除 e2e job 的重复构建。
@@ -130,17 +99,6 @@ jobs:
             server/dist
             client/dist
           retention-days: 7
-
-      - name: Contract smoke (real process vs spec)
-        # 补上此前唯一没被验证过的一环：**真实 HTTP 响应**是否与契约一致。
-        # 此前所有检查都在进程内（import buildOpenApiDocument 后比对），
-        # 而契约是手写的、响应是 res.json 拼的 —— 两者是独立代码路径，
-        # 「契约声明的字段」与「路由实际写出的字段」不一致时进程内测不出来。
-        # 该脚本会先 build server（契约与响应读同一份 dist，杜绝版本漂移），
-        # 再起真实进程请求 16 个无副作用端点逐字段校验。
-        # 已反向验证：把 ModelSpec.id 谎称成 integer 后立即报出
-        # `$.registry[0].id: 期望 number，实际 string` 并以非 0 退出。
-        run: npm run smoke:contract
 
       - name: Test with coverage
         # vitest run 全量测试（globals=false，测试内显式 import vi/expect）+ 覆盖率阈值门禁
