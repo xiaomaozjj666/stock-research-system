@@ -108,8 +108,12 @@ async function waitReady(timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const r = await fetch(`${BASE}/api/health`);
-      if (r.ok) return true;
+      // 能拿到任意状态码就说明进程已在监听：/api/health 的 503 只表示外呼
+      // （eastmoney 可达性）或缓存目录体检降级，属于环境型结论，与契约冒烟无关；
+      // 冒烟自身对依赖型非 2xx 有明示跳过逻辑。就绪判定若要求 200，会把
+      // 第三方站点的可达性引入 CI 门禁，在 Azure runner 上间歇性误红。
+      await fetch(`${BASE}/api/health`);
+      return true;
     } catch {
       /* 尚未监听 */
     }
