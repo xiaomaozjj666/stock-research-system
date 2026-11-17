@@ -51,9 +51,9 @@
     "globals": "17.14.0",
     "jsdom": "31.0.0",
     "nanoid": "^6.0.2",
-    "oxlint": "1.91.0",
-    "prettier": "3.9.10",
-    "supertest": "7.3.1",
+    "oxlint": "1.93.0",
+    "prettier": "3.10.1",
+    "supertest": "7.3.2",
     "tsx": "4.23.15",
     "typescript": "^7.0.2",
     "vitest": "5.1.0"
