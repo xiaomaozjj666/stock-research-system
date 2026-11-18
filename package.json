@@ -34,6 +34,7 @@
     "check:release-gates": "tsx scripts/check-release-gates.mts",
     "smoke:contract": "tsx scripts/run-contract-smoke.mts",
     "check:doc-freshness": "tsx scripts/check-doc-freshness.mts",
+    "check:audit": "node scripts/check-audit.mjs",
     "setup:hooks": "git config core.hooksPath scripts/hooks",
     "format": "prettier --write \"server/src/**/*.{ts,tsx,js,json,md}\" \"client/src/**/*.{ts,tsx,js,json,md}\" \"e2e/**/*.{ts,tsx,js,json}\" \"client/scripts/**/*.{js,mjs}\" \"client/vite.config.ts\" \"scripts/**/*.{ts,mts,tsx,js,mjs,json}\" \"*.{json,md,mjs,mts}\" \".github/**/*.yml\"",
     "format:check": "prettier --check \"server/src/**/*.{ts,tsx,js,json,md}\" \"client/src/**/*.{ts,tsx,js,json,md}\" \"e2e/**/*.{ts,tsx,js,json}\" \"client/scripts/**/*.{js,mjs}\" \"client/vite.config.ts\" \"scripts/**/*.{ts,mts,tsx,js,mjs,json}\" \"*.{json,md,mjs,mts}\" \".github/**/*.yml\""

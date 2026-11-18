@@ -56,11 +56,12 @@ jobs:
         run: npm ci --legacy-peer-deps --no-audit --no-fund
 
       - name: Dependency security audit
-        # 依赖安全门禁：--audit-level=high 只在 high/critical 时以非 0 退出（实测当前
-        # 仓库 0 漏洞，见下）。不设 continue-on-error —— 真出现 high/critical 就该拦住合并。
+        # 依赖安全门禁：基于 npm audit --audit-level=high，但对「所有版本均受影响、
+        # 上游尚无修复」的 advisory 做**显式豁免**（见 scripts/check-audit.mjs 的
+        # ALLOW_LIST，每项必须附理由）。其它任何 high/critical 仍以非 0 退出拦住合并。
         # 与下方 npm ci 的 --no-audit 互补：安装时跳过审计、这里单独跑一次以便定位。
         # 需要联网访问 registry 审计端点；若端点不可用会以非 0 退出（视为门禁失败而非静默通过）。
-        run: npm audit --audit-level=high
+        run: npm run check:audit
 
       - name: Lint
         # eslint 覆盖 JS/MJS（当前仓库内实际被检查的是 scripts/dev.mjs 与 eslint.config.mjs；
