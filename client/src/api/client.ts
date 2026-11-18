@@ -37,6 +37,10 @@ import type {
   GETApiModelsResponse as ModelRoutingResponse,
   POSTApiCostResetResponse as OkResponse,
   POSTApiPaperSettleResponse as PaperSettleResponse,
+  POSTApiResearchDeepRequestBody as DeepResearchRequest,
+  POSTApiResearchDeepResponse as DeepResearchResult,
+  ResearchRunSummary as DeepResearchRunSummary,
+  SavedResearchRun as SavedDeepResearchRun,
   GETApiStocksResponse as StockListResponse,
   GETApiStocksSearchResponse as StockSearchResponse,
   GETApiThesesResponse as ThesisListResponse,
@@ -1312,5 +1316,185 @@ export async function evaluateThesis(id: string): Promise<EvaluateThesisResponse
     return response.data;
   } catch (error: unknown) {
     throw normalizeApiError(error, '预注册评估失败');
+  }
+}
+
+/* ============================================================================
+ * 多步深度研究（Deep Research）
+ * ==========================================================================*/
+
+/** 深度研究的完整结果（报告 / 计划 / 证据 / 验证 / 事件 / 统计） */
+export type { DeepResearchRequest, DeepResearchResult };
+
+/** 研究过程中推送的单条 Agent 事件（规划 / 检索 / 验证 / 编排） */
+export type DeepResearchEvent = DeepResearchResult['events'][number];
+
+/**
+ * SSE 帧。三种 phase 与服务端一一对应（见 routes/research.ts）：
+ * agent_event 是过程推送，done 携带完整结果，error 表示中止。
+ */
+export type DeepResearchStreamEvent =
+  | { phase: 'agent_event'; event: DeepResearchEvent }
+  | { phase: 'done'; result: DeepResearchResult }
+  | { phase: 'error'; message?: string };
+
+export interface DeepResearchOptions {
+  scope?: DeepResearchRequest['scope'];
+  config?: DeepResearchRequest['config'];
+}
+
+/**
+ * 同步版：等整轮研究跑完一次性返回。
+ * 超时给到 5.5 分钟（服务端同步接口上限 5 分钟），确保服务端的超时提示先于
+ * 浏览器侧的网络超时抵达——否则用户只会看到笼统的「网络错误」。
+ */
+export async function runDeepResearch(question: string): Promise<DeepResearchResult> {
+  try {
+    const response = await api.post<DeepResearchResult>(
+      '/research/deep',
+      { question },
+      { timeout: 330000 },
+    );
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '深度研究失败');
+  }
+}
+
+/**
+ * 流式版：逐条推送 Agent 事件，最终 resolve 完整结果。
+ *
+ * 与 analyzeStockStream 的关键差异：**不做断线重连**。深度研究一次要跑几十次
+ * LLM 调用，重连等于把已完成的部分重跑一遍（时间与成本双输）；断开即报错，
+ * 由用户决定是否重启。
+ */
+export function runDeepResearchStream(
+  question: string,
+  onEvent: (event: DeepResearchStreamEvent) => void,
+  options: DeepResearchOptions = {},
+): { cancel: () => void; done: Promise<DeepResearchResult> } {
+  const params = new URLSearchParams({ question });
+  if (options.scope) params.set('scope', JSON.stringify(options.scope));
+  if (options.config) params.set('config', JSON.stringify(options.config));
+  const url = withTokenQuery(`/api/research/deep/stream?${params.toString()}`);
+
+  let resolveDone!: (r: DeepResearchResult) => void;
+  let rejectDone!: (e: Error) => void;
+  const done = new Promise<DeepResearchResult>((resolve, reject) => {
+    resolveDone = resolve;
+    rejectDone = reject;
+  });
+
+  let settled = false;
+  let received = false;
+  let es: EventSource | null = null;
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
+
+  const clearWatchdog = () => {
+    if (watchdog) {
+      clearTimeout(watchdog);
+      watchdog = null;
+    }
+  };
+
+  function finish(err: Error | null, result?: DeepResearchResult) {
+    if (settled) return;
+    settled = true;
+    clearWatchdog();
+    es?.close();
+    es = null;
+    if (err) rejectDone(err);
+    else resolveDone(result as DeepResearchResult);
+  }
+
+  es = new EventSource(url);
+
+  // 首包看门狗：规划阶段要先跑一次 LLM，20 秒内连一条事件都没有说明服务不可用
+  watchdog = setTimeout(() => {
+    if (!received) finish(new Error('后端无响应：20 秒内未收到研究进度，请确认服务是否正常'));
+  }, 20000);
+
+  es.onmessage = (event) => {
+    received = true;
+    clearWatchdog();
+    let data: DeepResearchStreamEvent;
+    try {
+      data = JSON.parse(event.data) as DeepResearchStreamEvent;
+    } catch {
+      // 单帧坏掉不应终止整次研究：回调一个可见错误后继续等后续帧
+      onEvent({ phase: 'error', message: '研究进度数据解析失败（收到无法解码的服务端帧）' });
+      return;
+    }
+
+    if (data.phase === 'done') {
+      finish(null, data.result);
+      return;
+    }
+    if (data.phase === 'error') {
+      finish(new Error(data.message || '深度研究失败'));
+      return;
+    }
+    onEvent(data);
+  };
+
+  es.onerror = () => {
+    if (settled) return;
+    finish(
+      received
+        ? new Error('连接中断，研究未完成，请重试')
+        : new Error(
+            // EventSource 读不到 4xx/5xx 的响应体，无法区分「服务没起」与「服务起了但未配 LLM 密钥」；
+            // 这两种情况都表现为首包前断开，所以文案要同时给出两个可操作原因，而不是断言服务没启动。
+            '无法开始研究：请确认后端服务已启动，且已配置 LLM 密钥（DEEPSEEK_API_KEY 或 OPENAI_API_KEY）',
+          ),
+    );
+  };
+
+  return {
+    cancel: () => finish(new Error('已取消本次研究')),
+    done,
+  };
+}
+
+/* ---------------------------------------------------------------- 研究库 */
+
+/** 历史研究摘要（列表用，不含报告正文） */
+export type { DeepResearchRunSummary, SavedDeepResearchRun };
+
+/** 列出历史研究（新 -> 旧） */
+export async function listDeepResearchRuns(limit = 20): Promise<DeepResearchRunSummary[]> {
+  try {
+    const response = await api.get<{ items: DeepResearchRunSummary[] }>('/research/runs', {
+      params: { limit },
+      timeout: 15000,
+    });
+    return response.data.items;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '历史研究读取失败');
+  }
+}
+
+/** 回看某次研究的完整结果（报告 / 证据 / 事件轨迹 / 统计） */
+export async function getDeepResearchRun(id: string): Promise<SavedDeepResearchRun> {
+  try {
+    const response = await api.get<SavedDeepResearchRun>(
+      `/research/runs/${encodeURIComponent(id)}`,
+      { timeout: 20000 },
+    );
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '历史研究读取失败');
+  }
+}
+
+/** 删除一条历史研究 */
+export async function deleteDeepResearchRun(id: string): Promise<{ ok: boolean }> {
+  try {
+    const response = await api.delete<{ ok: boolean }>(`/research/runs/${encodeURIComponent(id)}`, {
+      timeout: 15000,
+    });
+    return response.data;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '历史研究删除失败');
   }
 }

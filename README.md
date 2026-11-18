@@ -169,7 +169,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3512 用例 / 257 个测试文件，行覆盖 93.44% / statements 91.48% / functions 93.27% / branches 82.31%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3562 用例 / 261 个测试文件，行覆盖 92.46% / statements 90.51% / functions 92.20% / branches 81.54%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
 
 ## 快速开始
 
@@ -286,7 +286,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（3512 用例 / 257 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（3562 用例 / 261 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（17 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src、e2e）
 npm run format:check  # Prettier 格式检查

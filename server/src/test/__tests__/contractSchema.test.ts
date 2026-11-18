@@ -171,10 +171,15 @@ describe('契约本身的覆盖度（复用同一份 schema 查找）', () => {
     let ops = 0;
     let withSchema = 0;
     const missing: string[] = [];
-    // 这三个端点**正确地**没有 application/json schema：
-    // 两个 SSE 回 text/event-stream，/api/metrics 回 Prometheus 文本。
+    // 这几个端点**正确地**没有 application/json schema：
+    // 三个 SSE 回 text/event-stream，/api/metrics 回 Prometheus 文本。
     // 它们的响应体由事件结构（components.schemas 里的 *StreamEvent）描述。
-    const NON_JSON = new Set(['/api/analyze/stream', '/api/chat/stream', '/api/metrics']);
+    const NON_JSON = new Set([
+      '/api/analyze/stream',
+      '/api/chat/stream',
+      '/api/research/deep/stream',
+      '/api/metrics',
+    ]);
     for (const [path, item] of Object.entries(doc.paths)) {
       // 只用到 method（判断是否存在 2xx schema），不需要 operation 本身
       for (const method of Object.keys(item)) {

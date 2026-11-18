@@ -18,6 +18,7 @@ import { llmPaths } from './paths/llm.js';
 import { marketPaths } from './paths/market.js';
 import { portfolioPaths } from './paths/portfolio.js';
 import { quantPaths } from './paths/quant.js';
+import { researchPaths } from './paths/research.js';
 import { systemPaths } from './paths/system.js';
 import { thesisPaths } from './paths/thesis.js';
 import { analysisSchemas } from './schemas/analysis.js';
@@ -28,6 +29,7 @@ import { improvementSchemas } from './schemas/improvement.js';
 import { intlSchemas } from './schemas/intl.js';
 import { portfolioSchemas } from './schemas/portfolio.js';
 import { quantSchemas } from './schemas/quant.js';
+import { researchSchemas } from './schemas/research.js';
 import { thesisSchemas } from './schemas/thesis.js';
 
 export { OPENAPI_VERSION };
@@ -64,6 +66,7 @@ export function buildOpenApiDocument() {
       ...marketPaths,
       ...portfolioPaths,
       ...quantPaths,
+      ...researchPaths,
       ...systemPaths,
       ...thesisPaths,
     },
@@ -86,6 +89,7 @@ export function buildOpenApiDocument() {
         ...intlSchemas,
         ...portfolioSchemas,
         ...quantSchemas,
+        ...researchSchemas,
         ...thesisSchemas,
       },
     },

@@ -1442,6 +1442,58 @@ export type RebalanceRecord = {
   benchmarkReturn: number;
 };
 
+export type ResearchAcquisitionPath = {
+  /** 第几轮检索 */
+  round: number;
+  /** 实际使用的检索词 */
+  query: string;
+  /** 命中的适配器（公告 / 新闻 / 知识库） */
+  adapter: string;
+  /** 该适配器的第几次尝试（含退避重试） */
+  attempt: number;
+  /** 降级来源适配器；主通道直接命中时缺省 */
+  fallbackOf?: string;
+  /** 本次抓取耗时（毫秒） */
+  durationMs?: number;
+};
+
+export type ResearchAgentEvent = {
+  /** 单调递增序号，供 UI 排序 */
+  seq: number;
+  type:
+    | 'run_started'
+    | 'plan_created'
+    | 'plan_revised'
+    | 'replan_triggered'
+    | 'retrieval_started'
+    | 'retrieval_succeeded'
+    | 'retrieval_failed'
+    | 'retrieval_fallback'
+    | 'evidence_extracted'
+    | 'verification_completed'
+    | 'supplement_triggered'
+    | 'synthesis_started'
+    | 'synthesis_completed'
+    | 'run_finished'
+    | 'run_error';
+  round: number;
+  at: string;
+  message: string;
+  /** 事件附加数据（子问题 id、查询词、条数等） */
+  data?: Record<string, unknown>;
+};
+
+export type ResearchConfigInput = {
+  /** 约束：最小 1；最大 4 */
+  maxRounds?: number;
+  /** 约束：最小 3；最大 10 */
+  maxSubQuestions?: number;
+  /** 约束：最小 1；最大 10 */
+  resultsPerQuery?: number;
+  /** 约束：最小 1；最大 5 */
+  maxDocsPerQuery?: number;
+};
+
 export type ResearchDigest = {
   id: string;
   createdAt: string;
@@ -1469,6 +1521,30 @@ export type ResearchDigest = {
   notes: string[];
 };
 
+export type ResearchEvidence = {
+  id: string;
+  subQuestionId: string;
+  /** 从原文抽取的可引用陈述 */
+  claim: string;
+  /** 支撑该陈述的原文片段（可逐字核验） */
+  quote: string;
+  source: ResearchSourceRef;
+  path: ResearchAcquisitionPath;
+  /** 可信度 0-1（来源层级 × 时效衰减） */
+  credibility: number;
+  retrievedAt: string;
+};
+
+export type ResearchEvidenceConflict = {
+  /** 冲突的两条证据 id */
+  evidenceIds: string[];
+  /** 冲突维度：数值 / 时点 / 因果 / 事实 / 口径 */
+  dimension: 'numeric' | 'temporal' | 'causal' | 'factual' | 'caliber';
+  description: string;
+  resolution: 'a_wins' | 'b_wins' | 'both_partially_true' | 'unresolved';
+  resolutionReason?: string;
+};
+
 export type ResearchMemory = {
   stockCode: string;
   /** 同股票的上一次分析；从未分析过时为 null */
@@ -1491,6 +1567,213 @@ export type ResearchMemory = {
   }[];
   /** 拼好的中文摘要（可直接注入提示词）；无记忆时为 null */
   summary: string | null;
+};
+
+export type ResearchPlan = {
+  id: string;
+  originalQuestion: string;
+  scope: ResearchScope;
+  subQuestions: ResearchSubQuestion[];
+  /** 计划版本号（每轮重规划 +1） */
+  version: number;
+  revisions: ResearchPlanRevision[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ResearchPlanRevision = {
+  version: number;
+  round: number;
+  reason: string;
+  added: string[];
+  removed: string[];
+  adjusted: string[];
+  at: string;
+};
+
+export type ResearchReport = {
+  title: string;
+  executiveSummary: string;
+  overallConfidence: number;
+  confidenceLabel: '高' | '中' | '低';
+  sections: ResearchReportSection[];
+  methodology: {
+    rounds: number;
+    adaptersUsed: string[];
+    evidenceCount: number;
+    sourceCount: number;
+    planVersions: number;
+    conflictsFound: number;
+  };
+  conflicts: ResearchEvidenceConflict[];
+  limitations: string[];
+  generatedAt: string;
+};
+
+export type ResearchReportCitation = {
+  evidenceId: string;
+  claim: string;
+  sourceTitle: string;
+  sourceType:
+    | 'regulatory_filing'
+    | 'company_disclosure'
+    | 'financial_database'
+    | 'academic'
+    | 'internal_doc'
+    | 'research_report'
+    | 'news_media'
+    | 'industry_data'
+    | 'blog'
+    | 'social_ugc'
+    | 'unknown';
+  publisher?: string;
+  publishedAt?: string;
+  url?: string;
+  path: ResearchAcquisitionPath;
+};
+
+export type ResearchReportSection = {
+  subQuestionId: string;
+  question: string;
+  conclusion: string;
+  confidence: number;
+  confidenceLabel: '高' | '中' | '低';
+  citations: ResearchReportCitation[];
+  conflictNotes: string[];
+  status: string;
+};
+
+export type ResearchRunList = {
+  items: ResearchRunSummary[];
+};
+
+export type ResearchRunResult = {
+  report: ResearchReport;
+  /** Markdown 渲染版（可直接导出） */
+  reportMarkdown: string;
+  plan: ResearchPlan;
+  evidence: ResearchEvidence[];
+  verifications: ResearchVerification[];
+  events: ResearchAgentEvent[];
+  stats: ResearchRunStats;
+};
+
+export type ResearchRunStats = {
+  rounds: number;
+  totalRetrievalTasks: number;
+  succeededTasks: number;
+  failedTasks: number;
+  fallbacksUsed: number;
+  evidenceCount: number;
+  conflictsFound: number;
+  supplementRounds: number;
+  planVersions: number;
+  startedAt: string;
+  finishedAt?: string;
+  stopReason?: 'all_p0_sufficient' | 'max_rounds' | 'no_progress' | 'no_pending_work';
+};
+
+export type ResearchRunSummary = {
+  /** 研究记录 id（小写字母/数字/连字符） */
+  id: string;
+  /** 原始研究问题 */
+  question: string;
+  /** 报告生成时间（ISO） */
+  createdAt: string;
+  /** 报告标题 */
+  title: string;
+  /** 整体置信度 0-1 */
+  overallConfidence: number;
+  confidenceLabel: '高' | '中' | '低';
+  /** 实际检索轮次 */
+  rounds: number;
+  evidenceCount: number;
+  sectionCount: number;
+  conflictCount: number;
+  /** 终止原因（早期记录可能缺省） */
+  stopReason?: 'all_p0_sufficient' | 'max_rounds' | 'no_progress' | 'no_pending_work';
+};
+
+export type ResearchScope = {
+  /** 时间范围，如「近 2 年」 */
+  timeRange?: string;
+  region?: string;
+  industry?: string;
+  language?: string;
+  extraRequirements?: string[];
+};
+
+export type ResearchScopeInput = {
+  /** 时间范围（最长 100 字） */
+  timeRange?: string;
+  /** 地域（最长 100 字） */
+  region?: string;
+  /** 行业限定（最长 100 字） */
+  industry?: string;
+  /** 证据语言偏好（最长 100 字） */
+  language?: string;
+  /** 附加要求，最多 5 条、每条最长 200 字 */
+  extraRequirements?: string[];
+};
+
+export type ResearchSourceRef = {
+  /** 来源类型（决定可信度基准分） */
+  type:
+    | 'regulatory_filing'
+    | 'company_disclosure'
+    | 'financial_database'
+    | 'academic'
+    | 'internal_doc'
+    | 'research_report'
+    | 'news_media'
+    | 'industry_data'
+    | 'blog'
+    | 'social_ugc'
+    | 'unknown';
+  title: string;
+  /** 原文地址或自定义协议（em-ann:// / em-news:// / kb://） */
+  url?: string;
+  publisher?: string;
+  publishedAt?: string;
+  /** 抓取时使用的适配器名 */
+  retrievedVia: string;
+};
+
+export type ResearchSubQuestion = {
+  id: string;
+  question: string;
+  priority: 'P0' | 'P1' | 'P2';
+  keywords: string[];
+  expectedSources: (
+    | 'regulatory_filing'
+    | 'company_disclosure'
+    | 'financial_database'
+    | 'academic'
+    | 'internal_doc'
+    | 'research_report'
+    | 'news_media'
+    | 'industry_data'
+    | 'blog'
+    | 'social_ugc'
+    | 'unknown'
+  )[];
+  successCriteria: string;
+  status: 'pending' | 'retrieving' | 'sufficient' | 'insufficient' | 'blocked';
+  supplementRoundsUsed: number;
+  supplementHints: string[];
+  derivedFrom?: string;
+};
+
+export type ResearchVerification = {
+  subQuestionId: string;
+  consistency: 'consistent' | 'partial_conflict' | 'contradictory' | 'insufficient';
+  verdict: string;
+  confidence: number;
+  supportingEvidenceIds: string[];
+  conflicts: ResearchEvidenceConflict[];
+  needsSupplement: boolean;
+  supplementHints: string[];
+  checkedAt: string;
 };
 
 export type RunSnapshot = {
@@ -1521,6 +1804,14 @@ export type RunSnapshot = {
   concurrency?: number;
   /** 截面宽度上限（仅截面） */
   maxCodes?: number;
+};
+
+export type SavedResearchRun = {
+  id: string;
+  question: string;
+  scope: ResearchScope;
+  createdAt: string;
+  result: ResearchRunResult;
 };
 
 export type ScenarioResult = {
@@ -3152,6 +3443,103 @@ export type POSTApiQuantValuationModelRequestBody = {
  * 端点：POST /api/quant/valuation/model
  */
 export type POSTApiQuantValuationModelResponse = ValuationModelResult;
+
+/**
+ * 多步深度研究（同步）
+ * POST/PUT 等请求体
+ * 端点：POST /api/research/deep
+ */
+export type POSTApiResearchDeepRequestBody = {
+  /** 研究问题（4-500 字） */
+  question: string;
+  scope?: ResearchScopeInput;
+  config?: ResearchConfigInput;
+};
+
+/**
+ * 多步深度研究（同步）
+ * 开放问题 -> 自动拆解子问题 -> 多轮检索取证（公告 / 新闻 / 内部知识库）-> 交叉验证与冲突裁决 -> 生成带逐条引用的结构化报告。与 POST /api/analyze 的区别：analyze 面向「给定代码跑固定专家流水线」，本端点面向「给定开放问题，Agent 自主规划检索」。依赖 LLM，未配置时返回 503。
+ * 成功响应（HTTP 200）
+ * 端点：POST /api/research/deep
+ */
+export type POSTApiResearchDeepResponse = ResearchRunResult;
+
+/**
+ * 多步深度研究（SSE 流式）
+ * 逐条推送 AgentEvent（run_started / plan_created / retrieval_* / verification_completed / synthesis_* / run_finished），最终 phase=done 事件携带完整研究结果。
+ * 成功响应（HTTP 200）
+ * 端点：GET /api/research/deep/stream
+ */
+export type GETApiResearchDeepStreamResponse = string;
+
+/**
+ * 多步深度研究（SSE 流式）
+ * 路径/查询参数
+ * 端点：GET /api/research/deep/stream
+ */
+export type GETApiResearchDeepStreamParams = {
+  question: string;
+  /** ResearchScopeInput 的 JSON 字符串（URL 编码） */
+  scope?: string;
+  /** ResearchConfigInput 的 JSON 字符串（URL 编码） */
+  config?: string;
+};
+
+/**
+ * 列出历史深度研究（摘要）
+ * 按时间倒序返回最近的研究摘要（不含报告正文）。研究库用于复查结论：一次深度研究会跑几十次 LLM 调用，刷新页面不应该让结论消失。
+ * 成功响应（HTTP 200）
+ * 端点：GET /api/research/runs
+ */
+export type GETApiResearchRunsResponse = ResearchRunList;
+
+/**
+ * 列出历史深度研究（摘要）
+ * 路径/查询参数
+ * 端点：GET /api/research/runs
+ */
+export type GETApiResearchRunsParams = {
+  /**
+   * 返回条数（1-50，默认 20；研究库上限 30 条）
+   * 约束：最小 1；最大 50
+   */
+  limit?: number;
+};
+
+/**
+ * 删除单次历史研究
+ * 成功响应（HTTP 200）
+ * 端点：DELETE /api/research/runs/{id}
+ */
+export type DELETEApiResearchRunsIdResponse = {
+  ok?: boolean;
+};
+
+/**
+ * 删除单次历史研究
+ * 路径/查询参数
+ * 端点：DELETE /api/research/runs/{id}
+ */
+export type DELETEApiResearchRunsIdParams = {
+  id: string;
+};
+
+/**
+ * 读取单次历史研究的完整结果
+ * 返回报告、证据、验证、事件轨迹与统计，字段与 POST /api/research/deep 一致。
+ * 成功响应（HTTP 200）
+ * 端点：GET /api/research/runs/{id}
+ */
+export type GETApiResearchRunsIdResponse = SavedResearchRun;
+
+/**
+ * 读取单次历史研究的完整结果
+ * 路径/查询参数
+ * 端点：GET /api/research/runs/{id}
+ */
+export type GETApiResearchRunsIdParams = {
+  id: string;
+};
 
 /**
  * 已缓存股票列表

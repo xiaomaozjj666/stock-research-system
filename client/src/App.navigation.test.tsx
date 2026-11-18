@@ -248,7 +248,11 @@ describe('App —— 标签页导航', () => {
     const activeName = () => screen.getAllByRole('tab', { selected: true })[0].textContent;
 
     pressOn(tablist, 'ArrowRight');
+    expect(activeName()).toBe('AI 研究员');
+    pressOn(tablist, 'ArrowRight');
     expect(activeName()).toBe('今日');
+    pressOn(tablist, 'ArrowLeft');
+    expect(activeName()).toBe('AI 研究员');
     pressOn(tablist, 'ArrowLeft');
     expect(activeName()).toBe('深度研究');
     pressOn(tablist, 'ArrowLeft'); // 首个再往左 → 回卷到末个
@@ -265,11 +269,11 @@ describe('App —— 标签页导航', () => {
     expect(screen.getByRole('tab', { name: '量化研究' })).toHaveAttribute('tabindex', '-1');
   });
 
-  it('数字键 1~7 直接切 tab', async () => {
+  it('数字键 1~9 直接切 tab', async () => {
     render(<App />);
-    pressOn(document, '3');
+    pressOn(document, '4');
     expect(await screen.findByTestId('quant-page')).toBeInTheDocument();
-    pressOn(document, '2');
+    pressOn(document, '3');
     expect(await screen.findByTestId('today-page')).toBeInTheDocument();
     expect(screen.getAllByRole('tab', { selected: true })[0].textContent).toBe('今日');
   });

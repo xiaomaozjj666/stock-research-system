@@ -22,3 +22,15 @@ export { renderReportMarkdown } from './report.js';
 export { completeJson, LLMOutputError } from './llm.js';
 export type { LLMAdapter, LLMRequest } from './llm.js';
 export type { SearchAdapter, SearchHit, SearchQuery, FetchedDoc } from './search.js';
+export {
+  createLLMAdapter,
+  createAnnouncementAdapter,
+  createNewsAdapter,
+  createKnowledgeBaseAdapter,
+  createDefaultSearchAdapters,
+  extractStockCode,
+  type LLMAdapterOptions,
+  type AnnouncementAdapterOptions,
+  type NewsAdapterOptions,
+  type KnowledgeBaseAdapterOptions,
+} from './adapters.js';

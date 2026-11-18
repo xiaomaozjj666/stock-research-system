@@ -3968,6 +3968,104 @@
         ],
         "type": "object"
       },
+      "ResearchAcquisitionPath": {
+        "properties": {
+          "adapter": {
+            "description": "命中的适配器（公告 / 新闻 / 知识库）",
+            "type": "string"
+          },
+          "attempt": {
+            "description": "该适配器的第几次尝试（含退避重试）",
+            "type": "integer"
+          },
+          "durationMs": {
+            "description": "本次抓取耗时（毫秒）",
+            "type": "number"
+          },
+          "fallbackOf": {
+            "description": "降级来源适配器；主通道直接命中时缺省",
+            "type": "string"
+          },
+          "query": {
+            "description": "实际使用的检索词",
+            "type": "string"
+          },
+          "round": {
+            "description": "第几轮检索",
+            "type": "integer"
+          }
+        },
+        "required": ["round", "query", "adapter", "attempt"],
+        "type": "object"
+      },
+      "ResearchAgentEvent": {
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "data": {
+            "description": "事件附加数据（子问题 id、查询词、条数等）",
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "round": {
+            "type": "integer"
+          },
+          "seq": {
+            "description": "单调递增序号，供 UI 排序",
+            "type": "integer"
+          },
+          "type": {
+            "enum": [
+              "run_started",
+              "plan_created",
+              "plan_revised",
+              "replan_triggered",
+              "retrieval_started",
+              "retrieval_succeeded",
+              "retrieval_failed",
+              "retrieval_fallback",
+              "evidence_extracted",
+              "verification_completed",
+              "supplement_triggered",
+              "synthesis_started",
+              "synthesis_completed",
+              "run_finished",
+              "run_error"
+            ],
+            "type": "string"
+          }
+        },
+        "required": ["seq", "type", "round", "at", "message"],
+        "type": "object"
+      },
+      "ResearchConfigInput": {
+        "properties": {
+          "maxDocsPerQuery": {
+            "maximum": 5,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxRounds": {
+            "maximum": 4,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxSubQuestions": {
+            "maximum": 10,
+            "minimum": 3,
+            "type": "integer"
+          },
+          "resultsPerQuery": {
+            "maximum": 10,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "ResearchDigest": {
         "properties": {
           "createdAt": {
@@ -4055,6 +4153,76 @@
         "required": ["id", "createdAt", "screener", "ledger", "notes"],
         "type": "object"
       },
+      "ResearchEvidence": {
+        "properties": {
+          "claim": {
+            "description": "从原文抽取的可引用陈述",
+            "type": "string"
+          },
+          "credibility": {
+            "description": "可信度 0-1（来源层级 × 时效衰减）",
+            "type": "number"
+          },
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "$ref": "#/components/schemas/ResearchAcquisitionPath"
+          },
+          "quote": {
+            "description": "支撑该陈述的原文片段（可逐字核验）",
+            "type": "string"
+          },
+          "retrievedAt": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ResearchSourceRef"
+          },
+          "subQuestionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "subQuestionId",
+          "claim",
+          "quote",
+          "source",
+          "path",
+          "credibility",
+          "retrievedAt"
+        ],
+        "type": "object"
+      },
+      "ResearchEvidenceConflict": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "dimension": {
+            "description": "冲突维度：数值 / 时点 / 因果 / 事实 / 口径",
+            "enum": ["numeric", "temporal", "causal", "factual", "caliber"],
+            "type": "string"
+          },
+          "evidenceIds": {
+            "description": "冲突的两条证据 id",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "resolution": {
+            "enum": ["a_wins", "b_wins", "both_partially_true", "unresolved"],
+            "type": "string"
+          },
+          "resolutionReason": {
+            "type": "string"
+          }
+        },
+        "required": ["evidenceIds", "dimension", "description", "resolution"],
+        "type": "object"
+      },
       "ResearchMemory": {
         "properties": {
           "historyCount": {
@@ -4131,6 +4299,646 @@
         ],
         "type": "object"
       },
+      "ResearchPlan": {
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "originalQuestion": {
+            "type": "string"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchPlanRevision"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ResearchScope"
+          },
+          "subQuestions": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchSubQuestion"
+            },
+            "type": "array"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "version": {
+            "description": "计划版本号（每轮重规划 +1）",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "originalQuestion",
+          "scope",
+          "subQuestions",
+          "version",
+          "revisions",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "ResearchPlanRevision": {
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "adjusted": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "at": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "round": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": ["version", "round", "reason", "added", "removed", "adjusted", "at"],
+        "type": "object"
+      },
+      "ResearchReport": {
+        "properties": {
+          "confidenceLabel": {
+            "enum": ["高", "中", "低"],
+            "type": "string"
+          },
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchEvidenceConflict"
+            },
+            "type": "array"
+          },
+          "executiveSummary": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "methodology": {
+            "properties": {
+              "adaptersUsed": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "conflictsFound": {
+                "type": "integer"
+              },
+              "evidenceCount": {
+                "type": "integer"
+              },
+              "planVersions": {
+                "type": "integer"
+              },
+              "rounds": {
+                "type": "integer"
+              },
+              "sourceCount": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "rounds",
+              "adaptersUsed",
+              "evidenceCount",
+              "sourceCount",
+              "planVersions",
+              "conflictsFound"
+            ],
+            "type": "object"
+          },
+          "overallConfidence": {
+            "type": "number"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchReportSection"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "executiveSummary",
+          "overallConfidence",
+          "confidenceLabel",
+          "sections",
+          "methodology",
+          "conflicts",
+          "limitations",
+          "generatedAt"
+        ],
+        "type": "object"
+      },
+      "ResearchReportCitation": {
+        "properties": {
+          "claim": {
+            "type": "string"
+          },
+          "evidenceId": {
+            "type": "string"
+          },
+          "path": {
+            "$ref": "#/components/schemas/ResearchAcquisitionPath"
+          },
+          "publishedAt": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "sourceTitle": {
+            "type": "string"
+          },
+          "sourceType": {
+            "enum": [
+              "regulatory_filing",
+              "company_disclosure",
+              "financial_database",
+              "academic",
+              "internal_doc",
+              "research_report",
+              "news_media",
+              "industry_data",
+              "blog",
+              "social_ugc",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": ["evidenceId", "claim", "sourceTitle", "sourceType", "path"],
+        "type": "object"
+      },
+      "ResearchReportSection": {
+        "properties": {
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchReportCitation"
+            },
+            "type": "array"
+          },
+          "conclusion": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "confidenceLabel": {
+            "enum": ["高", "中", "低"],
+            "type": "string"
+          },
+          "conflictNotes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subQuestionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "subQuestionId",
+          "question",
+          "conclusion",
+          "confidence",
+          "confidenceLabel",
+          "citations",
+          "conflictNotes",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ResearchRunList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchRunSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": ["items"],
+        "type": "object"
+      },
+      "ResearchRunResult": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchAgentEvent"
+            },
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchEvidence"
+            },
+            "type": "array"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/ResearchPlan"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ResearchReport"
+          },
+          "reportMarkdown": {
+            "description": "Markdown 渲染版（可直接导出）",
+            "type": "string"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/ResearchRunStats"
+          },
+          "verifications": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchVerification"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "report",
+          "reportMarkdown",
+          "plan",
+          "evidence",
+          "verifications",
+          "events",
+          "stats"
+        ],
+        "type": "object"
+      },
+      "ResearchRunStats": {
+        "properties": {
+          "conflictsFound": {
+            "type": "integer"
+          },
+          "evidenceCount": {
+            "type": "integer"
+          },
+          "failedTasks": {
+            "type": "integer"
+          },
+          "fallbacksUsed": {
+            "type": "integer"
+          },
+          "finishedAt": {
+            "type": "string"
+          },
+          "planVersions": {
+            "type": "integer"
+          },
+          "rounds": {
+            "type": "integer"
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "stopReason": {
+            "enum": ["all_p0_sufficient", "max_rounds", "no_progress", "no_pending_work"],
+            "type": "string"
+          },
+          "succeededTasks": {
+            "type": "integer"
+          },
+          "supplementRounds": {
+            "type": "integer"
+          },
+          "totalRetrievalTasks": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rounds",
+          "totalRetrievalTasks",
+          "succeededTasks",
+          "failedTasks",
+          "fallbacksUsed",
+          "evidenceCount",
+          "conflictsFound",
+          "supplementRounds",
+          "planVersions",
+          "startedAt"
+        ],
+        "type": "object"
+      },
+      "ResearchRunSummary": {
+        "properties": {
+          "confidenceLabel": {
+            "enum": ["高", "中", "低"],
+            "type": "string"
+          },
+          "conflictCount": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "description": "报告生成时间（ISO）",
+            "type": "string"
+          },
+          "evidenceCount": {
+            "type": "integer"
+          },
+          "id": {
+            "description": "研究记录 id（小写字母/数字/连字符）",
+            "type": "string"
+          },
+          "overallConfidence": {
+            "description": "整体置信度 0-1",
+            "type": "number"
+          },
+          "question": {
+            "description": "原始研究问题",
+            "type": "string"
+          },
+          "rounds": {
+            "description": "实际检索轮次",
+            "type": "integer"
+          },
+          "sectionCount": {
+            "type": "integer"
+          },
+          "stopReason": {
+            "description": "终止原因（早期记录可能缺省）",
+            "enum": ["all_p0_sufficient", "max_rounds", "no_progress", "no_pending_work"],
+            "type": "string"
+          },
+          "title": {
+            "description": "报告标题",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "question",
+          "createdAt",
+          "title",
+          "overallConfidence",
+          "confidenceLabel",
+          "rounds",
+          "evidenceCount",
+          "sectionCount",
+          "conflictCount"
+        ],
+        "type": "object"
+      },
+      "ResearchScope": {
+        "properties": {
+          "extraRequirements": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "industry": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "timeRange": {
+            "description": "时间范围，如「近 2 年」",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ResearchScopeInput": {
+        "properties": {
+          "extraRequirements": {
+            "description": "附加要求，最多 5 条、每条最长 200 字",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "industry": {
+            "description": "行业限定（最长 100 字）",
+            "type": "string"
+          },
+          "language": {
+            "description": "证据语言偏好（最长 100 字）",
+            "type": "string"
+          },
+          "region": {
+            "description": "地域（最长 100 字）",
+            "type": "string"
+          },
+          "timeRange": {
+            "description": "时间范围（最长 100 字）",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ResearchSourceRef": {
+        "properties": {
+          "publishedAt": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "retrievedVia": {
+            "description": "抓取时使用的适配器名",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "description": "来源类型（决定可信度基准分）",
+            "enum": [
+              "regulatory_filing",
+              "company_disclosure",
+              "financial_database",
+              "academic",
+              "internal_doc",
+              "research_report",
+              "news_media",
+              "industry_data",
+              "blog",
+              "social_ugc",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "url": {
+            "description": "原文地址或自定义协议（em-ann:// / em-news:// / kb://）",
+            "type": "string"
+          }
+        },
+        "required": ["type", "title", "retrievedVia"],
+        "type": "object"
+      },
+      "ResearchSubQuestion": {
+        "properties": {
+          "derivedFrom": {
+            "type": "string"
+          },
+          "expectedSources": {
+            "items": {
+              "enum": [
+                "regulatory_filing",
+                "company_disclosure",
+                "financial_database",
+                "academic",
+                "internal_doc",
+                "research_report",
+                "news_media",
+                "industry_data",
+                "blog",
+                "social_ugc",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "priority": {
+            "enum": ["P0", "P1", "P2"],
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "status": {
+            "enum": ["pending", "retrieving", "sufficient", "insufficient", "blocked"],
+            "type": "string"
+          },
+          "successCriteria": {
+            "type": "string"
+          },
+          "supplementHints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "supplementRoundsUsed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "question",
+          "priority",
+          "keywords",
+          "expectedSources",
+          "successCriteria",
+          "status",
+          "supplementRoundsUsed",
+          "supplementHints"
+        ],
+        "type": "object"
+      },
+      "ResearchVerification": {
+        "properties": {
+          "checkedAt": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchEvidenceConflict"
+            },
+            "type": "array"
+          },
+          "consistency": {
+            "enum": ["consistent", "partial_conflict", "contradictory", "insufficient"],
+            "type": "string"
+          },
+          "needsSupplement": {
+            "type": "boolean"
+          },
+          "subQuestionId": {
+            "type": "string"
+          },
+          "supplementHints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "supportingEvidenceIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "verdict": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "subQuestionId",
+          "consistency",
+          "verdict",
+          "confidence",
+          "supportingEvidenceIds",
+          "conflicts",
+          "needsSupplement",
+          "supplementHints",
+          "checkedAt"
+        ],
+        "type": "object"
+      },
       "RunSnapshot": {
         "properties": {
           "at": {
@@ -4193,6 +5001,27 @@
           }
         },
         "required": ["kind"],
+        "type": "object"
+      },
+      "SavedResearchRun": {
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ResearchRunResult"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ResearchScope"
+          }
+        },
+        "required": ["id", "question", "scope", "createdAt", "result"],
         "type": "object"
       },
       "ScenarioResult": {
@@ -9375,6 +10204,298 @@
         },
         "summary": "估值建模（DCF / 相对估值，假设可覆盖默认值）",
         "tags": ["quant"]
+      }
+    },
+    "/api/research/deep": {
+      "post": {
+        "description": "开放问题 -> 自动拆解子问题 -> 多轮检索取证（公告 / 新闻 / 内部知识库）-> 交叉验证与冲突裁决 -> 生成带逐条引用的结构化报告。与 POST /api/analyze 的区别：analyze 面向「给定代码跑固定专家流水线」，本端点面向「给定开放问题，Agent 自主规划检索」。依赖 LLM，未配置时返回 503。",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "config": {
+                    "$ref": "#/components/schemas/ResearchConfigInput"
+                  },
+                  "question": {
+                    "description": "研究问题（4-500 字）",
+                    "type": "string"
+                  },
+                  "scope": {
+                    "$ref": "#/components/schemas/ResearchScopeInput"
+                  }
+                },
+                "required": ["question"],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchRunResult"
+                }
+              }
+            },
+            "description": "完整研究结果（报告 / 计划 / 证据 / 验证 / 事件 / 统计）"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "问题为空/过短/过长，或 scope/config 参数非法"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "已有深度研究任务在运行（并发上限 2），或触发限流"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "研究过程失败（LLM 输出连续不合规、上游数据源异常等）"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "未配置 LLM（深度研究无规则降级路径）"
+          }
+        },
+        "summary": "多步深度研究（同步）",
+        "tags": ["analysis"]
+      }
+    },
+    "/api/research/deep/stream": {
+      "get": {
+        "description": "逐条推送 AgentEvent（run_started / plan_created / retrieval_* / verification_completed / synthesis_* / run_finished），最终 phase=done 事件携带完整研究结果。",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "question",
+            "required": true,
+            "schema": {
+              "description": "研究问题（4-500 字）",
+              "type": "string"
+            }
+          },
+          {
+            "description": "ResearchScopeInput 的 JSON 字符串（URL 编码）",
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "ResearchConfigInput 的 JSON 字符串（URL 编码）",
+            "in": "query",
+            "name": "config",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "description": "SSE 原始帧序列",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "SSE 事件流：`data: {\"phase\":\"agent_event\",\"event\":{...}}\\n\\n` 推送过程，`{\"phase\":\"done\",\"result\":{...}}` 收尾，`{\"phase\":\"error\",\"message\":\"...\"}` 表示失败。**Content-Type 是 text/event-stream，不是 application/json**，故 schema 声明为 string（原始帧文本）。"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "参数非法"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "并发已达上限或触发限流"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "未配置 LLM"
+          }
+        },
+        "summary": "多步深度研究（SSE 流式）",
+        "tags": ["analysis"]
+      }
+    },
+    "/api/research/runs": {
+      "get": {
+        "description": "按时间倒序返回最近的研究摘要（不含报告正文）。研究库用于复查结论：一次深度研究会跑几十次 LLM 调用，刷新页面不应该让结论消失。",
+        "parameters": [
+          {
+            "description": "返回条数（1-50，默认 20；研究库上限 30 条）",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchRunList"
+                }
+              }
+            },
+            "description": "研究摘要列表（新 -> 旧）"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "limit 不是 1-50 的整数"
+          }
+        },
+        "summary": "列出历史深度研究（摘要）",
+        "tags": ["analysis"]
+      }
+    },
+    "/api/research/runs/{id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "研究记录 id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "删除成功"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "研究记录不存在"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "写操作限流"
+          }
+        },
+        "summary": "删除单次历史研究",
+        "tags": ["analysis"]
+      },
+      "get": {
+        "description": "返回报告、证据、验证、事件轨迹与统计，字段与 POST /api/research/deep 一致。",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "研究记录 id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedResearchRun"
+                }
+              }
+            },
+            "description": "完整研究记录"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "研究记录不存在"
+          }
+        },
+        "summary": "读取单次历史研究的完整结果",
+        "tags": ["analysis"]
       }
     },
     "/api/stocks": {

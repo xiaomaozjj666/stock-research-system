@@ -145,10 +145,17 @@ describe('getData 缓存隔离：调用方就地改写不得污染缓存', () =>
     mutateLikeAnalysisPipeline(fromDisk);
 
     const raw = readFileSync(join(cacheDir, '600000.json'), 'utf-8');
-    expect(raw).not.toContain('999');
-    const parsed = JSON.parse(raw) as { data: { valuation: { pe: number; pb: number } } };
+    const parsed = JSON.parse(raw) as {
+      data: {
+        valuation: { pe: number; pb: number; historicalPE: Array<{ year: string; pe: number }> };
+      };
+    };
+    // 按字段判污染，而不是 raw.includes('999')：缓存文件里带 timestamp（epoch 毫秒），
+    // 数字串里偶发出现 "999"（例如 1794999242928）会让这条用例随当前时刻假失败。
     expect(parsed.data.valuation.pe).toBe(30);
     expect(parsed.data.valuation.pb).toBe(6);
+    expect(parsed.data.valuation.historicalPE.some((h) => h.pe === 999)).toBe(false);
+    expect(parsed.data.valuation.historicalPE.some((h) => h.year === '2026')).toBe(false);
     // 磁盘命中的返回值同样是独立副本
     expect(fromDisk.valuation.pe).toBe(999);
     const again = await mod2.getData('600000');

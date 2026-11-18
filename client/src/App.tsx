@@ -37,6 +37,8 @@ const WatchlistPage = lazy(() => import('./pages/watchlist/WatchlistPage'));
 const HistoryPage = lazy(() => import('./pages/history/HistoryPage'));
 // 「今日」聚合页：自选股异动 + 关注股观点变化 + 最近简报（此前三者分散、且无日常入口）
 const TodayPanel = lazy(() => import('./pages/today/TodayPanel'));
+// 「AI 研究员」：开放问题的多步深度研究（规划 → 检索取证 → 交叉验证 → 带引用报告）
+const DeepResearchPage = lazy(() => import('./pages/agent/DeepResearchPage'));
 // 图表区懒加载：echarts 运行时（~196KB gzip）不再随首屏预加载，
 // 仅在分析结果出现、真正需要渲染图表时才拉取
 const ChartsSection = lazy(() => import('./components/ChartsSection'));
@@ -210,11 +212,12 @@ function DashboardCards({ data }: { data: AnalysisResult['stock_pool'][0] }) {
 }
 
 type TabId =
-  'research' | 'today' | 'quant' | 'compare' | 'watchlist' | 'paper' | 'chat' | 'history';
+  'research' | 'agent' | 'today' | 'quant' | 'compare' | 'watchlist' | 'paper' | 'chat' | 'history';
 
 /** 顶部功能导航：集中定义便于 ARIA tablist 的键盘导航（←/→/Home/End） */
 const TABS: { id: TabId; label: string }[] = [
   { id: 'research', label: '深度研究' },
+  { id: 'agent', label: 'AI 研究员' },
   { id: 'today', label: '今日' },
   { id: 'quant', label: '量化研究' },
   { id: 'compare', label: '对比分析' },
@@ -633,9 +636,9 @@ function App() {
         return;
       }
 
-      // ③ 1~7：切换到第 N 个 tab（输入框/文本域聚焦时屏蔽，否则数字会被打进输入框）
+      // ③ 1~9：切换到第 N 个 tab（输入框/文本域聚焦时屏蔽，否则数字会被打进输入框）
       // 带修饰键的数字键不拦：Ctrl/⌘+1~9 是浏览器/系统的标签页切换，不应被页面劫持
-      if (!mod && !e.altKey && !isEditableTarget(e.target) && /^[1-7]$/.test(e.key)) {
+      if (!mod && !e.altKey && !isEditableTarget(e.target) && /^[1-9]$/.test(e.key)) {
         const tab = TABS[Number(e.key) - 1];
         if (!tab) return;
         e.preventDefault();
@@ -1038,6 +1041,11 @@ function App() {
       </div>
       {/* 懒加载面板：首次激活才挂载；白名单页签之后常驻 + hidden，其余切走即卸载
           （未激活过的不渲染，首屏不并发取数）。每个面板一个独立 Suspense 边界，见上方 TabPane 注释 */}
+      {shouldRenderTab('agent') && (
+        <TabPane active={activeTab === 'agent'} id="panel-agent" tabId="tab-agent">
+          <DeepResearchPage />
+        </TabPane>
+      )}
       {shouldRenderTab('today') && (
         <TabPane active={activeTab === 'today'} id="panel-today" tabId="tab-today">
           <TodayPanel />
