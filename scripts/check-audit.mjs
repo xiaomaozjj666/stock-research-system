@@ -33,6 +33,9 @@ const ALLOW_LIST = {
 
 const ALLOWED_IDS = new Set(Object.keys(ALLOW_LIST).map(Number));
 
+/** 参与 CI 拦截的严重度（与原 npm audit --audit-level=high 对齐）。 */
+const BLOCKING_SEVERITIES = new Set(['high', 'critical']);
+
 function runAudit() {
   try {
     const out = execFileSync('npm', ['audit', '--json', '--audit-level=high'], {
@@ -69,9 +72,19 @@ function isFullyAllowListed(name, vulns, visiting) {
 
   for (const via of vuln.via ?? []) {
     if (typeof via === 'number') {
+      // 旧版 npm / 部分 registry 以裸 advisory id 给出
       if (!ALLOWED_IDS.has(via)) return false;
     } else if (typeof via === 'string') {
+      // 上游包名：继续沿链追
       if (!isFullyAllowListed(via, vulns, visiting)) return false;
+    } else if (via !== null && typeof via === 'object') {
+      // 直达 advisory 在 npm 的 JSON 里是对象，id 在 source（兜底 id）。
+      // 这里必须显式取 id 比对：早期实现漏掉对象形态会让**任何**未登记的
+      // 直达高危 advisory 被静默豁免，豁免名单形同虚设（2026-11-18 实证）。
+      const id = Number(via.source ?? via.id);
+      if (!Number.isInteger(id) || !ALLOWED_IDS.has(id)) return false;
+    } else {
+      return false; // 无法识别的 via 形态：失败关闭
     }
   }
   return true;
@@ -80,7 +93,9 @@ function isFullyAllowListed(name, vulns, visiting) {
 function main() {
   const report = runAudit();
   const vulns = report.vulnerabilities ?? {};
-  const names = Object.keys(vulns);
+  // 门禁口径与原 npm audit --audit-level=high 一致：只拦 high/critical；
+  // moderate/low 不参与拦截（也不打印），避免比既有契约更严格而误红。
+  const names = Object.keys(vulns).filter((name) => BLOCKING_SEVERITIES.has(vulns[name]?.severity));
 
   const blocked = [];
   const allowed = [];
