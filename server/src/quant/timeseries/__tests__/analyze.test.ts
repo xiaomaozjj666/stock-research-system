@@ -106,8 +106,9 @@ describe('analyzeTimeseries —— 时间窗口', () => {
 
     const [, startDate, endDate] = mocks.fetchOHLCVData.mock.calls[0];
     expect(endDate).toBe(localDate(today()));
-    const expectedStart = today();
-    expectedStart.setFullYear(expectedStart.getFullYear() - 3);
+    // 口径改为「天数」：默认窗口 = end − 1095 天（与其余路由的 defaultSpanDays
+    // 同义；旧的 setFullYear 日历年算法在闰年附近会差一天）
+    const expectedStart = new Date(today().getTime() - 1095 * 86_400_000);
     expect(startDate).toBe(localDate(expectedStart));
     expect(startDate < endDate).toBe(true);
   });
@@ -122,11 +123,25 @@ describe('analyzeTimeseries —— 时间窗口', () => {
     expect(mocks.fetchOHLCVData.mock.calls[0].slice(1)).toEqual(['2024-01-02', '2025-06-30']);
   });
 
-  it('日期格式非法时回退默认窗口，而不是把脏串发给数据源', async () => {
-    await analyzeTimeseries({ test: 'adf', code: '600519', startDate: '2024/01/02' });
-    const [, startDate] = mocks.fetchOHLCVData.mock.calls[0];
-    expect(startDate).not.toBe('2024/01/02');
+  it('日期格式非法 → 显式拒绝（不再静默回退默认窗口）', async () => {
+    // API 约定（stripe/AIP-193 同款）：缺省 → 默认值；传了但不合法 → 400。
+    // 静默回落会让统计结论被归因到调用方没请求过的时间窗，并掩盖客户端 bug。
+    await expect(
+      analyzeTimeseries({ test: 'adf', code: '600519', startDate: '2024/01/02' }),
+    ).rejects.toThrow('startDate 需为 YYYY-MM-DD 的真实日期');
+    expect(mocks.fetchOHLCVData).not.toHaveBeenCalled();
+  });
+
+  it('空串/纯空白视为未传（表单空值不误报 400）', async () => {
+    await analyzeTimeseries({
+      test: 'adf',
+      code: '600519',
+      startDate: '  ',
+      endDate: '',
+    });
+    const [, startDate, endDate] = mocks.fetchOHLCVData.mock.calls[0];
     expect(startDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(endDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   it('窗口上限 10 年：更早的起始日被拒', async () => {
@@ -134,7 +149,7 @@ describe('analyzeTimeseries —— 时间窗口', () => {
     tooEarly.setFullYear(tooEarly.getFullYear() - 11);
     await expect(
       analyzeTimeseries({ test: 'adf', code: '600519', startDate: localDate(tooEarly) }),
-    ).rejects.toThrow('时间窗口最多 10 年（startDate 过早）');
+    ).rejects.toThrow(/扫描区间过长/);
   });
 
   it('startDate 不早于 endDate 时被拒（含相等）', async () => {
@@ -145,7 +160,7 @@ describe('analyzeTimeseries —— 时间窗口', () => {
         startDate: '2025-06-30',
         endDate: '2025-06-30',
       }),
-    ).rejects.toThrow('startDate 需早于 endDate');
+    ).rejects.toThrow(/需早于 endDate/);
 
     await expect(
       analyzeTimeseries({
@@ -154,7 +169,7 @@ describe('analyzeTimeseries —— 时间窗口', () => {
         startDate: '2025-07-01',
         endDate: '2025-06-30',
       }),
-    ).rejects.toThrow('startDate 需早于 endDate');
+    ).rejects.toThrow(/不得晚于/);
   });
 });
 

@@ -73,6 +73,24 @@ describe('GET /api/intl/klines —— 入参闸门', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('非法日期 → 400 且零外呼（不再静默回落默认值）', async () => {
+    const res = await request(app)
+      .get('/api/intl/klines')
+      .query({ code: '00700', market: 'HK', startDate: '2024/01/02' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('YYYY-MM-DD');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('重复日期参数（数组形态）→ 400 且零外呼', async () => {
+    const res = await request(app).get(
+      '/api/intl/klines?code=00700&market=HK&startDate=2024-01-01&startDate=2024-02-01',
+    );
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('market 非白名单（XX）→ 400，提示可选值', async () => {
     const res = await request(app).get('/api/intl/klines').query({ code: '00700', market: 'XX' });
 

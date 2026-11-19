@@ -9,6 +9,7 @@
  * HTTP 路由按 message 命中「数据不足/观测不足」映射 502，其余映射 400。
  */
 import { fetchOHLCVData } from '../dataProvider.js';
+import { resolveDateRangeFromRaw } from '../../utils/dateRange.js';
 import { adfTest, type AdfSpec } from './adf.js';
 import { fitVolatilityModels } from './garch.js';
 import { engleGranger } from './cointegration.js';
@@ -25,10 +26,6 @@ interface CloseRow {
 }
 
 /** 本地时区日期 → YYYY-MM-DD */
-function localDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 /** 按日期对齐两条收盘序列（取交集，升序） */
 function alignCloses(a: CloseRow[], b: CloseRow[]): { y: number[]; x: number[] } {
   const map = new Map<string, number>();
@@ -90,26 +87,17 @@ export async function analyzeTimeseries(
     throw new Error(`test='${test}' 需要第二条序列（code2）`);
   }
 
-  // 时间窗口：默认近 3 年（日频 ≈ 730 个观测，GARCH/ADF 都够用），上限 10 年
-  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-  const endD = new Date();
-  const defaultStart = new Date(endD);
-  defaultStart.setFullYear(defaultStart.getFullYear() - 3);
-  const endDate =
-    typeof input.endDate === 'string' && dateRe.test(input.endDate)
-      ? input.endDate
-      : localDateStr(endD);
-  const startDate =
-    typeof input.startDate === 'string' && dateRe.test(input.startDate)
-      ? input.startDate
-      : localDateStr(defaultStart);
-  const floor = new Date(endD);
-  floor.setFullYear(floor.getFullYear() - 10);
-  if (startDate < localDateStr(floor)) {
-    throw new Error('时间窗口最多 10 年（startDate 过早）');
-  }
-  if (startDate >= endDate) {
-    throw new Error('startDate 需早于 endDate');
+  // 时间窗口：默认近 3 年（日频 ≈ 730 个观测，GARCH/ADF 都够用），上限 10 年。
+  // 口径与其余路由一致：缺省 → 默认值；非法（格式/重复参数/非字符串）→ 显式报错，
+  // 不再静默回落（回落会让统计结论被归因到调用方没请求的时间窗）。
+  const { start: startDate, end: endDate } = resolveDateRangeFromRaw(
+    input.startDate,
+    input.endDate,
+    { defaultSpanDays: 1095, maxSpanDays: 3653 },
+  );
+  // 零宽窗口对时序检验毫无意义（与旧行为一致：startDate 必须早于 endDate）
+  if (startDate === endDate) {
+    throw new Error(`startDate 需早于 endDate（当前窗口长度为 0：${startDate}）`);
   }
 
   const klines = await fetchOHLCVData(code, startDate, endDate);

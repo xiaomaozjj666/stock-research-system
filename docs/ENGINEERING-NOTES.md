@@ -1442,3 +1442,9 @@ fetch stub（service 已 mock、响应确定），且覆盖的是**当前最大�
 - **股票代码形态只有一份定义**（utils/stockCode 的 isAShareCode/isHKCode/
   isUSCode）：美股允许 `.`/`-`（BRK.B/BF-B）。历史上 marketOf、intlDataProvider
   与归一化层各写一份，导致同一代码「上一层放行、下一层拒绝/被当 A 股拼错 secid」。
+
+- **日期入参约定（全项目统一）**：缺省 → 默认窗口；传了但非法 → 400；绝不静默
+  回落（stripe / GitHub / AIP-193 同款）。路由层用
+  `resolveDateRangeFromRaw(req.query.startDate, req.query.endDate, {defaultSpanDays})`
+  一次性处理「重复参数（数组）/非字符串/空白/非法日期」四类形态；空白按未传处理，
+  以免表单空值误报 400。`2024-02-30` 这类「格式对但日期不存在」的值也会被拒。

@@ -86,6 +86,34 @@ export interface ResolveDateRangeSpec {
  *   - 传了就必须合法，否则抛 DateRangeParamError（不静默回落默认值）；
  *   - 返回值即调用方应当使用的区间，原样透传，不做二次改写。
  */
+/**
+ * 从 **原始请求入参**（undefined/null/字符串/数组/其它）严格解析日期区间。
+ *
+ * 口径（与 Stripe / GitHub / Google AIP-193 的 API 约定一致）：
+ *   - 缺省（undefined / null / 空串 / 纯空白）→ 由 resolveDateRange 给默认值；
+ *   - 形态非法（重复 query 得到的数组、数字、对象）→ 抛 DateRangeParamError（400）；
+ *   - 存在的字符串必须能解析成真实日期，否则 400——**绝不静默回落默认值**：
+ *     静默替换会让结果被归因到调用方并未请求的时间窗，且隐藏调用方的 bug。
+ */
+export function resolveDateRangeFromRaw(
+  startDateRaw: unknown,
+  endDateRaw: unknown,
+  spec?: ResolveDateRangeSpec,
+): { start: string; end: string } {
+  const pick = (raw: unknown, field: 'startDate' | 'endDate'): string | undefined => {
+    if (raw === undefined || raw === null) return undefined;
+    if (Array.isArray(raw)) {
+      throw new DateRangeParamError(`${field} 只能传一个值（收到重复参数）`);
+    }
+    if (typeof raw !== 'string') {
+      throw new DateRangeParamError(`${field} 需为 YYYY-MM-DD 字符串（收到 ${typeof raw}）`);
+    }
+    const trimmed = raw.trim();
+    return trimmed === '' ? undefined : trimmed;
+  };
+  return resolveDateRange(pick(startDateRaw, 'startDate'), pick(endDateRaw, 'endDate'), spec);
+}
+
 export function resolveDateRange(
   startDate: string | undefined,
   endDate: string | undefined,

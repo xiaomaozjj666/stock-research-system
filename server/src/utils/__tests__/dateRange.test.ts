@@ -4,6 +4,7 @@ import {
   formatLocalIsoDate,
   isValidIsoDate,
   resolveDateRange,
+  resolveDateRangeFromRaw,
   DateRangeParamError,
 } from '../dateRange.js';
 
@@ -105,5 +106,36 @@ describe('resolveDateRange', () => {
       new Date(endMs - days * 86_400_000).toISOString().slice(0, 10);
     expect(() => resolveDateRange(startAt(span), '2026-01-01')).not.toThrow();
     expect(() => resolveDateRange(startAt(span + 1), '2026-01-01')).toThrow(/区间过长/);
+  });
+});
+
+describe('resolveDateRangeFromRaw — 原始入参严格解析（缺省→默认，非法→400）', () => {
+  const spec = { defaultSpanDays: 30, now: Date.parse('2026-01-31T02:00:00Z') };
+
+  it('未传/空串/纯空白 → 默认区间（表单空值不误报）', () => {
+    for (const raw of [undefined, null, '', '   ']) {
+      const r = resolveDateRangeFromRaw(raw, raw, spec);
+      expect(r.end).toBe('2026-01-31');
+      expect(r.start).toBe('2026-01-01');
+    }
+  });
+
+  it('重复 query 参数（数组形态）→ DateRangeParamError（不静默取第一个/当未传）', () => {
+    expect(() => resolveDateRangeFromRaw(['2024-01-01', '2024-02-01'], undefined, spec)).toThrow(
+      DateRangeParamError,
+    );
+    expect(() => resolveDateRangeFromRaw(undefined, ['2024-01-01'], spec)).toThrow(/只能传一个值/);
+  });
+
+  it('非字符串（数字/对象）→ DateRangeParamError', () => {
+    expect(() => resolveDateRangeFromRaw(20240101, undefined, spec)).toThrow(
+      /需为 YYYY-MM-DD 字符串/,
+    );
+    expect(() => resolveDateRangeFromRaw({ d: '2024-01-01' }, undefined, spec)).toThrow(/字符串/);
+  });
+
+  it('非法日期字符串 → DateRangeParamError（不静默回落默认值）', () => {
+    expect(() => resolveDateRangeFromRaw('2024/01/02', undefined, spec)).toThrow(/真实日期/);
+    expect(() => resolveDateRangeFromRaw('2024-02-30', undefined, spec)).toThrow(/真实日期/);
   });
 });

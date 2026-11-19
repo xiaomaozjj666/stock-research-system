@@ -10,6 +10,7 @@ import {
 } from '../quant/intlDataProvider.js';
 import { normalizeStockCode, normalizeStockCodeFor, type StockMarket } from '../utils/stockCode.js';
 import { errorDetail } from '../utils/errorDetail.js';
+import { resolveDateRangeFromRaw } from '../utils/dateRange.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -85,16 +86,18 @@ router.get('/api/intl/klines', metaLimiter, async (req, res) => {
     if (checked.market === 'A') {
       return res.status(400).json({ error: 'A 股代码请走量化/行情既有接口，本接口仅港美股 K 线' });
     }
-    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-    const end = new Date();
-    const endStr = dateRe.test(String(req.query.endDate ?? ''))
-      ? String(req.query.endDate)
-      : end.toISOString().slice(0, 10);
-    const defaultStart = new Date(end);
-    defaultStart.setFullYear(defaultStart.getFullYear() - 2);
-    const startStr = dateRe.test(String(req.query.startDate ?? ''))
-      ? String(req.query.startDate)
-      : defaultStart.toISOString().slice(0, 10);
+    // 日期口径（与其余因子/回测路由一致）：缺省 → 近 2 年；非法 → 400。
+    // 此前「格式不符就静默用默认值」有两个害处：结果被归因到调用方没请求过的
+    // 时间窗、且掩盖客户端 bug；「今天」用 UTC 还会在东八区 00:00-08:00 退一天。
+    let range: { start: string; end: string };
+    try {
+      range = resolveDateRangeFromRaw(req.query.startDate, req.query.endDate, {
+        defaultSpanDays: 730,
+      });
+    } catch (error) {
+      return res.status(400).json({ error: (error as Error).message });
+    }
+    const { start: startStr, end: endStr } = range;
     const bars = await fetchIntlKlines(checked.code, checked.market, startStr, endStr);
     res.json({
       code: checked.code,
