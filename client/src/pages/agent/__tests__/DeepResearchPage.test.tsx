@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-import type { DeepResearchResult, DeepResearchRunSummary } from '../../../api/client';
+import type {
+  DeepResearchResult,
+  DeepResearchRunSummary,
+  DeepResearchStreamEvent,
+} from '../../../api/client';
 import { partial } from '../../../test/partial';
 
 vi.mock('../../../api/client', () => ({
@@ -184,9 +188,10 @@ describe('DeepResearchPage 运行流（此前审查点名的零覆盖区）', ()
   });
 
   it('开始研究：进度事件进轨迹、done 渲染报告、刷新历史', async () => {
-    let capturedOnEvent: ((e: unknown) => void) | null = null;
+    // 用对象盒保存回调：直接给变量赋值会让 TS 把 use-site 收窄成 never
+    const box: { onEvent?: (e: DeepResearchStreamEvent) => void } = {};
     vi.mocked(runDeepResearchStream).mockImplementation((_q, onEvent) => {
-      capturedOnEvent = onEvent as (e: unknown) => void;
+      box.onEvent = onEvent;
       return {
         cancel: vi.fn(),
         done: new Promise<DeepResearchResult>((resolve) => {
@@ -202,15 +207,12 @@ describe('DeepResearchPage 运行流（此前审查点名的零覆盖区）', ()
 
     // 过程事件进轨迹
     await waitFor(() => {
-      expect(capturedOnEvent).not.toBeNull();
+      expect(box.onEvent).toBeDefined();
     });
-    const emit = capturedOnEvent;
-    if (emit) {
-      emit({
-        phase: 'agent_event',
-        event: { seq: 1, type: 'run_started', round: 0, at: 't', message: '研究任务启动' },
-      });
-    }
+    box.onEvent!({
+      phase: 'agent_event',
+      event: { seq: 1, type: 'run_started', round: 0, at: 't', message: '研究任务启动' },
+    });
     await screen.findByText('研究任务启动');
 
     // done：报告渲染 + 历史刷新
