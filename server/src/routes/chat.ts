@@ -6,6 +6,7 @@ import { chatLimiter, circuitBreakerGuard, respondIfQueueTimeout } from '../midd
 import { chatAgent } from '../services/chatAgent.js';
 import { clearHistory, isValidSessionId } from '../services/chatMemory.js';
 import { errorDetail } from '../utils/errorDetail.js';
+import { abortOnClientClose } from '../utils/clientAbort.js';
 import { isQueueTimeoutError, validateChatHistory } from '../utils/limitGate.js';
 import logger from '../utils/logger.js';
 import { createSseChannel } from '../utils/sse.js';
@@ -14,6 +15,10 @@ const router = Router();
 
 // === 对话式助手接口（自然语言入口） ===
 router.post('/api/chat', chatLimiter, circuitBreakerGuard, async (req, res) => {
+  // 断连感知：与同文件 SSE 路由、analysis POST 同范式——客户端断开后，
+  // 最坏 ≈13 次 LLM 调用（工具回路 5 轮 + 校验 + 辩论）不应继续白烧。
+  // 声明在 try 之外：catch 里要读 abort.signal 区分「取消」与真实错误
+  const abort = abortOnClientClose(res);
   try {
     const body = req.body ?? {};
     const message = typeof body.message === 'string' ? body.message.trim() : '';
@@ -30,15 +35,23 @@ router.post('/api/chat', chatLimiter, circuitBreakerGuard, async (req, res) => {
     if (!history.ok) {
       return res.status(400).json({ error: history.error });
     }
-    const result = await chatAgent.run({
-      message,
-      // 仅在客户端确实传了数组时才带上 history（空数组也不落回持久记忆，保持既有语义）
-      ...(Array.isArray(body.history) ? { history: history.turns } : {}),
-      stockCode: typeof body.stockCode === 'string' ? body.stockCode : undefined,
-      sessionId: typeof body.sessionId === 'string' ? body.sessionId : undefined,
-    });
+    const result = await chatAgent.run(
+      {
+        message,
+        // 仅在客户端确实传了数组时才带上 history（空数组也不落回持久记忆，保持既有语义）
+        ...(Array.isArray(body.history) ? { history: history.turns } : {}),
+        stockCode: typeof body.stockCode === 'string' ? body.stockCode : undefined,
+        sessionId: typeof body.sessionId === 'string' ? body.sessionId : undefined,
+      },
+      abort.signal,
+    );
     res.json(result);
   } catch (error) {
+    // 客户端断开触发的取消：连接已关，按「取消」记日志而不是 500 错误
+    if (abort.signal.aborted || (error as Error)?.message?.includes('abort')) {
+      logger.info('客户端已断开，对话已取消', { route: '/api/chat' });
+      return;
+    }
     // LLM 闸门排队超时 → 429 + Retry-After，而不是笼统 500
     if (respondIfQueueTimeout(res, error, '/api/chat')) return;
     logger.error('Chat error', { route: '/api/chat', err: error });

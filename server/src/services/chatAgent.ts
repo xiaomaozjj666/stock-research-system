@@ -465,8 +465,8 @@ export function createChatAgent(deps: ChatAgentDeps) {
     }
   }
 
-  async function run(req: ChatAgentRequest): Promise<ChatAgentResponse> {
-    return runStream(req, undefined);
+  async function run(req: ChatAgentRequest, signal?: AbortSignal): Promise<ChatAgentResponse> {
+    return runStream(req, undefined, signal);
   }
 
   /**
@@ -483,6 +483,20 @@ export function createChatAgent(deps: ChatAgentDeps) {
     signal?: AbortSignal,
   ): Promise<ChatAgentResponse> {
     const emit = onEvent ?? (() => {});
+    // 重工具调用预算：run_analysis / compare_stocks / run_backtest / evaluate_backtest
+    // 每次都是一条完整分析流水线（8 专家 LLM 扇出）或两轮回测。chatLimiter 只限
+    // 消息数不限扇出（一条消息 5 轮工具回路 × 每轮多个并发 tool_call ≈ 上百次
+    // 流水线），必须在这里对齐 research.ts 的护栏思路：超出预算返回明确降级文案
+    //（回灌给模型，让它基于已有数据作答而不是继续烧钱）。
+    const HEAVY_TOOLS = new Set([
+      'run_analysis',
+      'compare_stocks',
+      'run_backtest',
+      'evaluate_backtest',
+      'run_valuation_model',
+    ]);
+    const MAX_HEAVY_TOOL_CALLS = 6;
+    let heavyToolCalls = 0;
     try {
       emit({ phase: 'retrieving', message: '正在检索相关证据…' });
       const evidence = await deps.retrieveEvidence(
@@ -558,15 +572,22 @@ export function createChatAgent(deps: ChatAgentDeps) {
         const result = await deps.chatWithTools(
           messages,
           TOOL_DEFINITIONS,
-          (name, args) =>
-            executeToolCall(
+          async (name, args) => {
+            if (HEAVY_TOOLS.has(name)) {
+              heavyToolCalls += 1;
+              if (heavyToolCalls > MAX_HEAVY_TOOL_CALLS) {
+                return `本轮对话的深度分析类工具调用预算已用尽（上限 ${MAX_HEAVY_TOOL_CALLS} 次），请基于已获取的数据直接回答用户，不要再调用分析类工具。`;
+              }
+            }
+            return executeToolCall(
               {
                 id: `call_${name}`,
                 type: 'function',
                 function: { name, arguments: JSON.stringify(args) },
               },
               toolDeps,
-            ),
+            );
+          },
           { temperature: 0.3, maxTokens: 2000, timeout: 60000, task: 'analysis', signal },
         );
         content = result.content;

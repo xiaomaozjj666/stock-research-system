@@ -45,6 +45,55 @@ describe('chatAgent — 规则降级（无 LLM）', () => {
 });
 
 describe('chatAgent — 带 LLM', () => {
+  it('重工具预算：超过上限后回调返回预算用尽文案（不再执行流水线）', async () => {
+    const results: string[] = [];
+    const runAnalysis = vi.fn(async () => ({
+      stock_pool: [
+        {
+          stock_name: '茅台',
+          total_score: 80,
+          rating: '买入',
+          valuation: { currentPrice: 100, pe: 20 },
+          risk_list: [],
+        },
+      ],
+    }));
+    const agent = createChatAgent(
+      baseDeps({
+        isLLMAvailable: () => true,
+        runAnalysis,
+        chatWithTools: async (_m, _tools, exec) => {
+          for (let i = 0; i < 8; i++) {
+            results.push(await exec('run_analysis', { stockCode: '600519' }));
+          }
+          return { content: '已基于部分结果作答', toolCalls: [] };
+        },
+      }),
+    );
+    await agent.run({ message: '分析 600519' });
+    // 前 6 次预算内真实执行完整流水线，后 2 次只回文案（不再碰 runAnalysis）
+    expect(runAnalysis).toHaveBeenCalledTimes(6);
+    expect(results[5]).not.toContain('预算');
+    expect(results[6]).toContain('预算已用尽');
+    expect(results[7]).toContain('预算已用尽');
+  });
+
+  it('run 的取消信号透传到 chatWithTools（I-3：POST /api/chat 断连中止）', async () => {
+    let captured: AbortSignal | undefined;
+    const agent = createChatAgent(
+      baseDeps({
+        isLLMAvailable: () => true,
+        chatWithTools: async (_m, _tools, _exec, opts) => {
+          captured = opts?.signal as AbortSignal | undefined;
+          return { content: 'ok', toolCalls: [] };
+        },
+      }),
+    );
+    const controller = new AbortController();
+    await agent.run({ message: '分析 600519' }, controller.signal);
+    expect(captured).toBe(controller.signal);
+  });
+
   it('返回 chatWithTools 的最终回答与工具调用', async () => {
     const agent = createChatAgent(
       baseDeps({

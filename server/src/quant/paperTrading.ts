@@ -29,6 +29,7 @@ import { isAShareCode } from '../utils/stockCode.js';
 // 默认交易参数
 const DEFAULTS = {
   commissionRate: 0.0003, // 佣金率：万三
+  minCommission: 5, // 单笔最低佣金（元）：与 costModel A_SHARE_COST_MODEL.minCost 一致
   stampDutyRate: 0.0005, // 卖出印花税：万5（2023-08-28 起，与 costModel A_SHARE_COST_MODEL 一致）
   limitPct: 0.1, // 主板涨跌停幅度：±10%（创业板/科创板固定 ±20%，见 limitPctForCode）
 };
@@ -36,6 +37,7 @@ const DEFAULTS = {
 /**
  * M2：按代码前缀取该板块的涨跌停幅度。
  * - 创业板（300/301）与科创板（688/689）±20%（注册制硬规则，优先于可配置的主板幅度）；
+ * - 北交所（43/83/87/88/92 开头，与 A_SHARE_PREFIX_RE 的板块前缀一致）±30%；
  * - 其余（主板等）用账户配置的 limitPct（默认 ±10%）。
  * 已知限制：ST ±5% 需要证券名称才能判定，而 PaperAccount 的订单/收盘价通道只有
  * 代码（closePrices: Map<code, number>），拿不到名称——ST 判定暂不实现，
@@ -43,6 +45,7 @@ const DEFAULTS = {
  */
 export function limitPctForCode(code: string, basePct: number): number {
   if (/^(300|301|688|689)/.test(code)) return 0.2;
+  if (/^(43|83|87|88|92)/.test(code)) return 0.3;
   return basePct;
 }
 
@@ -139,6 +142,8 @@ export interface PaperStats {
 export interface PaperTradingOptions {
   filePath?: string; // 持久化文件路径；缺省用 env PAPER_TRADING_FILE 或默认文件
   commissionRate?: number; // 佣金率，默认万三
+  /** 单笔最低佣金（元），默认 5（与 A_SHARE_COST_MODEL.minCost 对齐）；传 0 关闭 */
+  minCommission?: number;
   stampDutyRate?: number; // 卖出印花税率，默认 0.05%（万5，2023-08-28 起）
   limitPct?: number; // 主板涨跌停幅度，默认 0.1（创业板/科创板固定 0.2，不受此配置影响）
   initialDate?: string; // 初始交易日 YYYY-MM-DD
@@ -198,8 +203,10 @@ export function calculateExecutionCosts(
   price: number,
   commissionRate: number,
   stampDutyRate: number,
+  /** 单笔最低佣金（元），默认 0——调用方按自身口径传入（模拟盘与 A_SHARE_COST_MODEL 对齐为 5） */
+  minCommission = 0,
 ): { cashFlow: number; commission: number; stampDuty: number } {
-  const commission = round2(quantity * price * commissionRate);
+  const commission = Math.max(round2(quantity * price * commissionRate), minCommission);
   const stampDuty = side === 'sell' ? round2(quantity * price * stampDutyRate) : 0;
   return {
     cashFlow: round2(quantity * price + (side === 'buy' ? commission : -commission - stampDuty)),
@@ -268,6 +275,7 @@ export class PaperAccount {
   private readonly opts: {
     filePath: string;
     commissionRate: number;
+    minCommission: number;
     stampDutyRate: number;
     limitPct: number;
     autoSave: boolean;
@@ -290,6 +298,7 @@ export class PaperAccount {
     this.opts = {
       filePath: storeFile(options.filePath),
       commissionRate: options.commissionRate ?? DEFAULTS.commissionRate,
+      minCommission: options.minCommission ?? DEFAULTS.minCommission,
       stampDutyRate: options.stampDutyRate ?? DEFAULTS.stampDutyRate,
       limitPct: options.limitPct ?? DEFAULTS.limitPct,
       autoSave: options.autoSave ?? false,
@@ -419,6 +428,7 @@ export class PaperAccount {
         fprice,
         this.opts.commissionRate,
         this.opts.stampDutyRate,
+        this.opts.minCommission,
       );
       const { commission, stampDuty } = costs;
 
@@ -457,6 +467,13 @@ export class PaperAccount {
         const pos = this.positions.get(order.code);
         if (!pos || pos.quantity < order.quantity) {
           this.rejectAt(order, '成交时持仓不足');
+          continue;
+        }
+        // T+1 在**成交时**复核：下单时持仓的 buyDate 还是旧值（当日买入的市价单
+        // 此刻尚未成交），「今买今卖」能通过下单校验；等买单先成交把 buyDate 推到
+        // 今天后，同日的卖单若不复核就会穿透 T+1（当日 round-trip）。
+        if (pos.buyDate === date) {
+          this.rejectAt(order, 'T+1 限制：当日买入（含当日成交的加仓）不可当日卖出');
           continue;
         }
         const revenue = costs.cashFlow;

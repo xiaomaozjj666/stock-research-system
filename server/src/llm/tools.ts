@@ -13,6 +13,7 @@
 // 任何模块（纯正则 + 字符串处理），不会把网络/文件系统拉进来，与上面「不 import 重型
 // 业务模块」的设计原则不冲突。原先这里散落着 7 份各自复制的 `/^\d{6}$/.test(x)`。
 import { isAShareCode } from '../utils/stockCode.js';
+import { resolveDateRangeFromRaw } from '../utils/dateRange.js';
 
 // 仅类型导入：编译后被完全擦除，**不产生任何运行时 require**，
 // 因此不违反上面「不 import 重型业务模块」的设计原则。
@@ -198,6 +199,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           },
           stockCode: { type: 'string', description: '6 位股票代码（coint/kalman-beta 为因变量）' },
           code2: { type: 'string', description: '第二条序列的 6 位代码（coint/kalman-beta 必填）' },
+          startDate: { type: 'string', description: '可选：窗口起点 YYYY-MM-DD（缺省近 3 年）' },
+          endDate: { type: 'string', description: '可选：窗口终点 YYYY-MM-DD（缺省今天）' },
         },
         required: ['test', 'stockCode'],
       },
@@ -287,6 +290,13 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       if (!deps.runAnalysis) return 'compare_stocks 未配置';
       const codes = Array.isArray(args.stockCodes) ? args.stockCodes.map(String) : [];
       if (codes.length < 2 || codes.length > 3) return '请选择 2-3 只股票';
+      // 与 run_analysis/run_backtest 同口径：代码先过形态校验再进分析流水线。
+      // 此前是唯一不校验的工具——LLM 幻觉出的畸形码会直达 runAnalysis → 缓存
+      // 文件名与东财/新浪 URL（含 filter 引号内插值），可污染缓存键或打出畸形请求。
+      const invalid = codes.filter((c) => !isAShareCode(c));
+      if (invalid.length > 0) {
+        return `以下股票代码无效（需为 6 位数字）：${invalid.join('、')}，请修正后重试`;
+      }
       const results = await Promise.all(codes.map((c) => deps.runAnalysis!(c)));
       return truncate(JSON.stringify(results, null, 2));
     }
@@ -298,11 +308,15 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       // 与 run_analysis/evaluate_backtest 对齐：校验 6 位代码（此前缺失，行为不一致）
       if (!isAShareCode(code)) return '请提供有效的 6 位股票代码';
       const strategy = String(args.strategy || 'ma_cross');
-      const start = String(
-        args.startDate ||
-          new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
-      );
-      const end = String(args.endDate || new Date().toISOString().split('T')[0]);
+      // 日期直达 fetchOHLCVData 的 URL 拼接（beg/end/lmt/fqt 均可被注入改写），
+      // 必须先过严格解析（缺省→近 2 年；非法→可读错误回灌给模型重试）
+      let range: { start: string; end: string };
+      try {
+        range = resolveDateRangeFromRaw(args.startDate, args.endDate, { defaultSpanDays: 730 });
+      } catch (error) {
+        return `日期参数无效：${(error as Error).message}（startDate/endDate 需为 YYYY-MM-DD 的真实日期）`;
+      }
+      const { start, end } = range;
       // parseStrategyInput 接收策略描述串（如 'ma_cross'），返回完整策略配置；
       // 随后覆盖股票代码与起止日期，得到回测所需的 StrategyConfig。
       // cfg 显式标注 StrategyConfig：早前写 `as Record<string, unknown>` 是为了让
@@ -324,11 +338,13 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       }
       const code = String(args.stockCode || '');
       const strategy = String(args.strategy || 'ma_cross');
-      const start = String(
-        args.startDate ||
-          new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
-      );
-      const end = String(args.endDate || new Date().toISOString().split('T')[0]);
+      let range: { start: string; end: string };
+      try {
+        range = resolveDateRangeFromRaw(args.startDate, args.endDate, { defaultSpanDays: 730 });
+      } catch (error) {
+        return `日期参数无效：${(error as Error).message}（startDate/endDate 需为 YYYY-MM-DD 的真实日期）`;
+      }
+      const { start, end } = range;
       if (!isAShareCode(code)) return '请提供有效的 6 位股票代码';
       // 交叉类型而非 Record<string, unknown>：newsOverlay 是本工具附加的实验字段，
       // 不在 StrategyConfig 里，但**其余字段必须受 StrategyConfig 约束**——
@@ -401,10 +417,19 @@ export async function executeToolCall(call: ToolCall, deps: ToolDeps): Promise<s
       if ((test === 'coint' || test === 'kalman-beta') && !isAShareCode(code2)) {
         return `test='${test}' 需要第二条序列的 6 位代码（code2）`;
       }
+      // startDate/endDate/options 与 MCP 版工具（quant_timeseries_analyze）同口径——
+      // 此前 chat 版只透传三参，同一能力两套清单漂移
+      const startDate = typeof args.startDate === 'string' ? args.startDate : undefined;
+      const endDate = typeof args.endDate === 'string' ? args.endDate : undefined;
       const r = await deps.runTimeseriesAnalyze({
         test,
         code,
         ...(code2 ? { code2 } : {}),
+        ...(startDate ? { startDate } : {}),
+        ...(endDate ? { endDate } : {}),
+        ...(args.options && typeof args.options === 'object' && !Array.isArray(args.options)
+          ? { options: args.options as Record<string, unknown> }
+          : {}),
       });
       return truncate(JSON.stringify(r, null, 2));
     }

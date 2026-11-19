@@ -121,6 +121,53 @@ describe('PaperAccount 撮合与记账', () => {
     expect(o2.rejectReason).toContain('一手');
   });
 
+  it('T+1 在成交时复核：当日挂买单后同日挂卖单，结算不得穿透 T+1', () => {
+    const acct = makeAccount(); // 持仓为空，buyDate 是旧值不存在
+    // 先建一笔昨日仓位：买（01-01 成交）→ 次日（01-02）挂当日市价买单加仓 + 同日卖单
+    acct.setCurrentDate('2025-01-01');
+    acct.placeOrder(order({ quantity: 500 }));
+    acct.settleDay(closes({ '600519': 100 })); // 买入 500 股，buyDate=01-01
+
+    acct.setCurrentDate('2025-01-02');
+    // 加仓 100 股（资金可负担，确保结算时买单成交）；卖单在下单时 buyDate=01-01，通过校验
+    acct.placeOrder(order({ quantity: 100 }));
+    const sell = acct.placeOrder(order({ side: 'sell', quantity: 500 }));
+    expect(sell.status).toBe('pending');
+
+    acct.settleDay(closes({ '600519': 100 }));
+    // 买单先成交把 buyDate 推到 01-02；卖单若不在成交时复核 T+1 就会当日 round-trip
+    const filledSell = acct.orders.find((o) => o.side === 'sell')!;
+    expect(filledSell.status).toBe('rejected');
+    expect(filledSell.rejectReason).toContain('T+1');
+    // 买单正常成交（500+100=600），持仓未被卖出减少
+    expect(acct.positions.get('600519')!.quantity).toBe(600);
+  });
+
+  it('北交所（83 开头）涨跌停 ±30%：+25% 可成交、+30% 触板拒买', () => {
+    const acct = makeAccount();
+    acct.placeOrder(order({ code: '830001', quantity: 100 }));
+    acct.settleDay(closes({ '830001': 10 }));
+    expect(acct.positions.get('830001')!.quantity).toBe(100); // 首日建仓（无昨收不判涨跌停）
+
+    acct.setCurrentDate('2025-01-03');
+    acct.placeOrder(order({ code: '830001', quantity: 100 }));
+    acct.settleDay(closes({ '830001': 12.5 }), closes({ '830001': 10 })); // +25% < 30% → 成交
+    expect(acct.orders.at(-1)!.status).toBe('filled');
+
+    acct.placeOrder(order({ code: '830001', quantity: 100 }));
+    acct.settleDay(closes({ '830001': 13 }), closes({ '830001': 10 })); // +30% 触板 → 拒买
+    expect(acct.orders.at(-1)!.status).toBe('rejected');
+    expect(acct.orders.at(-1)!.rejectReason).toContain('涨停');
+  });
+
+  it('单笔最低佣金 5 元（与 A_SHARE_COST_MODEL.minCost 对齐）', () => {
+    const acct = makeAccount();
+    acct.placeOrder(order({ quantity: 100 })); // 100*10*0.0003 = 0.3 < 5 → 按 5 计
+    acct.settleDay(closes({ '600519': 10 }));
+    expect(acct.orders[0].commission).toBeCloseTo(5, 2);
+    expect(acct.cash).toBeCloseTo(100000 - 1000 - 5, 2);
+  });
+
   it('卖出收佣金 + 印花税，平仓后现金/持仓正确', () => {
     const acct = makeAccount();
     acct.placeOrder(order({ quantity: 500 }));

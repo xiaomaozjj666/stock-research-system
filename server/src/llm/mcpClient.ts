@@ -449,6 +449,9 @@ export class MCPClient {
       p.reject(err);
     }
     this.pending.clear();
+    // 断连即失效工具清单缓存：不清的话，进程死后 listTools 仍返回旧清单，
+    // registry 会把工具名继续路由到这个死实例（callTool 永远「未连接」）
+    this.toolsCache = null;
   }
 
   /** 列出该 server 暴露的工具；连接异常时返回空数组，永不抛出。 */

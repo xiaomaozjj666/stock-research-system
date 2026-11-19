@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { TOOL_DEFINITIONS, getTool, executeToolCall, type ToolDeps } from '../tools.js';
 import type { BacktestResult, StrategyConfig } from '../../quant/types.js';
 
@@ -123,6 +123,100 @@ describe('tool registry', () => {
       deps,
     );
     expect(r).toContain('sharpe');
+  });
+
+  it('compare_stocks 校验每个代码（此前唯一不校验的工具）', async () => {
+    const runAnalysis = vi.fn(async () => ({}));
+    const deps: ToolDeps = { runAnalysis };
+    const r = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: {
+          name: 'compare_stocks',
+          arguments: JSON.stringify({ stockCodes: ['600519', '600519&fqt=0'] }),
+        },
+      },
+      deps,
+    );
+    expect(r).toContain('无效');
+    expect(r).toContain('600519&fqt=0');
+    expect(runAnalysis).not.toHaveBeenCalled(); // 畸形码不得直达分析流水线/缓存/上游
+  });
+
+  it('run_backtest 日期非法 → 可读错误回灌给模型，且不发起取数', async () => {
+    const fetchOHLCVData = vi.fn(async () => []);
+    const deps: ToolDeps = {
+      parseStrategyInput: (s) => (typeof s === 'string' ? strategyConfig() : (s as StrategyConfig)),
+      fetchOHLCVData,
+      runBacktest: () => backtestResult({ sharpeRatio: 1 }),
+    };
+    const r = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: {
+          name: 'run_backtest',
+          arguments: JSON.stringify({
+            stockCode: '600519',
+            strategy: 'ma_cross',
+            startDate: '2020-01-01&fqt=0',
+          }),
+        },
+      },
+      deps,
+    );
+    expect(r).toContain('日期参数无效');
+    expect(fetchOHLCVData).not.toHaveBeenCalled();
+  });
+
+  it('evaluate_backtest 非真实日期（2024-02-30）→ 拒绝', async () => {
+    const deps: ToolDeps = {
+      parseStrategyInput: () => strategyConfig(),
+      fetchOHLCVData: async () => [],
+      runBacktest: () => backtestResult({ sharpeRatio: 1 }),
+    };
+    const r = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: {
+          name: 'evaluate_backtest',
+          arguments: JSON.stringify({
+            stockCode: '600519',
+            strategy: 'ma_cross',
+            startDate: '2024-02-30',
+          }),
+        },
+      },
+      deps,
+    );
+    expect(r).toContain('真实日期');
+  });
+
+  it('run_timeseries_analyze 透传日期窗口（与 MCP 版工具同口径）', async () => {
+    const runTimeseriesAnalyze = vi.fn(async () => ({ test: 'adf' }));
+    const deps: ToolDeps = { runTimeseriesAnalyze };
+    const r = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: {
+          name: 'run_timeseries_analyze',
+          arguments: JSON.stringify({
+            test: 'adf',
+            stockCode: '600519',
+            startDate: '2023-01-01',
+            endDate: '2025-12-31',
+          }),
+        },
+      },
+      deps,
+    );
+    expect(runTimeseriesAnalyze).toHaveBeenCalledWith(
+      expect.objectContaining({ startDate: '2023-01-01', endDate: '2025-12-31' }),
+    );
+    expect(r).toContain('adf');
   });
 
   it('run_backtest 校验 6 位代码（与 run_analysis/evaluate_backtest 对齐）', async () => {

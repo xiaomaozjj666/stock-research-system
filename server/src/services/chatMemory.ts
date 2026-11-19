@@ -87,12 +87,27 @@ export function loadHistory(sessionId: string): ChatTurn[] {
   return getOwnTurns(store, sessionId) ?? [];
 }
 
+/**
+ * 单条 content 的落盘上限（字符）。助手回答受 maxTokens 约束尚可到数千字，
+ * 不钳制时 200 session × 80 条最坏能把快照撑到几十 MB，且每轮对话都全量
+ * 同步 stringify/parse。超长部分截断（带标记），完整正文本就不进历史上下文
+ * （chatAgent 加载历史时另有 clampChatHistory 再夹紧一层）。
+ */
+const MAX_TURN_CHARS = 8000;
+
+function clampTurn(turn: ChatTurn): ChatTurn {
+  if (typeof turn.content === 'string' && turn.content.length > MAX_TURN_CHARS) {
+    return { ...turn, content: `${turn.content.slice(0, MAX_TURN_CHARS)}…（已截断）` };
+  }
+  return turn;
+}
+
 export function appendTurn(sessionId: string, turn: ChatTurn): void {
   if (!isValidSessionId(sessionId)) return; // 非法/保留键不落盘
   const store = readStore();
   const isNewSession = !hasOwnKey(store, sessionId);
   const list = getOwnTurns(store, sessionId) ?? [];
-  list.push(turn);
+  list.push(clampTurn(turn));
   // 截断：保留最近 MAX_TURNS*2 条（user+assistant 成对）
   if (list.length > MAX_TURNS * 2) {
     store[sessionId] = list.slice(list.length - MAX_TURNS * 2);

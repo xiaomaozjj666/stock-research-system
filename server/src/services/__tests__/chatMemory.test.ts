@@ -78,3 +78,13 @@ describe('sessionId 安全校验（原型链键防护）', () => {
     expect(loadHistory('sess-abc123')).toHaveLength(1);
   });
 });
+
+describe('appendTurn 单条内容钳制（防快照膨胀）', () => {
+  it('超过 8000 字的 content 落盘前截断并带标记', () => {
+    appendTurn('clamp-test', { role: 'assistant', content: 'x'.repeat(9000) });
+    const turns = loadHistory('clamp-test');
+    const stored = turns.at(-1)!;
+    expect(stored.content.length).toBeLessThanOrEqual(8010);
+    expect(String(stored.content)).toContain('已截断');
+  });
+});
