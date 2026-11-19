@@ -204,10 +204,13 @@ describe('DeepResearchPage 运行流（此前审查点名的零覆盖区）', ()
     await waitFor(() => {
       expect(capturedOnEvent).not.toBeNull();
     });
-    (capturedOnEvent as (e: unknown) => void)({
-      phase: 'agent_event',
-      event: { seq: 1, type: 'run_started', round: 0, at: 't', message: '研究任务启动' },
-    });
+    const emit = capturedOnEvent;
+    if (emit) {
+      emit({
+        phase: 'agent_event',
+        event: { seq: 1, type: 'run_started', round: 0, at: 't', message: '研究任务启动' },
+      });
+    }
     await screen.findByText('研究任务启动');
 
     // done：报告渲染 + 历史刷新
