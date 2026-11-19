@@ -4,6 +4,7 @@
  * 按 sessionId 把对话轮次持久化到 server/data/chatHistory.json（单文件、按 session 数组）。
  * 重启后仍能回忆历史；超过上限自动截断最旧轮次。所有 IO 错误静默降级为无记忆。
  */
+import { promises as fsp } from 'fs';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -59,11 +60,13 @@ function getHistoryFile(): string {
     : DEFAULT_HISTORY_FILE;
 }
 
-function readStore(): Store {
+/**
+ * 读快照（异步）：解析失败/文件缺失一律当空 store（所有 IO 错误静默降级为无记忆）。
+ */
+async function readStore(): Promise<Store> {
   try {
     const file = getHistoryFile();
-    if (!fs.existsSync(file)) return {};
-    const raw = fs.readFileSync(file, 'utf-8');
+    const raw = await fsp.readFile(file, 'utf-8');
     const parsed = JSON.parse(raw) as Store;
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
@@ -71,19 +74,33 @@ function readStore(): Store {
   }
 }
 
-function writeStore(store: Store): void {
-  try {
-    const file = getHistoryFile();
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(store, null, 2), 'utf-8');
-  } catch {
-    // 磁盘写入失败：静默降级（不阻断对话）
-  }
+/**
+ * 写快照（异步 + 临时文件原子 rename）：任何时刻磁盘上要么旧快照要么新快照，
+ * 不会出现半写状态（与 watchlist/paper 同模式）。
+ */
+async function writeStore(store: Store): Promise<void> {
+  const file = getHistoryFile();
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fsp.writeFile(tmp, JSON.stringify(store, null, 2), 'utf-8');
+  await fsp.rename(tmp, file);
 }
 
-export function loadHistory(sessionId: string): ChatTurn[] {
+/**
+ * 写操作串行队列：appendTurn/clearHistory 是「读-改-写整个 store」，并发调用
+ * （不同 session 的对话同时结束）若各自读改写会互相覆盖丢更新。全部写操作
+ * 排到同一条 promise 链上串行执行，保持与同步版本等价的互斥语义。
+ */
+let writeChain: Promise<void> = Promise.resolve();
+
+function enqueueWrite(op: () => Promise<void>): Promise<void> {
+  writeChain = writeChain.then(op, op); // 前序失败不阻塞后续写（各自静默降级）
+  return writeChain;
+}
+
+export async function loadHistory(sessionId: string): Promise<ChatTurn[]> {
   if (!isValidSessionId(sessionId)) return [];
-  const store = readStore();
+  const store = await readStore();
   return getOwnTurns(store, sessionId) ?? [];
 }
 
@@ -102,35 +119,39 @@ function clampTurn(turn: ChatTurn): ChatTurn {
   return turn;
 }
 
-export function appendTurn(sessionId: string, turn: ChatTurn): void {
+export async function appendTurn(sessionId: string, turn: ChatTurn): Promise<void> {
   if (!isValidSessionId(sessionId)) return; // 非法/保留键不落盘
-  const store = readStore();
-  const isNewSession = !hasOwnKey(store, sessionId);
-  const list = getOwnTurns(store, sessionId) ?? [];
-  list.push(clampTurn(turn));
-  // 截断：保留最近 MAX_TURNS*2 条（user+assistant 成对）
-  if (list.length > MAX_TURNS * 2) {
-    store[sessionId] = list.slice(list.length - MAX_TURNS * 2);
-  } else {
-    store[sessionId] = list;
-  }
-  // session 数上限：新增 session 超出配额时，按写入顺序淘汰最旧的 session
-  if (isNewSession) {
-    const keys = Object.keys(store);
-    for (const key of keys.slice(0, Math.max(0, keys.length - MAX_SESSIONS))) {
-      delete store[key];
+  await enqueueWrite(async () => {
+    const store = await readStore();
+    const isNewSession = !hasOwnKey(store, sessionId);
+    const list = getOwnTurns(store, sessionId) ?? [];
+    list.push(clampTurn(turn));
+    // 截断：保留最近 MAX_TURNS*2 条（user+assistant 成对）
+    if (list.length > MAX_TURNS * 2) {
+      store[sessionId] = list.slice(list.length - MAX_TURNS * 2);
+    } else {
+      store[sessionId] = list;
     }
-  }
-  writeStore(store);
+    // session 数上限：新增 session 超出配额时，按写入顺序淘汰最旧的 session
+    if (isNewSession) {
+      const keys = Object.keys(store);
+      for (const key of keys.slice(0, Math.max(0, keys.length - MAX_SESSIONS))) {
+        delete store[key];
+      }
+    }
+    await writeStore(store);
+  });
 }
 
-/** 测试/管理用：清空某 session 或全部 */
-export function clearHistory(sessionId?: string): void {
-  if (!sessionId) {
-    writeStore({});
-    return;
-  }
-  const store = readStore();
-  delete store[sessionId];
-  writeStore(store);
+/** 测试/管理用：清空某 session 或全部（与 appendTurn 共用同一写队列） */
+export async function clearHistory(sessionId?: string): Promise<void> {
+  await enqueueWrite(async () => {
+    if (!sessionId) {
+      await writeStore({});
+      return;
+    }
+    const store = await readStore();
+    delete store[sessionId];
+    await writeStore(store);
+  });
 }

@@ -21,10 +21,7 @@ describe('env 环境变量校验', () => {
 
     const env = loadEnv();
 
-    expect(env.nodeEnv).toBe('development');
     expect(env.port).toBe(3001);
-    expect(env.cacheTtlHours).toBe(24);
-    expect(env.rateLimitWindowMs).toBe(60000);
     expect(env.allowedOrigins).toBeNull();
   });
 
@@ -33,7 +30,6 @@ describe('env 环境变量校验', () => {
 
     const env = loadEnv();
 
-    expect(env.nodeEnv).toBe('test');
     expect(env.port).toBe(3001);
   });
 
@@ -79,18 +75,10 @@ describe('env 环境变量校验', () => {
     expect(env.allowedOrigins).toBeNull();
   });
 
-  it('CACHE_TTL_HOURS 自定义值', () => {
-    process.env.CACHE_TTL_HOURS = '48';
-
-    const env = loadEnv();
-
-    expect(env.cacheTtlHours).toBe(48);
-  });
-
-  it('CACHE_TTL_HOURS 为 0 时抛出错误', () => {
+  it('CACHE_TTL_HOURS 不再被消费（曾有启动校验，因无读取方移除）——设置为任何值都不影响启动', () => {
     process.env.CACHE_TTL_HOURS = '0';
-
-    expect(() => loadEnv()).toThrow('CACHE_TTL_HOURS 必须大于 0');
+    const env = loadEnv();
+    expect(env.port).toBe(3001); // 不会因为一个无人读取的变量抛错
   });
 
   it('ENABLE_HSTS 默认关闭', () => {
@@ -107,42 +95,13 @@ describe('env 环境变量校验', () => {
     expect(env.enableHsts).toBe(true);
   });
 
-  it('LLM API Key 从 DEEPSEEK_API_KEY 读取', () => {
+  it('LLM 配置不进 EnvConfig（由 llm/config 自行解析，见 env.ts 字段收敛说明）', () => {
     process.env.DEEPSEEK_API_KEY = 'sk-deepseek-123';
 
     const env = loadEnv();
 
-    expect(env.llm.apiKey).toBe('sk-deepseek-123');
-  });
-
-  it('LLM API Key 优先 DEEPSEEK，回退 OPENAI', () => {
-    process.env.DEEPSEEK_API_KEY = 'sk-deepseek-123';
-    process.env.OPENAI_API_KEY = 'sk-openai-456';
-
-    const env = loadEnv();
-
-    expect(env.llm.apiKey).toBe('sk-deepseek-123');
-  });
-
-  it('LLM API Key 未配置时为 undefined', () => {
-    delete process.env.DEEPSEEK_API_KEY;
-    delete process.env.OPENAI_API_KEY;
-
-    const env = loadEnv();
-
-    expect(env.llm.apiKey).toBeUndefined();
-  });
-
-  it('LLM baseUrl 和 model 可配置', () => {
-    process.env.LLM_BASE_URL = 'https://api.example.com';
-    process.env.LLM_MODEL = 'gpt-4';
-    process.env.EMBEDDING_MODEL = 'text-embedding-3-small';
-
-    const env = loadEnv();
-
-    expect(env.llm.baseUrl).toBe('https://api.example.com');
-    expect(env.llm.model).toBe('gpt-4');
-    expect(env.llm.embeddingModel).toBe('text-embedding-3-small');
+    // 类型层面已不存在 llm 字段：运行时断言对象上也没有（防回潜）
+    expect(env).not.toHaveProperty('llm');
   });
 
   it('东方财富搜索 Token 未配置时返回 undefined（接口不校验 token，见 env.ts 注释）', () => {
@@ -195,7 +154,6 @@ describe('env 环境变量校验', () => {
     try {
       const env = loadEnv();
 
-      expect(env.nodeEnv).toBe('production');
       expect(env.allowedOrigins).toBeNull();
       const output = writeSpy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('"level":"warn"');

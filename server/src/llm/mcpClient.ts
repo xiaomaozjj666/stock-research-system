@@ -16,6 +16,43 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import type { ToolDefinition } from './tools.js';
 
 /** MCP 工具元信息（与 MCP 协议 tools/list 返回项一致） */
+/**
+ * SSE 帧解析（纯函数，供 readSseStream 与测试共用）
+ * ----------------------------------------------------------------------------
+ * 与外部 MCP server 的 SSE 传输对接是手写边界，最容易在真实服务端下碎——
+ * 抽成纯函数钉进测试：CRLF/LF/CR 三种换行边界、跨 chunk 的半事件保留、
+ * 多行 data 拼接、event 行与 data 行的取值规则。
+ */
+/** 按 SSE 规范切出完整事件：返回完整事件原文数组与未完结的残留缓冲 */
+export function splitSseEvents(buffer: string): { events: string[]; rest: string } {
+  const boundary = /\r\n\r\n|\n\n|\r\r/;
+  const events: string[] = [];
+  let rest = buffer;
+  for (;;) {
+    const match = boundary.exec(rest);
+    if (!match) break;
+    events.push(rest.slice(0, match.index));
+    rest = rest.slice(match.index + match[0].length);
+  }
+  return { events, rest };
+}
+
+/** 解析单个事件原文：event 行取类型（默认 message），多行 data 以 LF 拼接 */
+export function parseSseEvent(raw: string): { event: string; data: string } {
+  const lines = raw.split(/\r\n|\n|\r/);
+  let event = 'message';
+  const dataParts: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim();
+    } else if (line.startsWith('data:')) {
+      dataParts.push(line.slice(5).replace(/^ /, ''));
+    }
+    // 其余行（注释 :xxx / id: / retry:）按 SSE 规范忽略
+  }
+  return { event, data: dataParts.join('\n') };
+}
+
 export interface MCPTool {
   name: string;
   description: string;
@@ -294,29 +331,14 @@ export class MCPClient {
   }
 
   private processSseBuffer(): void {
-    // 事件边界按 SSE 规范支持 CRLF / LF / CR 三种换行（严格 CRLF 服务端兼容）
-    const boundary = /\r\n\r\n|\n\n|\r\r/;
-    for (;;) {
-      const match = boundary.exec(this.sseBuffer);
-      if (!match) break;
-      const raw = this.sseBuffer.slice(0, match.index);
-      this.sseBuffer = this.sseBuffer.slice(match.index + match[0].length);
-      this.handleSseEvent(raw);
-    }
+    // 事件边界按 SSE 规范支持 CRLF / LF / CR 三种换行（解析逻辑抽为纯函数，见文件头部）
+    const { events, rest } = splitSseEvents(this.sseBuffer);
+    this.sseBuffer = rest;
+    for (const raw of events) this.handleSseEvent(raw);
   }
 
   private handleSseEvent(raw: string): void {
-    const lines = raw.split(/\r\n|\n|\r/);
-    let event = 'message';
-    const dataParts: string[] = [];
-    for (const line of lines) {
-      if (line.startsWith('event:')) {
-        event = line.slice(6).trim();
-      } else if (line.startsWith('data:')) {
-        dataParts.push(line.slice(5).replace(/^ /, ''));
-      }
-    }
-    const data = dataParts.join('\n');
+    const { event, data } = parseSseEvent(raw);
     if (event === 'endpoint') {
       // 服务端告知请求 POST 端点（可能是相对路径，需基于 SSE URL 解析）
       try {

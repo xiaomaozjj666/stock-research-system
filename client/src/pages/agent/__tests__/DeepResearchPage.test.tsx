@@ -21,6 +21,7 @@ import {
   deleteDeepResearchRun,
   getDeepResearchRun,
   listDeepResearchRuns,
+  runDeepResearchStream,
 } from '../../../api/client';
 import DeepResearchPage from '../DeepResearchPage';
 
@@ -167,5 +168,85 @@ describe('DeepResearchPage 研究库', () => {
     render(<DeepResearchPage />);
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByText('能用来做什么')).toBeInTheDocument();
+  });
+});
+
+describe('DeepResearchPage 运行流（此前审查点名的零覆盖区）', () => {
+  beforeEach(() => {
+    vi.mocked(listDeepResearchRuns).mockResolvedValue([]);
+    vi.mocked(getDeepResearchRun).mockResolvedValue({
+      id: SUMMARY.id,
+      question: SUMMARY.question,
+      scope: {},
+      createdAt: SUMMARY.createdAt,
+      result: makeResult(),
+    });
+  });
+
+  it('开始研究：进度事件进轨迹、done 渲染报告、刷新历史', async () => {
+    let capturedOnEvent: ((e: unknown) => void) | null = null;
+    vi.mocked(runDeepResearchStream).mockImplementation((_q, onEvent) => {
+      capturedOnEvent = onEvent as (e: unknown) => void;
+      return {
+        cancel: vi.fn(),
+        done: new Promise<DeepResearchResult>((resolve) => {
+          setTimeout(() => resolve(makeResult()), 0);
+        }),
+      };
+    });
+
+    render(<DeepResearchPage />);
+    const input = screen.getByPlaceholderText(/贵州茅台当前的基本面与估值/);
+    fireEvent.change(input, { target: { value: '白酒行业未来两年的竞争格局与风险' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始研究' }));
+
+    // 过程事件进轨迹
+    await waitFor(() => {
+      expect(capturedOnEvent).not.toBeNull();
+    });
+    (capturedOnEvent as (e: unknown) => void)({
+      phase: 'agent_event',
+      event: { seq: 1, type: 'run_started', round: 0, at: 't', message: '研究任务启动' },
+    });
+    await screen.findByText('研究任务启动');
+
+    // done：报告渲染 + 历史刷新
+    await screen.findByText('高端白酒集中度继续提升。');
+    expect(runDeepResearchStream).toHaveBeenCalledWith(
+      '白酒行业未来两年的竞争格局与风险',
+      expect.any(Function),
+      expect.objectContaining({ config: { maxRounds: expect.any(Number) } }),
+    );
+    await waitFor(() => {
+      expect(vi.mocked(listDeepResearchRuns)).toHaveBeenCalledTimes(2); // 初始 + 完成后刷新
+    });
+  });
+
+  it('取消研究：清空轨迹、running 复位、不弹错误', async () => {
+    let rejectDone!: (e: Error) => void;
+    vi.mocked(runDeepResearchStream).mockImplementation(() => {
+      const done = new Promise<DeepResearchResult>((_resolve, reject) => {
+        rejectDone = reject;
+      });
+      // 与真实 api 层契约一致：cancel 通过 reject done 传递取消，而不是抛同步异常
+      return {
+        cancel: vi.fn(() => rejectDone(new Error('已取消本次研究'))),
+        done,
+      };
+    });
+
+    render(<DeepResearchPage />);
+    const input = screen.getByPlaceholderText(/贵州茅台当前的基本面与估值/);
+    fireEvent.change(input, { target: { value: '白酒行业未来两年的竞争格局与风险' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始研究' }));
+
+    const cancelBtn = await screen.findByRole('button', { name: '取消研究' });
+    fireEvent.click(cancelBtn);
+
+    // 取消后回到「开始研究」态（running=false），轨迹被清空且无错误横幅
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '开始研究' })).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/研究失败/)).not.toBeInTheDocument();
   });
 });

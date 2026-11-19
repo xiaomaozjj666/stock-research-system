@@ -12,26 +12,20 @@
 
 import logger from './logger.js';
 
+/**
+ * 配置对象只保留**有真实消费者**的字段（index.ts 的 CORS / HSTS / 监听端口）。
+ * 历史上这里曾挂着 cacheTtlHours / rateLimitWindowMs / llm 等无消费字段——
+ * 校验一套、消费一套，两套口径必然漂移；且对从未被读取的变量做启动校验
+ * （如 CACHE_TTL_HOURS ≤ 0 直接抛错）会把「无效但无害」升级成「起不来」。
+ * 各专属模块（llm/config、middleware、各缓存）保留自己的 env 解析与钳制。
+ */
 export interface EnvConfig {
-  /** 运行环境 */
-  nodeEnv: 'development' | 'production' | 'test';
-  /** 服务端口 */
+  /** 服务端口（app.listen 的唯一读取口径） */
   port: number;
   /** CORS 允许的来源（逗号分隔），生产环境必填 */
   allowedOrigins: string[] | null;
   /** 是否启用 HSTS（仅生产环境 HTTPS 时启用） */
   enableHsts: boolean;
-  /** 缓存 TTL（小时） */
-  cacheTtlHours: number;
-  /** 速率限制窗口（毫秒） */
-  rateLimitWindowMs: number;
-  /** LLM API 相关 */
-  llm: {
-    apiKey?: string;
-    baseUrl?: string;
-    model?: string;
-    embeddingModel?: string;
-  };
 }
 
 /**
@@ -79,8 +73,7 @@ export function loadEnv(): EnvConfig {
   if (validationError) throw validationError;
 
   try {
-    const nodeEnv = (process.env.NODE_ENV || 'development') as EnvConfig['nodeEnv'];
-    const isProd = nodeEnv === 'production';
+    const isProd = process.env.NODE_ENV === 'production';
 
     // 端口
     const portRaw = process.env.PORT;
@@ -104,29 +97,10 @@ export function loadEnv(): EnvConfig {
       );
     }
 
-    // 缓存 TTL
-    const cacheTtlHoursRaw = process.env.CACHE_TTL_HOURS;
-    const cacheTtlHours = cacheTtlHoursRaw !== undefined ? Number(cacheTtlHoursRaw) : 24;
-    if (!Number.isFinite(cacheTtlHours) || cacheTtlHours <= 0) {
-      throw new Error(`CACHE_TTL_HOURS 必须大于 0，当前值: ${cacheTtlHoursRaw}`);
-    }
-
-    // 速率限制窗口（与 middleware 共用同一解析/钳制）
-    const rateLimitWindowMs = resolveRateLimitWindowMs();
-
     const config: EnvConfig = {
-      nodeEnv,
       port,
       allowedOrigins,
       enableHsts: process.env.ENABLE_HSTS === 'true',
-      cacheTtlHours,
-      rateLimitWindowMs,
-      llm: {
-        apiKey: process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || undefined,
-        baseUrl: process.env.LLM_BASE_URL || undefined,
-        model: process.env.LLM_MODEL || undefined,
-        embeddingModel: process.env.EMBEDDING_MODEL || undefined,
-      },
     };
 
     cachedConfig = config;
@@ -136,10 +110,9 @@ export function loadEnv(): EnvConfig {
         port,
         cors: allowedOrigins ? allowedOrigins.join(', ') : '未限制',
         hsts: config.enableHsts ? '启用' : '禁用',
-        llm: config.llm.apiKey ? '已配置' : '未配置（规则降级模式）',
       });
     } else {
-      logger.info(`[env] 开发环境配置已加载 (NODE_ENV=${nodeEnv})`);
+      logger.info(`[env] 开发环境配置已加载 (NODE_ENV=${process.env.NODE_ENV || 'development'})`);
     }
 
     return config;

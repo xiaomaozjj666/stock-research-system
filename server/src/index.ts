@@ -22,7 +22,7 @@ import { createShutdownHandler, registerScheduler } from './services/schedulerRe
 import { loadStockMaster } from './services/stockMaster.js';
 import { configureTracer, expressTracerMiddleware } from './services/telemetry.js';
 import { registerFundamentalFetchers } from './shared/fundamentalFetchers.js';
-import { loadEnv } from './utils/env.js';
+import { getEnv, loadEnv } from './utils/env.js';
 import { errorDetail } from './utils/errorDetail.js';
 import logger from './utils/logger.js';
 import { sanitizeUrlForLog } from './utils/logSanitize.js';
@@ -77,9 +77,8 @@ if (trustProxyRaw) {
 }
 
 // === CORS 配置：所有环境均使用白名单，开发环境仅额外放行本机来源 ===
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
-  : null;
+// 与启动校验同一口径（getEnv），不再各自解析 process.env
+const allowedOrigins = getEnv()?.allowedOrigins ?? null;
 
 /** 开发白名单：仅本机 HTTP(S) 来源，不能用 origin:true 反射任意恶意网页。 */
 export function isDevelopmentOriginAllowed(origin: string): boolean {
@@ -148,7 +147,7 @@ app.use(
     frameguard: { action: 'deny' },
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     hsts:
-      process.env.NODE_ENV === 'production' && process.env.ENABLE_HSTS === 'true'
+      process.env.NODE_ENV === 'production' && getEnv()?.enableHsts === true
         ? { maxAge: 63072000, includeSubDomains: true, preload: true } // 2 年
         : false,
   }),
@@ -340,7 +339,7 @@ app.use(
 
 // === Start Server（仅作为进程入口直接运行时监听端口；测试通过 supertest 引用导出的 app，不监听） ===
 if (process.env.NODE_ENV !== 'test') {
-  const PORT = Number(process.env.PORT) || 3001;
+  const PORT = getEnv()?.port ?? 3001;
   // 默认只监听回环地址：本系统按本地单机定位、无鉴权，绑定全网卡会让同局域网内
   // 任何设备都能调用写接口（下单/结算/清空自选）。确需局域网访问时显式设 HOST=0.0.0.0。
   const HOST = process.env.HOST?.trim() || '127.0.0.1';

@@ -20,6 +20,7 @@ import {
   type ChatMessage,
 } from '../llm/index.js';
 import { retrieveEvidence, type Embedder, type EvidenceDoc } from '../llm/rag.js';
+import logger from '../utils/logger.js';
 import { routeSkill, type SkillId } from '../llm/skillRouter.js';
 import { TOOL_DEFINITIONS, executeToolCall, type ToolDeps } from '../llm/tools.js';
 import { clampChatHistory } from '../utils/limitGate.js';
@@ -131,10 +132,10 @@ export interface ChatAgentDeps {
   ) => Promise<EvidenceDoc[]>;
   /** 嵌入函数（语义检索用）；不提供则 RAG 回退 BM25 */
   embedder?: Embedder;
-  /** 加载历史（持久记忆）；不提供则不使用持久记忆 */
-  loadHistory?: (sessionId: string) => ChatTurn[];
-  /** 持久化一轮（持久记忆）；不提供则不持久化 */
-  appendTurn?: (sessionId: string, turn: ChatTurn) => void;
+  /** 加载历史（持久记忆）；不提供则不使用持久记忆。允许同步或 Promise（异步落盘） */
+  loadHistory?: (sessionId: string) => ChatTurn[] | Promise<ChatTurn[]>;
+  /** 持久化一轮（持久记忆）；不提供则不持久化。允许同步或 Promise */
+  appendTurn?: (sessionId: string, turn: ChatTurn) => void | Promise<void>;
   isLLMAvailable: () => boolean;
   chat: (msgs: ChatMessage[], opts?: Record<string, unknown>) => Promise<string>;
   chatWithTools: (
@@ -515,12 +516,15 @@ export function createChatAgent(deps: ChatAgentDeps) {
       // 内联 history，但**持久记忆加载路径不经过路由**，且历史无界增长会直接推高
       // 每次调用的 prompt 成本与延迟，必须在这一层兜底。
       const history = clampChatHistory(
-        req.history ?? (req.sessionId && deps.loadHistory ? deps.loadHistory(req.sessionId) : []),
+        req.history ??
+          (req.sessionId && deps.loadHistory
+            ? await Promise.resolve(deps.loadHistory(req.sessionId))
+            : []),
       );
 
       if (!deps.isLLMAvailable()) {
         const resp = await runFallback(req, deps, evidence);
-        persist(req, resp.answer);
+        void persist(req, resp.answer).catch((err) => logger.warn('对话记忆落盘失败', { err }));
         emit({ phase: 'done', message: '离线降级完成', response: resp });
         return resp;
       }
@@ -632,7 +636,7 @@ export function createChatAgent(deps: ChatAgentDeps) {
         degraded: false,
         model: getLLMConfig().model,
       };
-      persist(req, content);
+      void persist(req, content).catch((err) => logger.warn('对话记忆落盘失败', { err }));
       emit({ phase: 'done', message: '完成', response: resp });
       return resp;
     } catch (err) {
@@ -651,11 +655,15 @@ export function createChatAgent(deps: ChatAgentDeps) {
     }
   }
 
-  /** 持久化一轮对话（仅当配置了 sessionId + appendTurn） */
-  function persist(req: ChatAgentRequest, answer: string): void {
+  /**
+   * 持久化一轮对话（仅当配置了 sessionId + appendTurn）。
+   * 异步落盘（fs.promises + 写队列串行化）；fire-and-forget——落盘失败已静默
+   * 降级，不得阻断对话响应，但顺序必须保证 user 先于 assistant。
+   */
+  async function persist(req: ChatAgentRequest, answer: string): Promise<void> {
     if (req.sessionId && deps.appendTurn && answer) {
-      deps.appendTurn(req.sessionId, { role: 'user', content: req.message });
-      deps.appendTurn(req.sessionId, { role: 'assistant', content: answer });
+      await deps.appendTurn(req.sessionId, { role: 'user', content: req.message });
+      await deps.appendTurn(req.sessionId, { role: 'assistant', content: answer });
     }
   }
 

@@ -35,6 +35,58 @@ describe('chatWithTools 工具调用回路', () => {
     else process.env.DEEPSEEK_API_KEY = originalKey;
   });
 
+  it('工具回路 5 轮耗尽 → 返回最后 assistant 内容或明确降级文案（防死循环烧钱）', async () => {
+    const tools = [
+      {
+        type: 'function',
+        function: {
+          name: 'run_analysis',
+          description: '运行分析',
+          parameters: { type: 'object', properties: { code: { type: 'string' } } },
+        },
+      },
+    ];
+    // 每一轮都返回新的 tool_calls（模型陷入工具循环的病态场景）
+    let round = 0;
+    fetchMock.mockImplementation(async (_url: string, init?: { body?: string }) => {
+      if (init?.body) captured.push(JSON.parse(init.body));
+      round += 1;
+      return makeResponse({
+        choices: [
+          {
+            message: {
+              content: '',
+              tool_calls: [
+                {
+                  id: `call_${round}`,
+                  function: { name: 'run_analysis', arguments: `{"code":"600519"}` },
+                },
+              ],
+            },
+          },
+        ],
+      });
+    });
+
+    const executions: string[] = [];
+    const res = await chatWithTools(
+      [{ role: 'user', content: '分析 600519' }],
+      tools,
+      async (name) => {
+        executions.push(name);
+        return JSON.stringify({ summary: 'ok' });
+      },
+    );
+
+    // 恰好 5 轮（不多不少），每轮执行了一次工具
+    expect(executions).toHaveLength(5);
+    // 5 轮内模型从未给出文本内容 → 返回明确降级文案（不是空串、不是 tool 消息原文）
+    expect(res.content).toContain('工具调用轮次已达上限');
+    // 全部 5 次工具调用记录在案（审计用）
+    expect(res.toolCalls).toHaveLength(5);
+    expect(res.toolCalls.map((t) => t.name)).toEqual(Array(5).fill('run_analysis'));
+  });
+
   it('把 tool_call_id / name 写入 tool 消息，并保留 assistant.tool_calls', async () => {
     const callId = 'call_abc123';
     const tools = [
