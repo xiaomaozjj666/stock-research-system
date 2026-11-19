@@ -12,8 +12,9 @@
  * 本模块把两件事放在同一个文件里，因为它们同属「LLM 调用资源上限」这一件事
  * （并发上限 + 单次调用开销上限），且本次修复被限定只新增一个 utils 模块。
  *
- * 闸门语义（务必注意）：**限并发，不是串行化**。默认 4 路并行，8 位专家仍以
- * 4 路推进，只有超出部分排队；退化成 limit=1 会让一次对比分析从分钟级变成十分钟级。
+ * 闸门语义（务必注意）：**限并发，不是串行化**。默认 8 路并行（与 8 位专家
+ * 并行一致），只有超出部分排队；退化成 limit=1 会让一次对比分析从分钟级变成
+ * 十分钟级。
  */
 import logger from './logger.js';
 import type { ChatMessage } from '../llm/client.js';
@@ -271,6 +272,9 @@ export class LimitGate {
         this.detachAbort(waiter);
         this.counters.timeouts += 1;
         const waitedMs = Math.max(0, this.now() - waiter.enqueuedAt);
+        // 口径：queueWaits 计全部等待者，totalQueueWaitMs 也必须计全部——
+        // 超时者的等待时间同样真实发生，漏计会让平均排队时长被系统性低估
+        this.counters.totalQueueWaitMs += waitedMs;
         logger.warn('[llm-gate] 排队超时，拒绝本次 LLM 调用（429 语义）', {
           gate: this.name,
           waitedMs,
@@ -291,6 +295,8 @@ export class LimitGate {
           if (waiter.timer !== undefined) this.clearTimer(waiter.timer);
           this.detachAbort(waiter);
           this.counters.aborted += 1;
+          // 取消者同样计入等待时长（与 queueWaits 口径一致）
+          this.counters.totalQueueWaitMs += Math.max(0, this.now() - waiter.enqueuedAt);
           logger.info('[llm-gate] 排队中的 LLM 调用被取消', {
             gate: this.name,
             queued: this.queue.length,
@@ -398,9 +404,13 @@ function abortReason(signal: AbortSignal): Error {
 }
 
 /**
- * 生产用单例：并发上限与排队超时**每次调用都重新读环境变量**，
- * 因此运维改 LLM_MAX_CONCURRENCY 不需要重启（也让测试能按用例改环境变量），
- * 同时单例本身不会因为改配置而被重建、丢掉在途计数。
+ * 生产用单例：并发上限与排队超时**每次调用都重新解析配置函数**——这让测试能
+ * 按用例注入/改环境变量，单例本身也不会因为改配置被重建、丢掉在途计数。
+ *
+ * 注意边界（勿误读为「运维热改」）：Node 进程的 process.env 无法从外部修改，
+ * 改 .env / 编排配置仍需**重启进程**才生效；另外 dispatch() 只在 release()
+ * 时触发，即使进程内改大上限，已排队的 waiter 也要等下一次配额归还才会被
+ * 补派发（新到请求则会走快路径直接占位）。
  */
 export const llmGate = new LimitGate({
   name: 'llm',
@@ -584,7 +594,16 @@ export function validateMessages(
         error: `messages[${i}].content 超过单条上限 ${limits.maxCharsPerMessage} 字`,
       };
     }
-    totalChars += content.length;
+    // 总预算按**实际透传内容**计算：只统计 content 会留下两个绕过面——
+    // 超长 name、任意条数/深度的 tool_calls 都能在 content 合规时放大单次
+    // 调用开销（本模块声称这条是「真正兜底」的一条，必须名副其实）。
+    let messageChars = content.length;
+    if (typeof item.name === 'string') messageChars += item.name.length;
+    if (Array.isArray(item.tool_calls)) {
+      // 序列化长度即上游要解析的负载规模；结构非法也在这里按体积拦截
+      messageChars += JSON.stringify(item.tool_calls).length;
+    }
+    totalChars += messageChars;
     if (totalChars > limits.maxTotalChars) {
       return { ok: false, error: `messages 总字符数超过上限 ${limits.maxTotalChars}` };
     }

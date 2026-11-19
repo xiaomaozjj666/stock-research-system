@@ -63,6 +63,12 @@ export function formatLocalIsoDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** 纯日期加减（UTC 数学，与本地时区无关）：用于由 end 反推默认 start */
+export function shiftIsoDate(iso: string, days: number): string {
+  const base = Date.parse(`${iso}T00:00:00Z`);
+  return new Date(base + days * 86_400_000).toISOString().slice(0, 10);
+}
+
 export interface ResolveDateRangeSpec {
   /** 默认区间长度（自然日）：未传起始日时，start = end - defaultSpanDays */
   defaultSpanDays: number;
@@ -88,14 +94,16 @@ export function resolveDateRange(
   const now = spec.now ?? Date.now();
   const maxSpanDays = spec.maxSpanDays ?? MAX_DATE_RANGE_SPAN_DAYS;
   const end = endDate ?? formatLocalIsoDate(new Date(now));
-  const start =
-    startDate ?? formatLocalIsoDate(new Date(now - spec.defaultSpanDays * 24 * 3600 * 1000));
 
-  if (!isValidIsoDate(start)) {
-    throw new DateRangeParamError(`startDate 需为 YYYY-MM-DD 的真实日期（当前：${start}）`);
-  }
+  // 先校验 end：默认 start 必须由**end**反推（契约：start = end - defaultSpanDays）。
+  // 此前用 now 反推，导致「只传 endDate」的请求得到一个晚于 end 的 start，
+  // 触发自相矛盾的 400（调用方根本没传 startDate）。
   if (!isValidIsoDate(end)) {
     throw new DateRangeParamError(`endDate 需为 YYYY-MM-DD 的真实日期（当前：${end}）`);
+  }
+  const start = startDate ?? shiftIsoDate(end, -spec.defaultSpanDays);
+  if (!isValidIsoDate(start)) {
+    throw new DateRangeParamError(`startDate 需为 YYYY-MM-DD 的真实日期（当前：${start}）`);
   }
   const startMs = Date.parse(`${start}T00:00:00Z`);
   const endMs = Date.parse(`${end}T00:00:00Z`);

@@ -57,6 +57,7 @@ import { abortOnClientClose } from '../utils/clientAbort.js';
 import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 import { isAShareCode } from '../utils/stockCode.js';
+import { resolveDateRange } from '../utils/dateRange.js';
 import { withAbortableTimeout } from '../utils/timeout.js';
 
 /**
@@ -689,11 +690,20 @@ router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, asy
       return res.status(400).json({ error: '请提供有效的6位股票代码' });
     }
     const strategyName = String(body.strategy ?? 'ma_cross').trim();
-    const startDate = String(
-      body.startDate ??
-        new Date(Date.now() - 365 * 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
-    );
-    const endDate = String(body.endDate ?? new Date().toISOString().split('T')[0]);
+    // 日期会拼进行情 URL：统一走 resolveDateRange 校验（默认区间基准为本地
+    // 时区的「今天」——旧实现用 UTC toISOString，东八区 00:00-08:00 会把
+    // 默认右端点算成昨天）
+    let range: { start: string; end: string };
+    try {
+      range = resolveDateRange(
+        body.startDate === undefined ? undefined : String(body.startDate),
+        body.endDate === undefined ? undefined : String(body.endDate),
+        { defaultSpanDays: 730 },
+      );
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
+    const { start: startDate, end: endDate } = range;
 
     // parseStrategyInput 本就返回 StrategyConfig（见 orchestrator.ts 第 17 行），
     // 早前的 `as unknown as StrategyConfig` 是不必要的断言：它会掩盖「返回类型

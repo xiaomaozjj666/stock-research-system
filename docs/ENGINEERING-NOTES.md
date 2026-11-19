@@ -1409,3 +1409,28 @@ fetch stub（service 已 mock、响应确定），且覆盖的是**当前最大�
 - **比对「连续实测值」的守卫必须给容差**。v8 覆盖率在同一段代码上逐日有 ±0.01~0.02pp 抖动（异步分支执行路径非确定），doc-freshness 曾用精确比对——同一提交四天全绿后第 5 天突然红（README 93.71 vs 实测 93.72，2026-10-13 schedule 实证）。0.05pp 容差滤掉抖动；真实漂移（增删代码通常 ≥0.1pp）仍会报。「测得准」和「比得稳」是两回事。
 - **override 只在该包被多处声明时才有意义；单处声明挂 override = 给 dependabot 埋雷**。vite 只在 client/package.json 一处声明，根 overrides.vite 纯属孤儿钉子——dependabot 升 client 的 vite 时两侧 specifier 不再逐字相同 → npm EOVERRIDE、PR 的 npm ci 必挂（#30 实证；nanoid 前科第二例）。移除前先验证传递依赖不被钉（查 vitest 的 peerDependencies 范围 + lock 里该包实体数），移除后用 `npm install --package-lock-only` 确认 lock 零改动。
 - **dependabot 合并「精确版本声明」的包时，lock 的 manifest 副本可能写 `^` 前缀**（@vitejs/plugin-react 写 ^6.1.2、vite 写 ^8.3.4，两例），与 package.json 不符：npm ci 容忍、npm install 每次改写 → 本地 lock 莫名变 dirty。npm install 后 lock 变 dirty 时**先查 manifest 副本 specifier**，对齐提交即可。
+
+## 2026-11-19 基础设施层实测事实（本轮审查沉淀）
+
+- **undici/fetch 非 2xx 必须取消 body**：不消费也不 cancel 的响应体让连接无法
+  归还连接池；反复 5xx 的上游按「每次尝试 × 重试次数」累积悬挂连接，直到 GC。
+  `fetchJson` 已在 throw 前 `await resp.body?.cancel()`。
+- **setInterval 间隔 > 2^31-1 会被 Node 静默钳到 1ms**（并报
+  TimeoutOverflowWarning）——「把秒当毫秒写」不是变慢，而是变成每秒千次写风暴。
+  SSE 心跳已钳制 [1000, 60000]。
+- **express-rate-limit 的 windowMs 配负数会在模块初始化直接抛
+  ERR_ERL_WINDOW_MS，服务起不来**：`Number('-5') || 60000` 得到 -5 不是 NaN，
+  `||` 兜不住——windowMs 与 max 必须同口径钳制。
+- **单调用方 abort signal 不能灌进共享缓存 producer**：withQuantCache 会把首个
+  调用者的 inflight promise 直接共享给后来者，A 断开会让同 key 的 B 一起失败。
+  正确范式：signal 只在入口做 aborted 预检（fundamentalCache/marginProvider/
+  eventProvider 已统一）。
+- **项目自带两条防作弊测试**：`as never` 只许减不许增（测试代码）、
+  `as unknown as` 限基线（生产代码）。新增测试若用类型逃逸会被当场拦下——
+  构造不完整对象走 `test/partial.ts` 的 partial<T>()，或改用 toMatchObject
+  子集断言。
+- **vitest 单文件从 server/ 直接跑不带根配置**（testTimeout 5s 默认 vs 根配置
+  30s）：涉及多秒等待的用例必须从仓库根跑 `npx vitest run server/src/...`，
+  否则表现为「本地 5s 超时、CI 通过」的假红。
+- **文档目录已迁到 docs/**：CODE_REVIEW / ENGINEERING-NOTES / DATA-SOURCES 的
+  追加位置以 `ls docs/` 为准，勿按旧根路径写入。

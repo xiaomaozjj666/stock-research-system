@@ -186,7 +186,10 @@ describe('LimitGate — 排队超时（假时钟，零真实等待）', () => {
 
     release();
     expect(gate.inFlight).toBe(0);
+    // 排队时长口径与 queueWaits 一致：超时者的等待时间同样真实发生，
+    // 漏计会让「平均排队时长」被系统性低估（200 个等待者全超时 → 平均值仍 0）
     expect(gate.snapshot()).toMatchObject({ timeouts: 2, queueWaits: 2 });
+    expect(gate.snapshot().totalQueueWaitMs).toBe(2000);
   });
 
   it('超时的 waiter 不会在后续 release 时被误派发（无僵尸 waiter）', async () => {
@@ -371,6 +374,25 @@ describe('messages 校验（严格拒绝口径）', () => {
     const chunk = 'x'.repeat(7000);
     const r = validateMessages(Array.from({ length: 6 }, () => msg(chunk)));
     expect(chunk.length * 6).toBeGreaterThan(MAX_TOTAL_MESSAGE_CHARS);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error).toContain('总字符');
+  });
+
+  it('总预算把 name / tool_calls 计入（此前只算 content，可绕过上限）', () => {
+    // content 合规但 tool_calls 巨大：单条 content 不超限、总 content 不超限，
+    // 但上游实际要解析的负载远超预算——必须按透传内容计费
+    const hugeCalls = Array.from({ length: 50 }, () => ({
+      id: 'call_'.repeat(30),
+      type: 'function',
+      function: { name: 'f'.repeat(200), arguments: '{"a":"' + 'x'.repeat(600) + '"}' },
+    }));
+    const r = validateMessages([{ role: 'assistant', content: 'ok', tool_calls: hugeCalls }]);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error).toContain('总字符');
+  });
+
+  it('超长 name 计入总预算', () => {
+    const r = validateMessages([{ role: 'user', content: 'hi', name: 'n'.repeat(40_001) }]);
     expect(r.ok).toBe(false);
     expect(r.ok === false && r.error).toContain('总字符');
   });

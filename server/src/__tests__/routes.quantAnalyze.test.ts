@@ -145,6 +145,46 @@ beforeEach(() => {
 });
 
 describe('POST /api/quant/analyze 主路径', () => {
+  it('object 形态 strategy 的 stockCode 非法 → 400（不得把自由字符串拼进行情 URL）', async () => {
+    const injected: StrategyConfig = {
+      name: 'x',
+      type: 'ma_cross',
+      stockCode: '600519&fqt=0', // 查询串注入形态
+      params: { shortPeriod: 5, longPeriod: 20 },
+      startDate: '2024-01-01',
+      endDate: '2024-06-30',
+    };
+    mocks.parseStrategyInput.mockReturnValue(injected);
+
+    const res = await request(app)
+      .post('/api/quant/analyze')
+      .send({ strategy: { stockCode: '600519&fqt=0' } });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toContain('无效的股票代码');
+    expect(mocks.fetchOHLCVData).not.toHaveBeenCalled();
+  });
+
+  it('object 形态 strategy 的日期非法 → 400（日期会拼进 beg/end 参数）', async () => {
+    const injected: StrategyConfig = {
+      name: 'x',
+      type: 'ma_cross',
+      stockCode: '600519',
+      params: { shortPeriod: 5, longPeriod: 20 },
+      startDate: '20240101&fqt=0',
+      endDate: '2024-06-30',
+    };
+    mocks.parseStrategyInput.mockReturnValue(injected);
+
+    const res = await request(app)
+      .post('/api/quant/analyze')
+      .send({ strategy: { startDate: '20240101&fqt=0' } });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toContain('YYYY-MM-DD');
+    expect(mocks.fetchOHLCVData).not.toHaveBeenCalled();
+  });
+
   it('合法入参 → 200，且完整报告结构齐备（strategy/backtest/audit/summary/confidence/limitations）', async () => {
     const res = await request(app)
       .post('/api/quant/analyze')

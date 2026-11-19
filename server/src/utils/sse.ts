@@ -37,14 +37,23 @@ export interface SseChannel {
 /**
  * 解析 SSE_HEARTBEAT_MS（每次建通道时读取，测试可逐用例改 env）：
  * - 未设置 / 空 / 非数值 → 默认 15000；
- * - <= 0（含显式的 0）→ 0，表示关闭心跳（测试与不便长连接的环境用）。
+ * - <= 0（含显式的 0）→ 0，表示关闭心跳（测试与不便长连接的环境用）；
+ * - 正值钳制到 [1000, 60000]：1ms 会把连接变成每秒千帧写风暴；写成
+ *   15e9（把秒当毫秒）会让 Node 报 TimeoutOverflowWarning 并把间隔钳到 1ms，
+ *   后果相同——越界一律按边界处理，不把错误配置放大成 CPU/日志灾难。
  */
+/** 心跳间隔下限（毫秒）：低于此值的配置视为错误配置，按边界处理 */
+const MIN_HEARTBEAT_MS = 1000;
+/** 心跳间隔上限（毫秒）：超过 2^31-1 的 setInterval 会被 Node 钳到 1ms */
+const MAX_HEARTBEAT_MS = 60_000;
+
 export function resolveHeartbeatMs(): number {
   const raw = process.env.SSE_HEARTBEAT_MS;
   if (raw === undefined || raw.trim() === '') return DEFAULT_HEARTBEAT_MS;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return DEFAULT_HEARTBEAT_MS;
-  return parsed > 0 ? Math.floor(parsed) : 0;
+  if (!(parsed > 0)) return 0;
+  return Math.min(MAX_HEARTBEAT_MS, Math.max(MIN_HEARTBEAT_MS, Math.floor(parsed)));
 }
 
 export function createSseChannel(_req: Request, res: Response): SseChannel {

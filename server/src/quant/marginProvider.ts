@@ -77,14 +77,12 @@ function numOf(row: Record<string, unknown>, keys: string[]): number | null {
  * 返回 [] 表示「查询成功且无数据」（如未开通两融标的）；抛错由调用方降级。
  */
 export async function fetchMarginSeries(code: string, signal?: AbortSignal): Promise<MarginRow[]> {
+  // 取消检查放在入口：withQuantCache 的 producer 是**多调用方共享**的，
+  // 把某个调用方的 signal 灌进去会让它断开时连累同一 key 的并发请求一起失败
+  //（与 fundamentalCache 同口径）。
+  if (signal?.aborted) throw signal.reason ?? new Error('两融序列拉取已中止');
   return withQuantCache(`margin_series_${code}`, marginCacheTtlMs(), async () => {
-    const rows = await fetchReportRows(
-      'RPTA_WEB_RZRQ_GGMX',
-      `(scode="${code}")`,
-      'DATE',
-      '-1',
-      signal,
-    );
+    const rows = await fetchReportRows('RPTA_WEB_RZRQ_GGMX', `(scode="${code}")`, 'DATE', '-1');
     // 同日可能出现多行（理论上不会，防御性去重：保留首行）；转升序
     const byDate = new Map<string, MarginRow>();
     for (const row of rows) {

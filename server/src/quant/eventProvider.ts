@@ -172,13 +172,14 @@ export async function fetchDividendEvents(
   code: string,
   signal?: AbortSignal,
 ): Promise<DividendEventRow[]> {
+  // 取消预检放在入口：共享 producer 不接 caller signal（见 marginProvider 同款注释）
+  if (signal?.aborted) throw signal.reason ?? new Error('事件拉取已中止');
   return withQuantCache(`event_div_${code}`, eventCacheTtlMs(), async () => {
     const rows = await fetchReportRows(
       'RPT_SHAREBONUS_DET',
       `(SECURITY_CODE="${code}")`,
       'PLAN_NOTICE_DATE',
       '-1',
-      signal,
     );
     const parsed = rows.map((row) => {
       const rawYield = numOf(row, ['DIVIDENT_RATIO']); // 已验证：0-1 小数（非百分比）
@@ -233,13 +234,14 @@ export async function fetchBuybackEvents(
   code: string,
   signal?: AbortSignal,
 ): Promise<BuybackEventRow[]> {
+  // 取消预检放在入口：共享 producer 不接 caller signal（见 marginProvider 同款注释）
+  if (signal?.aborted) throw signal.reason ?? new Error('事件拉取已中止');
   return withQuantCache(`event_buyback_${code}`, eventCacheTtlMs(), async () => {
     const rows = await fetchReportRows(
       'RPTA_WEB_GETHGLIST_NEW',
       `(DIM_SCODE="${code}")`,
       'UPD,DIM_DATE,DIM_SCODE',
       '-1,-1,-1',
-      signal,
     );
     const parsed = rows.map((row) => ({
       announceDate: normDate(row.DIM_DATE) ?? normDate(row.NOTICEDATE) ?? normDate(row.UPDATEDATE),
@@ -285,13 +287,14 @@ export async function fetchDragonTigerEvents(
   code: string,
   signal?: AbortSignal,
 ): Promise<DragonTigerEventRow[]> {
+  // 取消预检放在入口：共享 producer 不接 caller signal（见 marginProvider 同款注释）
+  if (signal?.aborted) throw signal.reason ?? new Error('事件拉取已中止');
   return withQuantCache(`event_lhb_${code}`, eventCacheTtlMs(), async () => {
     const rows = await fetchReportRows(
       'RPT_DAILYBILLBOARD_DETAILS',
       `(SECURITY_CODE="${code}")`,
       'TRADE_DATE',
       '-1',
-      signal,
     );
     const parsed = rows.map((row) => ({
       eventDate: normDate(row.TRADE_DATE),
@@ -331,13 +334,14 @@ export async function fetchUnlockEvents(
   code: string,
   signal?: AbortSignal,
 ): Promise<UnlockEventRow[]> {
+  // 取消预检放在入口：共享 producer 不接 caller signal（见 marginProvider 同款注释）
+  if (signal?.aborted) throw signal.reason ?? new Error('事件拉取已中止');
   return withQuantCache(`event_unlock_${code}`, eventCacheTtlMs(), async () => {
     const rows = await fetchReportRows(
       'RPT_LIFT_STAGE',
       `(SECURITY_CODE="${code}")`,
       'FREE_DATE',
       '1',
-      signal,
     );
     const parsed = rows.map((row) => {
       const rawRatio = numOf(row, ['FREE_RATIO']);
@@ -377,23 +381,27 @@ export async function fetchStockEvents(
   code: string,
   signal?: AbortSignal,
 ): Promise<StockEventBundle> {
+  // 客户端断开是取消，不是「上游失败」：逐类 warn 会在一次批量评估里刷出
+  // 数百行误导性告警（50 只票 × 4 类），且取消本就该原样上抛
+  if (signal?.aborted) throw signal.reason ?? new Error('事件拉取已中止');
+  const degrade = <T>(what: string, err: unknown, empty: T[]): T[] => {
+    if (signal?.aborted) throw err;
+    logger.warn(`${what}拉取失败，该股降级为无${what}事件`, { code, err });
+    return empty;
+  };
   const [dividend, buyback, unlock, dragonTiger] = await Promise.all([
-    fetchDividendEvents(code, signal).catch((err) => {
-      logger.warn('分红事件拉取失败，该股降级为无分红事件', { code, err });
-      return [] as DividendEventRow[];
-    }),
-    fetchBuybackEvents(code, signal).catch((err) => {
-      logger.warn('回购事件拉取失败，该股降级为无回购事件', { code, err });
-      return [] as BuybackEventRow[];
-    }),
-    fetchUnlockEvents(code, signal).catch((err) => {
-      logger.warn('解禁事件拉取失败，该股降级为无解禁事件', { code, err });
-      return [] as UnlockEventRow[];
-    }),
-    fetchDragonTigerEvents(code, signal).catch((err) => {
-      logger.warn('龙虎榜拉取失败，该股降级为无龙虎榜事件', { code, err });
-      return [] as DragonTigerEventRow[];
-    }),
+    fetchDividendEvents(code, signal).catch((err) =>
+      degrade('分红事件', err, [] as DividendEventRow[]),
+    ),
+    fetchBuybackEvents(code, signal).catch((err) =>
+      degrade('回购事件', err, [] as BuybackEventRow[]),
+    ),
+    fetchUnlockEvents(code, signal).catch((err) =>
+      degrade('解禁事件', err, [] as UnlockEventRow[]),
+    ),
+    fetchDragonTigerEvents(code, signal).catch((err) =>
+      degrade('龙虎榜', err, [] as DragonTigerEventRow[]),
+    ),
   ]);
   return { dividend, buyback, unlock, dragonTiger };
 }

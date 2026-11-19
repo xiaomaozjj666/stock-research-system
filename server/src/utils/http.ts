@@ -55,6 +55,9 @@ export async function fetchJson(url: string, opts: FetchJsonOptions = {}): Promi
       });
       if (!resp.ok) {
         httpRejected = true;
+        // 不消费也不取消 body 时，undici 不会把连接放回池：反复 5xx 的上游会
+        // 按「每次尝试一条悬挂连接 × 重试次数」累积，直到 GC 才释放
+        await resp.body?.cancel().catch(() => {});
         throw new HttpStatusError(resp.status);
       }
       const text = await resp.text();

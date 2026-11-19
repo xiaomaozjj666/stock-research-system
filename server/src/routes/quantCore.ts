@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 
 import { quantLimiter, metaLimiter, circuitBreakerGuard } from '../middleware.js';
 import { normalizeAShareCode } from '../utils/stockCode.js';
+import { resolveDateRange } from '../utils/dateRange.js';
 import { parseStrategyInput, orchestrate, generateSummary } from '../quant/agents/orchestrator.js';
 import type { StrategyConfig, FactorOverlay } from '../quant/types.js';
 import {
@@ -102,18 +103,26 @@ router.post('/api/quant/analyze', quantLimiter, circuitBreakerGuard, async (req,
       return res.status(400).json({ error: '请提供策略配置（strategy）' });
     }
 
-    // 1. 解析策略配置
+    // 1. 解析策略配置（object 形态原样返回——必须在这里把用户可控字段收紧：
+    //    stockCode/日期会拼进东财行情 URL，未校验的字符串可直接改写查询参数）
     const strategyConfig = parseStrategyInput(strategy);
-
-    // 确保日期范围有默认值
-    if (!strategyConfig.startDate) {
-      strategyConfig.startDate = new Date(Date.now() - 365 * 2 * 24 * 60 * 60 * 1000)
-        .toISOString()
-        .split('T')[0];
+    const code = normalizeAShareCode(strategyConfig.stockCode);
+    if (!code) {
+      return res
+        .status(400)
+        .json({ error: `无效的股票代码：${String(strategyConfig.stockCode ?? '') || '空'}` });
     }
-    if (!strategyConfig.endDate) {
-      strategyConfig.endDate = new Date().toISOString().split('T')[0];
+    let range: { start: string; end: string };
+    try {
+      range = resolveDateRange(strategyConfig.startDate, strategyConfig.endDate, {
+        defaultSpanDays: 730,
+      });
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
     }
+    strategyConfig.stockCode = code;
+    strategyConfig.startDate = range.start;
+    strategyConfig.endDate = range.end;
 
     // 2. 获取K线数据
     const ohlcvData = await fetchOHLCVData(

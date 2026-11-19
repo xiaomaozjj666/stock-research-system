@@ -284,3 +284,68 @@ linalg 部分主元消元 + 经典标准误公式；MCP server 为 stdio 薄转�
 - 1458 单测（130 文件）、lint / prettier / 双端 tsc / build / CI 全绿
 - 实机：sz50@2024-06-28 历史成分截面（50 只入组、24 因子）；health 双增强通道
   如实披露（baostock available / tushare 降级原因）
+
+## 附：研究 Agent 生命周期 + 基础设施工具层审查（2026-11-19）
+
+两路独立子代理（全新上下文）分别深查「AI 研究员工作台」（b7ee621 新增）与
+「基础设施工具层」（limitGate 701 行等），发现逐条由主会话亲自复核成立后修复。
+
+### 研究 Agent：4 Important（全部修复）
+
+1. **取消链路缺失**：SSE 断开/前端取消只停推送，编排继续烧 LLM 配额并占满
+   2 个并发槽位。修复：AbortSignal 贯穿编排器（阶段边界/每轮/每任务入口检查，
+   抛 ResearchAbortedError）→ LLM 适配器 → chat() 的 HTTP；SSE 接
+   abortOnClientClose；另加 30 分钟运行墙钟上限（RESEARCH_RUN_MAX_MS）。
+2. **同步超时僵尸 run**：Promise.race 超时后 run 无人认领（槽位提前归还、
+   成果整体丢弃）。修复：run promise 单独持有，归档挂在 run 自身完成点，
+   槽位按真实结束归还。自测当场发现初版漏接归档并修正。
+3. **stats.succeededTasks 恒 0** 被新 UI 消费成「检索 0/N 成功」：按
+   totalRetrievalTasks − failedTasks 回填。
+4. **来源独立性被常量击穿**：公告/知识库适配器把 publisher 写死成频道名，
+   验证器将不同文档折叠为单一来源，P0 硬证据误判 insufficient。修复：
+   公告省略 publisher（回落 URL 文档级独立），知识库用 doc.source。
+
+安全面复核结论：SSRF（无）、路径穿越（isSafeId 白名单+测试）、XSS（无）、
+入参校验（完整）均干净。
+
+### 基础设施工具层：6 Important（全部修复）
+
+1. limitGate 排队时长口径：超时/取消者不计入 totalQueueWaitMs（与 queueWaits
+   口径不一致，平均值被系统性低估）→ 两路径均累加。
+2. limitGate 单次调用总预算可绕过：只统计 content，name/tool_calls 无上限
+   → 按透传内容计入总量（序列化长度）。
+3. resolveDateRange 未实现「只传 endDate」契约：start 用 now 反推导致
+   自相矛盾 400（影响 5 条因子路由）→ 先校验 end 再 shiftIsoDate 反推。
+4. SSE_HEARTBEAT_MS 无边界：1ms → 每秒千帧写风暴；15e9 → Node 溢出钳到 1ms
+   同罪 → 钳制到 [1000, 60000]。
+5. limitGate 文档与实现不符（4 vs 8 路并发；「热改 env 不重启」表述错误）
+   → 更正，并写清 dispatch 只在 release 时触发。
+6. fetchJson 非 2xx 分支未取消 body：undici 连接无法归还池，反复 5xx 累积
+   悬挂连接 → throw 前 await body.cancel()。
+
+### 存量高价值项（顺带修复）
+
+- **上游查询串注入**（安全）：`/api/quant/analyze` 的 object 形态 strategy 与
+  `/api/backtest/evaluate` 的日期直接拼进行情 URL，`20240101&fqt=0` 可改写
+  复权参数 → 两处入口统一走 normalizeAShareCode + resolveDateRange。
+- **共享缓存 producer 信号污染**：marginProvider/eventProvider 把单调用方
+  signal 灌进 withQuantCache 共享 producer，一个客户端断开会连累同 key 并发
+  请求 → 改为入口预检（与 fundamentalCache 同口径）；取消不再按上游失败
+  刷误导性 warn。
+- **windowMs 负数导致启动崩溃**：RATE_LIMIT_WINDOW_MS=-5 会让
+  express-rate-limit 初始化抛 ERR_ERL_WINDOW_MS（整个服务起不来）→ 与 max
+  同口径钳制 ≥1。
+
+### 已复核未发现缺陷
+
+timeout.ts（signal 组合与定时器清理）、concurrency.ts（失败语义）、sse.ts
+（关闭/心跳入口一致）、logSanitize.ts（白名单默认拒绝、大小写变体全覆盖）、
+errorDetail.ts（按环境裁剪语义与其余调用点不同，不构成重复实现）。
+
+### 测试门禁（2026-11-19）
+
+- 新增测试：研究生命周期 3、僵尸 run 路由 2、重复 query 400、publisher 契约、
+  客户端流消费 6（看门狗/坏帧/取消/错误文案）、日期 end-only、心跳钳制、
+  排队统计、消息预算绕过、入口注入 400、取消纪律 2。
+- 项目自带 `as never` 只许减不许增的防作弊测试**当场拦下了本次新增的 2 处**
+  类型逃逸（改为类型正确的字面量与 toMatchObject 断言）。

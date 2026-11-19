@@ -295,3 +295,14 @@ describe('fetchStockEvents — 单类失败降级', () => {
     expect(bundle.unlock).toEqual([]);
   });
 });
+
+describe('取消纪律：fetchStockEvents 的取消不按上游失败处理', () => {
+  it('已中止的信号 → 入口即拒绝（不发起任何上游调用）', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(dcBody([]));
+    const controller = new AbortController();
+    controller.abort(new Error('客户端断开'));
+
+    await expect(fetchStockEvents('600519', controller.signal)).rejects.toThrow(/客户端断开/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+});

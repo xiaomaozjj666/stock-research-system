@@ -197,6 +197,16 @@ describe('createSseChannel 心跳', () => {
     expect(f.writes).toHaveLength(0);
   });
 
+  it('SSE_HEARTBEAT_MS 正值钳制到 [1000, 60000]（防写风暴与溢出钳 1ms）', () => {
+    process.env.SSE_HEARTBEAT_MS = '1';
+    expect(resolveHeartbeatMs()).toBe(1000);
+    process.env.SSE_HEARTBEAT_MS = '15000000000'; // 把秒当毫秒写：Node 会静默钳到 1ms
+    expect(resolveHeartbeatMs()).toBe(60_000);
+    process.env.SSE_HEARTBEAT_MS = '15000';
+    expect(resolveHeartbeatMs()).toBe(15000);
+    delete process.env.SSE_HEARTBEAT_MS;
+  });
+
   it('SSE_HEARTBEAT_MS 非法（非数值/负数）时回落：非法→默认，负数→关闭', () => {
     expect(resolveHeartbeatMs()).toBe(DEFAULT_HEARTBEAT_MS);
     process.env.SSE_HEARTBEAT_MS = 'abc';

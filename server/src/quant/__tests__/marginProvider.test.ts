@@ -90,6 +90,22 @@ describe('fetchMarginSeries — 两融日度序列解析', () => {
   });
 });
 
+describe('取消纪律：共享缓存 producer 不接 caller signal', () => {
+  it('已中止的调用方入口即拒绝，且不影响随后的正常调用（不污染共享缓存）', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(dcBody(MARGIN_ROWS));
+    const controller = new AbortController();
+    controller.abort(new Error('客户端断开'));
+
+    await expect(fetchMarginSeries('600036', controller.signal)).rejects.toThrow(/客户端断开/);
+    // 取消发生在入口：未触达上游、未写入缓存
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+
+    const rows = await fetchMarginSeries('600036');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('marginFactorValues — PIT 取值（T+1 披露纪律）', () => {
   // 22 行两融序列：余额 100 + i（便于手算变化率），占比 1 + i*0.1
   const rows: MarginRow[] = Array.from({ length: 22 }, (_, i) => ({

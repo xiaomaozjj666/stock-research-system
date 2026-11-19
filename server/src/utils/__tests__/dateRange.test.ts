@@ -66,6 +66,23 @@ describe('resolveDateRange', () => {
     });
   });
 
+  it('只传 endDate → start 由 end 反推（契约：start = end - defaultSpanDays）', () => {
+    // 回归：旧实现用 now 反推 start，导致「只传 endDate」得到晚于 end 的 start，
+    // 抛出自相矛盾的 400（调用方根本没传 startDate）
+    const r = resolveDateRange(undefined, '2024-01-01', {
+      defaultSpanDays: 30,
+      now: Date.parse('2026-01-01T02:00:00Z'),
+    });
+    expect(r.end).toBe('2024-01-01');
+    expect(r.start).toBe('2023-12-02');
+  });
+
+  it('只传 endDate 且区间超上限 → 按真实区间拒绝（错误信息指向跨度而非 startDate 缺省）', () => {
+    expect(() => resolveDateRange(undefined, '2024-01-01', { defaultSpanDays: 4000 })).toThrow(
+      /跨度|startDate/,
+    );
+  });
+
   it('只传 startDate → end 取默认（今天）', () => {
     const now = Date.parse('2026-05-20T10:00:00Z');
     const r = resolveDateRange('2026-05-01', undefined, { now, defaultSpanDays: 730 });

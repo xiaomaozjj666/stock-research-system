@@ -270,6 +270,31 @@ describe('模拟行情闸门：合成 K 线不得流入结论', () => {
   });
 });
 
+describe('/api/backtest/evaluate 日期入参校验（日期会拼进行情 URL）', () => {
+  it('非法 startDate → 400，且不触发行情取数', async () => {
+    const res = await request(app)
+      .post('/api/backtest/evaluate')
+      .send({ stockCode: '600519', strategy: 'ma_cross', startDate: '20240101&fqt=0' });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toContain('YYYY-MM-DD');
+    expect(mockedBars).not.toHaveBeenCalled();
+  });
+
+  it('只传 endDate → start 由 end 反推（不再出现晚于 end 的自相矛盾 400）', async () => {
+    mockedBars.mockResolvedValue([]);
+    const res = await request(app)
+      .post('/api/backtest/evaluate')
+      .send({ stockCode: '600519', strategy: 'ma_cross', endDate: '2024-06-28' });
+
+    // 无 K 线 → 500（取数被正常发起），关键是不该因为「startDate 缺省」被判 400
+    expect(res.status).not.toBe(400);
+    expect(mockedBars).toHaveBeenCalled();
+    const [, startArg] = mockedBars.mock.calls.at(-1) ?? [];
+    expect(String(startArg) < '2024-06-28').toBe(true);
+  });
+});
+
 describe('horizons 统一解析：越界/小数/超个数一律 400', () => {
   const base = { stockCode: '600519' };
 
