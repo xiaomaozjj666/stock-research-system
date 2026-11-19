@@ -9,12 +9,14 @@
  * 由此落实「LLM 输出不合规 -> 修复重试」的异常处理策略。
  */
 import type { MiniSchema } from './utils.js';
-import { parseJsonLoose, validateSchema } from './utils.js';
+import { parseJsonLoose, validateSchema, ResearchAbortedError } from './utils.js';
 
 export interface LLMRequest {
   system?: string;
   prompt: string;
   temperature?: number;
+  /** 取消信号：透传到底层 chat() 的 HTTP 请求；已中止时同步抛 ResearchAbortedError */
+  signal?: AbortSignal;
 }
 
 export interface LLMAdapter {
@@ -40,6 +42,8 @@ export interface CompleteJsonOptions {
   label: string;
   /** 不合规重试次数上限（不含首次），默认 2 */
   maxRetries?: number;
+  /** 取消信号：逐次尝试间检查，并透传给底层 LLM 请求 */
+  signal?: AbortSignal;
 }
 
 /**
@@ -52,10 +56,12 @@ export async function completeJson<T>(llm: LLMAdapter, opts: CompleteJsonOptions
   let prompt = opts.prompt;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (opts.signal?.aborted) throw new ResearchAbortedError();
     const raw = await llm.complete({
       system: opts.system,
       prompt,
       temperature: attempt === 0 ? 0.2 : 0,
+      signal: opts.signal,
     });
     try {
       const value = parseJsonLoose(raw);

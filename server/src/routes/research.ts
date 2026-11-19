@@ -32,6 +32,7 @@ import {
   saveResearchRun,
 } from '../services/researchLibrary.js';
 import { errorDetail } from '../utils/errorDetail.js';
+import { abortOnClientClose } from '../utils/clientAbort.js';
 import logger from '../utils/logger.js';
 import { createSseChannel } from '../utils/sse.js';
 
@@ -149,11 +150,13 @@ const LLM_REQUIRED_MESSAGE =
 function buildOrchestrator(
   config: Partial<ResearchConfig>,
   onEvent: (event: unknown) => void,
+  signal?: AbortSignal,
 ): ResearchOrchestrator {
   return new ResearchOrchestrator({
     llm: createLLMAdapter(),
     adapters: createDefaultSearchAdapters(),
     config,
+    signal,
     onEvent: (event) => {
       try {
         onEvent(event);
@@ -208,19 +211,36 @@ router.post(
 
     inFlight += 1;
     const startedAt = Date.now();
-    try {
-      const orchestrator = buildOrchestrator(parsed.config, () => {
-        /* 同步接口不透传事件：事件只在 SSE 通道消费 */
-      });
+    // run promise 单独持有：同步响应有截止时间，但 run 本身不被截断——
+    // 超时后 run 在后台继续跑完并归档（研究成果不因响应超时而丢弃），
+    // 并发槽位按 run 真实结束时间归还（原先在响应 finally 里提前归还，
+    // 超时的 run 变成无人认领的僵尸：槽位泄漏 + 结果丢弃 + 配额白烧）。
+    let wallTimer: NodeJS.Timeout | undefined;
+    const runPromise = (async () => {
+      try {
+        const orchestrator = buildOrchestrator(parsed.config, () => {
+          /* 同步接口不透传事件：事件只在 SSE 通道消费 */
+        });
+        const result = await orchestrator.run(parsed.question, parsed.scope);
+        // 归档挂在 run 自身的完成点上（而不是响应成功之后）：响应超时后 run 仍会
+        // 跑完，成果照常入库——不因为客户端等不及而整体丢弃一次分钟级研究。
+        archiveRun('/api/research/deep', parsed, result);
+        return result;
+      } finally {
+        inFlight -= 1;
+        clearTimeout(wallTimer);
+      }
+    })();
 
+    try {
       const result = await Promise.race([
-        orchestrator.run(parsed.question, parsed.scope),
+        runPromise,
         new Promise<never>((_, reject) => {
-          const timer = setTimeout(
+          wallTimer = setTimeout(
             () => reject(new Error(`研究超时（超过 ${Math.round(SYNC_TIMEOUT_MS / 1000)} 秒）`)),
             SYNC_TIMEOUT_MS,
           );
-          timer.unref?.();
+          wallTimer.unref?.();
         }),
       ]);
 
@@ -231,13 +251,13 @@ router.post(
         durationMs: Date.now() - startedAt,
       });
 
-      archiveRun('/api/research/deep', parsed, result);
+      // 归档已在 runPromise 内完成（超时/正常同一条路径）
       res.json(result);
     } catch (error) {
+      // 超时分支：runPromise 已有 race 订阅（无 unhandled rejection），
+      // 其后台完成时会走 archiveRun；此处只负责把超时如实告知调用方
       logger.error('Deep research error', { route: '/api/research/deep', err: error });
       res.status(500).json({ error: '深度研究失败', detail: errorDetail(error) });
-    } finally {
-      inFlight -= 1;
     }
   },
 );
@@ -253,6 +273,9 @@ router.get(
     // 与 POST 用同一个 parseRequest，保证两个入口的校验口径完全一致。
     // 注意区分「未传」与「传了但解析失败」：都当成 undefined 会让非法参数被静默忽略。
     const parseJsonParam = (raw: unknown): { ok: true; value: unknown } | { ok: false } => {
+      // 重复 query 参数（?scope=a&scope=b）在 Express 里是数组——按「非法」显式
+      // 拒绝而不是静默当 undefined（与下方「传了但解析失败」同口径）
+      if (Array.isArray(raw)) return { ok: false };
       if (typeof raw !== 'string' || raw.trim() === '') return { ok: true, value: undefined };
       try {
         return { ok: true, value: JSON.parse(raw) };
@@ -287,20 +310,38 @@ router.get(
 
     inFlight += 1;
     const sse = createSseChannel(req, res);
+    // 取消级联：客户端断开（关页/前端「取消研究」关闭 EventSource）→ res 'close'
+    // → abort → 编排器在阶段边界抛 ResearchAbortedError，在途 LLM/检索请求一并中止
+    const abort = abortOnClientClose(res);
+    // 运行墙钟上限：内部四重终止门之外的最后保险（病态场景下逐 LLM 调用 90s ×
+    // 重试 × 多任务多轮可挂数小时）。超时取消同样走 abort 通道。
+    const RUN_MAX_MS = Number(process.env.RESEARCH_RUN_MAX_MS) || 30 * 60_000;
+    const wallTimer = setTimeout(
+      () =>
+        abort.abort(
+          new Error(`研究超过最大时长（${Math.round(RUN_MAX_MS / 60_000)} 分钟），已中止`),
+        ),
+      RUN_MAX_MS,
+    );
+    wallTimer.unref?.();
 
     try {
-      const orchestrator = buildOrchestrator(parsed.config, (event) => {
-        // 客户端已断开就不必再推：继续写会抛错并打断编排
-        if (sse.isClosed()) return;
-        sse.trySend({ phase: 'agent_event', event });
-      });
+      const orchestrator = buildOrchestrator(
+        parsed.config,
+        (event) => {
+          // 客户端已断开就不必再推：继续写会抛错并打断编排
+          if (sse.isClosed()) return;
+          sse.trySend({ phase: 'agent_event', event });
+        },
+        abort.signal,
+      );
 
       const result = await orchestrator.run(parsed.question, parsed.scope);
       archiveRun('/api/research/deep/stream', parsed, result);
       sse.trySend({ phase: 'done', result });
     } catch (error) {
       if (sse.isClosed()) {
-        logger.info('SSE 客户端已断开，深度研究提前中止', {
+        logger.info('SSE 客户端已断开，研究已取消（取消信号已级联中止在途 LLM/检索）', {
           route: '/api/research/deep/stream',
         });
       } else {
@@ -311,6 +352,7 @@ router.get(
         sse.trySend({ phase: 'error', message: errorDetail(error) || '深度研究失败' });
       }
     } finally {
+      clearTimeout(wallTimer);
       sse.stopHeartbeat();
       inFlight -= 1;
       if (!res.writableEnded) res.end();

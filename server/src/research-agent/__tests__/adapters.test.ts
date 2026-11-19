@@ -212,8 +212,21 @@ describe('createKnowledgeBaseAdapter', () => {
 
     expect(hits).toHaveLength(1);
     expect(hits[0]!.sourceType).toBe('internal_doc');
-    expect(hits[0]!.publisher).toBe('内部知识库');
+    // 出版方 = 文档真实来源分类（doc.source），写常量会把来源独立性折叠成单一值
+    expect(hits[0]!.publisher).toBe('光伏行业跟踪报告');
     expect(hits[0]!.snippet).toContain('硅料价格');
+  });
+
+  it('文档无来源分类时省略 publisher（验证器回落 URL 判文档级独立性）', async () => {
+    mocks.retrieveEvidence.mockResolvedValue([
+      { id: 'd2', source: undefined, text: '无来源内部笔记' },
+    ]);
+    const hits = await createKnowledgeBaseAdapter({ topK: 3 }).search({
+      query: '笔记',
+      maxResults: 3,
+    });
+    expect(hits[0]!.publisher).toBeUndefined();
+    expect(hits[0]!.title).toContain('内部资料');
   });
 
   it('召回为空时返回空数组（这是合法结果，不是异常）', async () => {

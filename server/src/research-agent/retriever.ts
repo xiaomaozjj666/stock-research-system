@@ -20,6 +20,7 @@ import { SOURCE_TIER } from './types.js';
 import type { ResearchConfig } from './types.js';
 import type { LLMAdapter } from './llm.js';
 import { completeJson } from './llm.js';
+import { ResearchAbortedError } from './utils.js';
 import type { FetchedDoc, SearchAdapter, SearchHit } from './search.js';
 import { clamp01, newId, recencyDecay } from './utils.js';
 
@@ -76,6 +77,8 @@ export class EvidenceRetriever {
     private readonly emit: AgentEventEmitter,
     private readonly sleep: (ms: number) => Promise<void> = (ms) =>
       new Promise((r) => setTimeout(r, ms)),
+    /** 取消信号：任务间隙与每个适配器入口检查，LLM/HTTP 请求级联透传 */
+    private readonly signal?: AbortSignal,
   ) {}
 
   /**
@@ -104,6 +107,7 @@ export class EvidenceRetriever {
       taskCount += 1;
       attempted.add(sq.id);
 
+      if (this.signal?.aborted) throw new ResearchAbortedError();
       sq.status = 'retrieving';
       const query = this.buildQuery(sq, round);
       this.emit('retrieval_started', `开始检索 [${sq.id}] ${sq.question}`, {
@@ -116,6 +120,7 @@ export class EvidenceRetriever {
 
       let collectedForSq = 0;
       for (const hit of outcome.hits) {
+        if (this.signal?.aborted) throw new ResearchAbortedError();
         if (collectedForSq >= this.config.maxDocsPerQuery) break;
         if (this.seenUrls.has(hit.url)) continue;
         this.seenUrls.add(hit.url);
@@ -178,7 +183,10 @@ export class EvidenceRetriever {
       adaptersTried.push(adapter.name);
       for (let attempt = 1; attempt <= this.config.maxRetrievalAttempts; attempt++) {
         try {
-          const hits = await adapter.search({ query, maxResults: this.config.resultsPerQuery });
+          const hits = await adapter.search(
+            { query, maxResults: this.config.resultsPerQuery },
+            this.signal,
+          );
           if (firstAdapter && firstAdapter !== adapter.name) {
             this.fallbacksUsed += 1;
             this.emit(
@@ -244,7 +252,7 @@ export class EvidenceRetriever {
     adapter: SearchAdapter,
   ): Promise<FetchedDoc | null> {
     try {
-      const doc = await adapter.fetch(hit.url);
+      const doc = await adapter.fetch(hit.url, this.signal);
       return {
         ...doc,
         title: doc.title || hit.title,
@@ -300,6 +308,7 @@ export class EvidenceRetriever {
         label: `证据抽取[${sq.id}]`,
         maxRetries: 1,
         system: '你是严谨的研究助理，只输出符合要求的 JSON。',
+        signal: this.signal,
       });
     } catch (err) {
       this.emit('retrieval_failed', `证据抽取失败 [${sq.id}]: ${(err as Error).message}`, {

@@ -199,6 +199,7 @@ export async function createPlan(
   scope: ScopeConstraints,
   config: ResearchConfig,
   emit: AgentEventEmitter,
+  signal?: AbortSignal,
 ): Promise<ResearchPlan> {
   const now = new Date().toISOString();
   const result = await completeJson<{ subQuestions: SubQuestionDraft[] }>(llm, {
@@ -206,6 +207,7 @@ export async function createPlan(
     schema: PLAN_SCHEMA,
     label: '研究计划拆解',
     system: '你是严谨的研究助理，只输出符合要求的 JSON，不要输出任何解释性文字。',
+    signal,
   });
 
   const seen = new Set<string>();
@@ -278,6 +280,7 @@ export async function revisePlan(
   round: number,
   config: ResearchConfig,
   emit: AgentEventEmitter,
+  signal?: AbortSignal,
 ): Promise<ResearchPlan | null> {
   const byId = new Map(plan.subQuestions.map((sq) => [sq.id, sq]));
   const problemText = problems
@@ -307,6 +310,7 @@ export async function revisePlan(
     schema: REVISE_SCHEMA,
     label: '检索计划修订',
     system: '你是严谨的研究助理，只输出符合要求的 JSON。',
+    signal,
   });
 
   if (result.action === 'no_change') {

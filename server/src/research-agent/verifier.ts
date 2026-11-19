@@ -151,6 +151,7 @@ export async function verifySubQuestion(
   evidence: Evidence[],
   config: ResearchConfig,
   emit: AgentEventEmitter,
+  signal?: AbortSignal,
 ): Promise<Verification> {
   const now = new Date().toISOString();
 
@@ -219,6 +220,7 @@ export async function verifySubQuestion(
     schema: VERIFICATION_SCHEMA,
     label: `交叉验证[${sq.id}]`,
     system: '你是严谨的研究助理，只输出符合要求的 JSON。',
+    signal,
   });
 
   // ---- 后处理：ID 合法性校验 + 冲突结构化 ----

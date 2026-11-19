@@ -32,6 +32,7 @@ import { DEFAULT_CONFIG } from './types.js';
 import type { LLMAdapter } from './llm.js';
 import type { SearchAdapter } from './search.js';
 import { EvidenceRetriever } from './retriever.js';
+import { ResearchAbortedError } from './utils.js';
 import { createPlan, revisePlan, type ReplanProblem } from './planner.js';
 import { verifySubQuestion } from './verifier.js';
 import { synthesize } from './synthesizer.js';
@@ -46,6 +47,12 @@ export interface OrchestratorDeps {
   onEvent?: (event: AgentEvent) => void;
   /** 退避等待注入点（测试传 no-op） */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * 取消信号：SSE 断开 / 前端取消 / 运行超时统一走这里。信号在每轮边界、
+   * 每个阶段与每个检索任务入口检查（抛 ResearchAbortedError），并级联到
+   * LLM 与检索适配器的在途请求——避免「客户端已走、编排还在白烧配额」。
+   */
+  signal?: AbortSignal;
 }
 
 export interface AgentRunResult {
@@ -95,11 +102,23 @@ export class ResearchOrchestrator {
       this.deps.onEvent?.(event);
     };
 
+    const ensureNotAborted = () => {
+      if (this.deps.signal?.aborted) throw new ResearchAbortedError();
+    };
+    ensureNotAborted();
+
     emit('run_started', `研究任务启动: ${question}`, { question, scope });
 
     try {
       const llm = this.deps.llm;
-      const retriever = new EvidenceRetriever(llm, this.deps.adapters, cfg, emit, this.deps.sleep);
+      const retriever = new EvidenceRetriever(
+        llm,
+        this.deps.adapters,
+        cfg,
+        emit,
+        this.deps.sleep,
+        this.deps.signal,
+      );
 
       let plan: ResearchPlan | null = null;
       const evidence: Evidence[] = [];
@@ -112,13 +131,15 @@ export class ResearchOrchestrator {
 
       for (let round = 1; round <= maxRounds; round++) {
         stats.rounds = round;
+        ensureNotAborted();
 
         // ---- 阶段一：规划（仅首轮；后续轮的动态修订在终止门处按需触发） ----
         if (!plan) {
-          plan = await createPlan(llm, question, scope, cfg, emit);
+          plan = await createPlan(llm, question, scope, cfg, emit, this.deps.signal);
         }
 
         // ---- 阶段二：按计划检索 ----
+        ensureNotAborted();
         const { evidence: newEvidence, attempted } = await retriever.collect(plan, round);
         for (const ev of newEvidence) {
           evidence.push(ev);
@@ -129,6 +150,9 @@ export class ResearchOrchestrator {
         stats.totalRetrievalTasks += attempted.size;
         stats.fallbacksUsed = retriever.fallbacksUsed;
         stats.failedTasks = retriever.failedTasks.length;
+        // succeededTasks 此前只初始化不回填（UI 展示恒 0）——按「发起任务数 −
+        // 累计失败数」口径回填；failedTasks 为实例累计数组，差值即成功数
+        stats.succeededTasks = stats.totalRetrievalTasks - stats.failedTasks;
         const evidenceGrew = newEvidence.length > 0;
 
         // ---- 阶段三：交叉验证（只验证本轮实际发起过检索的子问题） ----
@@ -137,7 +161,15 @@ export class ResearchOrchestrator {
         for (const sq of plan.subQuestions) {
           if (!attempted.has(sq.id)) continue;
 
-          const v = await verifySubQuestion(llm, sq, evidenceBySq.get(sq.id) ?? [], cfg, emit);
+          ensureNotAborted();
+          const v = await verifySubQuestion(
+            llm,
+            sq,
+            evidenceBySq.get(sq.id) ?? [],
+            cfg,
+            emit,
+            this.deps.signal,
+          );
           verifications.set(sq.id, v);
 
           // 补充检索触发：insufficient（证据不足），或 needsSupplement
@@ -190,7 +222,16 @@ export class ResearchOrchestrator {
           const problems = this.collectProblems(retriever, plan, verifications);
           let revived = false;
           if (problems.length > 0) {
-            const revised = await revisePlan(llm, plan, problems, round, cfg, emit);
+            ensureNotAborted();
+            const revised = await revisePlan(
+              llm,
+              plan,
+              problems,
+              round,
+              cfg,
+              emit,
+              this.deps.signal,
+            );
             if (revised) {
               stats.planVersions = revised.version;
               revived = true;
@@ -206,6 +247,7 @@ export class ResearchOrchestrator {
       // ---- 阶段四：结论编排 ----
       // maxRounds >= 1 保证首轮必然 createPlan，此处 plan 必非空
       const settledPlan = plan!;
+      ensureNotAborted();
       const report = await synthesize(
         llm,
         settledPlan,
@@ -214,6 +256,7 @@ export class ResearchOrchestrator {
         retriever.failedTasks,
         cfg,
         emit,
+        this.deps.signal,
       );
       report.methodology.rounds = stats.rounds;
       stats.evidenceCount = evidence.length;

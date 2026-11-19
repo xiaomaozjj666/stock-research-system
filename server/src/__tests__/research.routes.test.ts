@@ -102,6 +102,14 @@ describe('GET /api/research/deep/stream 入参校验', () => {
     expect(res.status).toBe(400);
   });
 
+  it('重复 query 参数（数组形态）显式 400，不静默当未传', async () => {
+    const res = await request(app).get(
+      '/api/research/deep/stream?question=白酒行业竞争格局&scope=a&scope=b',
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('JSON');
+  });
+
   it('config 不是合法 JSON 时返回 400', async () => {
     const res = await request(app)
       .get('/api/research/deep/stream')

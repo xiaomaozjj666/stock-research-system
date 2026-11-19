@@ -9,6 +9,8 @@
 export interface SearchQuery {
   query: string;
   maxResults: number;
+  /** 取消信号：适配器在入口检查，已在途的 HTTP 由各自超时/取消机制承接 */
+  signal?: AbortSignal;
 }
 
 export interface SearchHit {
@@ -31,6 +33,6 @@ export interface FetchedDoc {
 
 export interface SearchAdapter {
   readonly name: string;
-  search(q: SearchQuery): Promise<SearchHit[]>;
-  fetch(url: string): Promise<FetchedDoc>;
+  search(q: SearchQuery, signal?: AbortSignal): Promise<SearchHit[]>;
+  fetch(url: string, signal?: AbortSignal): Promise<FetchedDoc>;
 }

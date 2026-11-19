@@ -99,6 +99,17 @@ export function validateSchema(value: unknown, schema: MiniSchema, path = '$'): 
   return errors;
 }
 
+/**
+ * 研究被取消（AbortSignal 触发）时抛出的统一错误类型。
+ * 路由层据此区分「用户/系统取消」与「真实失败」，取消不归档半成品、不再重试。
+ */
+export class ResearchAbortedError extends Error {
+  constructor(message = '研究已被取消') {
+    super(message);
+    this.name = 'ResearchAbortedError';
+  }
+}
+
 // ---------------------------------------------------------------- 时效衰减
 
 /**

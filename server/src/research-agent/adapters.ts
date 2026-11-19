@@ -31,6 +31,7 @@ import {
 import { fetchLatestNews } from '../quant/newsSignal.js';
 import type { LLMAdapter, LLMRequest } from './llm.js';
 import type { FetchedDoc, SearchAdapter, SearchHit, SearchQuery } from './search.js';
+import { ResearchAbortedError } from './utils.js';
 import type { SourceType } from './types.js';
 
 /* ------------------------------------------------------------------ 通用工具 */
@@ -156,6 +157,8 @@ export function createLLMAdapter(opts: LLMAdapterOptions = {}): LLMAdapter {
         maxTokens,
         task,
         timeout: timeoutMs,
+        // 取消级联：chat() 的 options.signal 直通底层 HTTP fetch
+        signal: req.signal,
       });
 
       // 空串不是合法回复：让它以异常形式冒泡，由 completeJson 的重试/降级接住，
@@ -193,7 +196,8 @@ export function createAnnouncementAdapter(opts: AnnouncementAdapterOptions = {})
   return {
     name: 'eastmoney.announcement',
 
-    async search(q: SearchQuery): Promise<SearchHit[]> {
+    async search(q: SearchQuery, signal?: AbortSignal): Promise<SearchHit[]> {
+      if (signal?.aborted) throw new ResearchAbortedError();
       const code = extractStockCode(q.query);
       if (!code) return []; // 非个股问题：让位给后续通道
 
@@ -210,13 +214,18 @@ export function createAnnouncementAdapter(opts: AnnouncementAdapterOptions = {})
         title: a.title || `${code} 公告`,
         url: toUrl(a.artCode),
         snippet: `${a.date} 公告`,
-        publisher: '巨潮资讯 / 东方财富',
+        // publisher 刻意省略：全部公告经由同一披露渠道分发，「渠道名」不是出版方，
+        // 把它填成常量会让验证器的来源独立性门槛（publishers.size >= 2）把
+        // 互相独立的不同公告结构性折叠成单一来源。省略后 verifier 按
+        // `publisher ?? url ?? title` 回落到文档级 URL——不同公告天然互异，
+        // 与「交叉印证」的语义一致。
         publishedAt: a.date,
         sourceType,
       }));
     },
 
-    async fetch(url: string): Promise<FetchedDoc> {
+    async fetch(url: string, signal?: AbortSignal): Promise<FetchedDoc> {
+      if (signal?.aborted) throw new ResearchAbortedError();
       const artCode = decodeURIComponent(url.replace(/^em-ann:\/\//, '')).trim();
       if (!artCode) throw new Error(`公告地址非法：${url}`);
 
@@ -256,7 +265,8 @@ export function createNewsAdapter(opts: NewsAdapterOptions = {}): SearchAdapter 
   return {
     name: 'eastmoney.news',
 
-    async search(q: SearchQuery): Promise<SearchHit[]> {
+    async search(q: SearchQuery, signal?: AbortSignal): Promise<SearchHit[]> {
+      if (signal?.aborted) throw new ResearchAbortedError();
       const code = extractStockCode(q.query);
       if (!code) return [];
 
@@ -292,7 +302,8 @@ export function createNewsAdapter(opts: NewsAdapterOptions = {}): SearchAdapter 
       });
     },
 
-    async fetch(url: string): Promise<FetchedDoc> {
+    async fetch(url: string, signal?: AbortSignal): Promise<FetchedDoc> {
+      if (signal?.aborted) throw new ResearchAbortedError();
       const doc = cache.get(url);
       if (!doc) {
         throw new Error(`新闻正文未命中缓存：${url}（超出缓存容量或跨进程复用）`);
@@ -326,7 +337,8 @@ export function createKnowledgeBaseAdapter(opts: KnowledgeBaseAdapterOptions = {
   return {
     name: 'internal.knowledge_base',
 
-    async search(q: SearchQuery): Promise<SearchHit[]> {
+    async search(q: SearchQuery, signal?: AbortSignal): Promise<SearchHit[]> {
+      if (signal?.aborted) throw new ResearchAbortedError();
       const docs = await retrieveEvidence(q.query, {
         topK: Math.max(topK, q.maxResults),
       });
@@ -344,13 +356,16 @@ export function createKnowledgeBaseAdapter(opts: KnowledgeBaseAdapterOptions = {
           title: doc.source || `内部资料 ${doc.id}`,
           url,
           snippet: clip(doc.text, 160),
-          publisher: '内部知识库',
+          // 出版方 = 文档自身的来源分类（年报/研报/会议纪要…）——不同类别的
+          // 内部资料是真实的独立来源；写常量会把多样性折叠成单一来源。
+          publisher: doc.source || undefined,
           sourceType,
         };
       });
     },
 
-    async fetch(url: string): Promise<FetchedDoc> {
+    async fetch(url: string, signal?: AbortSignal): Promise<FetchedDoc> {
+      if (signal?.aborted) throw new ResearchAbortedError();
       const doc = cache.get(url);
       if (!doc) throw new Error(`知识库正文未命中缓存：${url}`);
       return doc;

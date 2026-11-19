@@ -63,6 +63,7 @@ export async function synthesize(
   failedTasks: FailedTask[],
   config: ResearchConfig,
   emit: AgentEventEmitter,
+  signal?: AbortSignal,
 ): Promise<ResearchReport> {
   emit('synthesis_started', '开始编排结构化结论', {
     evidenceCount: evidence.length,
@@ -101,6 +102,7 @@ export async function synthesize(
     schema: SYNTHESIS_SCHEMA,
     label: '结论编排',
     system: '你是严谨的研究助理，只输出符合要求的 JSON。',
+    signal,
   });
 
   // ---- 组装报告分节（引用完整性校验） ----
