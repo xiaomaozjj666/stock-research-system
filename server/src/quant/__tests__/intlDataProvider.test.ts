@@ -65,6 +65,11 @@ function rptError(): unknown {
 }
 
 describe('detectMarket', () => {
+  it('带 . / - 的美股与 utils/stockCode 同一口径（BRK.B / BF-B）', () => {
+    expect(detectMarket('BRK.B')).toBe('US');
+    expect(detectMarket('BF-B')).toBe('US');
+  });
+
   it('5 位纯数字 → HK', () => {
     expect(detectMarket('00700')).toBe('HK');
     expect(detectMarket('09988')).toBe('HK');

@@ -91,6 +91,21 @@ describe('runExpertWithLLM：降级原因可被上层看见', () => {
     expect(opinion._degradeReason).toBe('queue_timeout');
   });
 
+  it('取消信号中止 → 原样上抛（不降级规则引擎：取消必须终止管线而非换路继续）', async () => {
+    const controller = new AbortController();
+    const ruleFallback = vi.fn(ruleOpinion);
+    vi.mocked(chatJSON).mockImplementation(async () => {
+      controller.abort();
+      throw new DOMException('This operation was aborted', 'AbortError');
+    });
+
+    await expect(
+      runExpertWithLLM({ ...makeOptions(), ruleFallback, signal: controller.signal }),
+    ).rejects.toThrow(/abort/i);
+    // 关键断言：取消路径不调用规则引擎（此前会降级成一份没人要的报告）
+    expect(ruleFallback).not.toHaveBeenCalled();
+  });
+
   it('其它 LLM 错误 → _degradeReason=llm_error，且绝不抛错（既有契约）', async () => {
     vi.mocked(chatJSON).mockRejectedValue(new Error('upstream 502'));
 

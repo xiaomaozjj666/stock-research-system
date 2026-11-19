@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { DATA_ROOT } from '../dataRoot.js';
+import { isAShareCode } from '../utils/stockCode.js';
 
 /**
  * 自建 A 股模拟盘撮合引擎（PaperAccount）
@@ -343,7 +344,7 @@ export class PaperAccount {
     if (String(type) !== 'market' && String(type) !== 'limit') {
       return this.reject(order, '订单类型无效（应为 market / limit）');
     }
-    if (!/^\d{6}$/.test(code)) return this.reject(order, '股票代码需为 6 位数字');
+    if (!isAShareCode(code)) return this.reject(order, '股票代码需为 6 位数字');
     if (!Number.isFinite(input.quantity) || input.quantity <= 0) {
       return this.reject(order, '数量必须为正整数');
     }

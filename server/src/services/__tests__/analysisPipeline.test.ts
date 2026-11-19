@@ -337,6 +337,33 @@ describe('并发去重（single-flight）', () => {
   });
 
   it(
+    '单消费者取消信号 → 在下个阶段边界中止（SSE_CLIENT_DISCONNECTED）',
+    { timeout: 30000 },
+    async () => {
+      vi.mocked(getData).mockClear();
+      const controller = new AbortController();
+      controller.abort(); // 已断开的客户端：首个 emit 即触发孤儿判定
+      await expect(runAnalysis('600519', undefined, { signal: controller.signal })).rejects.toThrow(
+        'SSE_CLIENT_DISCONNECTED',
+      );
+      // 边界中止先于取数：没有为已离开的消费者发起任何上游请求
+      expect(vi.mocked(getData)).not.toHaveBeenCalled();
+    },
+  );
+
+  it('多消费者：一人取消信号不误伤另一人（共享轮次语义）', { timeout: 30000 }, async () => {
+    vi.mocked(getData).mockClear();
+    const controller = new AbortController();
+    const promiseA = runAnalysis('600519', vi.fn(), { signal: controller.signal });
+    const promiseB = runAnalysis('600519');
+    controller.abort(); // A 离开，B 仍在等
+    const [resultA, resultB] = await Promise.all([promiseA, promiseB]);
+    expect(resultB.stock_pool[0].stock_code).toBe('600519');
+    expect(resultA).toBe(resultB); // 同一轮共享结果，不是各跑一遍
+    expect(vi.mocked(getData)).toHaveBeenCalledTimes(1);
+  });
+
+  it(
     '唯一订阅者断开时整轮中止（保留「无人消费即不白跑 LLM」语义）',
     { timeout: 30000 },
     async () => {

@@ -76,7 +76,8 @@ describe('POST /api/analyze — 在途轮次语义冲突', () => {
     const res = await request(app).post('/api/analyze').send({ stockCode: '600519' });
 
     expect(res.status).toBe(200);
-    expect(runAnalysisMock.mock.calls[0][2]).toEqual({ resume: false });
+    expect(runAnalysisMock.mock.calls[0][2]).toMatchObject({ resume: false });
+    expect(runAnalysisMock.mock.calls[0][2]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('与其他失败区分：非冲突错误仍回 500', async () => {
@@ -117,6 +118,8 @@ describe('GET /api/analyze/stream — 在途轮次语义冲突', () => {
     const event = lastSseEvent(res.text);
     expect(event.phase).toBe('done');
     expect(event.code).toBeUndefined();
-    expect(runAnalysisMock.mock.calls[0][2]).toEqual({ resume: true });
+    // 断连感知：路由必须把 res close 的取消信号一并传下去（客户端断开即取消）
+    expect(runAnalysisMock.mock.calls[0][2]).toMatchObject({ resume: true });
+    expect(runAnalysisMock.mock.calls[0][2]?.signal).toBeInstanceOf(AbortSignal);
   });
 });

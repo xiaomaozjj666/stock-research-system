@@ -246,11 +246,14 @@ export async function industryExpert(
   info: StockInfo,
   /** 可选附加语境块（如机构一致预期），追加在上下文末尾 */
   extraBrief?: string | null,
+  /** 取消信号：透传到 runExpertWithLLM → chat 的 HTTP（中止原样上抛） */
+  signal?: AbortSignal,
 ): Promise<IndustryExpertResult> {
   const opinion = await runExpertWithLLM({
     expertName: EXPERT_NAME,
     systemPrompt: SYSTEM_PROMPT,
     context: formatContext(financial, valuation, info, extraBrief),
+    signal,
     ruleFallback: () => industryExpertRule(financial, valuation, info),
   });
   // 量化评分始终用规则计算（LLM 不擅长精确打分，规则确定性更高）

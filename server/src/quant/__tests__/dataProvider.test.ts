@@ -19,6 +19,14 @@ describe('market resolution', () => {
     expect(marketOf('AAPL')).toBe('US');
     expect(resolveSecid('aapl')).toBe('107.AAPL');
   });
+
+  it('带 . / - 的美股（BRK.B / BF-B）与 utils/stockCode 同一口径判 US', () => {
+    // 回归：此前 marketOf 只认纯字母（1-6 位），BRK.B 会被归为 A 股拼成 0.BRK.B，
+    // 而路由层（normalizeStockCodeFor）已放行——同一代码两层结论不同
+    expect(marketOf('BRK.B')).toBe('US');
+    expect(marketOf('BF-B')).toBe('US');
+    expect(resolveSecid('BRK.B')).toBe('107.BRK.B');
+  });
 });
 
 describe('filterOHLCVByRange look-ahead 防御', () => {

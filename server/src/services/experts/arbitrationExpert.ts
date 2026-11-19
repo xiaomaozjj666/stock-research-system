@@ -25,6 +25,8 @@ export interface ArbitrationInput {
    * 让仲裁在系统性偏乐观/悲观时能自我校准（借鉴 TradingAgents 的 decision log 反思注入）。
    */
   ratingAccuracy?: string | null;
+  /** 取消信号：透传底层 chat；中止时原样上抛（不降级为规则仲裁） */
+  signal?: AbortSignal;
 }
 
 const EXPERT_NAME = '数据仲裁官（综合研判）';
@@ -426,9 +428,11 @@ export async function arbitrationExpert(input: ArbitrationInput): Promise<{
       temperature: 0.4,
       maxTokens: 2500,
       timeout: 60000,
+      signal: input.signal,
     });
     return normalizeArbitration(raw);
   } catch (err) {
+    if (input.signal?.aborted) throw err;
     const reason: ExpertDegradeReason = isQueueTimeoutError(err) ? 'queue_timeout' : 'llm_error';
     logger.warn('[LLM] 仲裁专家降级规则引擎', { err: err as Error, reason });
     const ruled = arbitrationExpertRule(input);

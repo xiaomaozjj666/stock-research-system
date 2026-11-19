@@ -52,6 +52,20 @@ export function getEastmoneySearchToken(): string | undefined {
   return token || undefined;
 }
 
+/**
+ * 限流窗口的唯一解析入口（带钳制）。
+ *
+ * `Number('-5') || 60000` 得到 -5 不是 NaN，`||` 兜不住——而 express-rate-limit
+ * 会在初始化时抛 ERR_ERL_WINDOW_MS，一个错的环境变量就能让服务起不来。
+ * middleware 与启动校验都走这里，避免两处口径各自漂移。
+ */
+export function resolveRateLimitWindowMs(
+  raw: string | undefined = process.env.RATE_LIMIT_WINDOW_MS,
+): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : 60000;
+}
+
 /** 已校验的环境变量缓存 */
 let cachedConfig: EnvConfig | null = null;
 let validationError: Error | null = null;
@@ -97,8 +111,8 @@ export function loadEnv(): EnvConfig {
       throw new Error(`CACHE_TTL_HOURS 必须大于 0，当前值: ${cacheTtlHoursRaw}`);
     }
 
-    // 速率限制窗口
-    const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS) || 60000;
+    // 速率限制窗口（与 middleware 共用同一解析/钳制）
+    const rateLimitWindowMs = resolveRateLimitWindowMs();
 
     const config: EnvConfig = {
       nodeEnv,

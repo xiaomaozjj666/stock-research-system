@@ -1,4 +1,5 @@
 import logger from '../utils/logger.js';
+import { isAShareCode, isHKCode, isUSCode } from '../utils/stockCode.js';
 import { isCacheFresh, readCacheEntry, writeCacheEntry } from './quantCache.js';
 import type { OHLCVData } from './types.js';
 
@@ -8,12 +9,15 @@ function getSecId(code: string): string {
 
 export type Market = 'A' | 'HK' | 'US';
 
-/** 识别市场：A 股 6 位纯数字；港股 5 位纯数字；美股字母代码 */
+/**
+ * 识别市场：口径统一走 utils/stockCode 的三个判定函数——美股形态（含 `.`/`-`）
+ * 在各层必须是同一个定义，否则 BRK.B 在路由层通过、到这里被当成 A 股拼 `0.BRK.B`。
+ */
 export function marketOf(code: string): Market {
   const c = code.trim();
-  if (/^\d{6}$/.test(c)) return 'A';
-  if (/^\d{5}$/.test(c)) return 'HK';
-  if (/^[A-Za-z]{1,6}$/.test(c)) return 'US';
+  if (isAShareCode(c)) return 'A';
+  if (isHKCode(c)) return 'HK';
+  if (isUSCode(c)) return 'US';
   return 'A';
 }
 

@@ -21,6 +21,7 @@
  */
 
 import logger from '../utils/logger.js';
+import { isHKCode, isUSCode } from '../utils/stockCode.js';
 import { fetchKlineBySecid } from './dataProvider.js';
 import type { OHLCVData } from './types.js';
 
@@ -99,8 +100,9 @@ const BATCH_CONCURRENCY = 5;
  */
 export function detectMarket(code: string): 'HK' | 'US' | 'A' {
   const c = code.trim();
-  if (/^\d{5}$/.test(c)) return 'HK';
-  if (/^[A-Za-z]{1,6}$/.test(c)) return 'US';
+  // 口径统一走 utils/stockCode（美股允许 `.`/`-`，与路由层校验同一份定义）
+  if (isHKCode(c)) return 'HK';
+  if (isUSCode(c)) return 'US';
   return 'A';
 }
 
@@ -371,8 +373,10 @@ export async function fetchIntlKlines(
   if (market === 'HK' && !/^\d{4,5}$/.test(c)) {
     throw new Error(`港股代码需为 4-5 位数字（当前 ${c}）`);
   }
-  if (market === 'US' && !/^[A-Za-z.]{1,8}$/.test(c)) {
-    throw new Error(`美股代码需为字母代码如 TSLA（当前 ${c}）`);
+  if (market === 'US' && !isUSCode(c)) {
+    // 与路由层接受面保持一致（允许 BRK.B / BF-B 这类带 `.`/`-` 的合法美股），
+    // 不再出现「上一层放行、下一层用另一份正则拒绝」的自相矛盾
+    throw new Error(`美股代码需为字母代码如 TSLA / BRK.B（当前 ${c}）`);
   }
   const secid = formatIntlCode(c, market);
   const bars = await fetchKlineBySecid(secid, startDate, endDate, secid);

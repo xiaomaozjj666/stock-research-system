@@ -27,6 +27,7 @@ import {
 } from '../utils/dateRange.js';
 import { fetchOHLCVData } from './dataProvider.js';
 import { detectPatternEvents, PATTERN_NAMES } from './patternEvents.js';
+import { isAShareCode } from '../utils/stockCode.js';
 
 export interface ScreenerHit {
   code: string;
@@ -185,7 +186,7 @@ export async function runMarketScreener(
   // 同样必须被挡在非法日期与超长跨度之外，否则区间原样传进 K 线拉取与模拟降级路径。
   const { start, end } = parseScreenerDateRange(opts.startDate, opts.endDate);
 
-  const master = (await loadStockMaster()).filter((m) => /^\d{6}$/.test(m.code));
+  const master = (await loadStockMaster()).filter((m) => isAShareCode(m.code));
   const universe = selectScreenerUniverse(master, maxStocksLimit(opts.maxStocks));
 
   type Candidate = { code: string; name?: string; ret250: number; hits: ScreenerHit[] };

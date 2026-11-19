@@ -330,7 +330,13 @@ export class LimitGate {
     };
   }
 
-  /** 清零累计计数（不动在途/排队状态，供测试与运维周期性归零） */
+  /**
+   * 清零累计计数（不动在途/排队状态，供测试与运维周期性归零）。
+   *
+   * **只清计数**：在途数与排队队列不动——清空排队/在途只能靠逐个 release()，
+   * 刻意不提供强制重置（运维误操作会把正在进行的 LLM 调用变成永不结算的孤儿）。
+   * 测试若需要在同一单例上彻底隔离，请新建 LimitGate 实例而不是依赖本方法。
+   */
   resetStats(): void {
     this.counters = { acquired: 0, queueWaits: 0, timeouts: 0, aborted: 0, totalQueueWaitMs: 0 };
   }

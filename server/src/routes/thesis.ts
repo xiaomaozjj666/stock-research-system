@@ -3,9 +3,9 @@ import { Router } from 'express';
 import { createThesis, evaluateThesis, listTheses } from '../services/thesisService.js';
 import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
+import { isAShareCode } from '../utils/stockCode.js';
 
 const router = Router();
-const CODE_RE = /^\d{6}$/;
 const METRICS = new Set(['close_price', 'return_pct', 'excess_return_pct']);
 const COMPARATORS = new Set(['gt', 'gte', 'lt', 'lte']);
 
@@ -18,7 +18,7 @@ router.post('/api/theses', async (req, res) => {
     const body = req.body ?? {};
     const execution = body.execution ?? {};
     if (
-      !CODE_RE.test(body.stockCode) ||
+      !isAShareCode(body.stockCode) ||
       !validText(body.thesis, 500) ||
       !validText(body.rating, 50) ||
       !METRICS.has(body.metric) ||
@@ -30,7 +30,7 @@ router.post('/api/theses', async (req, res) => {
       body.horizonDays > 3650 ||
       body.evidenceSource !== 'real_ohlcv' ||
       !validText(body.invalidationAction, 200) ||
-      !CODE_RE.test(body.benchmarkCode) ||
+      !isAShareCode(body.benchmarkCode) ||
       execution.side !== 'buy' ||
       (execution.orderType !== 'market' && execution.orderType !== 'limit') ||
       typeof execution.entryPrice !== 'number' ||
@@ -86,7 +86,7 @@ router.post('/api/theses', async (req, res) => {
 
 router.get('/api/theses', (req, res) => {
   const stockCode = typeof req.query.stockCode === 'string' ? req.query.stockCode : undefined;
-  if (stockCode && !CODE_RE.test(stockCode)) {
+  if (stockCode && !isAShareCode(stockCode)) {
     return res.status(400).json({ error: '股票代码无效' });
   }
   res.json({ items: listTheses(stockCode) });

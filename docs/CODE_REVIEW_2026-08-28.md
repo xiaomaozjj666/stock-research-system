@@ -349,3 +349,36 @@ errorDetail.ts（按环境裁剪语义与其余调用点不同，不构成重复
   排队统计、消息预算绕过、入口注入 400、取消纪律 2。
 - 项目自带 `as never` 只许减不许增的防作弊测试**当场拦下了本次新增的 2 处**
   类型逃逸（改为类型正确的字面量与 toMatchObject 断言）。
+
+### 续修：剩余存量项全部收口（同日）
+
+上一批列为「后续排期」的存量项已全部完成：
+
+1. **`/api/analyze/stream` 断连 → 在途取消**（P3）：此前断连只在**阶段边界**
+   生效（8 位专家各 45s 的 LLM 在途期间照常付费）。现引入共享轮的
+   `runAbort`：消费者全部离开时（listener 抛错或调用方 signal 触发）立即
+   中止在途 LLM，并在边界抛 SSE_CLIENT_DISCONNECTED。**多消费者语义**：
+   调用方 signal 只摘除自己的订阅/等待位，最后一个消费者离开才中止——
+   同代码分析是 single-flight 复用的，不能因为一人走了误伤其他人。
+   预中止的调用方不再登记消费者，首个边界即退出、取数都不会发起。
+2. **SSE 帧契约测试**：`/api/research/deep/stream` 的 agent_event（seq/type/
+   round/at/message）与 done（result）帧结构钉进测试——此前改 phase 名或漏
+   done 帧，服务端测试全绿、客户端运行时才炸。
+3. **`isValidTradingDate` 收敛**（P4）：paper.ts 的等价实现改为委托
+   `utils/dateRange.isValidIsoDate`（唯一实现）。
+4. **美股形态三处口径统一**（P5）：`marketOf` 只认纯字母 1-6 位、
+   `intlDataProvider` 认 `.` 不认 `-`、`stockCode` 认 `.`/`-`——BRK.B 在路由层
+   通过、到行情层被当 A 股拼 `0.BRK.B`。现统一由 stockCode 的
+   isHKCode/isUSCode 判定（新增导出），两层加回归测试。
+5. **6 位代码内联判定收敛**（P8）：paperTrading / screener / universeProvider /
+   analysisCheckpoint / thesis 五处 `/^\d{6}$/` 改为 isAShareCode（语义逐字等价）。
+6. **resetStats 语义澄清**（P7）：文档明确「只清计数、不动在途/排队」，
+   测试彻底隔离需新建实例。
+7. **限流窗口解析唯一化**（env.ts）：`resolveRateLimitWindowMs` 成为
+   middleware 与启动校验的共同入口（带 ≥1 钳制），消除两份解析漂移。
+
+测试 +6：多消费者取消不误伤、预中止不发起取数、专家层取消原样上抛（不降级
+规则引擎）、SSE 帧契约、美股 `.`/`-` 形态三处一致（×2）。
+
+> 剩余未动：`intl.ts` / `timeseries/analyze.ts` 对非法日期的**静默回落**——
+> 改成拒绝会改变用户可见行为（不属于等价迁移），需产品决策后单独做。

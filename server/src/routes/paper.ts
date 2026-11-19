@@ -11,6 +11,7 @@ import { PaperAccount } from '../quant/paperTrading.js';
 import { auditTradeSignal } from '../services/auditLog.js';
 import { getReqTraceContext } from '../services/telemetry.js';
 import { errorDetail } from '../utils/errorDetail.js';
+import { isValidIsoDate } from '../utils/dateRange.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -66,19 +67,15 @@ function parsePriceMap(
   return { ok: true, map };
 }
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
 /**
  * 交易日必须是真的 YYYY-MM-DD 且能被解析。
  * 此前只查 `typeof === 'string'`，`{"date":"hello"}` 或 `"2026-13-45"` 会被写成
  * 账户的当前交易日并进入订单的 placedDate，污染 T+1 判定与净值序列（按日期做键）。
  */
 function isValidTradingDate(v: unknown): v is string {
-  if (typeof v !== 'string' || !DATE_RE.test(v)) return false;
-  const t = Date.parse(`${v}T00:00:00Z`);
-  if (Number.isNaN(t)) return false;
-  // 排除 2026-02-31 这类"格式对但日期不存在"的值：Date.parse 会顺延到 3 月
-  return new Date(t).toISOString().slice(0, 10) === v;
+  // 与 utils/dateRange.isValidIsoDate 逐字等价（正则 + Date.parse + 回比），
+  // 收敛到唯一实现，避免两处口径随时间漂移
+  return typeof v === 'string' && isValidIsoDate(v);
 }
 
 router.get('/api/paper/portfolio', (_req, res) => {

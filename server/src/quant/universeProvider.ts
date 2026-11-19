@@ -22,6 +22,7 @@
 import { fetchJson } from '../utils/http.js';
 import logger from '../utils/logger.js';
 import { deleteCacheEntry, isCacheFresh, readCacheEntry, writeCacheEntry } from './quantCache.js';
+import { isAShareCode } from '../utils/stockCode.js';
 
 export interface IndustryBoard {
   /** 板块代码（BK0475 等） */
@@ -111,7 +112,7 @@ function parseConstituents(rows: Record<string, unknown>[], capped: number): Uni
   for (const r of rows) {
     const stockCode = String(r.f12 ?? '').trim();
     const name = String(r.f14 ?? '').trim();
-    if (!/^\d{6}$/.test(stockCode)) continue; // 只收 A 股 6 位代码（板块内可能混 B 股/其他）
+    if (!isAShareCode(stockCode)) continue; // 只收 A 股 6 位代码（板块内可能混 B 股/其他）
     // fltt=2 时市值已是「元」；转亿元。缺值/非有限则不透出该字段
     const capYuan = Number(r.f20);
     stocks.push({

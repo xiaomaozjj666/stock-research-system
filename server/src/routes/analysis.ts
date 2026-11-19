@@ -20,6 +20,7 @@ import {
 import { recordAnalysis } from '../services/outcomeTracker.js';
 import type { AnalysisResult } from '../types.js';
 import { errorDetail } from '../utils/errorDetail.js';
+import { abortOnClientClose } from '../utils/clientAbort.js';
 import { isQueueTimeoutError } from '../utils/limitGate.js';
 import logger from '../utils/logger.js';
 import { createSseChannel } from '../utils/sse.js';
@@ -107,10 +108,24 @@ router.post('/api/analyze', analyzeLimiter, circuitBreakerGuard, async (req, res
       return res.status(400).json({ error: '请提供有效的6位股票代码' });
     }
     // resume：上次分析中断时，从最后一个成功阶段续跑（省去已支付过的 LLM 成本）
-    const result = await runAnalysis(stockCode, undefined, { resume: resume === true });
+    // 断连信号：客户端走了就不再为本调用方工作（shared 轮次里最后一个消费者离开
+    // 才真正中止在途 LLM——语义见 RunAnalysisOptions.signal）
+    const abort = abortOnClientClose(res);
+    const result = await runAnalysis(stockCode, undefined, {
+      resume: resume === true,
+      signal: abort.signal,
+    });
     await persistAnalysisHistory(result); // 分析完成自动入库（失败静默，不影响响应）
     res.json(result);
   } catch (error) {
+    // 客户端断开触发的取消不是错误：连接已关，日志级别与响应都按「取消」处理
+    if ((error as Error)?.message === 'SSE_CLIENT_DISCONNECTED') {
+      logger.info('客户端已断开，分析已取消', {
+        route: '/api/analyze',
+        stockCode: req.body?.stockCode,
+      });
+      return;
+    }
     logger.error('Analysis error', {
       route: '/api/analyze',
       stockCode: req.body?.stockCode,
@@ -139,11 +154,18 @@ router.get('/api/analyze/stream', analyzeLimiter, circuitBreakerGuard, async (re
   // 断开感知：客户端关闭页面后，下一次 emit 抛错使管线在阶段边界提前中止，
   // 不再白跑 1-3 分钟的专家研判/外部请求
   const sse = createSseChannel(req, res);
+  // 断开感知升级：除了「下一次 emit 抛错」的阶段边界检查，还监听 res close——
+  // 客户端中途离开时立即摘除本订阅者并重估消费者计数（最后一个离开才中止在途 LLM，
+  // 而不是等下一次阶段边界才发现）
+  const abort = abortOnClientClose(res);
 
   try {
     // resume=1：上次分析中断（如客户端断开）时，从最后一个成功阶段续跑
     const resume = req.query.resume === '1' || req.query.resume === 'true';
-    const result = await runAnalysis(stockCode, (stage) => sse.send(stage), { resume });
+    const result = await runAnalysis(stockCode, (stage) => sse.send(stage), {
+      resume,
+      signal: abort.signal,
+    });
     await persistAnalysisHistory(result); // 分析完成自动入库（失败静默）
     sse.trySend({ phase: 'done', message: '分析完成', result });
   } catch (error) {

@@ -130,13 +130,16 @@ describe('/api/analyze/stream（SSE 流式分析）', () => {
     await request(app).get('/api/analyze/stream').query({ stockCode: '600519', resume: '1' });
     expect(runAnalysisMock).toHaveBeenCalledTimes(1);
     expect(runAnalysisMock.mock.calls[0][0]).toBe('600519');
-    expect(runAnalysisMock.mock.calls[0][2]).toEqual({ resume: true });
+    // 断连感知：路由必须把 res close 的取消信号一并传下去（客户端断开即取消）
+    expect(runAnalysisMock.mock.calls[0][2]).toMatchObject({ resume: true });
+    expect(runAnalysisMock.mock.calls[0][2]?.signal).toBeInstanceOf(AbortSignal);
 
     runAnalysisMock.mockClear();
 
     // 未传/传其他值时为全新分析
     await request(app).get('/api/analyze/stream').query({ stockCode: '600519' });
-    expect(runAnalysisMock.mock.calls[0][2]).toEqual({ resume: false });
+    expect(runAnalysisMock.mock.calls[0][2]).toMatchObject({ resume: false });
+    expect(runAnalysisMock.mock.calls[0][2]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('分析完成后写入研究历史（含生成时间戳，供报告时间语境使用）', async () => {

@@ -165,6 +165,13 @@ export interface RunAnalysisOptions {
    * 中断后重入可省去已支付过的 LLM 成本；无断点或断点已过期则自动全新开始。
    */
   resume?: boolean;
+  /**
+   * 调用方取消信号（客户端断开）。语义是「**本调用方不再消费**」而不是「杀掉共享
+   * 分析」：同代码的分析是 single-flight 复用的，多个调用方可能同时在等同一轮结果。
+   * 信号触发时仅摘除本调用方的进度订阅（或等待位），并立即重估消费者计数——
+   * 最后一个消费者离开时才中止在途 LLM 调用（否则其余调用方会被误伤）。
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -194,6 +201,14 @@ interface InFlightAnalysis {
   promise?: Promise<AnalysisResult>;
   /** 进度订阅者：抛错（SSE 已断开）即被移除，其余订阅者与等待者不受影响 */
   listeners: Set<(stage: AnalysisStage) => void>;
+  /** 是否出现过同步等待者（用于「消费者全部离开」的判定，与 hadListener 对称） */
+  hadSilentWaiter?: boolean;
+  /**
+   * 由 executeAnalysis 注册：消费者集合变化时立即重估是否孤儿。
+   * 路由侧断连（signal）与进度推送失败（listener 抛错）共用同一判定，
+   * 保证「最后一个消费者离开才中止」的语义只有一处定义。
+   */
+  notifyConsumerLeft?: () => void;
   /** 是否曾有订阅者（仅 SSE 路由会传回调）：用于判断「已无人消费进度」是否成立 */
   hadListener: boolean;
   /** 无进度回调的等待者数（POST / 工具调用）：只要还有人等结果，就不因订阅者断开而中止整轮 */
@@ -248,12 +263,15 @@ export function runAnalysis(
     // 调用方以为跑的是自己那一轮，实际数据来源（是否来自过期断点）完全不同
     if (existing.resume !== resume) throw inFlightConflictError();
     // 语义一致：复用结果（不重复调用 LLM），进度广播给新订阅者
+    const preAborted = options.signal?.aborted === true;
     if (onProgress) {
-      existing.listeners.add(onProgress);
+      if (!preAborted) existing.listeners.add(onProgress);
       existing.hadListener = true;
     } else {
-      existing.silentWaiters += 1;
+      if (!preAborted) existing.silentWaiters += 1;
+      existing.hadSilentWaiter = true;
     }
+    bindConsumerSignal(existing, onProgress, options.signal);
     return existing.promise!; // 在途轮次必然已赋值（构造后紧接同步赋值）
   }
 
@@ -263,19 +281,45 @@ export function runAnalysis(
     silentWaiters: 0,
     resume,
   };
+  // 预中止的调用方（客户端在建轮前就已断开）：只标记「曾经有消费者」但不登记，
+  // 让 executeAnalysis 的首个 emit 立即判孤儿并在取数前退出——否则同步段里的
+  // 第一次上游请求已经发出去了，取消只能等到下一个阶段边界
+  const preAborted = options.signal?.aborted === true;
   if (onProgress) {
-    handle.listeners.add(onProgress);
+    if (!preAborted) handle.listeners.add(onProgress);
     handle.hadListener = true;
   } else {
-    handle.silentWaiters = 1;
+    if (!preAborted) handle.silentWaiters = 1;
+    handle.hadSilentWaiter = true;
   }
   handle.promise = executeAnalysis(stockCode, handle, options).finally(() => {
     // 只删自己那一轮：避免把随后新起的同代码轮次误删
     if (inFlightAnalyses.get(stockCode) === handle) inFlightAnalyses.delete(stockCode);
   });
   inFlightAnalyses.set(stockCode, handle);
+  bindConsumerSignal(handle, onProgress, options.signal);
   // 上一步必定已给 promise 赋值（紧接着的同步语句），故此处非空
   return handle.promise!;
+}
+
+/**
+ * 把调用方的取消信号接到共享轮次的消费计数上：
+ * 触发时只摘除**本调用方**的订阅（或等待位），随后立即重估消费者集合——
+ * 最后一个消费者离开才中止在途工作（见 RunAnalysisOptions.signal 的语义说明）。
+ */
+function bindConsumerSignal(
+  handle: InFlightAnalysis,
+  listener: ((stage: AnalysisStage) => void) | undefined,
+  signal: AbortSignal | undefined,
+): void {
+  if (!signal) return;
+  const onAbort = () => {
+    if (listener) handle.listeners.delete(listener);
+    else if (handle.silentWaiters > 0) handle.silentWaiters -= 1;
+    handle.notifyConsumerLeft?.();
+  };
+  if (signal.aborted) onAbort();
+  else signal.addEventListener('abort', onAbort, { once: true });
 }
 
 async function executeAnalysis(
@@ -283,6 +327,22 @@ async function executeAnalysis(
   handle: InFlightAnalysis,
   options: RunAnalysisOptions,
 ): Promise<AnalysisResult> {
+  // 共享轮的取消控制器：本轮所有在途 LLM 调用（8 位专家 / 仲裁）都绑这个 signal。
+  // 消费者全部离开时 abort——这是把「阶段边界才停」升级为「在途调用也能停」的关键，
+  // 否则最后一位客户端断开后，正在跑的 45s LLM 调用仍会跑完并付完钱。
+  const runAbort = new AbortController();
+  const abortIfOrphaned = (): boolean => {
+    const noConsumers = handle.listeners.size === 0 && handle.silentWaiters === 0;
+    if (noConsumers && (handle.hadListener || handle.hadSilentWaiter)) {
+      if (!runAbort.signal.aborted) {
+        runAbort.abort(new Error('SSE_CLIENT_DISCONNECTED'));
+      }
+      return true;
+    }
+    return false;
+  };
+  handle.notifyConsumerLeft = abortIfOrphaned;
+
   const emit = (stage: AnalysisStage) => {
     // 逐个订阅者推送：某个订阅者断开（SSE 已关闭时 send 抛错）不得影响其余订阅者与等待者。
     // 先取快照再遍历：本轮内被移除的订阅者不应再收到本次事件。
@@ -293,9 +353,10 @@ async function executeAnalysis(
         handle.listeners.delete(listener);
       }
     }
-    // 保持既有语义：进度订阅者全部断开、且没有别的调用方在等结果时，在阶段边界提前中止，
-    // 不再白跑 1-3 分钟的专家研判/外部请求（无人消费的结论没有意义，且要白付 LLM 成本）。
-    if (handle.hadListener && handle.listeners.size === 0 && handle.silentWaiters === 0) {
+    // 消费者全部离开：先中止在途 LLM（runAbort），再在阶段边界抛错提前退出。
+    // 两者缺一不可——只抛错会让已发出的 LLM 请求跑完并付费；只 abort 则要等到
+    // 下一次阶段边界才退出（中间阶段仍会串行跑完不需要的工作）。
+    if (abortIfOrphaned()) {
       throw new Error('SSE_CLIENT_DISCONNECTED');
     }
   };
@@ -508,42 +569,42 @@ async function executeAnalysis(
       {
         key: 'fundamental',
         name: '基本面专家',
-        run: () => fundamentalExpert(financial, valuation, info, consensusBrief),
+        run: () => fundamentalExpert(financial, valuation, info, consensusBrief, runAbort.signal),
       },
       {
         key: 'valuation',
         name: '估值专家',
-        run: () => valuationExpert(financial, valuation, info, consensusBrief),
+        run: () => valuationExpert(financial, valuation, info, consensusBrief, runAbort.signal),
       },
       {
         key: 'industry',
         name: '行业专家',
-        run: () => industryExpert(financial, valuation, info, consensusBrief),
+        run: () => industryExpert(financial, valuation, info, consensusBrief, runAbort.signal),
       },
       {
         key: 'risk',
         name: '风险专家',
-        run: () => riskExpert(financial, valuation, info, consensusBrief),
+        run: () => riskExpert(financial, valuation, info, consensusBrief, runAbort.signal),
       },
       {
         key: 'capital',
         name: '资金流专家',
-        run: () => capitalFlowExpert(financial, valuation, info, consensusBrief),
+        run: () => capitalFlowExpert(financial, valuation, info, consensusBrief, runAbort.signal),
       },
       {
         key: 'policy',
         name: '政策专家',
-        run: () => policyExpert(financial, valuation, info, consensusBrief),
+        run: () => policyExpert(financial, valuation, info, consensusBrief, runAbort.signal),
       },
       {
         key: 'hotMoney',
         name: '题材专家',
-        run: () => hotMoneyExpert(financial, valuation, info, consensusBrief),
+        run: () => hotMoneyExpert(financial, valuation, info, consensusBrief, runAbort.signal),
       },
       {
         key: 'unlock',
         name: '解禁专家',
-        run: () => unlockExpert(financial, valuation, info, consensusBrief),
+        run: () => unlockExpert(financial, valuation, info, consensusBrief, runAbort.signal),
       },
     ]);
     // 全部专家均失败时无法形成有效研判，直接抛错交由上层（500 / SSE error）处理
@@ -592,6 +653,7 @@ async function executeAnalysis(
       info,
       opinions: expertOpinions,
       ratingAccuracy: ratingAccuracyHint,
+      signal: runAbort.signal,
     });
     controversies = arbitration.controversies;
     finalOpinion = arbitration.finalOpinion;

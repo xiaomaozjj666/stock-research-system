@@ -123,3 +123,20 @@ export function normalizeAShareCode(input: unknown): string | null {
 export function isAShareCode(input: unknown): boolean {
   return A_SHARE_RE.test(input as string);
 }
+
+/**
+ * 纯布尔判定：港股 5 位数字（与 marketOf / 归一化推断同一口径）。
+ * 4-5 位的放宽版只用于**显式 market=HK** 的入口（东财口径），不在自动推断里。
+ */
+export function isHKCode(input: unknown): boolean {
+  return HK_RE.test(input as string);
+}
+
+/**
+ * 纯布尔判定：美股字母代码，允许 `.`/`-`，总长 ≤ 8（BRK.B / BF-B 是合法美股）。
+ * 这是美股形态的**唯一口径**——此前 marketOf、intlDataProvider 与归一化三家
+ * 各写一份（`.`/`-` 支持面不同），同一代码在不同层得到不同结论。
+ */
+export function isUSCode(input: unknown): boolean {
+  return US_RE.test(input as string);
+}

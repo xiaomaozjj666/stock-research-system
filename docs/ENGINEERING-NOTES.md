@@ -1434,3 +1434,11 @@ fetch stub（service 已 mock、响应确定），且覆盖的是**当前最大�
   否则表现为「本地 5s 超时、CI 通过」的假红。
 - **文档目录已迁到 docs/**：CODE_REVIEW / ENGINEERING-NOTES / DATA-SOURCES 的
   追加位置以 `ls docs/` 为准，勿按旧根路径写入。
+
+- **single-flight 管线的取消语义**：调用方 AbortSignal 不能直接杀共享轮次
+  （同代码分析可能多人共用一轮）。正确做法：每调用方 signal 只摘除自己的
+  listener/等待位，管线在「消费者全部离开」时 abort 共享轮次的 runAbort——
+  预中止的调用方要在登记消费者**之前**判断，否则同步段的第一笔取数已经发出。
+- **股票代码形态只有一份定义**（utils/stockCode 的 isAShareCode/isHKCode/
+  isUSCode）：美股允许 `.`/`-`（BRK.B/BF-B）。历史上 marketOf、intlDataProvider
+  与归一化层各写一份，导致同一代码「上一层放行、下一层拒绝/被当 A 股拼错 secid」。

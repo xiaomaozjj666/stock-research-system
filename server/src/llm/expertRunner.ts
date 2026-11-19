@@ -29,6 +29,11 @@ export interface ExpertRunOptions {
   temperature?: number;
   /** 最大 token，默认 1500 */
   maxTokens?: number;
+  /**
+   * 取消信号：透传到底层 chat() 的 HTTP；已中止时**原样上抛**而不是降级到
+   * 规则引擎——客户端走了还继续跑规则引擎没有意义，取消必须能终止整条管线。
+   */
+  signal?: AbortSignal;
 }
 
 /** LLM 返回的原始结构 */
@@ -116,6 +121,7 @@ export async function runExpertWithLLM(options: ExpertRunOptions): Promise<Exper
     temperature: options.temperature ?? 0.4,
     maxTokens: options.maxTokens ?? 1500,
     timeout: 45000,
+    signal: options.signal,
   };
 
   try {
@@ -140,6 +146,8 @@ export async function runExpertWithLLM(options: ExpertRunOptions): Promise<Exper
           logger.warn('[LLM] 重问后仍为空，按降级处理', { expertName: options.expertName });
         }
       } catch (retryErr) {
+        // 取消不是「重问失败」：原样上抛，让管线立即终止
+        if (options.signal?.aborted) throw retryErr;
         // 重问本身失败（网络/闸门）不影响首轮结果的处理，落到下面的降级
         logger.warn('[LLM] 重问失败', { expertName: options.expertName, err: retryErr as Error });
       }
@@ -147,6 +155,9 @@ export async function runExpertWithLLM(options: ExpertRunOptions): Promise<Exper
 
     return normalizeExpertOpinion({ expert: options.expertName, ...raw });
   } catch (err) {
+    // 取消原样上抛：降级到规则引擎会让「客户端已断开」的分析继续烧 CPU 并
+    // 在稍后写出一份没人要的报告（取消语义必须终止，不是换条路继续）
+    if (options.signal?.aborted) throw err;
     // 排队超时（闸门 429 语义）与"LLM 调用出错"分开标记：
     // 前者是系统繁忙、可退避重试，后者是上游/返回内容的问题，处置方式不同。
     const reason: ExpertDegradeReason = isQueueTimeoutError(err) ? 'queue_timeout' : 'llm_error';

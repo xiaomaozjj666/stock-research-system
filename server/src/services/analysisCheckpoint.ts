@@ -13,6 +13,7 @@ import type {
   ValuationData,
 } from '../types.js';
 import logger from '../utils/logger.js';
+import { isAShareCode } from '../utils/stockCode.js';
 
 /**
  * 分析流水线断点续跑（借鉴 TradingAgents 的 checkpoint resume）。
@@ -101,7 +102,7 @@ function getTtlMs(): number {
 
 function fileFor(stockCode: string): string {
   // 股票代码恒为 6 位数字，但仍做一次收敛，避免路径穿越
-  const safe = /^\d{6}$/.test(stockCode) ? stockCode : stockCode.replace(/[^0-9a-zA-Z_-]/g, '_');
+  const safe = isAShareCode(stockCode) ? stockCode : stockCode.replace(/[^0-9a-zA-Z_-]/g, '_');
   return path.join(getDir(), `${safe}.json`);
 }
 

@@ -219,11 +219,14 @@ export async function valuationExpert(
   valuation: ValuationData,
   info: StockInfo,
   extraBrief?: string | null,
+  /** 取消信号：透传到 runExpertWithLLM → chat 的 HTTP（中止原样上抛） */
+  signal?: AbortSignal,
 ): Promise<ExpertOpinion> {
   return runExpertWithLLM({
     expertName: EXPERT_NAME,
     systemPrompt: SYSTEM_PROMPT,
     context: formatContext(financial, valuation, info, extraBrief),
+    signal,
     ruleFallback: () => valuationExpertRule(financial, valuation, info),
   });
 }

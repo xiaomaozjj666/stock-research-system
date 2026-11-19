@@ -9,17 +9,15 @@ import { timingSafeEqual } from 'node:crypto';
 import { auditLogger } from './services/auditLog.js';
 import { isQueueTimeoutError } from './utils/limitGate.js';
 import { errorDetail } from './utils/errorDetail.js';
+import { resolveRateLimitWindowMs } from './utils/env.js';
 import logger from './utils/logger.js';
 
 /**
- * 限流窗口（毫秒）。与 max 同理必须防「负数/0」：`Number('-5') || 60000` 得到
- * -5（不是 NaN），express-rate-limit 会在模块初始化时抛 ERR_ERL_WINDOW_MS，
- * 整个服务直接起不来——一个错的环境变量就能让进程无法启动。
+ * 限流窗口（毫秒）。解析与钳制统一在 utils/env.resolveRateLimitWindowMs——
+ * `Number('-5') || 60000` 得到 -5（不是 NaN），`||` 兜不住，而 express-rate-limit
+ * 会在模块初始化时抛 ERR_ERL_WINDOW_MS，一个错的环境变量就能让服务起不来。
  */
-export const windowMs = (() => {
-  const n = Number(process.env.RATE_LIMIT_WINDOW_MS);
-  return Number.isInteger(n) && n >= 1 ? n : 60000;
-})();
+export const windowMs = resolveRateLimitWindowMs();
 
 /**
  * 限流上限的解析：`Number(env) || dflt` 对「配成负数或 0」完全不设防——
