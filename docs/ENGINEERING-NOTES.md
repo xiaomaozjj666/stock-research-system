@@ -1448,3 +1448,13 @@ fetch stub（service 已 mock、响应确定），且覆盖的是**当前最大�
   `resolveDateRangeFromRaw(req.query.startDate, req.query.endDate, {defaultSpanDays})`
   一次性处理「重复参数（数组）/非字符串/空白/非法日期」四类形态；空白按未传处理，
   以免表单空值误报 400。`2024-02-30` 这类「格式对但日期不存在」的值也会被拒。
+
+- **LLM 工具层的护栏要独立于消息层**：chat 有 2000 字限 + 10/min 限流，但 LLM
+  生成的工具参数（代码/日期）绕过了同文件已有的校验范式（compare_stocks 漏
+  isAShareCode、backtest 工具漏 resolveDateRangeFromRaw），且消息层限流限不住
+  工具扇出（一条消息 × 5 轮 × 并发 tool_call ≈ 上百次流水线）——重工具需独立
+  预算（chatAgent 的 MAX_HEAVY_TOOL_CALLS=6）。
+- **T+1 这类时点规则要在「下单」与「成交」两个时点都校验**：挂单时点持仓的
+  buyDate 还是旧值，结算顺序（先买后卖）会把 buyDate 推到当天——只在下单时
+  校验存在成交时穿透窗口（paperTrading 修复的回归测试自身也踩过一次，场景里
+  资金不足导致买单被拒，卖的是昨日合法持仓）。

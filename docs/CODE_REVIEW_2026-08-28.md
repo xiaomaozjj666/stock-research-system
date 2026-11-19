@@ -407,3 +407,48 @@ Google AIP-193（错误必须显式）一致的 API 约定——**缺省 → 默
   同步更新两处旧「静默回落」断言。
 - 影响面核验：港美股 K 线唯一生产调用方（模拟盘页）始终发送合法 ISO 日期；
   timeseries 无前端页面（仅 MCP/chat 工具，工具调用失败会以可读错误回灌给模型）。
+
+## 附：第三轮子代理审查——paperTrading 资金引擎 + 对话/工具执行链路（2026-11-20）
+
+范围：前两轮未覆盖的高危面。paperTrading（696 行）由主会话**亲自逐行审**
+（资金正确性属计费高危区，不假手子代理）；chat/tools/RAG/MCP/autonomous（约
+2400 行）由全新上下文子代理审，发现逐条经主会话复核后修复。
+
+### paperTrading：3 项修复（主会话自审）
+
+1. **T+1 穿透漏洞**：T+1 只在下单时校验，成交时不复核——当日挂买单加仓 +
+   同日挂卖单可通过下单校验，结算时买单先成交把 buyDate 推到今天、卖单随后
+   成交即完成当日 round-trip。修复：卖出**成交时**复核 buyDate === 当日 → 拒单。
+   修复本身的回归测试还抓到了测试场景自身的资金不足问题（买单被拒、卖的是
+   昨日合法持仓——引擎行为正确），修正场景后通过。
+2. **最低佣金缺失**：A_SHARE_COST_MODEL.minCost=5（真实券商费率），模拟盘按
+   纯比例计佣金 → 对齐为单笔最低 5 元（options.minCommission 可配、0 关闭），
+   共用纯函数加可选参数保持 thesisService 调用方行为不变。
+3. **北交所涨跌停缺失**：43/83/87/88/92 前缀按主板 ±10% 处理，实际 ±30% →
+   limitPctForCode 补板块判定（backtestEngine 同源受益）。
+
+### chat/tools 链路：4 Important + 3 存量（子代理审 + 复核修复）
+
+1. **compare_stocks 唯一不校验代码形态**：LLM 幻觉码直达 runAnalysis → 缓存
+   文件名与东财/新浪 URL（含 filter 引号内插值）→ 与同文件先例对齐，逐码
+   isAShareCode 校验，畸形码回可读错误且零执行。
+2. **run_backtest / evaluate_backtest 日期未校验**：`2020-01-01&fqt=0` 可改写
+   K 线查询的复权/周期/lmt 参数，错误数据静默进回测结论 → 工具层统一过
+   resolveDateRangeFromRaw（缺省近 2 年；非法→可读错误回灌给模型重试）。
+3. **POST /api/chat 无断连中止**：同文件 SSE 路由、analysis POST 都接了，唯独
+   这条漏——单条消息最坏 ≈13 次 LLM 调用照烧。修复：run() 增加可选 signal
+   透传到 runStream（其 M-5 机制已把信号送进全部 LLM 调用点），路由接
+   abortOnClientClose；catch 区分「取消」与真实错误。
+4. **重工具无预算**：一条消息 5 轮工具回路 × 每轮多个并发 tool_call ≈ 上百次
+   完整流水线，chatLimiter 只限消息数。修复：runStream 内加重工具预算（上限 6
+   次分析类工具），超出返回明确降级文案回灌给模型。
+5. 存量：mcpClient 断连即失效工具清单缓存（防死实例继续被路由）；
+   chat 版 timeseries 工具补齐 startDate/endDate/options（与 MCP 版同口径）；
+   chatMemory 单条 content 落盘前钳制 8000 字（防快照膨胀）。
+
+### 测试门禁（2026-11-20）
+
+- 测试 +10：T+1 穿透回归、北交所 ±30% 双向、最低佣金、compare 代码校验、
+  backtest 日期注入×2、timeseries 日期透传、重工具预算、signal 接线、记忆钳制。
+- 全量 3609 用例 / 265 文件绿；lint / prettier / tsc×2 / build / release-gates /
+  doc-freshness 全过。
