@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as path from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import logger from '../../utils/logger.js';
 import { fetchOHLCVData, getBenchmarkCurve, marketOf, resolveSecid } from '../dataProvider.js';
 import type { OHLCVData } from '../types.js';
 
@@ -55,6 +56,37 @@ describe('fetchOHLCVData — 合并历史缓存与增量补尾', () => {
   afterEach(() => {
     fs.rmSync(klineCacheFile(code), { force: true });
     vi.restoreAllMocks();
+  });
+
+  it('子窗口请求只裁剪不告警（缓存存并集历史属正常，warn 会掩盖真异常）', async () => {
+    const code2 = '999002';
+    writeKlineCache(code2, [
+      { date: '2024-01-01', open: 10, close: 10, high: 10, low: 10, volume: 1 },
+      { date: '2024-01-15', open: 10, close: 10, high: 10, low: 10, volume: 1 },
+      { date: '2024-01-31', open: 10, close: 10, high: 10, low: 10, volume: 1 },
+    ]);
+    const warnSpy = vi.spyOn(logger, 'warn');
+    const result = await fetchOHLCVData(code2, '2024-01-10', '2024-01-20');
+    expect(result.map((b) => b.date)).toEqual(['2024-01-15']);
+    expect(warnSpy).not.toHaveBeenCalled(); // 正常裁剪不再 warn
+    fs.rmSync(klineCacheFile(code2), { force: true });
+  });
+
+  it('缓存含非法日期行 → 剔除并告警（真实脏数据）', async () => {
+    const code3 = '999003';
+    writeKlineCache(code3, [
+      { date: '2024-01-02', open: 10, close: 10, high: 10, low: 10, volume: 1 },
+      // 畸形日期：会让区间比较失真，必须剔除并留下痕迹
+      { date: '20240103', open: 10, close: 10, high: 10, low: 10, volume: 1 },
+    ]);
+    const warnSpy = vi.spyOn(logger, 'warn');
+    const result = await fetchOHLCVData(code3, '2024-01-01', '2024-01-31');
+    expect(result.map((b) => b.date)).toEqual(['2024-01-02']);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '缓存K线含非法日期行，已剔除',
+      expect.objectContaining({ invalid: 1 }),
+    );
+    fs.rmSync(klineCacheFile(code3), { force: true });
   });
 
   it('区间被完整覆盖且缓存新鲜 → 零网络请求', async () => {

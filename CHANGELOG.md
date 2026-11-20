@@ -38,7 +38,8 @@ Baostock sidecar 接入指数历史成分（幸存者偏差正面修复）；两
 数据不可得同样类型化，compare 的每只失败分类改按类型；港美股 K 线上游失败由
 500 对齐为 OpenAPI 声明的 502。ErrorResponse.code 在 OpenAPI 中逐项点名
 （TS_PARAM / TS_DATA / DATE_RANGE_PARAM / VALUATION_PARAM / INTL_PARAM /
-ANNOUNCEMENT_PARAM / DATA_UNAVAILABLE）。
+ANNOUNCEMENT_PARAM / DATA_UNAVAILABLE）。同时消除一类日志噪声：K 线缓存按请求窗口
+裁剪属正常行为，由 warn 降为 debug，仅在剔除「非法日期行」（真脏数据）时告警。
 
 **门禁**：测试 3599 → 3670（270 文件），覆盖率阈值 92/90/92/80 下实测
 93.61/91.55/93.33/82.08；CI 全绿。相关提交：c85f9b9 / aed5e39 / 7c2d859 /

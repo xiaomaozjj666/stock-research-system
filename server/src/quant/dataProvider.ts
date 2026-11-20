@@ -30,6 +30,7 @@ export function marketOf(code: string): Market {
  * （见 dataProvider.extra.test.ts 的 `0.1234567` 用例），严格形态校验已由路由层
  * `utils/stockCode.ts` 的 normalizeStockCode 承担；这里只堵可改写 URL 的元字符。
  */
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SAFE_CODE_RE = /^[A-Za-z0-9.-]{1,12}$/;
 
 /**
@@ -161,20 +162,28 @@ export async function fetchKlineBySecid(
 
   // 1. 读缓存：合并历史。不判断新鲜度——即使不新鲜也要读出来做增量补尾。
   const cached = readCacheEntry<KlineCachePayload>(cacheKey);
-  const cachedBars =
+  const rawCachedBars =
     cached?.data && Array.isArray(cached.data.bars)
       ? cached.data.bars.filter((b) => b && typeof b.date === 'string')
       : [];
+  // 真正的脏数据是**非法日期行**（畸形/时间戳混入会让排序与区间比较失真）；
+  // 这类才告警并剔除。「请求窗口比缓存窄」导致的裁剪是正常行为（缓存保留并集历史），
+  // 不再逐次 warn——否则每次窄窗口请求都刷一条，掩盖真异常。
+  const cachedBars = rawCachedBars.filter((b) => ISO_DATE_RE.test(b.date));
+  const invalidCached = rawCachedBars.length - cachedBars.length;
+  if (invalidCached > 0) {
+    logger.warn('缓存K线含非法日期行，已剔除', { secid, invalid: invalidCached });
+  }
   const cStart = cachedBars.length > 0 ? cachedBars[0].date : null;
   const cEnd = cachedBars.length > 0 ? cachedBars[cachedBars.length - 1].date : null;
 
   // 完全覆盖且新鲜 → 零网络调用返回
   const covered = cStart !== null && cEnd !== null && startDate >= cStart && endDate <= cEnd;
   if (covered && cached && isCacheFresh(cached.timestamp, klineFreshTtlMs())) {
-    // 仍做范围过滤（防御历史脏缓存混入未来行）
+    // 仍做范围过滤（请求窗口比缓存窄时属正常提取，静默处理）
     const { data, trimmed } = filterOHLCVByRange(cachedBars, startDate, endDate);
     if (trimmed > 0) {
-      logger.warn('缓存K线存在越界行，已剔除', { secid, startDate, endDate, trimmed });
+      logger.debug('缓存K线按请求窗口裁剪', { secid, startDate, endDate, trimmed });
     }
     return data;
   }

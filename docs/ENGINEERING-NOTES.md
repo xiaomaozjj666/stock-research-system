@@ -1475,3 +1475,9 @@ fetch stub（service 已 mock、响应确定），且覆盖的是**当前最大�
 - **ErrorResponse.code 是给程序判断的稳定标识**，与面向用户的 error 文案解耦：
   新增错误码时同步 OpenAPI 描述（如 TS_PARAM / TS_DATA / DATE_RANGE_PARAM /
   VALUATION_PARAM / INTL_PARAM / ANNOUNCEMENT_PARAM / DATA_UNAVAILABLE）。
+
+- **正常行为不要打 warn（日志噪声会掩盖真异常）**：K 线缓存保留并集历史、按请求窗口
+  裁剪属正常——每次窄窗口请求都 warn「越界行已剔除」会把真正的脏数据（非法日期行）
+  淹没。现约定：正常裁剪走 debug，仅「非法日期行/结构畸形」才 warn 并剔除。
+- **契约与实现的状态码不一致是隐性缺陷**：`/api/intl/klines` 上游失败代码回 500、
+  OpenAPI 却声明 502——客户端据此不重试。改接口状态语义时，同步核对 paths/*.ts。
