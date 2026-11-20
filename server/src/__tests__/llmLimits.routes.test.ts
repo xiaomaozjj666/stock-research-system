@@ -55,6 +55,7 @@ vi.mock('../middleware.js', async (importOriginal) => {
 
 // 必须在 mock 之后导入 app
 // app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { DomainError } from '../utils/domainError.js';
 import { app as rawApp } from '../index.js';
 import { withContract } from '../test/contractSupertest.js';
 const app = withContract(rawApp);
@@ -224,18 +225,32 @@ describe('闸门排队超时 → 429 + Retry-After', () => {
     expect([400, 502]).not.toContain(r.status);
   });
 
-  it('POST /api/quant/timeseries/analyze：领域错误仍走原有 400/502', async () => {
-    timeseries.analyzeTimeseries.mockRejectedValue(new Error('数据不足，请扩大窗口'));
+  it('POST /api/quant/timeseries/analyze：领域错误按类型映射 400/502（不再嗅探中文）', async () => {
+    // 服务层抛 DomainError（带 status/code）——正则嗅探已移除：文案不再参与状态判定
+    timeseries.analyzeTimeseries.mockRejectedValue(
+      new DomainError('K 线数据不足（12 条 < 60）', 502, 'TS_DATA'),
+    );
     const insufficient = await request(app)
       .post('/api/quant/timeseries/analyze')
       .send({ test: 'adf', code: '600519' });
     expect(insufficient.status).toBe(502);
+    expect(insufficient.body.code).toBe('TS_DATA');
 
-    timeseries.analyzeTimeseries.mockRejectedValue(new Error('参数至少需要两个标的'));
+    timeseries.analyzeTimeseries.mockRejectedValue(
+      new DomainError("spec 需为 'n' | 'c' | 'ct'", 400, 'TS_PARAM'),
+    );
     const badParam = await request(app)
       .post('/api/quant/timeseries/analyze')
       .send({ test: 'cointegration', code: '600519' });
     expect(badParam.status).toBe(400);
+    expect(badParam.body.code).toBe('TS_PARAM');
+
+    // 未类型化的意外异常 → 500（不再因文案含「失败」被误判成 400）
+    timeseries.analyzeTimeseries.mockRejectedValue(new Error('上游连接失败'));
+    const unexpected = await request(app)
+      .post('/api/quant/timeseries/analyze')
+      .send({ test: 'adf', code: '600519' });
+    expect(unexpected.status).toBe(500);
   });
 
   it('POST /api/quant/digests/run：修复前是 500，现在是 429', async () => {

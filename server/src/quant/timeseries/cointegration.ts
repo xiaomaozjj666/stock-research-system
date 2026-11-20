@@ -20,6 +20,7 @@
  */
 
 import { adfTest, type AdfSpec } from './adf.js';
+import { DomainError } from '../../utils/domainError.js';
 import { olsWithStats } from './linalg.js';
 
 /** Engle-Granger 双变量（无常数项）渐近临界值：1% / 5% / 10% */
@@ -74,7 +75,7 @@ export function engleGranger(
     throw new Error(`y 与 x 长度不一致：${y.length} vs ${x.length}`);
   }
   if (y.length < 60) {
-    throw new Error(`协整检验需要至少 60 个对齐观测，当前 ${y.length}`);
+    throw new DomainError(`协整检验需要至少 60 个对齐观测，当前 ${y.length}`, 502, 'TS_DATA');
   }
 
   // 第一步：静态回归 → 对冲比率与价差

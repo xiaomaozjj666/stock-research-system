@@ -11,6 +11,7 @@
  * 优雅降级为「无市场收益」（Beta 类因子仍按 NaN 处理，不参与组合加权）。
  */
 
+import { DomainError } from '../utils/domainError.js';
 import {
   fetchOHLCVData,
   fetchBenchmarkReturns,
@@ -71,7 +72,7 @@ export async function computeCompositeAlphaForStrategy(
 ): Promise<CompositeAlphaResult> {
   const ohlcv = await fetchOHLCVData(stockCode, startDate, endDate, signal);
   if (!ohlcv || ohlcv.length === 0) {
-    throw new Error(`无法获取股票 ${stockCode} 的K线数据`);
+    throw new DomainError(`无法获取股票 ${stockCode} 的K线数据`, 422, 'DATA_UNAVAILABLE');
   }
   // 模拟数据闸门的判据（与 routes/quant.ts 的 hasSimulatedBars 同一口径）：
   // provider 的合成降级是整条序列逐根打标，任一为真即整条不可信

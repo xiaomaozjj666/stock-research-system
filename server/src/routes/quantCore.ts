@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 
 import { quantLimiter, metaLimiter, circuitBreakerGuard } from '../middleware.js';
 import { normalizeAShareCode } from '../utils/stockCode.js';
+import { domainErrorPayload, isDomainError } from '../utils/domainError.js';
 import { resolveDateRange } from '../utils/dateRange.js';
 import { parseStrategyInput, orchestrate, generateSummary } from '../quant/agents/orchestrator.js';
 import type { StrategyConfig, FactorOverlay } from '../quant/types.js';
@@ -462,10 +463,20 @@ router.post('/api/quant/factor/composite', quantLimiter, circuitBreakerGuard, as
     );
     res.json(result);
   } catch (error) {
+    // 领域错误按类型映射（compositeService 的 K 线不可得 → 422 DATA_UNAVAILABLE）；
+    // 不再用「无法获取」字面匹配判断
+    if (isDomainError(error)) {
+      logger.warn('Composite alpha 领域错误', {
+        route: '/api/quant/factor/composite',
+        status: error.status,
+        code: error.code,
+      });
+      return res
+        .status(error.status)
+        .json({ error: '组合 alpha 计算失败', detail: domainErrorPayload(error).error });
+    }
     logger.error('Composite alpha error', { route: '/api/quant/factor/composite', err: error });
-    // 「无法获取 K 线」属数据问题 → 422；其余（意外异常）→ 500
-    const status = error instanceof Error && /无法获取/.test(error.message) ? 422 : 500;
-    res.status(status).json({ error: '组合 alpha 计算失败', detail: errorDetail(error) });
+    res.status(500).json({ error: '组合 alpha 计算失败', detail: errorDetail(error) });
   }
 });
 

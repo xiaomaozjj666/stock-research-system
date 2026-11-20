@@ -18,6 +18,7 @@
  */
 
 import { olsWithStats } from './linalg.js';
+import { DomainError } from '../../utils/domainError.js';
 import { adfTest } from './adf.js';
 
 export interface ArimaFit {
@@ -45,7 +46,7 @@ export interface ArimaFit {
 export function differenceSeries(x: number[], d: number): number[] {
   let out = x.slice();
   for (let i = 0; i < d; i++) {
-    if (out.length < 2) throw new Error(`序列过短，无法做 ${d} 阶差分`);
+    if (out.length < 2) throw new DomainError(`序列过短，无法做 ${d} 阶差分`, 502, 'TS_DATA');
     out = out.slice(1).map((v, j) => v - out[j]);
   }
   return out;
@@ -121,7 +122,11 @@ export function fitArima(
   const d = opts.d ?? 1;
   const pMax = Math.max(0, Math.min(opts.pMax ?? 3, 8));
   if (series.length < 40 + d + pMax) {
-    throw new Error(`ARIMA 需要至少 ${40 + d + pMax} 个观测，当前 ${series.length}`);
+    throw new DomainError(
+      `ARIMA 需要至少 ${40 + d + pMax} 个观测，当前 ${series.length}`,
+      502,
+      'TS_DATA',
+    );
   }
 
   // 单位根提示：对原始序列做 ADF，帮助判断 d 的选择是否合理
@@ -149,7 +154,7 @@ export function fitArima(
     }
   }
   if (!bestFit) {
-    throw new Error('ARIMA 拟合失败：有效样本不足（差分后观测过少）');
+    throw new DomainError('ARIMA 拟合失败：有效样本不足（差分后观测过少）', 502, 'TS_DATA');
   }
 
   // Ljung-Box：滞后数 h = min(10, nobs/5)，df = h − p
@@ -195,5 +200,5 @@ export function arimaForecastOneStep(fit: ArimaFit, series: number[]): number {
   if (fit.d === 1) return series[series.length - 1] + pred;
   if (fit.d === 0) return pred;
   // d≥2 的多步还原需要中间水平，这里不支持（价格序列 d=1 足够）
-  throw new Error(`一步预测还原仅支持 d≤1，当前 d=${fit.d}`);
+  throw new DomainError(`一步预测还原仅支持 d≤1，当前 d=${fit.d}`, 400, 'TS_PARAM');
 }

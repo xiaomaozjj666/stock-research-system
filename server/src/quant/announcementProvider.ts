@@ -17,6 +17,7 @@
  * 由调用方降级（与 eventProvider 同语义）。
  */
 import { withQuantCache } from './quantCache.js';
+import { DomainError } from '../utils/domainError.js';
 import { isAShareCode } from '../utils/stockCode.js';
 
 const LIST_URL = 'https://np-anotice-stock.eastmoney.com/api/security/ann';
@@ -69,7 +70,7 @@ export async function fetchAnnouncementList(
 ): Promise<AnnouncementListResult> {
   const c = code.trim();
   if (!isAShareCode(c)) {
-    throw new Error('公告查询需 6 位 A 股代码');
+    throw new DomainError('公告查询需 6 位 A 股代码', 400, 'ANNOUNCEMENT_PARAM');
   }
   const size = Math.max(1, Math.min(Math.floor(pageSize), 30));
   return withQuantCache(`ann_list_${c}_${size}`, announcementCacheTtlMs(), async () => {
@@ -90,7 +91,7 @@ export async function fetchAnnouncementList(
 /** 公告正文全文（纯文本；已发布公告不可变 → 30 天缓存） */
 export async function fetchAnnouncementContent(artCode: string): Promise<string> {
   const art = artCode.trim();
-  if (!art) throw new Error('artCode 必填');
+  if (!art) throw new DomainError('artCode 必填', 400, 'ANNOUNCEMENT_PARAM');
   return withQuantCache(`ann_content_${art}`, CONTENT_TTL_MS, async () => {
     const url = `${CONTENT_URL}?art_code=${encodeURIComponent(art)}&client_source=web&page_index=1`;
     const json = (await fetchJson(url)) as ContentResponse;

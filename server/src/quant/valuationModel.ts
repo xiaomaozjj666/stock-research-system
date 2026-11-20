@@ -18,6 +18,7 @@
  * 全部纯函数、确定性、零依赖（与 quant 内核同一纪律）。
  */
 import type { FinancialData, ValuationData } from '../types.js';
+import { DomainError } from '../utils/domainError.js';
 
 export interface DcfAssumptions {
   /** 显性期年增速（小数，如 0.12） */
@@ -59,14 +60,18 @@ export interface DcfResult {
 /** 单元格错误（g2 ≥ r 等非法假设）时给 NaN，让矩阵如实显示不可算 */
 export function twoStageEpsDcf(input: DcfAssumptions): DcfResult {
   const { baseEps, growthRate1, growthRate2, discountRate, explicitYears } = input;
-  if (!(baseEps > 0)) throw new Error('baseEps 需为正数');
-  if (!(discountRate > 0)) throw new Error('discountRate 需为正数');
+  if (!(baseEps > 0)) throw new DomainError('baseEps 需为正数', 400, 'VALUATION_PARAM');
+  if (!(discountRate > 0)) {
+    throw new DomainError('discountRate 需为正数', 400, 'VALUATION_PARAM');
+  }
   if (!(Number.isInteger(explicitYears) && explicitYears >= 1 && explicitYears <= 15)) {
-    throw new Error('explicitYears 需为 1-15 的整数');
+    throw new DomainError('explicitYears 需为 1-15 的整数', 400, 'VALUATION_PARAM');
   }
   if (growthRate2 >= discountRate) {
-    throw new Error(
+    throw new DomainError(
       `永续增速 g2（${(growthRate2 * 100).toFixed(1)}%）必须严格小于折现率 r（${(discountRate * 100).toFixed(1)}%），否则终值发散`,
+      400,
+      'VALUATION_PARAM',
     );
   }
 
@@ -269,6 +274,37 @@ export function runValuationModel(
     'EPS 贴现近似：未建模再投资率与净债务，对高资本开支/高杠杆公司偏乐观，结论需与经营现金流和 PB 分位交叉印证',
     '终值对 g2/r 极其敏感：g2 接近 r 时终值主导估值，请结合敏感性矩阵解读而非只看单点',
   ];
+
+  // 显式传入的假设先做契约校验：非法假设是**调用方的错**（400），
+  // 与「数据缺失导致模型不可执行」的降级路径（保持 200 + dcf:null + limitation）
+  // 区分开——此前显式 discountRate=-1 会被内部 catch 吞成 200/null，用户无法察觉
+  if (options.baseEps !== undefined && !(options.baseEps > 0)) {
+    throw new DomainError('baseEps 需为正数', 400, 'VALUATION_PARAM');
+  }
+  if (options.discountRate !== undefined && !(options.discountRate > 0)) {
+    throw new DomainError('discountRate 需为正数', 400, 'VALUATION_PARAM');
+  }
+  if (
+    options.explicitYears !== undefined &&
+    !(
+      Number.isInteger(options.explicitYears) &&
+      options.explicitYears >= 1 &&
+      options.explicitYears <= 15
+    )
+  ) {
+    throw new DomainError('explicitYears 需为 1-15 的整数', 400, 'VALUATION_PARAM');
+  }
+  if (
+    options.growthRate2 !== undefined &&
+    options.discountRate !== undefined &&
+    options.growthRate2 >= options.discountRate
+  ) {
+    throw new DomainError(
+      `永续增速 g2（${(options.growthRate2 * 100).toFixed(1)}%）必须严格小于折现率 r（${(options.discountRate * 100).toFixed(1)}%）`,
+      400,
+      'VALUATION_PARAM',
+    );
+  }
 
   // 基期 EPS：优先调用方覆盖 → 最新年报 EPS
   const baseEpsInput = options.baseEps ?? financial.eps[financial.eps.length - 1];

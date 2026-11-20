@@ -21,6 +21,7 @@
  */
 
 import logger from '../utils/logger.js';
+import { DomainError } from '../utils/domainError.js';
 import { isHKCode, isUSCode } from '../utils/stockCode.js';
 import { fetchKlineBySecid } from './dataProvider.js';
 import type { OHLCVData } from './types.js';
@@ -371,12 +372,12 @@ export async function fetchIntlKlines(
 ): Promise<OHLCVData[]> {
   const c = code.trim();
   if (market === 'HK' && !/^\d{4,5}$/.test(c)) {
-    throw new Error(`港股代码需为 4-5 位数字（当前 ${c}）`);
+    throw new DomainError(`港股代码需为 4-5 位数字（当前 ${c}）`, 400, 'INTL_PARAM');
   }
   if (market === 'US' && !isUSCode(c)) {
     // 与路由层接受面保持一致（允许 BRK.B / BF-B 这类带 `.`/`-` 的合法美股），
     // 不再出现「上一层放行、下一层用另一份正则拒绝」的自相矛盾
-    throw new Error(`美股代码需为字母代码如 TSLA / BRK.B（当前 ${c}）`);
+    throw new DomainError(`美股代码需为字母代码如 TSLA / BRK.B（当前 ${c}）`, 400, 'INTL_PARAM');
   }
   const secid = formatIntlCode(c, market);
   const bars = await fetchKlineBySecid(secid, startDate, endDate, secid);

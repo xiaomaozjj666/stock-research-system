@@ -1,3 +1,4 @@
+import { DomainError } from '../../utils/domainError.js';
 /**
  * Kalman 滤波：信号提取与时变对冲比率。
  * ============================================================================
@@ -74,7 +75,7 @@ export function localLevelFilter(
 ): LocalLevelResult {
   const qRatio = opts.qRatio ?? 0.1;
   if (series.length < 10) {
-    throw new Error(`局部水平滤波需要至少 10 个观测，当前 ${series.length}`);
+    throw new DomainError(`局部水平滤波需要至少 10 个观测，当前 ${series.length}`, 502, 'TS_DATA');
   }
   const m = series.reduce((a, b) => a + b, 0) / series.length;
   const { level, variance, oneStepErrors } = scalarFilter(series, qRatio, m);
@@ -131,7 +132,7 @@ export function timeVaryingBeta(
     throw new Error(`y 与 x 长度不一致：${y.length} vs ${x.length}`);
   }
   if (y.length < 30) {
-    throw new Error(`时变对冲比率需要至少 30 个对齐观测，当前 ${y.length}`);
+    throw new DomainError(`时变对冲比率需要至少 30 个对齐观测，当前 ${y.length}`, 502, 'TS_DATA');
   }
   const qRatio = opts.qRatio ?? 1e-4;
 

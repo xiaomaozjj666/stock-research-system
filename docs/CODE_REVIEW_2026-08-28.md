@@ -499,8 +499,23 @@ outcomeTracker）。子代理审 + 主会话逐条复核后修复。
   llmAdmin 校准 5、improvement 3、ensemble 权重上限 1。
 - 全量 3660 用例 / 269 文件绿；覆盖率 93.61/91.55/93.33/82.08。
 
-### 明确未做（记录在案）
+### 遗留项收口：领域错误类型化（同日晚些时候完成）
 
-- 时间序列/公告/估值路由的「中文正则错误分类」（含"失败"的上游错误会被当
-  400）——需 analyzer 抛带 code 的领域错误，改动面涉及全部抛出点，排期待定。
-- `intl`/`timeseries` 之外无已知行为变更遗留。
+上一版列为「明确未做」的中文正则错误分类已落地：新增
+`utils/domainError.ts`（DomainError 携带 status + 稳定 code），服务层在确定
+错误性质时抛类型化错误，路由按类型映射状态码：
+
+- timeseries 全链路：analyze 的参数（TS_PARAM）与数据不足（TS_DATA）、5 个
+  计量 helper 的观测不足（TS_DATA）、arima 的 d>1 限制（TS_PARAM）；
+  `DateRangeParamError` 归入 DomainError（DATE_RANGE_PARAM）；
+- announcements（ANNOUNCEMENT_PARAM）、valuationModel（VALUATION_PARAM）、
+  intlDataProvider 代码形态（INTL_PARAM）、compositeService 取数失败
+  （DATA_UNAVAILABLE → 422）；
+- 五处路由（quantOps ×3、intl、quantCore）改为 `isDomainError` 映射；
+  未类型化异常一律 500 并记日志（含「失败」字样的上游错误不再被误判为 400）；
+- OpenAPI 的错误描述点名稳定 code（ErrorResponse.code 本就存在）；
+- 测试：llmLimits 的领域映射用例改为类型化断言并加「纯文案不参与状态判定」
+  反断言；新增 routes.domainErrors（基础语义/服务层抛类型/路由三态映射）。
+- 已知边界：`market.ts` 的 toReadableFailure 仍按文案给**每只结果**打分类码
+  （compare 的 200 内嵌失败项，不是 HTTP 状态码），其来源是 dataService 的
+  稳定本地包装文案，不影响客户端重试决策——保留并在注释中说明。

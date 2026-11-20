@@ -23,6 +23,7 @@
  */
 
 import { olsWithStats } from './linalg.js';
+import { DomainError } from '../../utils/domainError.js';
 
 export type AdfSpec = 'n' | 'c' | 'ct';
 
@@ -149,7 +150,7 @@ export function adfTest(
   const spec = opts.spec ?? 'c';
   const criterion = opts.criterion ?? 'aic';
   if (y.length < 8) {
-    throw new Error(`ADF 检验需要至少 8 个观测，当前 ${y.length}`);
+    throw new DomainError(`ADF 检验需要至少 8 个观测，当前 ${y.length}`, 502, 'TS_DATA');
   }
   const n = y.length;
   const maxLag = Math.max(0, Math.min(opts.maxLag ?? schwertMaxLag(n), schwertMaxLag(n)));

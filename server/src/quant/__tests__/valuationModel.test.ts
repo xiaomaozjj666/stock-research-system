@@ -10,6 +10,7 @@ import {
   epsCagr,
   runValuationModel,
 } from '../valuationModel.js';
+import { DomainError } from '../../utils/domainError.js';
 import type { FinancialData, ValuationData } from '../../types.js';
 
 describe('twoStageEpsDcf — 数学正确性', () => {
@@ -177,6 +178,34 @@ describe('runValuationModel — 组合入口', () => {
     expect(r.comparables.sampleSize).toBe(3);
     // 局限声明始终随结果返回
     expect(r.limitations.some((l) => l.includes('EPS 贴现近似'))).toBe(true);
+  });
+
+  it('显式传入非法假设 → 400 VALUATION_PARAM（与数据缺失的降级路径区分）', () => {
+    const err = (() => {
+      try {
+        runValuationModel('600519', financial, valuation, { discountRate: -1 });
+        return null;
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(err).toBeInstanceOf(DomainError);
+    expect((err as DomainError).status).toBe(400);
+    expect((err as DomainError).code).toBe('VALUATION_PARAM');
+
+    // g2 >= r 且两者都显式传入 → 同样拒绝（此前被内部 catch 吞成 200/dcf:null）
+    const err2 = (() => {
+      try {
+        runValuationModel('600519', financial, valuation, {
+          discountRate: 0.05,
+          growthRate2: 0.05,
+        });
+        return null;
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(err2).toBeInstanceOf(DomainError);
   });
 
   it('EPS 缺失 → dcf=null 如实披露，可比表仍返回', () => {

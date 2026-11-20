@@ -32,7 +32,13 @@ EnvConfig 收敛为有真实消费者的三字段；Tushare token 启用退市�
 Baostock sidecar 接入指数历史成分（幸存者偏差正面修复）；两融 PIT 因子族、
 机构一致预期、组合回测 T+1 次日开盘撮合。
 
-**门禁**：测试 3599 → 3660（269 文件），覆盖率阈值 92/90/92/80 下实测
+**错误契约**：新增 DomainError（status + 稳定 code），timeseries / 公告 /
+估值 / 港美股代码 / 组合 alpha 的错误按类型映射状态码，路由不再嗅探中文文案
+（含「失败」的上游错误曾被误判为 400）；ErrorResponse.code 在 OpenAPI 中逐项
+点名（TS_PARAM / TS_DATA / DATE_RANGE_PARAM / VALUATION_PARAM / INTL_PARAM /
+ANNOUNCEMENT_PARAM / DATA_UNAVAILABLE）。
+
+**门禁**：测试 3599 → 3670（270 文件），覆盖率阈值 92/90/92/80 下实测
 93.61/91.55/93.33/82.08；CI 全绿。相关提交：c85f9b9 / aed5e39 / 7c2d859 /
 da18298 / 3af3386 / c840cf5 / 6df6ee4。
 

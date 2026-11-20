@@ -11,6 +11,7 @@ import {
 import { normalizeStockCode, normalizeStockCodeFor, type StockMarket } from '../utils/stockCode.js';
 import { errorDetail } from '../utils/errorDetail.js';
 import { resolveDateRangeFromRaw } from '../utils/dateRange.js';
+import { domainErrorPayload, isDomainError } from '../utils/domainError.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -108,9 +109,10 @@ router.get('/api/intl/klines', metaLimiter, async (req, res) => {
       klines: bars,
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (/(需|不足|至少|无效)/.test(msg)) {
-      return res.status(400).json({ error: msg });
+    // 代码形态等客户端错误已类型化为 DomainError（INTL_PARAM→400），
+    // 不再嗅探中文文案（此前含「不足」的上游错误会被误判为 400）
+    if (isDomainError(error)) {
+      return res.status(error.status).json(domainErrorPayload(error));
     }
     logger.error('Intl klines error', { route: '/api/intl/klines', err: error });
     res.status(500).json({ error: '港美股 K 线获取失败', detail: errorDetail(error) });

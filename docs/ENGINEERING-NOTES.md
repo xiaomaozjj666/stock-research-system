@@ -1467,3 +1467,11 @@ fetch stub（service 已 mock、响应确定），且覆盖的是**当前最大�
   （fqt=1 前复权）混算，送转/除息会直接变成假命中/假失败并污染命中率闭环。
 - **限流管不住并发**：rate-limit 按客户端计数，昂贵端点（全市场扫描/批量表达式）
   还需进程内信号量（utils/heavyGate.ts），否则多开/连点即可叠加 N 份。
+
+- **HTTP 状态码必须由错误类型决定，不能嗅探中文文案**：`/(需|不足|失败)/` 这类
+  正则会把含「失败」的上游错误判成 400（客户端不再退避重试），新文案漏字则退化成
+  500。约定：服务层确定性质时抛 `utils/domainError.ts` 的 DomainError（status +
+  稳定 code），路由 `isDomainError` 映射；未类型化异常一律 500。
+- **ErrorResponse.code 是给程序判断的稳定标识**，与面向用户的 error 文案解耦：
+  新增错误码时同步 OpenAPI 描述（如 TS_PARAM / TS_DATA / DATE_RANGE_PARAM /
+  VALUATION_PARAM / INTL_PARAM / ANNOUNCEMENT_PARAM / DATA_UNAVAILABLE）。

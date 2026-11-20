@@ -55,6 +55,7 @@ import {
 } from '../services/quant/panelService.js';
 import { abortOnClientClose } from '../utils/clientAbort.js';
 import { tryAcquireGate } from '../utils/heavyGate.js';
+import { domainErrorPayload, isDomainError } from '../utils/domainError.js';
 import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 import { isAShareCode } from '../utils/stockCode.js';
@@ -239,17 +240,12 @@ router.post(
       });
       res.json(result);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      // 闸门排队超时 → 429 + Retry-After（此前落到 500，客户端无法据此退避重试）。
-      // 放在下面两条中文正则**之前**：排队超时也是「可重试」语义，若将来错误文案
-      // 演变到含「需/不足/失败」等字样，会被 400/502 分支先一步吃掉，退化成参数错误。
+      // 闸门排队超时 → 429 + Retry-After（可退避重试语义，优先于领域错误）
       if (respondIfQueueTimeout(res, error, '/api/quant/timeseries/analyze')) return;
-      // 取数不足属上游/窗口问题（502），其余中文校验信息为参数问题（400）
-      if (/(数据不足|观测不足|对齐后仅)/.test(msg)) {
-        return res.status(502).json({ error: msg });
-      }
-      if (/(需|不足|至少|一致|失败|必填)/.test(msg)) {
-        return res.status(400).json({ error: msg });
+      // 领域错误按类型映射（TS_PARAM→400 / TS_DATA→502 / DATE_RANGE_PARAM→400）：
+      // 此前用中文正则嗅探 message，含「失败」的上游错误会被当 400、新文案漏字变 500
+      if (isDomainError(error)) {
+        return res.status(error.status).json(domainErrorPayload(error));
       }
       logger.error('Timeseries analyze error', {
         route: '/api/quant/timeseries/analyze',
@@ -317,9 +313,8 @@ router.get('/api/quant/announcements', quantLimiter, async (req, res) => {
     const pageSize = Number.isFinite(limitRaw) ? limitRaw : 10;
     res.json(await fetchAnnouncementList(code, pageSize));
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (/(需|必填)/.test(msg)) {
-      return res.status(400).json({ error: msg });
+    if (isDomainError(error)) {
+      return res.status(error.status).json(domainErrorPayload(error));
     }
     logger.error('Announcements error', { route: '/api/quant/announcements', err: error });
     res.status(502).json({ error: '公告获取失败（上游不可达时如实重试）' });
@@ -351,9 +346,8 @@ router.post('/api/quant/valuation/model', quantLimiter, circuitBreakerGuard, asy
     });
     res.json(result);
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (/(需|必填|严格小于|正数|整数)/.test(msg)) {
-      return res.status(400).json({ error: msg });
+    if (isDomainError(error)) {
+      return res.status(error.status).json(domainErrorPayload(error));
     }
     logger.error('Valuation model error', { route: '/api/quant/valuation/model', err: error });
     res.status(502).json({ error: '估值建模失败（数据获取或计算异常）' });

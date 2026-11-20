@@ -20,6 +20,7 @@
  */
 
 import { gaussianStream } from './linalg.js';
+import { DomainError } from '../../utils/domainError.js';
 
 export type GarchModel = 'garch' | 'egarch';
 
@@ -225,7 +226,7 @@ function garchPenalty(omega: number, alpha: number, beta: number): number {
  */
 export function fitGarch(returns: number[], opts: { maxIter?: number } = {}): GarchFit {
   if (returns.length < 60) {
-    throw new Error(`GARCH 拟合需要至少 60 个观测，当前 ${returns.length}`);
+    throw new DomainError(`GARCH 拟合需要至少 60 个观测，当前 ${returns.length}`, 502, 'TS_DATA');
   }
   const mu = returns.reduce((a, b) => a + b, 0) / returns.length;
   const eps = returns.map((r) => r - mu);
@@ -293,7 +294,7 @@ export function fitGarch(returns: number[], opts: { maxIter?: number } = {}): Ga
  */
 export function fitEgarch(returns: number[], opts: { maxIter?: number } = {}): GarchFit {
   if (returns.length < 60) {
-    throw new Error(`EGARCH 拟合需要至少 60 个观测，当前 ${returns.length}`);
+    throw new DomainError(`EGARCH 拟合需要至少 60 个观测，当前 ${returns.length}`, 502, 'TS_DATA');
   }
   const mu = returns.reduce((a, b) => a + b, 0) / returns.length;
   const eps = returns.map((r) => r - mu);

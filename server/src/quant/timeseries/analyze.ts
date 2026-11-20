@@ -9,6 +9,7 @@
  * HTTP 路由按 message 命中「数据不足/观测不足」映射 502，其余映射 400。
  */
 import { fetchOHLCVData } from '../dataProvider.js';
+import { DomainError } from '../../utils/domainError.js';
 import { resolveDateRangeFromRaw } from '../../utils/dateRange.js';
 import { adfTest, type AdfSpec } from './adf.js';
 import { fitVolatilityModels } from './garch.js';
@@ -78,13 +79,17 @@ export async function analyzeTimeseries(
 ): Promise<TimeseriesAnalyzeResult> {
   const test = (input.test ?? '').trim() as TsTest;
   if (!TS_TESTS.includes(test)) {
-    throw new Error(`test 需为 ${TS_TESTS.map((t) => `'${t}'`).join(' | ')} 之一`);
+    throw new DomainError(
+      `test 需为 ${TS_TESTS.map((t) => `'${t}'`).join(' | ')} 之一`,
+      400,
+      'TS_PARAM',
+    );
   }
   const code = (input.code ?? '').trim();
   const code2 = (input.code2 ?? '').trim();
-  if (!code) throw new Error('code 必填');
+  if (!code) throw new DomainError('code 必填', 400, 'TS_PARAM');
   if ((test === 'coint' || test === 'kalman-beta') && !code2) {
-    throw new Error(`test='${test}' 需要第二条序列（code2）`);
+    throw new DomainError(`test='${test}' 需要第二条序列（code2）`, 400, 'TS_PARAM');
   }
 
   // 时间窗口：默认近 3 年（日频 ≈ 730 个观测，GARCH/ADF 都够用），上限 10 年。
@@ -97,13 +102,19 @@ export async function analyzeTimeseries(
   );
   // 零宽窗口对时序检验毫无意义（与旧行为一致：startDate 必须早于 endDate）
   if (startDate === endDate) {
-    throw new Error(`startDate 需早于 endDate（当前窗口长度为 0：${startDate}）`);
+    throw new DomainError(
+      `startDate 需早于 endDate（当前窗口长度为 0：${startDate}）`,
+      400,
+      'TS_PARAM',
+    );
   }
 
   const klines = await fetchOHLCVData(code, startDate, endDate);
   if (!klines || klines.length < 60) {
-    throw new Error(
+    throw new DomainError(
       `${code} 的 K 线数据不足（${klines?.length ?? 0} 条 < 60），请检查代码或扩大时间窗口`,
+      502,
+      'TS_DATA',
     );
   }
   const closes: CloseRow[] = klines.map((k) => ({ date: k.date, close: k.close }));
@@ -113,7 +124,9 @@ export async function analyzeTimeseries(
   if (test === 'adf') {
     const on = options.on === 'price' ? 'price' : 'return';
     const spec = (typeof options.spec === 'string' ? options.spec : 'c') as AdfSpec;
-    if (!['n', 'c', 'ct'].includes(spec)) throw new Error("spec 需为 'n' | 'c' | 'ct'");
+    if (!['n', 'c', 'ct'].includes(spec)) {
+      throw new DomainError("spec 需为 'n' | 'c' | 'ct'", 400, 'TS_PARAM');
+    }
     const series =
       on === 'price' ? closes.map((r) => r.close) : logReturns(closes.map((r) => r.close));
     const result = adfTest(series, {
@@ -138,7 +151,7 @@ export async function analyzeTimeseries(
   if (test === 'garch') {
     const returns = logReturns(closes.map((r) => r.close));
     if (returns.length < 60) {
-      throw new Error('对数收益观测不足 60 条，无法拟合 GARCH');
+      throw new DomainError('对数收益观测不足 60 条，无法拟合 GARCH', 502, 'TS_DATA');
     }
     return { test, code, window, result: fitVolatilityModels(returns) };
   }
@@ -160,14 +173,22 @@ export async function analyzeTimeseries(
   // coint / kalman-beta：需要第二条对齐序列
   const klines2 = await fetchOHLCVData(code2, startDate, endDate);
   if (!klines2 || klines2.length < 60) {
-    throw new Error(`${code2} 的 K 线数据不足（${klines2?.length ?? 0} 条 < 60）`);
+    throw new DomainError(
+      `${code2} 的 K 线数据不足（${klines2?.length ?? 0} 条 < 60）`,
+      502,
+      'TS_DATA',
+    );
   }
   const aligned = alignCloses(
     closes,
     klines2.map((k) => ({ date: k.date, close: k.close })),
   );
   if (aligned.y.length < 60) {
-    throw new Error(`两序列按日期对齐后仅 ${aligned.y.length} 条（<60），日期范围可能不重叠`);
+    throw new DomainError(
+      `两序列按日期对齐后仅 ${aligned.y.length} 条（<60），日期范围可能不重叠`,
+      502,
+      'TS_DATA',
+    );
   }
   const windowAligned = { startDate, endDate, n: aligned.y.length };
 

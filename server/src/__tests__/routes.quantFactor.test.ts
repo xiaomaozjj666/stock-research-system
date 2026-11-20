@@ -246,13 +246,24 @@ describe('POST /api/quant/factor/composite', () => {
     expect(res.body.error).toContain('stockCode');
   });
 
-  it('K 线不可得（服务抛「无法获取」）→ 422 数据问题语义', async () => {
-    mockedComposite.mockRejectedValue(new Error('无法获取股票 999999 的K线数据'));
+  it('K 线不可得（服务抛类型化 DATA_UNAVAILABLE）→ 422；未类型化异常 → 500', async () => {
+    // 领域错误按类型映射（不再嗅探「无法获取」字面）
+    const { DomainError } = await import('../utils/domainError.js');
+    mockedComposite.mockRejectedValue(
+      new DomainError('无法获取股票 999999 的K线数据', 422, 'DATA_UNAVAILABLE'),
+    );
     const res = await request(app)
       .post('/api/quant/factor/composite')
       .send({ stockCode: '999999' });
     expect(res.status).toBe(422);
     expect(res.body.detail).toContain('无法获取');
+
+    // 反断言：同样是「无法获取」文案，但未类型化 → 500（文案不再参与状态判定）
+    mockedComposite.mockRejectedValue(new Error('无法获取股票 999999 的K线数据'));
+    const plain = await request(app)
+      .post('/api/quant/factor/composite')
+      .send({ stockCode: '999999' });
+    expect(plain.status).toBe(500);
   });
 
   it('合法请求 → 200 且 horizons 透传', async () => {

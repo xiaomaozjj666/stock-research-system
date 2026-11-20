@@ -73,7 +73,9 @@ export const intlPaths = {
             required: ['code', 'market', 'startDate', 'endDate', 'count', 'klines'],
           },
         ),
-        400: errorResponse('参数非法，或传入 A 股代码'),
+        400: errorResponse(
+          '参数非法或传入 A 股代码；代码形态错误（code: INTL_PARAM）、日期非法（code: DATE_RANGE_PARAM）',
+        ),
         429: errorResponse('触发限流（元数据默认每分钟 30 次）'),
         502: errorResponse('上游 K 线获取失败'),
       },

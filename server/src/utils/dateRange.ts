@@ -1,3 +1,4 @@
+import { DomainError } from './domainError.js';
 /**
  * 取数区间（startDate / endDate）校验
  * ----------------------------------------------------------------------------
@@ -33,9 +34,9 @@ export const DEFAULT_SCREENER_WINDOW_DAYS = 400;
 export const DEFAULT_FACTOR_WINDOW_DAYS = 730;
 
 /** 区间入参校验失败（路由据此回 400 而不是 500）：message 为可直接展示的中文说明 */
-export class DateRangeParamError extends Error {
+export class DateRangeParamError extends DomainError {
   constructor(message: string) {
-    super(message);
+    super(message, 400, 'DATE_RANGE_PARAM');
     this.name = 'DateRangeParamError';
   }
 }

@@ -7999,7 +7999,7 @@
                 }
               }
             },
-            "description": "参数非法，或传入 A 股代码"
+            "description": "参数非法或传入 A 股代码；代码形态错误（code: INTL_PARAM）、日期非法（code: DATE_RANGE_PARAM）"
           },
           "429": {
             "content": {
@@ -8759,7 +8759,7 @@
                 }
               }
             },
-            "description": "未提供 artCode 且 code 不是 6 位 A 股代码"
+            "description": "未提供 artCode 且 code 不是 6 位 A 股代码；或 artCode 非法（code: ANNOUNCEMENT_PARAM）"
           },
           "429": {
             "content": {
@@ -8943,7 +8943,7 @@
                 }
               }
             },
-            "description": "无法获取 K 线数据"
+            "description": "K 线数据不可得（code: DATA_UNAVAILABLE）"
           },
           "429": {
             "content": {
@@ -10005,7 +10005,7 @@
                 }
               }
             },
-            "description": "参数非法（窗口、至少观测数、区间一致性等）"
+            "description": "参数非法（code: TS_PARAM / DATE_RANGE_PARAM；窗口、spec、日期等）"
           },
           "429": {
             "content": {
@@ -10035,7 +10035,7 @@
                 }
               }
             },
-            "description": "取数不足（数据不足 / 观测不足 / 对齐后样本过少）"
+            "description": "取数不足（code: TS_DATA；数据不足 / 观测不足 / 对齐后样本过少）"
           },
           "503": {
             "content": {
@@ -10171,7 +10171,7 @@
                 }
               }
             },
-            "description": "代码非法或假设违反约束（增长率/折现率/显性年数等）"
+            "description": "代码非法或假设违反约束（code: VALUATION_PARAM；增长率/折现率/显性年数等）"
           },
           "429": {
             "content": {
