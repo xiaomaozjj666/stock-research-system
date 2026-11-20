@@ -65,8 +65,11 @@ export const llmPaths = {
       summary: '记录一次模型判断的验证结果（correct = 事后被验证正确）',
       requestBody: jsonBody({
         type: 'object',
-        properties: { model: { type: 'string' }, correct: { type: 'boolean' } },
-        required: ['model'],
+        properties: {
+          model: { type: 'string', description: '模型 ID（1-64 位字母数字，可含 . _ : / -）' },
+          correct: { type: 'boolean', description: '事后是否验证正确；必须显式传布尔' },
+        },
+        required: ['model', 'correct'],
       }),
       responses: {
         200: jsonOk(
@@ -84,7 +87,7 @@ export const llmPaths = {
             required: ['ok', 'weights'],
           },
         ),
-        400: errorResponse('未提供 model'),
+        400: errorResponse('model 缺失/超长/含非法字符，或 correct 不是布尔值（不做隐式转换）'),
         429: errorResponse('触发限流'),
         500: errorResponse('校准记录失败'),
       },

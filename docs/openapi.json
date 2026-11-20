@@ -7007,7 +7007,7 @@
                 }
               }
             },
-            "description": "股票代码无效"
+            "description": "股票代码无效，或日期非法（需为 YYYY-MM-DD 的真实日期）"
           },
           "429": {
             "content": {
@@ -7017,7 +7017,7 @@
                 }
               }
             },
-            "description": "触发限流"
+            "description": "触发限流 / 同类评估并发已满（retryAfterSeconds=30）"
           },
           "500": {
             "content": {
@@ -8070,13 +8070,15 @@
               "schema": {
                 "properties": {
                   "correct": {
+                    "description": "事后是否验证正确；必须显式传布尔",
                     "type": "boolean"
                   },
                   "model": {
+                    "description": "模型 ID（1-64 位字母数字，可含 . _ : / -）",
                     "type": "string"
                   }
                 },
-                "required": ["model"],
+                "required": ["model", "correct"],
                 "type": "object"
               }
             }
@@ -8116,7 +8118,7 @@
                 }
               }
             },
-            "description": "未提供 model"
+            "description": "model 缺失/超长/含非法字符，或 correct 不是布尔值（不做隐式转换）"
           },
           "429": {
             "content": {
@@ -9546,7 +9548,7 @@
                 }
               }
             },
-            "description": "触发限流，或 LLM 排队超时（带 Retry-After）"
+            "description": "触发限流 / 同类评估并发已满（retryAfterSeconds=30）/ LLM 排队超时"
           },
           "503": {
             "content": {
@@ -9631,7 +9633,7 @@
                 }
               }
             },
-            "description": "触发限流，或 LLM 排队超时（带 Retry-After）"
+            "description": "触发限流 / 已有批量验证在运行（retryAfterSeconds=30）/ LLM 排队超时"
           },
           "500": {
             "content": {
@@ -9901,7 +9903,7 @@
                 }
               }
             },
-            "description": "参数非法"
+            "description": "参数非法（maxStocks 需为 ≥1 的整数；日期需为真实日历日）"
           },
           "429": {
             "content": {
@@ -9911,7 +9913,7 @@
                 }
               }
             },
-            "description": "触发限流，或 LLM 排队超时（带 Retry-After）"
+            "description": "触发限流 / 同类任务并发已满（retryAfterSeconds=30）/ LLM 排队超时"
           },
           "500": {
             "content": {

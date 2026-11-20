@@ -2826,8 +2826,10 @@ export type GETApiLlmCalibrationResponse = {
  * 端点：POST /api/llm/calibration
  */
 export type POSTApiLlmCalibrationRequestBody = {
+  /** 模型 ID（1-64 位字母数字，可含 . _ : / -） */
   model: string;
-  correct?: boolean;
+  /** 事后是否验证正确；必须显式传布尔 */
+  correct: boolean;
 };
 
 /**
