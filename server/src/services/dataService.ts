@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { DomainError } from '../utils/domainError.js';
 import * as path from 'path';
 
 import { DATA_ROOT } from '../dataRoot.js';
@@ -287,7 +288,11 @@ async function fetchDataAndCache(stockCode: string): Promise<StockDataSet> {
         valuation: MOUTAI_VALUATION,
       });
     }
-    throw new Error(`无法获取股票数据: ${stockCode}，${(error as Error).message}`);
+    throw new DomainError(
+      `无法获取股票数据: ${stockCode}，${(error as Error).message}`,
+      502,
+      'DATA_UNAVAILABLE',
+    );
   }
 }
 

@@ -115,7 +115,8 @@ router.get('/api/intl/klines', metaLimiter, async (req, res) => {
       return res.status(error.status).json(domainErrorPayload(error));
     }
     logger.error('Intl klines error', { route: '/api/intl/klines', err: error });
-    res.status(500).json({ error: '港美股 K 线获取失败', detail: errorDetail(error) });
+    // 上游不可达属 502（OpenAPI 已如此声明；此前代码回 500，契约与实现不一致）
+    res.status(502).json({ error: '港美股 K 线获取失败', detail: errorDetail(error) });
   }
 });
 

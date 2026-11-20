@@ -17,6 +17,7 @@
  */
 
 import type { QuarterlyReport, QuarterlySeries } from '../shared/quarterlyTypes.js';
+import { DomainError } from '../utils/domainError.js';
 import { fetchJson } from '../utils/http.js';
 import logger from '../utils/logger.js';
 import { yuanToYi } from './dataFetcher.js';
@@ -93,7 +94,7 @@ export async function fetchQuarterlyFinancials(code: string, limit = 16): Promis
   } | null;
   const rows = json?.result?.data ?? [];
   if (!Array.isArray(rows) || rows.length === 0) {
-    throw new Error(`无法获取 ${code} 的季度财务数据`);
+    throw new DomainError(`无法获取 ${code} 的季度财务数据`, 502, 'DATA_UNAVAILABLE');
   }
   const series = parseQuarterlyRecords(rows, code);
   if (series.reports.length === 0) {

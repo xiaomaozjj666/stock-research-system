@@ -516,6 +516,9 @@ outcomeTracker）。子代理审 + 主会话逐条复核后修复。
 - OpenAPI 的错误描述点名稳定 code（ErrorResponse.code 本就存在）；
 - 测试：llmLimits 的领域映射用例改为类型化断言并加「纯文案不参与状态判定」
   反断言；新增 routes.domainErrors（基础语义/服务层抛类型/路由三态映射）。
-- 已知边界：`market.ts` 的 toReadableFailure 仍按文案给**每只结果**打分类码
-  （compare 的 200 内嵌失败项，不是 HTTP 状态码），其来源是 dataService 的
-  稳定本地包装文案，不影响客户端重试决策——保留并在注释中说明。
+- 同批补完 `market.ts` 的每只失败分类：dataService / dataFetcher / pipeline
+  在数据不可得时改抛 DomainError(DATA_UNAVAILABLE)，compare 的
+  toReadableFailure 按类型分类（不再嗅探「无法获取/停牌」文案）；反断言钉住
+  「同文案但未类型化 → 通用兜底」。
+- 顺带对齐一处契约/实现不一致：`/api/intl/klines` 上游失败原先代码回 500，
+  而 OpenAPI 已声明 502 → 改为 502。

@@ -34,8 +34,10 @@ Baostock sidecar 接入指数历史成分（幸存者偏差正面修复）；两
 
 **错误契约**：新增 DomainError（status + 稳定 code），timeseries / 公告 /
 估值 / 港美股代码 / 组合 alpha 的错误按类型映射状态码，路由不再嗅探中文文案
-（含「失败」的上游错误曾被误判为 400）；ErrorResponse.code 在 OpenAPI 中逐项
-点名（TS_PARAM / TS_DATA / DATE_RANGE_PARAM / VALUATION_PARAM / INTL_PARAM /
+（含「失败」的上游错误曾被误判为 400）；dataService/dataFetcher/pipeline 的
+数据不可得同样类型化，compare 的每只失败分类改按类型；港美股 K 线上游失败由
+500 对齐为 OpenAPI 声明的 502。ErrorResponse.code 在 OpenAPI 中逐项点名
+（TS_PARAM / TS_DATA / DATE_RANGE_PARAM / VALUATION_PARAM / INTL_PARAM /
 ANNOUNCEMENT_PARAM / DATA_UNAVAILABLE）。
 
 **门禁**：测试 3599 → 3670（270 文件），覆盖率阈值 92/90/92/80 下实测

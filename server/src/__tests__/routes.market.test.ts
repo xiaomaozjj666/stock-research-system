@@ -55,6 +55,7 @@ vi.mock('../services/analysisPipeline.js', () => ({
 }));
 
 // app 经 withContract 包装：所有 2xx JSON 响应自动接受契约校验（见 test/contractSupertest.ts）
+import { DomainError } from '../utils/domainError.js';
 import { app as rawApp } from '../index.js';
 import { withContract } from '../test/contractSupertest.js';
 import { analysisResult as analysisResultFixture } from '../test/contractFixtures.js';
@@ -204,8 +205,10 @@ describe('POST /api/compare — 2-3 只股票横向对比', () => {
     mocks.runAnalysis.mockImplementation((code: string) =>
       code === '000858'
         ? Promise.reject(
-            new Error(
-              '无法获取股票数据: 000858，上游 http://push2.eastmoney.com/api/qt 返回 500，at fetchQuote (/app/server/src/services/dataService.ts:255)',
+            new DomainError(
+              '无法获取股票数据: 000858，上游 http://push2.eastmoney.com/api/qt 返回 500',
+              502,
+              'DATA_UNAVAILABLE',
             ),
           )
         : Promise.resolve(analysisResult(code, '贵州茅台')),
@@ -261,7 +264,9 @@ describe('POST /api/compare — 2-3 只股票横向对比', () => {
     // 契约选择：请求本身合法，失败只发生在逐只分析阶段；逐只原因必须回传，502/500
     // 只能给一条整体 error（前端就丢了"哪只为什么失败"）。前端约定 stocks 为空即走
     // 既有整体错误提示路径，不渲染空表格。
-    mocks.runAnalysis.mockRejectedValue(new Error('无法获取股票数据: 000858，上游超时'));
+    mocks.runAnalysis.mockRejectedValue(
+      new DomainError('无法获取股票数据: 000858，上游超时', 502, 'DATA_UNAVAILABLE'),
+    );
 
     const res = await request(app)
       .post('/api/compare')
@@ -275,6 +280,19 @@ describe('POST /api/compare — 2-3 只股票横向对比', () => {
       expect(f.error).toBe('行情或财务数据不可用（可能已停牌或数据源异常）');
     }
     expect(res.body.detail).toBeUndefined();
+  });
+
+  it('同文案但未类型化 → 不再被判为数据不可用（分类只看错误类型）', async () => {
+    // 反断言：文案一字不差，但没有 DomainError(DATA_UNAVAILABLE) 类型 → 走通用兜底
+    mocks.runAnalysis.mockRejectedValue(
+      new Error('无法获取股票数据: 000858，上游 http://x 返回 500'),
+    );
+    const res = await request(app)
+      .post('/api/compare')
+      .send({ stockCodes: ['600519', '000858'] });
+    expect(res.status).toBe(200);
+    expect(res.body.failures[0].error).toBe('该股分析未完成，请稍后重试');
+    expect(res.body.failures[0].error).not.toContain('数据不可用');
   });
 
   it('失败原因分类：未知错误走稳定兜底文案，不把原始 message 透给客户端', async () => {

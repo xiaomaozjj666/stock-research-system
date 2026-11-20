@@ -1,4 +1,5 @@
 import type { FinancialData, StockInfo, ValuationData } from '../types.js';
+import { DomainError } from '../utils/domainError.js';
 import { fetchJson } from '../utils/http.js';
 import logger from '../utils/logger.js';
 
@@ -100,7 +101,7 @@ export async function fetchStockInfo(code: string): Promise<StockInfo> {
   const sinaInfo = await fetchStockInfoFromSina(code);
   if (sinaInfo && sinaInfo.name) return sinaInfo;
 
-  throw new Error(`无法获取股票基本信息: ${code}`);
+  throw new DomainError(`无法获取股票基本信息: ${code}`, 502, 'DATA_UNAVAILABLE');
 }
 
 // ============ 获取财务数据 ============
@@ -274,7 +275,7 @@ export async function fetchFinancialData(code: string): Promise<FinancialData> {
   const fallback = await fetchFinancialFallback(code);
   if (fallback) return fallback;
 
-  throw new Error(`无法获取财务数据: ${code}`);
+  throw new DomainError(`无法获取财务数据: ${code}`, 502, 'DATA_UNAVAILABLE');
 }
 
 // ============ 获取估值数据 ============
@@ -496,7 +497,7 @@ export async function fetchValuationData(code: string): Promise<ValuationData> {
   const em = await fetchValuationFromEastMoney(code);
   if (em && em.currentPrice > 0) return em;
 
-  throw new Error(`无法获取估值数据: ${code}`);
+  throw new DomainError(`无法获取估值数据: ${code}`, 502, 'DATA_UNAVAILABLE');
 }
 
 // ============ 数值转换工具 ============

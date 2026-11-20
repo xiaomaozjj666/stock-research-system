@@ -1,4 +1,5 @@
 import type { StrategyConfig, QuantResearchReport } from './types.js';
+import { DomainError } from '../utils/domainError.js';
 import { fetchOHLCVData } from './dataProvider.js';
 import { runBacktest } from './backtestEngine.js';
 import { parseStrategyInput, orchestrate, generateSummary } from './agents/orchestrator.js';
@@ -20,7 +21,11 @@ export async function runQuantPipeline(
   const data = await fetchOHLCVData(strategy.stockCode, strategy.startDate, strategy.endDate);
 
   if (data.length < 30) {
-    throw new Error(`历史数据不足（仅${data.length}条），请扩大时间范围`);
+    throw new DomainError(
+      `历史数据不足（仅${data.length}条），请扩大时间范围`,
+      422,
+      'DATA_UNAVAILABLE',
+    );
   }
 
   // 模拟数据必须显式声明（与 routes/quant.ts 的降级提示一致）：

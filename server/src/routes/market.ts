@@ -2,6 +2,7 @@
  * 股票列表 / 搜索 / 横向对比。
  */
 import { Router } from 'express';
+import { isDomainError } from '../utils/domainError.js';
 import { isAShareCode } from '../utils/stockCode.js';
 import {
   searchLimiter,
@@ -142,7 +143,10 @@ function toReadableFailure(error: unknown): { code: string; error: string; queue
       // 单只分析的 SSE 订阅者断开：批量场景下极罕见（对比走 POST 无订阅者）
       return { code: 'STREAM_DISCONNECTED', error: '分析连接中断，请重试', queueTimeout: false };
     }
-    if (/无法获取股票数据|数据不足|行情|停牌/.test(error.message)) {
+    // 按错误**类型**分类（dataService/dataFetcher/pipeline 在数据不可得时抛
+    // DomainError(DATA_UNAVAILABLE)）；不再嗅探「无法获取/停牌」等中文文案——
+    // 文案调整会让分类静默失效，且无法区分「数据不可得」与「意外异常」
+    if (isDomainError(error) && error.code === 'DATA_UNAVAILABLE') {
       return {
         code: 'DATA_UNAVAILABLE',
         error: '行情或财务数据不可用（可能已停牌或数据源异常）',
