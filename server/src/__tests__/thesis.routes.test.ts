@@ -9,7 +9,11 @@ import { withContract } from '../test/contractSupertest.js';
 import type { ThesisRecord } from '../services/thesisService.js';
 
 const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn(async () => []) }));
-vi.mock('../quant/dataProvider.js', () => ({ fetchOHLCVData: fetchMock }));
+vi.mock('../quant/dataProvider.js', () => ({
+  fetchOHLCVData: fetchMock,
+  A_SHARE_BENCHMARK_SECID: '1.000300',
+  fetchKlineBySecid: async () => [],
+}));
 const app = withContract(rawApp);
 const tmpDir = mkdtempSync(join(tmpdir(), 'thesis-route-'));
 const tmpFile = join(tmpDir, 'theses.json');

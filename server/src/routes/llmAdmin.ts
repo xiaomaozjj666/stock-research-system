@@ -95,13 +95,31 @@ router.get('/api/llm/calibration', quantLimiter, (_req, res) => {
   res.json({ weights: getModelWeights() });
 });
 
+/** 模型标识允许的字符集：字母数字 + . _ : / -（覆盖 deepseek-chat / openai/gpt-4o 等） */
+const MODEL_ID_CHARS = new Set(
+  'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/-'.split(''),
+);
+const MAX_MODEL_ID_LEN = 64;
+
 /** 记录一次模型判断的验证结果（correct = 事后被验证正确） */
 router.post('/api/llm/calibration', quantLimiter, (req, res) => {
   try {
     const body = (req.body ?? {}) as { model?: unknown; correct?: unknown };
     const model = String(body.model ?? '').trim();
     if (!model) return res.status(400).json({ error: '请提供 model' });
-    recordModelOutcome(model, body.correct === true);
+    // model 会作为 JSON key 永久落盘：无长度/字符集上限时，垃圾键可把
+    // calibration.json 无界吹大（GET 还会原样返回）
+    if (model.length > MAX_MODEL_ID_LEN || [...model].some((c) => !MODEL_ID_CHARS.has(c))) {
+      return res
+        .status(400)
+        .json({ error: `model 需为 1-${MAX_MODEL_ID_LEN} 位字母数字（可含 . _ : / -）` });
+    }
+    // correct 隐式缺省会被记成一次 miss（Laplace 权重被永久拉低，进而影响
+    // runEnsemble 投票聚合）——必须显式布尔，不做隐式 false
+    if (typeof body.correct !== 'boolean') {
+      return res.status(400).json({ error: 'correct 需为布尔值（true=事后验证正确）' });
+    }
+    recordModelOutcome(model, body.correct);
     res.json({ ok: true, weights: getModelWeights() });
   } catch (error) {
     logger.error('Calibration record error', { route: '/api/llm/calibration', err: error });

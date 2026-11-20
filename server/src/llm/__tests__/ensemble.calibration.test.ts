@@ -223,4 +223,16 @@ describe('ensemble 校准数据：写后失效（记忆化不得丢数据）', (
 
     expect(getModelWeights()).toEqual({});
   });
+
+  it('权重表条目上限 50：垃圾 model 键不会把 calibration.json 无界吹大', async () => {
+    const { recordModelOutcome, getModelWeights } = await loadEnsemble();
+
+    // 写 60 个一次性模型键（模拟外部端点被刷）
+    for (let i = 0; i < 60; i++) recordModelOutcome(`junk-${i}`, true);
+    const weights = getModelWeights();
+    expect(Object.keys(weights).length).toBeLessThanOrEqual(50);
+    // 新写入的模型永远有位置（淘汰的是样本量最少的旧键）
+    expect(weights['junk-59']).toBeDefined();
+    expect(weights['junk-0']).toBeUndefined();
+  });
 });

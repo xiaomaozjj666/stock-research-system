@@ -171,6 +171,12 @@ describe('POST /api/improvement/run', () => {
     expect(res.body.policySource).toBe('default');
   });
 
+  it('dryRun 传字符串 "true" → 400（否则演练静默变真跑并改判据）', async () => {
+    const res = await request(app).post('/api/improvement/run').send({ dryRun: 'true' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('dryRun');
+  });
+
   it('演练模式：不回传记录（"有记录=已生效"是最容易被误读的地方）', async () => {
     seed(70);
     const res = await request(app).post('/api/improvement/run').send({ dryRun: true });
@@ -260,6 +266,25 @@ describe('改进调度端点（无人值守）', () => {
     } finally {
       if (saved === undefined) delete process.env.IMPROVEMENT_INTERVAL_HOURS;
       else process.env.IMPROVEMENT_INTERVAL_HOURS = saved;
+    }
+  });
+
+  it('start：间隔低于下限（0.25h）→ 400（1e-9 会把进程拖成 1ms 自旋）', async () => {
+    const res = await request(app)
+      .post('/api/improvement/scheduler/start')
+      .send({ intervalHours: 1e-9 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('不得小于');
+    expect(getImprovementSchedulerState()).toBeNull();
+  });
+
+  it('start：intervalHours 非正数/非数值 → 400（不静默忽略回落默认值）', async () => {
+    for (const bad of ['abc', 0, -2]) {
+      const res = await request(app)
+        .post('/api/improvement/scheduler/start')
+        .send({ intervalHours: bad });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('intervalHours');
     }
   });
 

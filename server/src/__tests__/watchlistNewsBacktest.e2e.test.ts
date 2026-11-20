@@ -83,6 +83,8 @@ const NEUTRAL: NewsSignal = {
 vi.mock('../quant/dataProvider.js', () => ({
   fetchOHLCVData: mocks.fetchOHLCVData,
   getBenchmarkCurve: mocks.getBenchmarkCurve,
+  A_SHARE_BENCHMARK_SECID: '1.000300',
+  fetchKlineBySecid: async () => [],
 }));
 
 vi.mock('../quant/newsSignal.js', () => ({

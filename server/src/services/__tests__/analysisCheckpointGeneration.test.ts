@@ -60,6 +60,8 @@ vi.mock('../dataService.js', () => ({
 }));
 vi.mock('../../quant/dataProvider.js', () => ({
   fetchOHLCVData: vi.fn(async () => []),
+  A_SHARE_BENCHMARK_SECID: '1.000300',
+  fetchKlineBySecid: vi.fn(async () => []),
 }));
 vi.mock('../../quant/newsSignal.js', () => ({
   extractNewsSignal: vi.fn(async () => ({ signal: null, source: 'none' })),

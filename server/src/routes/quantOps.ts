@@ -54,6 +54,7 @@ import {
   runSnapshot,
 } from '../services/quant/panelService.js';
 import { abortOnClientClose } from '../utils/clientAbort.js';
+import { tryAcquireGate } from '../utils/heavyGate.js';
 import { errorDetail } from '../utils/errorDetail.js';
 import logger from '../utils/logger.js';
 import { isAShareCode } from '../utils/stockCode.js';
@@ -151,18 +152,36 @@ async function tushareHealthBlock(): Promise<Record<string, unknown>> {
   }
 }
 
+/** 昂贵操作并发闸的 429 响应（与 research.ts 的 MAX_CONCURRENT_RUNS 语义一致） */
+function heavyBusy(res: import('express').Response, what: string): void {
+  res.status(429).json({
+    error: `已有${what}在运行，请等待当前任务完成后再试`,
+    retryAfterSeconds: 30,
+  });
+}
+
 // === 全市场初筛（借鉴 Sequoia-X「收盘后扫全市场」）===
 // 形态触发 + RPS 分位初筛全市场（可设上限），结果落盘；
 // 命中标的天然适合接入截面二次验证（IC/分层/OOS）与研究队列。
 router.post('/api/quant/screener/run', quantLimiter, circuitBreakerGuard, async (req, res) => {
   // 全市场扫描是长任务：客户端提前断开 → 级联中止在途取数，不写死响应
   const abort = abortOnClientClose(res);
+  const release = tryAcquireGate('screener', 2);
+  if (!release) return heavyBusy(res, '全市场初筛任务');
   try {
     const body = (req.body ?? {}) as {
       maxStocks?: unknown;
       startDate?: unknown;
       endDate?: unknown;
     };
+    // maxStocks 严格校验：非有限/非正整数此前被 screener 当 undefined →
+    // **静默升级成全市场扫描**（最贵的路径），且照样 200
+    if (body.maxStocks !== undefined && body.maxStocks !== null) {
+      const n = Number(body.maxStocks);
+      if (!Number.isInteger(n) || n < 1) {
+        return res.status(400).json({ error: 'maxStocks 需为 ≥1 的整数' });
+      }
+    }
     const result = await runMarketScreener({
       ...(body.maxStocks !== undefined && body.maxStocks !== null
         ? { maxStocks: Number(body.maxStocks) }
@@ -184,6 +203,8 @@ router.post('/api/quant/screener/run', quantLimiter, circuitBreakerGuard, async 
     if (respondIfQueueTimeout(res, error, '/api/quant/screener/run')) return;
     logger.error('Market screener error', { route: '/api/quant/screener/run', err: error });
     res.status(500).json({ error: '全市场初筛失败' });
+  } finally {
+    release();
   }
 });
 
@@ -377,6 +398,67 @@ router.get('/api/quant/factor/experiments', quantLimiter, (req, res) => {
   }
 });
 
+/**
+ * 补录条目的逐条校验。
+ * 这些行会被改进循环（improvementLoop.collectReplayRows）原样回放并参与
+ * McNemar/判据评分——是「外部可写入的调参证据」。只校验数组形状不够：
+ * 伪造 evidence/kept 可让自动判据朝任意方向漂移，畸形数值会产出 NaN 分数，
+ * 无长度上限的字符串能把 500 条台账吹爆。
+ */
+const EXPERIMENT_SOURCES = new Set(['cross-section', 'expression', 'hypothesis']);
+function validateExperimentEntry(e: unknown): string | null {
+  if (!e || typeof e !== 'object' || Array.isArray(e)) return '条目需为对象';
+  const r = e as Record<string, unknown>;
+  const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  if (typeof r.source !== 'string' || !EXPERIMENT_SOURCES.has(r.source)) {
+    return 'source 需为 cross-section/expression/hypothesis 之一';
+  }
+  if (typeof r.name !== 'string' || r.name.trim() === '' || r.name.length > 120) {
+    return 'name 需为 1-120 字的字符串';
+  }
+  if (
+    r.expression !== undefined &&
+    (typeof r.expression !== 'string' || r.expression.length > 800)
+  ) {
+    return 'expression 需为 ≤800 字的字符串';
+  }
+  if (!num(r.horizon) || r.horizon <= 0 || r.horizon > 250) return 'horizon 需为 1-250 的数值';
+  if (!num(r.sampleSize) || r.sampleSize < 0) return 'sampleSize 需为非负数值';
+  if (!num(r.icMean) || !num(r.pValue)) return 'icMean/pValue 需为有限数值';
+  if (r.pValue < 0 || r.pValue > 1) return 'pValue 需在 [0,1]';
+  if (typeof r.oosStable !== 'boolean') return 'oosStable 需为布尔值';
+  if (typeof r.kept !== 'boolean') return 'kept 需为布尔值';
+  if (!r.universe || typeof r.universe !== 'object' || Array.isArray(r.universe)) {
+    return 'universe 需为对象（requested/included 必填）';
+  }
+  const u = r.universe as Record<string, unknown>;
+  if (!num(u.requested) || !num(u.included)) return 'universe.requested/included 需为数值';
+  if (
+    u.codes !== undefined &&
+    (!Array.isArray(u.codes) ||
+      u.codes.length > 2000 ||
+      u.codes.some((c) => typeof c !== 'string' || !isAShareCode(c)))
+  ) {
+    return 'universe.codes 需为合法股票代码数组（≤2000 只）';
+  }
+  if (u.board !== undefined && typeof u.board !== 'string') return 'universe.board 需为字符串';
+  if (r.evidence !== undefined) {
+    if (!r.evidence || typeof r.evidence !== 'object' || Array.isArray(r.evidence)) {
+      return 'evidence 需为对象';
+    }
+    for (const [k, v] of Object.entries(r.evidence as Record<string, unknown>)) {
+      if (typeof v === 'number' && !Number.isFinite(v)) return `evidence.${k} 需为有限数值`;
+      if (v !== null && typeof v !== 'object' && typeof v !== 'string' && typeof v !== 'boolean') {
+        return `evidence.${k} 类型非法`;
+      }
+    }
+  }
+  if (r.notes !== undefined && (typeof r.notes !== 'string' || r.notes.length > 500)) {
+    return 'notes 需为 ≤500 字的字符串';
+  }
+  return null;
+}
+
 // 手动补录实验（外部脚本/离线评估的结论也能进台账）
 router.post('/api/quant/factor/experiments', quantLimiter, (req, res) => {
   try {
@@ -385,6 +467,13 @@ router.post('/api/quant/factor/experiments', quantLimiter, (req, res) => {
     const entries = Array.isArray(raw) ? (raw as FactorExperimentInput[]) : null;
     if (!entries || entries.length === 0 || entries.length > 200) {
       return res.status(400).json({ error: '请提供 entries 数组（1-200 条）' });
+    }
+    // 逐条校验：任一非法整批 400（带下标定位），不让畸形条目进改进循环的回放证据
+    for (let i = 0; i < entries.length; i++) {
+      const problem = validateExperimentEntry(entries[i]);
+      if (problem) {
+        return res.status(400).json({ error: `entries[${i}] 非法：${problem}` });
+      }
     }
     res.json({ recorded: recordFactorExperiments(entries).length });
   } catch (error) {
@@ -399,6 +488,8 @@ router.post('/api/quant/factor/experiments', quantLimiter, (req, res) => {
 // 自定义因子表达式评估：LLM 提假设 → 受限 DSL 求值 → 既有截面评估器验证 → 台账留痕。
 // 关键点：**不执行模型生成的代码**（无沙箱逃逸面），只解析白名单语法的表达式。
 router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, async (req, res) => {
+  const release = tryAcquireGate('factor-expression', 2);
+  if (!release) return heavyBusy(res, '因子表达式评估任务');
   let abort: AbortController | null = null;
   try {
     const body = (req.body ?? {}) as {
@@ -513,6 +604,8 @@ router.post('/api/quant/factor/expression', quantLimiter, circuitBreakerGuard, a
       err: error,
     });
     res.status(500).json({ error: '自定义因子评估失败' });
+  } finally {
+    release();
   }
 });
 
@@ -525,6 +618,8 @@ router.post(
   quantLimiter,
   circuitBreakerGuard,
   async (req, res) => {
+    const release = tryAcquireGate('factor-expression-batch', 1);
+    if (!release) return heavyBusy(res, '批量因子假设验证任务');
     let abort: AbortController | null = null;
     try {
       const body = (req.body ?? {}) as {
@@ -677,12 +772,16 @@ router.post(
         err: error,
       });
       res.status(500).json({ error: '批量因子假设验证失败' });
+    } finally {
+      release();
     }
   },
 );
 
 // 受控回测评估：基线(无新闻叠加) vs 实验(带新闻情绪叠加)，量化 LLM 信号是否真增 alpha
 router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, async (req, res) => {
+  const release = tryAcquireGate('backtest-evaluate', 2);
+  if (!release) return heavyBusy(res, '受控回测评估任务');
   try {
     const body = req.body ?? {};
     const stockCode = String(body.stockCode ?? '').trim();
@@ -760,6 +859,8 @@ router.post('/api/backtest/evaluate', watchlistLimiter, circuitBreakerGuard, asy
       err: error,
     });
     res.status(500).json({ error: '受控回测评估失败', detail: errorDetail(error) });
+  } finally {
+    release();
   }
 });
 

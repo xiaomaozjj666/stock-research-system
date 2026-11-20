@@ -452,3 +452,55 @@ Google AIP-193（错误必须显式）一致的 API 约定——**缺省 → 默
   backtest 日期注入×2、timeseries 日期透传、重工具预算、signal 接线、记忆钳制。
 - 全量 3609 用例 / 265 文件绿；lint / prettier / tsc×2 / build / release-gates /
   doc-freshness 全过。
+
+## 附：第四轮子代理审查——管理路由 + 决策-结果闭环（2026-11-20）
+
+范围：覆盖率最低、从未深审的四块（llmAdmin / quantOps / improvement /
+outcomeTracker）。子代理审 + 主会话逐条复核后修复。
+
+### 数据正确性（本轮最重要的两条）
+
+1. **超额收益从未生效**：outcomeTracker 用代码 `000300` 取基准，`resolveSecid`
+   按「非 6 开头 → 深市」拼成 `0.000300` → 上游返回空 → 模拟数据降级 →
+   `excessPct` 恒为 null。改为 `fetchKlineBySecid(A_SHARE_BENCHMARK_SECID)`
+   （1.000300，与 preflight 同一常量），测试断言实际 secid。
+2. **复权口径混用**：建仓价是分析时的**未复权实时价**、退出价是**前复权收盘价**
+   ——10 转 5 平盘会被算成 −33%，永久落盘成假失败并污染注入仲裁的命中率。
+   改为建仓/退出都取区间内 fq=1 收盘价（`entryAdjClose` 随记录落盘供复算；
+   快照 entryPrice 仅留审计）。
+
+### 资源与滥用（可被单个请求持续放大成事故）
+
+3. **run 类端点无并发护栏**：新增 `utils/heavyGate.ts`（进程内信号量），
+   screener/run ×2、factor/expression ×2、expression/batch ×1、
+   backtest/evaluate ×2，超出 429 + retryAfterSeconds（对齐 research.ts 范式）。
+4. **maxStocks 非法值静默升级为全市场扫描**（最贵路径且 200）→ 入口 400。
+5. **improvement 调度间隔无下限**：1e-9 小时会让 setTimeout 链每 ~1ms 同步跑
+   一轮（直堵事件循环）并数分钟内耗光台账与未探索候选 → 下限 0.25h，显式非法
+   值 400；`dryRun: "true"`（字符串）此前静默变真跑 → 非布尔 400；两个 GET
+   补 metaLimiter。
+6. **LLM 校准端点无契约**：model 可作任意长度 JSON key 无界增长、`correct`
+   缺省即记 miss（Laplace 权重被永久拉低并影响投票聚合）→ charset/长度校验 +
+   `correct` 强制布尔；ensemble 权重表上限 50（淘汰样本量最少的键）。
+
+### 存量收口
+
+7. 台账损坏不再静默当空（改名 `.corrupt-<ts>` 留档 + warn），写入失败可见
+   （此前 writeStore 只返回 false 且无人读）；退出价陈旧（缓存尾部 >5 天）
+   不再当「今日价」永久落盘；记录回填的建仓价纳入合并回写字段；
+   `recordAnalysis` 的同步原子性前提写进锁注释。
+8. 实验补录 entries 逐条 schema 校验（source 枚举 / 数值有限 / pValue∈[0,1] /
+   evidence 形状 / 字符串上限，带下标定位）——这些行会进改进循环的回放证据。
+
+### 测试门禁（2026-11-20 第四轮）
+
+- 新增测试 +51：linalg 17、ChatPanel 4、chat history/clear 3（上一批）；
+  outcomeTracker 重写 21（含 secid/复权/陈旧/损坏/并发）、quantOps 护栏 6、
+  llmAdmin 校准 5、improvement 3、ensemble 权重上限 1。
+- 全量 3660 用例 / 269 文件绿；覆盖率 93.61/91.55/93.33/82.08。
+
+### 明确未做（记录在案）
+
+- 时间序列/公告/估值路由的「中文正则错误分类」（含"失败"的上游错误会被当
+  400）——需 analyzer 抛带 code 的领域错误，改动面涉及全部抛出点，排期待定。
+- `intl`/`timeseries` 之外无已知行为变更遗留。

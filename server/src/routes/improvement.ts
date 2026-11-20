@@ -10,7 +10,7 @@
  */
 import { Router } from 'express';
 import type { Request, Response } from 'express';
-import { writeLimiter } from '../middleware.js';
+import { metaLimiter, writeLimiter } from '../middleware.js';
 import { auditToolCall } from '../services/auditLog.js';
 import { getReqTraceContext } from '../services/telemetry.js';
 import {
@@ -37,12 +37,18 @@ const router = Router();
 
 /** 手填间隔的上限（小时）：与调度器内部 clamp 同值，避免接口说一套、内部做一套 */
 const MAX_INTERVAL_HOURS = 720;
+/**
+ * 调度间隔下限（0.25h = 15 分钟）。只有上限没有下限时，intervalHours=1e-9
+ * 会让 setTimeout 链每 ~1ms 同步跑一次 runImprovementRound（同步函数直堵事件
+ * 循环），几分钟内把 500 条台账与未探索候选一起耗光——自动调参判据被一次性锁死。
+ */
+const MIN_INTERVAL_HOURS = 0.25;
 
 function requestTraceId(req: Request, res: Response): string | undefined {
   return getReqTraceContext(res)?.traceId ?? (req as Request & { reqId?: string }).reqId;
 }
 
-router.get('/api/improvement/status', (_req, res) => {
+router.get('/api/improvement/status', metaLimiter, (_req, res) => {
   try {
     const state = getHarnessPolicyState();
     const ledger = summarizeImprovements();
@@ -91,6 +97,11 @@ router.get('/api/improvement/status', (_req, res) => {
 
 router.post('/api/improvement/run', writeLimiter, (req, res) => {
   try {
+    // dryRun 显式存在时必须是布尔：表单发的 "true" 若被静默当 false，
+    // 演练会变成真跑并改写判据（与 OpenAPI 声明的 boolean 不符）
+    if (req.body?.dryRun !== undefined && typeof req.body.dryRun !== 'boolean') {
+      return res.status(400).json({ error: 'dryRun 需为布尔值（true=演练，不落盘）' });
+    }
     const dryRun = req.body?.dryRun === true;
     const result = runImprovementRound({ dryRun });
     auditToolCall(
@@ -122,7 +133,7 @@ router.post('/api/improvement/run', writeLimiter, (req, res) => {
   }
 });
 
-router.get('/api/improvement/history', (req, res) => {
+router.get('/api/improvement/history', metaLimiter, (req, res) => {
   try {
     const raw = Number(req.query.limit);
     const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), 200) : 20;
@@ -136,8 +147,18 @@ router.get('/api/improvement/history', (req, res) => {
 /** 启动 / 重设周期调度。带 intervalHours 时**显式压过 env**（用户当场说了算） */
 router.post('/api/improvement/scheduler/start', writeLimiter, (req, res) => {
   try {
+    const hasField = req.body?.intervalHours !== undefined;
     const rawHours = Number(req.body?.intervalHours);
     const hasExplicit = Number.isFinite(rawHours) && rawHours > 0;
+    // 显式传了但非法 → 400（此前静默忽略并回落 env/默认值，用户以为已生效）
+    if (hasField && !hasExplicit) {
+      return res.status(400).json({ error: 'intervalHours 需为正数（单位：小时）' });
+    }
+    if (hasExplicit && rawHours < MIN_INTERVAL_HOURS) {
+      return res.status(400).json({
+        error: `intervalHours 不得小于 ${MIN_INTERVAL_HOURS} 小时（过小会把进程拖成自旋）`,
+      });
+    }
     if (!hasExplicit && resolveIntervalFromEnv() === null) {
       // env 显式关闭（IMPROVEMENT_INTERVAL_HOURS=0）时，不传间隔就不知道该按什么节奏跑。
       // 静默改用默认值会让"我明明关了它"变成假的，故如实拒绝并给出两条出路。

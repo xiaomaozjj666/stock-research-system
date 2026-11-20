@@ -159,6 +159,13 @@ export function getModelWeights(): Record<string, number> {
  * 已消除的是「读者读到半截文件 → catch 静默返回空档 → 统计被整份抹掉」这一类，
  * 由 writeCalibration 的 tmp+rename 解决。
  */
+/**
+ * 权重表条目上限：model 是外部可写的 JSON key，不设上限时垃圾键可把
+ * calibration.json 无界吹大（GET /api/llm/calibration 还会原样返回全部键）。
+ * 超限时淘汰样本量最少（total 最小）的非本次模型——新模型永远有机会进入。
+ */
+const MAX_CALIBRATION_MODELS = 50;
+
 export function recordModelOutcome(model: string, correct: boolean): void {
   if (!model) return;
   // 基于快照**新建**一份再改，不就地改 readCalibration 返回的对象：
@@ -167,15 +174,21 @@ export function recordModelOutcome(model: string, correct: boolean): void {
   // 记忆化里就残留了一个从未真正落盘的版本，后续读取会被它污染。
   const current = readCalibration().models;
   const prev = current[model] ?? { correct: 0, total: 0 };
-  writeCalibration({
-    models: {
-      ...current,
-      [model]: {
-        correct: prev.correct + (correct ? 1 : 0),
-        total: prev.total + 1,
-      },
+  const next: typeof current = {
+    ...current,
+    [model]: {
+      correct: prev.correct + (correct ? 1 : 0),
+      total: prev.total + 1,
     },
-  });
+  };
+  const keys = Object.keys(next);
+  if (keys.length > MAX_CALIBRATION_MODELS) {
+    const victim = keys
+      .filter((k) => k !== model)
+      .sort((a, b) => next[a].total - next[b].total || a.localeCompare(b))[0];
+    if (victim) delete next[victim];
+  }
+  writeCalibration({ models: next });
 }
 
 /** 清空校准数据（供测试隔离） */

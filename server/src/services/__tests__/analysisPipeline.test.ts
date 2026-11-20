@@ -58,6 +58,8 @@ vi.mock('../dataService.js', () => ({
 
 vi.mock('../../quant/dataProvider.js', () => ({
   fetchOHLCVData: vi.fn(async () => []), // 无K线 -> 策略清单为空，不触发网络
+  A_SHARE_BENCHMARK_SECID: '1.000300', // outcomeTracker 的基准 secid（会随流水线被加载）
+  fetchKlineBySecid: vi.fn(async () => []),
 }));
 
 // 新闻抓取走真实东财接口：单测不依赖外网（高负载下 3s 超时路径曾疑似拖垮用例）

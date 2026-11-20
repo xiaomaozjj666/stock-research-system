@@ -78,7 +78,10 @@ describe('A 类：上游接受 signal 的限时点必须可取消', () => {
     expect(tracker).toMatch(
       /export async function evaluateOutcomes\(limit = 3, signal\?: AbortSignal\)/,
     );
-    expect(tracker).toMatch(/fetchOHLCVData\(code, fmt\(start\), fmt\(end\), signal\)/);
+    // 2026-11-20 重写：个股与基准都取「评级日 → 今天」整段（建仓/退出同复权口径），
+    // 基准必须走 secid（A_SHARE_BENCHMARK_SECID）而不是代码；两路都透传 signal
+    expect(tracker).toMatch(/fetchOHLCVData\(item\.stockCode, startDate, endDate, signal\)/);
+    expect(tracker).toMatch(/fetchKlineBySecid\(\s*BENCHMARK_SECID[\s\S]{0,120}?signal,/);
   });
 });
 

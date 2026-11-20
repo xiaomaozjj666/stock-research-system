@@ -2,7 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { DATA_ROOT } from '../dataRoot.js';
-import { fetchOHLCVData } from '../quant/dataProvider.js';
+import {
+  A_SHARE_BENCHMARK_SECID,
+  fetchKlineBySecid,
+  fetchOHLCVData,
+} from '../quant/dataProvider.js';
 import type { RatingAccuracy } from '../types.js';
 import logger from '../utils/logger.js';
 
@@ -20,8 +24,16 @@ import logger from '../utils/logger.js';
 
 /** 最短持有天数：不足则该条评级尚未到期，暂不评估 */
 export const MIN_HOLD_DAYS = 20;
-/** 超额收益基准：沪深300 */
-const BENCHMARK_CODE = '000300';
+/**
+ * 超额收益基准：沪深300。
+ * **必须走 secid（1.000300）而不是代码**：resolveSecid('000300') 会按「非 6 开头
+ * → 深市」拼成 0.000300，上游返回空 → 模拟数据降级 → excessPct 恒为 null。
+ * 这条曾经让「相对沪深300 超额」整维从未生效（2026-11-20 子代理审查实测）。
+ */
+const BENCHMARK_SECID = A_SHARE_BENCHMARK_SECID;
+const BENCHMARK_CACHE_TOKEN = 'A_SHARE_BENCHMARK';
+/** 退出价最大陈旧度（自然日）：缓存尾部补拉失败时，数日前的收盘价不能当今日价 */
+const MAX_EXIT_STALENESS_DAYS = 5;
 /** 命中率统计的最小样本量：不足时不给出准确率（避免小样本误导） */
 const MIN_SAMPLE_FOR_ACCURACY = 3;
 /** 台账容量上限：超出后淘汰最旧的已评估记录 */
@@ -43,7 +55,14 @@ export interface OutcomeRecord {
   /** 已评估时填充以下字段 */
   evaluatedAt?: string;
   exitPrice?: number;
+  /**
+   * 区间收益（%）。口径：**建仓/退出都用前复权（fqt=1）收盘价**——
+   * 快照 entryPrice 是未复权的实时价，与复权收盘价混用会让送转/除息直接
+   * 变成假命中/假失败（10 转 5 平盘 = −33%）。entryPrice 仅留作审计。
+   */
   returnPct?: number;
+  /** 评估时实际使用的复权建仓价（审计/复算用，可选） */
+  entryAdjClose?: number;
   /** 相对沪深300的超额收益（%）；基准不可得时为 null */
   excessPct?: number | null;
   /** 评级方向是否兑现；中性评级（谨慎观望）不参与判定，为 null */
@@ -68,7 +87,19 @@ function readStore(): OutcomeStore {
     if (!fs.existsSync(file)) return { items: [] };
     const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as OutcomeStore;
     return parsed && Array.isArray(parsed.items) ? parsed : { items: [] };
-  } catch {
+  } catch (err) {
+    // 损坏≠不存在：若静默当空台账，下一次写入会用空/半量数据把损坏文件整体覆盖，
+    // 一次 JSON 截断就永久清零全部评级历史。改名留档（可人工恢复）+ 明确告警，
+    // 让「台账坏了」这件事可见、可追溯。
+    try {
+      const file = getFile();
+      if (fs.existsSync(file)) {
+        fs.renameSync(file, `${file}.corrupt-${Date.now()}`);
+      }
+    } catch {
+      /* 留档失败：至少下面的 warn 会留下痕迹 */
+    }
+    logger.warn('评级台账损坏，已改名留档并按空台账继续（历史样本需人工恢复）', { err });
     return { items: [] };
   }
 }
@@ -89,10 +120,14 @@ function writeStore(store: OutcomeStore): boolean {
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
 /**
- * 台账写入串行锁。
+ * 台账写入串行锁（**仅覆盖跨 await 的读-改-写**）。
  * evaluateOutcomes 是「读快照 → await 取行情 → 写回」的跨 await 读-改-写：
  * 并发/重叠执行（/api/compare 并行分析、6 小时定时回填与分析收尾重叠）会互相覆盖，
- * 导致评级记录或回填结果静默丢失。这里把所有此类操作排成队列，单进程内串行执行。
+ * 导致评级记录或回填结果静默丢失。这里把此类异步操作排成队列串行执行。
+ *
+ * 边界（勿误解）：recordAnalysis 是**纯同步**读-改-写、不经过本队列——今日安全
+ * 依赖单线程同步原子性。若将来给它加任何 await（如换异步文件 API），必须先接入
+ * 本队列，否则会重新引入丢更新。跨进程（cluster/pm2）本锁不生效，需外部部署约束。
  */
 let storeLock: Promise<void> = Promise.resolve();
 
@@ -112,25 +147,6 @@ function daysSince(iso: string): number {
   const t = new Date(iso).getTime();
   if (!Number.isFinite(t)) return 0;
   return (Date.now() - t) / (24 * 60 * 60 * 1000);
-}
-
-/**
- * 取某标的最新收盘价；数据不可得或为模拟数据时返回 null。
- * 模拟数据是行情 API 不可达时的合成价格，绝不能用于事后校准（会污染结论）。
- */
-async function latestClose(
-  code: string,
-  sinceIso?: string,
-  signal?: AbortSignal,
-): Promise<number | null> {
-  const end = new Date();
-  const start = sinceIso ? new Date(sinceIso) : new Date(end.getTime() - 15 * 24 * 3600 * 1000);
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
-  const rows = await fetchOHLCVData(code, fmt(start), fmt(end), signal);
-  if (!rows || rows.length === 0) return null;
-  if (rows.some((r) => r.isSimulated)) return null;
-  const last = rows[rows.length - 1];
-  return last && last.close > 0 ? last.close : null;
 }
 
 /** 评级方向是否兑现；中性评级返回 null（不参与命中率统计） */
@@ -168,7 +184,13 @@ export function recordAnalysis(input: {
       const dropId = pool.sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]?.id;
       store.items = store.items.filter((it) => it.id !== dropId);
     }
-    writeStore(store);
+    if (!writeStore(store)) {
+      // writeStore 内部吞掉异常只返回 false：不看返回值的话，磁盘满/目录只读时
+      // 决策-结果闭环会永久失效且没有任何痕迹
+      logger.warn('评级台账写入失败（磁盘/权限问题？），本次评级未入账', {
+        stockCode: input.stockCode,
+      });
+    }
   } catch (err) {
     logger.warn('评级台账写入失败，降级跳过', { stockCode: input.stockCode, err: err as Error });
   }
@@ -189,7 +211,7 @@ async function evaluateOutcomesLocked(limit: number, signal?: AbortSignal): Prom
   try {
     const store = readStore();
     const pending = store.items
-      .filter((it) => !it.evaluatedAt && it.entryPrice > 0)
+      .filter((it) => !it.evaluatedAt)
       .filter((it) => daysSince(it.createdAt) >= MIN_HOLD_DAYS)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, Math.max(1, limit));
@@ -197,31 +219,47 @@ async function evaluateOutcomesLocked(limit: number, signal?: AbortSignal): Prom
     for (const item of pending) {
       if (signal?.aborted) break; // 已取消：不再为剩余条目打行情上游
       try {
-        // 个体区间收益与基准区间收益并行取，起点统一为评级发出日
-        const [exitPrice, benchRows] = await Promise.all([
-          latestClose(item.stockCode, undefined, signal),
-          fetchOHLCVData(
-            BENCHMARK_CODE,
-            item.createdAt.slice(0, 10),
-            new Date().toISOString().slice(0, 10),
+        const startDate = item.createdAt.slice(0, 10);
+        const endDate = new Date().toISOString().slice(0, 10);
+        // 个股与基准都取「评级日 → 今天」整段：
+        //  - 建仓价取区间**第一根真实收盘价**（fqt=1 复权口径与退出价一致；
+        //    快照 entryPrice 是未复权实时价，送转/除息会把它变成假命中/假失败）；
+        //  - 基准必须走 secid 1.000300（代码 000300 会被解析成深市 0.000300 → 空）。
+        const [bars, benchRows] = await Promise.all([
+          fetchOHLCVData(item.stockCode, startDate, endDate, signal).catch(() => []),
+          fetchKlineBySecid(
+            BENCHMARK_SECID,
+            startDate,
+            endDate,
+            BENCHMARK_CACHE_TOKEN,
+            15000,
             signal,
           ).catch(() => []),
         ]);
-        if (exitPrice === null) continue; // 行情不可得，留待下次
+        const realBars = bars.filter((b) => !b.isSimulated && b.close > 0);
+        if (realBars.length === 0) continue; // 行情不可得（或全为模拟），留待下次
+        const last = realBars[realBars.length - 1];
+        // 缓存尾部补拉失败时，最后一行可能是数日前的价——不能当「今日退出价」
+        // 永久落盘（写入 evaluatedAt 后不会再重评）
+        if (daysSince(`${last.date}T00:00:00Z`) > MAX_EXIT_STALENESS_DAYS) continue;
 
-        const returnPct = round2(pctChange(item.entryPrice, exitPrice));
+        const entryAdjClose = realBars[0].close;
+        const exitPrice = last.close;
+        const returnPct = round2(pctChange(entryAdjClose, exitPrice));
+
         let excessPct: number | null = null;
-        if (
-          benchRows.length >= 2 &&
-          !benchRows.some((r) => r.isSimulated) &&
-          benchRows[0].close > 0
-        ) {
-          const benchReturn = pctChange(benchRows[0].close, benchRows[benchRows.length - 1].close);
-          excessPct = round2(returnPct - benchReturn);
+        const realBench = benchRows.filter((r) => !r.isSimulated && r.close > 0);
+        if (realBench.length >= 2) {
+          const benchLast = realBench[realBench.length - 1];
+          if (daysSince(`${benchLast.date}T00:00:00Z`) <= MAX_EXIT_STALENESS_DAYS) {
+            const benchReturn = pctChange(realBench[0].close, benchLast.close);
+            excessPct = round2(returnPct - benchReturn);
+          }
         }
 
         item.evaluatedAt = new Date().toISOString();
         item.exitPrice = exitPrice;
+        item.entryAdjClose = round2(entryAdjClose);
         item.returnPct = returnPct;
         item.excessPct = excessPct;
         item.hit = judgeHit(item.rating, returnPct);
@@ -244,12 +282,17 @@ async function evaluateOutcomesLocked(limit: number, signal?: AbortSignal): Prom
         if (!target) continue; // 期间已被容量淘汰，不再复活
         target.evaluatedAt = item.evaluatedAt;
         target.exitPrice = item.exitPrice;
+        target.entryAdjClose = item.entryAdjClose;
         target.returnPct = item.returnPct;
         target.excessPct = item.excessPct;
         target.hit = item.hit;
         target.holdingDays = item.holdingDays;
       }
-      writeStore(fresh);
+      if (!writeStore(fresh)) {
+        logger.warn('评级回填结果写盘失败（磁盘/权限问题？），本轮结果将在下次重算', {
+          evaluated: done,
+        });
+      }
     }
   } catch (err) {
     logger.warn('评级结果回填失败，降级跳过', { err: err as Error });
