@@ -1,6 +1,15 @@
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('../services/chatMemory.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/chatMemory.js')>();
+  return {
+    ...actual,
+    // clearHistory 异步化后路由必须 await；用 spy 断言确实被调用与完成
+    clearHistory: vi.fn(async () => {}),
+  };
+});
+
 vi.mock('../services/chatAgent.js', () => ({
   chatAgent: {
     run: vi.fn(async () => ({ answer: 'ok', toolsUsed: [], evidence: [], degraded: false })),
@@ -58,5 +67,29 @@ describe('GET /api/chat/stream', () => {
       expect.any(Function),
       expect.any(AbortSignal),
     );
+  });
+});
+
+describe('POST /api/chat/history/clear', () => {
+  it('合法 sessionId → 200 且 await 清空（异步落盘完成后才响应）', async () => {
+    const r = await request(app).post('/api/chat/history/clear').send({ sessionId: 'sess-abc' });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ ok: true });
+    const { clearHistory } = await import('../services/chatMemory.js');
+    expect(vi.mocked(clearHistory)).toHaveBeenCalledWith('sess-abc');
+  });
+
+  it('缺少 sessionId → 400', async () => {
+    const r = await request(app).post('/api/chat/history/clear').send({});
+    expect(r.status).toBe(400);
+    expect(r.body.error).toContain('sessionId');
+  });
+
+  it('非法 sessionId（原型链键）→ 400，不触达存储层', async () => {
+    const r = await request(app).post('/api/chat/history/clear').send({ sessionId: '__proto__' });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toContain('格式无效');
+    const { clearHistory } = await import('../services/chatMemory.js');
+    expect(vi.mocked(clearHistory)).not.toHaveBeenCalled();
   });
 });

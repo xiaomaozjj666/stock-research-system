@@ -20,10 +20,40 @@ export interface OlsWithStats {
   fullRank: boolean;
 }
 
-/** 高斯消元 + 部分主元求解 A·x = b；A 奇异时返回 null */
+/**
+ * 奇异判定阈值（**相对矩阵尺度**）。
+ * 绝对阈值 1e-12 在数值分析里是经典坑：量级 1e-3 的良态矩阵会被误判奇异，
+ * 量级 1e8 的病态矩阵反而被放过（主元都远大于 1e-12 但相对条件数已爆）。
+ * 按初始矩阵的最大元素缩放，下限 1e-12 防止全零矩阵除零。
+ */
+function singularTolerance(matrix: number[][]): number {
+  let scale = 0;
+  for (const row of matrix) {
+    for (const v of row) {
+      const a = Math.abs(v);
+      if (a > scale) scale = a;
+    }
+  }
+  return Math.max(scale, 1) * 1e-12;
+}
+
+/** 校验 A 是否为 n×n 且元素有限（夹带 undefined/NaN 会让消元静默产出 NaN） */
+function isSquareFiniteMatrix(A: number[][]): boolean {
+  const n = A.length;
+  if (n === 0) return false;
+  for (const row of A) {
+    if (!Array.isArray(row) || row.length !== n) return false;
+    for (const v of row) if (typeof v !== 'number' || !Number.isFinite(v)) return false;
+  }
+  return true;
+}
+
+/** 高斯消元 + 部分主元求解 A·x = b；A 奇异或形状非法时返回 null */
 export function solveLinearSystem(A: number[][], b: number[]): number[] | null {
   const n = A.length;
-  if (n === 0 || b.length !== n) return null;
+  if (n === 0 || b.length !== n || !isSquareFiniteMatrix(A)) return null;
+  if (b.some((v) => typeof v !== 'number' || !Number.isFinite(v))) return null;
+  const tol = singularTolerance(A);
   // 复制为增广矩阵，避免改写入参
   const M: number[][] = A.map((row, i) => [...row, b[i]]);
   for (let col = 0; col < n; col++) {
@@ -32,7 +62,7 @@ export function solveLinearSystem(A: number[][], b: number[]): number[] | null {
     for (let r = col + 1; r < n; r++) {
       if (Math.abs(M[r][col]) > Math.abs(M[pivot][col])) pivot = r;
     }
-    if (Math.abs(M[pivot][col]) < 1e-12) return null;
+    if (Math.abs(M[pivot][col]) < tol) return null;
     if (pivot !== col) {
       const tmp = M[pivot];
       M[pivot] = M[col];
@@ -50,10 +80,11 @@ export function solveLinearSystem(A: number[][], b: number[]): number[] | null {
   return M.map((row) => row[n]);
 }
 
-/** 方阵求逆（高斯-约当）；奇异时返回 null */
+/** 方阵求逆（高斯-约当）；奇异或形状非法时返回 null */
 export function invertMatrix(A: number[][]): number[][] | null {
   const n = A.length;
-  if (n === 0) return null;
+  if (n === 0 || !isSquareFiniteMatrix(A)) return null;
+  const tol = singularTolerance(A);
   const M: number[][] = A.map((row) => [...row, ...new Array<number>(n).fill(0)]);
   for (let i = 0; i < n; i++) M[i][n + i] = 1;
   for (let col = 0; col < n; col++) {
@@ -61,7 +92,7 @@ export function invertMatrix(A: number[][]): number[][] | null {
     for (let r = col + 1; r < n; r++) {
       if (Math.abs(M[r][col]) > Math.abs(M[pivot][col])) pivot = r;
     }
-    if (Math.abs(M[pivot][col]) < 1e-12) return null;
+    if (Math.abs(M[pivot][col]) < tol) return null;
     if (pivot !== col) {
       const tmp = M[pivot];
       M[pivot] = M[col];
