@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 type ToastType = 'success' | 'info' | 'error';
 
@@ -38,6 +46,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     },
     [dismiss],
   );
+
+  // 卸载时清掉所有待触发的自动消失定时器：泄漏的 timer 会在组件消失后
+  // 触发 setState——测试环境里 jsdom 已卸载、后续文件是 node 环境时直接
+  // 抛 "window is not defined"（2026-11-21 全仓测试实测 13 个 uncaught）。
+  useEffect(() => {
+    const pending = timersRef.current;
+    return () => {
+      for (const timer of pending.values()) {
+        clearTimeout(timer);
+      }
+      pending.clear();
+    };
+  }, []);
 
   return (
     <ToastContext.Provider value={{ showToast }}>
