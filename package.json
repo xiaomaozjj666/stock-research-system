@@ -41,23 +41,23 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@playwright/test": "1.65.0",
+    "@playwright/test": "1.65.1",
     "@testing-library/dom": "10.4.2",
-    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/jest-dom": "8.0.0",
     "@testing-library/react": "16.3.3",
     "@types/supertest": "7.2.1",
-    "@vitest/coverage-v8": "5.1.0",
-    "eslint": "10.14.0",
+    "@vitest/coverage-v8": "5.1.1",
+    "eslint": "10.15.0",
     "eslint-config-prettier": "10.1.8",
     "globals": "17.14.0",
-    "jsdom": "31.0.0",
+    "jsdom": "31.0.1",
     "nanoid": "^6.0.2",
-    "oxlint": "1.93.0",
+    "oxlint": "1.94.0",
     "prettier": "3.10.1",
     "supertest": "7.3.2",
     "tsx": "4.23.15",
     "typescript": "^7.0.2",
-    "vitest": "5.1.0"
+    "vitest": "5.1.1"
   },
   "overrides": {
     "minimatch": "11.0.3"
