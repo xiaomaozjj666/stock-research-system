@@ -40,14 +40,14 @@ import {
   type ChatStreamEvent,
 } from '../client.js';
 
-// axios 实例换成可控桩；isCancel 复刻真实判据（__CANCEL__ 标记），
+// HTTP 客户端换成可控桩；isCancelled 复刻真实判据（ERR_CANCELED），
 // 让"取消"路径走与生产一致的判定，而不是另写一套。
 // 注：桩必须带 interceptors —— client.ts 在模块加载时就注册了 request/response
 // 拦截器（鉴权头注入 + 401 广播）。这里内联而非抽公共 helper：vi.hoisted 的回调
 // 在 ESM import 之前执行，抽成 import 的 helper 会撞 "Cannot access before
 // initialization"（已实测）。桩只需调用不报错，无需断言，故用 no-op。
 
-const axiosInst = vi.hoisted(() => ({
+const httpInst = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
   delete: vi.fn(),
@@ -57,16 +57,17 @@ const axiosInst = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('axios', () => ({
+vi.mock('../http.js', () => ({
   default: {
-    create: () => axiosInst,
-    isCancel: (v: unknown) => !!(v && (v as { __CANCEL__?: boolean }).__CANCEL__),
+    create: () => httpInst,
   },
+  // isCancelled 复刻真实判据（AbortSignal 取消 → ERR_CANCELED）
+  isCancelled: (v: unknown) => !!(v && (v as { code?: string }).code === 'ERR_CANCELED'),
 }));
 
-/** axios 的取消错误 */
+/** 被 AbortSignal 取消的错误 */
 function cancelled(message = 'canceled') {
-  return { __CANCEL__: true, name: 'CanceledError', message };
+  return { code: 'ERR_CANCELED', name: 'AbortError', message };
 }
 
 /** 有响应体的服务端错误：data 为空时 normalizeApiError 落到各接口自己的兜底文案 */
@@ -79,9 +80,9 @@ function networkError() {
 }
 
 beforeEach(() => {
-  axiosInst.get.mockReset();
-  axiosInst.post.mockReset();
-  axiosInst.delete.mockReset();
+  httpInst.get.mockReset();
+  httpInst.post.mockReset();
+  httpInst.delete.mockReset();
 });
 
 afterEach(() => {
@@ -419,25 +420,25 @@ const CASES: ApiCase[] = [
 
 describe('REST 封装 —— 成功时命中正确的端点并原样透传响应体', () => {
   it.each(CASES)('$name → $method $url', async (c) => {
-    axiosInst[c.method].mockResolvedValue({ data: c.response });
+    httpInst[c.method].mockResolvedValue({ data: c.response });
     await expect(c.call()).resolves.toEqual(c.expected);
-    expect(axiosInst[c.method]).toHaveBeenCalledTimes(1);
-    expect(axiosInst[c.method].mock.calls[0][0]).toBe(c.url);
+    expect(httpInst[c.method]).toHaveBeenCalledTimes(1);
+    expect(httpInst[c.method].mock.calls[0][0]).toBe(c.url);
   });
 });
 
 describe('REST 封装 —— 失败时给出该接口专属的兜底文案（而不是笼统的"请求失败"）', () => {
   it.each(CASES)('$name 抛"$fallback"', async (c) => {
-    axiosInst[c.method].mockRejectedValue(httpError(400));
+    httpInst[c.method].mockRejectedValue(httpError(400));
     await expect(c.call()).rejects.toThrow(c.fallback);
   });
 });
 
 describe('REST 封装 —— 后端未启动时统一给出启动指引', () => {
   it('所有接口都不把 "Network Error" 原样抛给用户', async () => {
-    axiosInst.get.mockRejectedValue(networkError());
-    axiosInst.post.mockRejectedValue(networkError());
-    axiosInst.delete.mockRejectedValue(networkError());
+    httpInst.get.mockRejectedValue(networkError());
+    httpInst.post.mockRejectedValue(networkError());
+    httpInst.delete.mockRejectedValue(networkError());
     for (const c of CASES) {
       await expect(c.call()).rejects.toThrow('无法连接后端服务（localhost:3001）');
     }
@@ -455,14 +456,14 @@ describe('REST 封装 —— 取消时抛专用类型（调用方据此静默收
   ];
 
   it.each(cancellable)('%s 抛 AnalysisCancelledError', async (_name, call) => {
-    axiosInst.post.mockRejectedValue(cancelled());
+    httpInst.post.mockRejectedValue(cancelled());
     const err = await call().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AnalysisCancelledError);
     expect((err as Error).name).toBe('AnalysisCancelledError');
   });
 
   it.each(cancellable)('%s 的非取消失败仍是普通 Error（不误判为取消）', async (_name, call) => {
-    axiosInst.post.mockRejectedValue(httpError(400, { error: '服务端拒绝' }));
+    httpInst.post.mockRejectedValue(httpError(400, { error: '服务端拒绝' }));
     const err = await call().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(AnalysisCancelledError);
@@ -477,13 +478,13 @@ describe('REST 封装 —— 取消时抛专用类型（调用方据此静默收
 
 describe('REST 封装 —— 请求契约（超时量级 / 参数 / signal 透传）', () => {
   it('按任务耗时量级给足超时（分析 60s、批量与对比 180s、大面板 600s）', async () => {
-    axiosInst.post.mockResolvedValue({ data: {} });
+    httpInst.post.mockResolvedValue({ data: {} });
     await analyzeStock('600519');
     await runQuantAnalysis({ strategy: {} });
     await runBatchCompositeAlpha({ stockCodes: [] });
     await runCrossSectionEvaluation({});
     await compareStocks(['600519']);
-    const timeouts = axiosInst.post.mock.calls.map(
+    const timeouts = httpInst.post.mock.calls.map(
       (c) => (c[2] as { timeout?: number } | undefined)?.timeout,
     );
     // runQuantAnalysis 不单独设超时 → 继承实例默认 120s（见 create({ timeout: 120000 })）
@@ -491,52 +492,52 @@ describe('REST 封装 —— 请求契约（超时量级 / 参数 / signal 透�
   });
 
   it('查询参数原样透传（搜索关键词 / 港美股代码与市场）', async () => {
-    axiosInst.get.mockResolvedValue({ data: {} });
+    httpInst.get.mockResolvedValue({ data: {} });
     await searchStocks('600519');
-    expect(axiosInst.get.mock.calls[0][1]).toMatchObject({ params: { keyword: '600519' } });
+    expect(httpInst.get.mock.calls[0][1]).toMatchObject({ params: { keyword: '600519' } });
 
     await getIntlFundamentals('AAPL', 'US');
-    expect(axiosInst.get.mock.calls[1][1]).toMatchObject({
+    expect(httpInst.get.mock.calls[1][1]).toMatchObject({
       params: { code: 'AAPL', market: 'US' },
     });
   });
 
-  it('外部 AbortSignal 透传给 axios（长请求可被调用方中断）', async () => {
-    axiosInst.post.mockResolvedValue({ data: {} });
-    axiosInst.get.mockResolvedValue({ data: {} });
+  it('外部 AbortSignal 透传给 HTTP 客户端（长请求可被调用方中断）', async () => {
+    httpInst.post.mockResolvedValue({ data: {} });
+    httpInst.get.mockResolvedValue({ data: {} });
     const ac = new AbortController();
     await searchStocks('茅台', ac.signal);
     await compareStocks(['600519'], ac.signal);
-    expect(axiosInst.get.mock.calls[0][1]).toMatchObject({ signal: ac.signal });
-    expect(axiosInst.post.mock.calls[0][2]).toMatchObject({ signal: ac.signal });
+    expect(httpInst.get.mock.calls[0][1]).toMatchObject({ signal: ac.signal });
+    expect(httpInst.post.mock.calls[0][2]).toMatchObject({ signal: ac.signal });
   });
 
   it('runWatchlistNewsBacktest 不传 codes 时回退为空数组（后端按自选股全量跑）', async () => {
-    axiosInst.post.mockResolvedValue({ data: {} });
+    httpInst.post.mockResolvedValue({ data: {} });
     await runWatchlistNewsBacktest();
-    expect(axiosInst.post.mock.calls[0][1]).toEqual({ codes: [] });
+    expect(httpInst.post.mock.calls[0][1]).toEqual({ codes: [] });
     await runWatchlistNewsBacktest(['600519']);
-    expect(axiosInst.post.mock.calls[1][1]).toEqual({ codes: ['600519'] });
+    expect(httpInst.post.mock.calls[1][1]).toEqual({ codes: ['600519'] });
   });
 
   it('getFactorExperiments 不传参时以空对象作为 params', async () => {
-    axiosInst.get.mockResolvedValue({ data: {} });
+    httpInst.get.mockResolvedValue({ data: {} });
     await getFactorExperiments();
-    expect(axiosInst.get.mock.calls[0][1]).toMatchObject({ params: {} });
+    expect(httpInst.get.mock.calls[0][1]).toMatchObject({ params: {} });
     await getFactorExperiments({ kept: true, limit: 20 });
-    expect(axiosInst.get.mock.calls[1][1]).toMatchObject({ params: { kept: true, limit: 20 } });
+    expect(httpInst.get.mock.calls[1][1]).toMatchObject({ params: { kept: true, limit: 20 } });
   });
 });
 
 describe('analyzeStock —— 单飞取消：新请求必须中断上一次', () => {
-  it('取消产生的失败被翻成普通 Error（axios CanceledError 不外泄）', async () => {
-    axiosInst.post.mockRejectedValue(cancelled());
+  it('取消产生的失败被翻成普通 Error（取消错误不外泄）', async () => {
+    httpInst.post.mockRejectedValue(cancelled());
     await expect(analyzeStock('600519')).rejects.toThrow('请求已取消');
   });
 
   it('连续调用时上一只的 signal 被 abort，当前这只保持未中断', async () => {
     const signals: (AbortSignal | undefined)[] = [];
-    axiosInst.post.mockImplementation(
+    httpInst.post.mockImplementation(
       (_url: string, _body: unknown, cfg: { signal?: AbortSignal }) => {
         signals.push(cfg.signal);
         return new Promise(() => {});
@@ -596,46 +597,46 @@ describe('getUniverseBoards —— in-flight 去重 + 5 分钟缓存（该端点
   });
 
   it('同一时刻的并发调用共享一个 in-flight 请求', async () => {
-    axiosInst.get.mockResolvedValue(boardsResponse);
+    httpInst.get.mockResolvedValue(boardsResponse);
     const [a, b, c] = await Promise.all([
       getUniverseBoards(),
       getUniverseBoards(),
       getUniverseBoards(),
     ]);
-    expect(axiosInst.get).toHaveBeenCalledTimes(1);
+    expect(httpInst.get).toHaveBeenCalledTimes(1);
     expect(a).toEqual(boardsResponse.data);
     expect(b).toEqual(a);
     expect(c).toEqual(a);
   });
 
   it('TTL 内命中缓存不再请求，超过 5 分钟后重新请求', async () => {
-    axiosInst.get.mockResolvedValue(boardsResponse);
+    httpInst.get.mockResolvedValue(boardsResponse);
     await getUniverseBoards();
     await getUniverseBoards();
-    expect(axiosInst.get).toHaveBeenCalledTimes(1);
+    expect(httpInst.get).toHaveBeenCalledTimes(1);
 
     clock += 4 * 60_000; // 4 分钟后仍在 TTL 内
     vi.setSystemTime(new Date(clock));
     await getUniverseBoards();
-    expect(axiosInst.get).toHaveBeenCalledTimes(1);
+    expect(httpInst.get).toHaveBeenCalledTimes(1);
 
     clock += 90_000; // 累计 5.5 分钟，已过期
     vi.setSystemTime(new Date(clock));
     await getUniverseBoards();
-    expect(axiosInst.get).toHaveBeenCalledTimes(2);
+    expect(httpInst.get).toHaveBeenCalledTimes(2);
   });
 
   it('失败不缓存：一次上游抖动不会让板块下拉在整个会话内永久不可用', async () => {
-    axiosInst.get.mockRejectedValueOnce(httpError(400));
+    httpInst.get.mockRejectedValueOnce(httpError(400));
     await expect(getUniverseBoards()).rejects.toThrow('行业板块列表获取失败');
 
-    axiosInst.get.mockResolvedValueOnce(boardsResponse);
+    httpInst.get.mockResolvedValueOnce(boardsResponse);
     await expect(getUniverseBoards()).resolves.toEqual(boardsResponse.data);
-    expect(axiosInst.get).toHaveBeenCalledTimes(2);
+    expect(httpInst.get).toHaveBeenCalledTimes(2);
   });
 
   it('失败同样被翻成中文提示（网络不可达时给启动指引）', async () => {
-    axiosInst.get.mockRejectedValueOnce(networkError());
+    httpInst.get.mockRejectedValueOnce(networkError());
     await expect(getUniverseBoards()).rejects.toThrow('无法连接后端服务（localhost:3001）');
   });
 });

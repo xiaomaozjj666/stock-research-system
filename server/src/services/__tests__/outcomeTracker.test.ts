@@ -177,6 +177,15 @@ describe('outcomeTracker 决策-结果闭环', () => {
       expect(readItems()[0].excessPct).toBe(10);
     });
 
+    it('区间只有 1 根真实 K 线 → 不落盘评估（收益恒 0 会把看空误记为命中）', async () => {
+      seed([{ stockCode: '600519', rating: '建议规避', entryPrice: 100 }]);
+      stockMock.mockImplementation(async () => [barOf(100)]); // 评级日非交易日 + 停牌/仅 1 行
+
+      expect(await evaluateOutcomes(3)).toBe(0);
+      expect(readItems()[0].evaluatedAt).toBeUndefined(); // 留待下次回填，而非永久判定
+      expect(getRatingAccuracy('600519').stock.judgedCount).toBe(0);
+    });
+
     it('基准走 secid（1.000300）而非代码 000300——否则上游返回空、超额恒为 null', async () => {
       seed([{ stockCode: '600519', rating: '优先跟踪', entryPrice: 100 }]);
       await evaluateOutcomes(3);

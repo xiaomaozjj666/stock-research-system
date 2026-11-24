@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -67,6 +67,10 @@ function makeEntry(code: string, over: Partial<HistoryEntryInput> = {}): History
 
 describe('historyService 研究历史', () => {
   beforeEach(() => {
+    // 清掉上一用例可能留下的损坏留档，避免目录级断言串味
+    for (const f of readdirSync(tmpDir)) {
+      if (f.includes('.corrupt-')) rmSync(join(tmpDir, f), { force: true });
+    }
     // 每个用例从空历史开始（直接重建文件 + 重置内存缓存）
     seedFile(JSON.stringify({ items: [] }));
   });
@@ -253,6 +257,30 @@ describe('historyService 研究历史', () => {
     const saved = await saveHistoryEntry(makeEntry('600519'));
     expect(saved).not.toBeNull();
     expect(await listHistory()).toHaveLength(1);
+  });
+
+  it('文件损坏时改名留档，坏文件内容原样保留（不静默丢全部历史）', async () => {
+    seedFile('{ not valid json');
+    expect(await listHistory()).toEqual([]);
+
+    const backups = readdirSync(tmpDir).filter((f) => f.includes('.corrupt-'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(tmpDir, backups[0]), 'utf-8')).toBe('{ not valid json');
+  });
+
+  it('损坏且留档失败时拒绝写入，绝不覆盖唯一副本', async () => {
+    seedFile('{ not valid json');
+    const spy = vi
+      .spyOn(fsp, 'rename')
+      .mockRejectedValue(Object.assign(new Error('EPERM: locked'), { code: 'EPERM' }));
+    try {
+      // 读到的只是「空快照」，若照常保存会把坏文件（唯一副本）覆盖成 1 条
+      expect(await saveHistoryEntry(makeEntry('600519'))).toBeNull();
+      expect(readFileSync(tmpFile, 'utf-8')).toBe('{ not valid json');
+    } finally {
+      spy.mockRestore();
+      resetHistoryStoreCache();
+    }
   });
 
   it('写盘失败时返回 null（不阻断主流程）', async () => {

@@ -13,7 +13,7 @@ import {
 // 在 ESM import 之前执行，抽成 import 的 helper 会撞 "Cannot access before
 // initialization"（已实测）。桩只需调用不报错，无需断言，故用 no-op。
 
-const axiosInst = vi.hoisted(() => ({
+const httpInst = vi.hoisted(() => ({
   post: vi.fn(),
   get: vi.fn(),
   interceptors: {
@@ -21,7 +21,10 @@ const axiosInst = vi.hoisted(() => ({
     response: { use: () => {} },
   },
 }));
-vi.mock('axios', () => ({ default: { create: () => axiosInst } }));
+vi.mock('../http.js', () => ({
+  default: { create: () => httpInst },
+  isCancelled: (v: unknown) => !!(v && (v as { code?: string }).code === 'ERR_CANCELED'),
+}));
 
 describe('normalizeApiError', () => {
   it('ERR_CANCELED -> 请求已取消', () => {
@@ -80,16 +83,16 @@ describe('normalizeApiError', () => {
 
 describe('研究增强接口（前端 API 层）', () => {
   beforeEach(() => {
-    axiosInst.post.mockReset();
-    axiosInst.get.mockReset();
+    httpInst.post.mockReset();
+    httpInst.get.mockReset();
   });
 
   it('chatWithAgent 透传 sessionId 给后端（记忆生效）', async () => {
-    axiosInst.post.mockResolvedValue({
+    httpInst.post.mockResolvedValue({
       data: { answer: 'a', toolsUsed: [], evidence: [], degraded: false },
     });
     await chatWithAgent({ message: 'hi', sessionId: 's1' });
-    expect(axiosInst.post).toHaveBeenCalledWith(
+    expect(httpInst.post).toHaveBeenCalledWith(
       '/chat',
       expect.objectContaining({ sessionId: 's1' }),
       expect.any(Object),
@@ -97,7 +100,7 @@ describe('研究增强接口（前端 API 层）', () => {
   });
 
   it('ingestDocument 调 /ingest 并解析返回值', async () => {
-    axiosInst.post.mockResolvedValue({
+    httpInst.post.mockResolvedValue({
       data: {
         id: 'x',
         title: 't',
@@ -114,7 +117,7 @@ describe('研究增强接口（前端 API 层）', () => {
     });
     const r = await ingestDocument({ title: 't', text: 'x' });
     expect(r.ingested).toBe(true);
-    expect(axiosInst.post).toHaveBeenCalledWith(
+    expect(httpInst.post).toHaveBeenCalledWith(
       '/ingest',
       expect.objectContaining({ title: 't' }),
       expect.any(Object),
@@ -122,7 +125,7 @@ describe('研究增强接口（前端 API 层）', () => {
   });
 
   it('getModels 返回 embeddingEnabled 字段', async () => {
-    axiosInst.get.mockResolvedValue({
+    httpInst.get.mockResolvedValue({
       data: { available: true, embeddingEnabled: false, registry: [], routing: {} },
     });
     const r = await getModels();
@@ -130,9 +133,9 @@ describe('研究增强接口（前端 API 层）', () => {
   });
 
   it('startAutonomous 调 /autonomous/start 并带 intervalMs', async () => {
-    axiosInst.post.mockResolvedValue({ data: { started: true, running: true } });
+    httpInst.post.mockResolvedValue({ data: { started: true, running: true } });
     await startAutonomous(60000);
-    expect(axiosInst.post).toHaveBeenCalledWith(
+    expect(httpInst.post).toHaveBeenCalledWith(
       '/autonomous/start',
       expect.objectContaining({ intervalMs: 60000 }),
       expect.any(Object),
@@ -140,9 +143,9 @@ describe('研究增强接口（前端 API 层）', () => {
   });
 
   it('clearChatHistory 调 /chat/history/clear 并带 sessionId', async () => {
-    axiosInst.post.mockResolvedValue({ data: { ok: true } });
+    httpInst.post.mockResolvedValue({ data: { ok: true } });
     await clearChatHistory('s1');
-    expect(axiosInst.post).toHaveBeenCalledWith(
+    expect(httpInst.post).toHaveBeenCalledWith(
       '/chat/history/clear',
       { sessionId: 's1' },
       expect.any(Object),

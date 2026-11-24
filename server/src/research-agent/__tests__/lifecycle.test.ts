@@ -8,7 +8,7 @@
  *      现在后台跑完归档，路由层用 supertest + 短超时实测；
  *   3. stats.succeededTasks 恒 0 被新 UI 消费——回填口径在此钉住。
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { ResearchOrchestrator } from '../index.js';
 import { ResearchAbortedError } from '../utils.js';
 import type { SearchAdapter, SearchHit } from '../search.js';

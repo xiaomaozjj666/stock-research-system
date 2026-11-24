@@ -386,6 +386,11 @@ export class PaperAccount {
    */
   settleDay(closePrices: Map<string, number>, prevClosePrices?: Map<string, number>): void {
     const date = this.requireDate();
+    const lastSettledDate = this.equityHistory.at(-1)?.date;
+    // 结算以「交易日」为单位幂等：同一交易日重复调用（客户端重试/重复点击/更早日期
+    // 补录）会重复追加净值点并重复累计，虚增 totalDays、插入 0% 日收益稀释夏普，
+    // 乱序日期还会让最大回撤序列失真。重复/倒序结算直接忽略本次调用。
+    if (lastSettledDate !== undefined && date <= lastSettledDate) return;
     const pending = this.orders.filter((o) => o.status === 'pending');
 
     for (const order of pending) {
@@ -594,6 +599,9 @@ export class PaperAccount {
       currentDate: this.currentDate,
       options: {
         commissionRate: this.opts.commissionRate,
+        // 最低佣金必须随快照落盘：构造时传 0（关闭最低佣金）的账户重启后会静默
+        // 回落到默认 5 元，成交成本与配置不符，且没有任何提示。
+        minCommission: this.opts.minCommission,
         stampDutyRate: this.opts.stampDutyRate,
         limitPct: this.opts.limitPct,
       },
@@ -637,6 +645,7 @@ export class PaperAccount {
     const acct = new PaperAccount(data.initialCapital, {
       filePath,
       commissionRate: data.options?.commissionRate,
+      minCommission: data.options?.minCommission,
       stampDutyRate: data.options?.stampDutyRate,
       limitPct: data.options?.limitPct,
       initialDate: data.currentDate ?? undefined,

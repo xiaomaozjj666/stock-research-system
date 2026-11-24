@@ -13,7 +13,7 @@ import type { StrategyConfig } from '../types';
  */
 
 // StrategyInput 自己不碰网络，但它渲染的 StockSearchInput 会 import searchStocks；
-// 不 mock 就会在 jsdom 里真发 axios 请求（mock 工厂必须导出该符号，否则渲染即报错）。
+// 不 mock 就会在 jsdom 里真发网络请求（mock 工厂必须导出该符号，否则渲染即报错）。
 const apiMocks = vi.hoisted(() => ({ searchStocks: vi.fn() }));
 vi.mock('../../../api/client', () => ({ searchStocks: apiMocks.searchStocks }));
 

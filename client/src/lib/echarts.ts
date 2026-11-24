@@ -14,7 +14,6 @@ import {
   TooltipComponent,
   LegendComponent,
   MarkLineComponent,
-  TitleComponent,
   DataZoomComponent,
   AxisPointerComponent,
 } from 'echarts/components';
@@ -31,7 +30,6 @@ echarts.use([
   TooltipComponent,
   LegendComponent,
   MarkLineComponent,
-  TitleComponent,
   DataZoomComponent,
   AxisPointerComponent,
   CanvasRenderer,

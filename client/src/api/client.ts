@@ -1,4 +1,3 @@
-import axios from 'axios';
 // 端点级类型全部由契约生成（见 api/generated.ts，头部有「请勿手改」告警）。
 // 这里的 import 不是可选的便利：泛型写错会在 tsc 立刻报错，而契约改动后忘记
 // 重新生成会被 `npm run check:api-types`（CI 门禁）拦下——这正是本项目此前
@@ -54,8 +53,9 @@ import type {
   QuantResearchReport,
 } from '../pages/quant/types';
 import { getApiToken, notifyUnauthorized, withTokenQuery } from './auth';
+import http, { isCancelled } from './http';
 
-const api = axios.create({
+const api = http.create({
   baseURL: '/api',
   timeout: 120000,
 });
@@ -70,7 +70,7 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = getApiToken();
   if (token) {
-    // 用 set() 而非展开合并：axios 的 headers 是 AxiosHeaders 类实例，
+    // 用 set() 而非展开合并：拦截器拿到的 headers 是 Headers 实例，
     // 展开成普通对象会丢掉 set/get/has 等方法（TS 与运行时都会出问题）。
     config.headers.set('x-api-token', token);
   }
@@ -107,7 +107,7 @@ export class ApiError extends Error {
   retryAfter?: number;
 }
 
-interface AxiosErrorLike {
+interface HttpErrorLike {
   code?: string;
   message?: string;
   response?: {
@@ -124,7 +124,7 @@ interface AxiosErrorLike {
 }
 
 /** 从响应头/错误体提取排障元数据并挂到错误对象上（不改变文案语义） */
-function attachErrorMetadata(err: ApiError, e: AxiosErrorLike): ApiError {
+function attachErrorMetadata(err: ApiError, e: HttpErrorLike): ApiError {
   const headers = e.response?.headers;
   const data = e.response?.data;
   const header = (name: string): unknown =>
@@ -141,11 +141,11 @@ function attachErrorMetadata(err: ApiError, e: AxiosErrorLike): ApiError {
 }
 
 /**
- * 把 axios 的原始错误翻译成用户能理解、能行动的中文提示。
- * 后端未启动时 axios 只会抛 "Network Error"，对用户毫无意义。
+ * 把底层 HTTP 客户端（fetch）的原始错误翻译成用户能理解、能行动的中文提示。
+ * 后端未启动时只会抛 "Network Error"，对用户毫无意义。
  */
 export function normalizeApiError(error: unknown, fallback = '请求失败'): ApiError {
-  const e = error as AxiosErrorLike;
+  const e = error as HttpErrorLike;
 
   if (e?.code === 'ERR_CANCELED') return new ApiError('请求已取消');
   if (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message ?? '')) {
@@ -200,7 +200,7 @@ export async function analyzeStock(stockCode: string): Promise<AnalysisResult> {
     );
     return response.data;
   } catch (error: unknown) {
-    if (axios.isCancel(error)) throw new Error('请求已取消');
+    if (isCancelled(error)) throw new Error('请求已取消');
     throw normalizeApiError(error, '分析请求失败');
   } finally {
     currentController = null;
@@ -264,7 +264,7 @@ export async function runQuantAnalysis(
     return response.data;
   } catch (error: unknown) {
     // 用户主动取消：以专用类型上抛，调用方据此静默收尾而非当失败渲染
-    if (axios.isCancel(error)) throw new AnalysisCancelledError('研究已取消');
+    if (isCancelled(error)) throw new AnalysisCancelledError('研究已取消');
     throw normalizeApiError(error, '量化分析失败');
   }
 }
@@ -293,7 +293,7 @@ export async function runBatchCompositeAlpha(
     return response.data;
   } catch (error: unknown) {
     // 用户主动取消：以专用类型上抛，调用方据此静默收尾而非当失败渲染
-    if (axios.isCancel(error)) throw new AnalysisCancelledError('批量测算已取消');
+    if (isCancelled(error)) throw new AnalysisCancelledError('批量测算已取消');
     throw normalizeApiError(error, '批量组合 alpha 测算失败');
   }
 }
@@ -355,7 +355,7 @@ export async function runCrossSectionEvaluation(
     return response.data;
   } catch (error: unknown) {
     // 用户主动取消：以专用类型上抛，调用方据此静默收尾而非当失败渲染
-    if (axios.isCancel(error)) throw new AnalysisCancelledError('截面评估已取消');
+    if (isCancelled(error)) throw new AnalysisCancelledError('截面评估已取消');
     throw normalizeApiError(error, '截面因子评估失败');
   }
 }
@@ -381,7 +381,7 @@ export async function compareStocks(
     );
     return response.data;
   } catch (error: unknown) {
-    if (axios.isCancel(error)) throw new AnalysisCancelledError('对比分析已取消');
+    if (isCancelled(error)) throw new AnalysisCancelledError('对比分析已取消');
     throw normalizeApiError(error, '对比分析失败');
   }
 }
@@ -432,7 +432,7 @@ export async function runWatchlistNewsBacktest(
     );
     return response.data;
   } catch (error: unknown) {
-    if (axios.isCancel(error)) throw new AnalysisCancelledError('批量回测已取消');
+    if (isCancelled(error)) throw new AnalysisCancelledError('批量回测已取消');
     throw normalizeApiError(error, '自选股批量回测失败');
   }
 }
@@ -479,7 +479,7 @@ export async function chatWithAgent(
     });
     return response.data;
   } catch (error: unknown) {
-    if (axios.isCancel(error)) throw new AnalysisCancelledError('已取消本次回答');
+    if (isCancelled(error)) throw new AnalysisCancelledError('已取消本次回答');
     throw normalizeApiError(error, '对话请求失败');
   }
 }
@@ -1101,7 +1101,7 @@ export async function runFactorExpression(
     return response.data;
   } catch (error: unknown) {
     // 用户主动取消：与截面评估同语义上抛专用类型，调用方据此静默收尾而非当失败渲染
-    if (axios.isCancel(error)) throw new AnalysisCancelledError('因子评估已取消');
+    if (isCancelled(error)) throw new AnalysisCancelledError('因子评估已取消');
     throw normalizeApiError(error, '因子表达式评估失败');
   }
 }
@@ -1260,7 +1260,7 @@ export async function monitorWatchlist(signal?: AbortSignal): Promise<WatchlistM
     );
     return response.data;
   } catch (error: unknown) {
-    if (axios.isCancel(error)) throw new AnalysisCancelledError('监控已取消');
+    if (isCancelled(error)) throw new AnalysisCancelledError('监控已取消');
     throw normalizeApiError(error, '自选股监控失败');
   }
 }

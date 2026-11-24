@@ -11,7 +11,7 @@ import { analyzeStockStream, chatWithAgentStream } from '../client.js';
  */
 
 // 与 client.test.ts 同理：桩必须带 interceptors（模块加载时会注册）
-const axiosInst = vi.hoisted(() => ({
+const httpInst = vi.hoisted(() => ({
   post: vi.fn(),
   get: vi.fn(),
   interceptors: {
@@ -20,7 +20,10 @@ const axiosInst = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('axios', () => ({ default: { create: () => axiosInst } }));
+vi.mock('../http.js', () => ({
+  default: { create: () => httpInst },
+  isCancelled: (v: unknown) => !!(v && (v as { code?: string }).code === 'ERR_CANCELED'),
+}));
 
 class MockEventSource {
   static instances: MockEventSource[] = [];

@@ -11,7 +11,7 @@
  * 启用鉴权时存在，用 localStorage + 显式注入把权限收得更紧。
  *
  * 两条注入路径（缺一不可）：
- *  1. `Authorization: Bearer` / `x-api-token` 头 —— 覆盖全部 axios REST 调用；
+ *  1. `Authorization: Bearer` / `x-api-token` 头 —— 覆盖全部 REST 调用；
  *  2. `?token=` query —— **只为 SSE**。EventSource 是浏览器唯一能消费 text/event-stream
  *     的原生 API，而它**不允许自定义请求头**（无 header 选项），这不是本项目的选择。
  *     因此流式端点只能走 query。服务端日志与 telemetry 侧已有 sanitizeUrlForLog
@@ -75,7 +75,7 @@ export function isUnauthorized(): boolean {
 }
 
 /**
- * 由 axios 响应拦截器调用：任一 REST 请求返回 401 即广播。
+ * 由 HTTP 客户端响应拦截器调用：任一 REST 请求返回 401 即广播。
  *
  * 为什么放在拦截器而不是各页面自己判断：401 可能出现在任意端点（首屏的股票列表、
  * 成本面板、历史页…），逐个页面判断等于赌"用户触发的第一个请求恰好是某个已知端点"。

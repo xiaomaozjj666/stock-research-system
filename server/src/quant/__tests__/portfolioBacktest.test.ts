@@ -115,6 +115,8 @@ describe('runPortfolioBacktest — 因子组合回测', () => {
     const empty = r.rebalances.find((x) => x.holdings.length === 0);
     expect(empty).toBeDefined();
     expect(empty!.grossReturn).toBe(0);
+    // 清仓期：名额全部卖出（成本按全额计提），换手率必须同为 1，不能显示 0
+    expect(empty!.turnover).toBe(1);
   });
 
   it('反向因子：值越小越好时研究者应取负——按原值排序持有的是「最差股」', () => {

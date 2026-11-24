@@ -133,7 +133,7 @@ export default function TodayPanel() {
       setChanges(rows);
     } else {
       setChanges([]);
-      // 两块任一失败都算「观点变化」这块失败；优先取真正被拒那条的 reason（axios 原始错误原样保留）
+      // 两块任一失败都算「观点变化」这块失败；优先取真正被拒那条的 reason（底层错误原样保留）
       failedParts.changes =
         historyRes.status === 'rejected'
           ? historyRes.reason

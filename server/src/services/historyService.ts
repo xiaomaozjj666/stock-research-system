@@ -27,6 +27,7 @@ import * as path from 'node:path';
 
 import { DATA_ROOT } from '../dataRoot.js';
 import type { AnalysisResult } from '../types.js';
+import logger from '../utils/logger.js';
 
 /** 评分/评级时间线单点（精简：只留回看"观点怎么变的"所需字段，不带完整 result） */
 export interface HistoryTimelinePoint {
@@ -133,25 +134,66 @@ export async function readHistoryStore(): Promise<HistoryStore> {
   return { items: [...(await readStore()).items] };
 }
 
+/**
+ * 最近一次「损坏且留档失败」的历史文件路径。
+ * ----------------------------------------------------------------------------
+ * 文件损坏本身可以按空历史继续，但 saveHistoryEntry 会把读到的空快照全量写回——
+ * 一次 JSON 截断就会永久清零全部研究历史（100 条 ≈ 14.7MB）。因此先改名留档
+ * （`.corrupt-<ts>`，可人工恢复）再继续；留档也失败时（权限/锁定）禁止任何写入，
+ * 宁可本次保存失败，也不覆盖唯一副本。评级台账 outcomeTracker 是同一处置口径。
+ */
+let unquarantinedCorruptFile: string | null = null;
+
+/** 损坏文件改名留档；留档失败则禁止写入（避免用空快照覆盖唯一副本）。 */
+async function quarantineCorrupt(file: string, err: unknown): Promise<void> {
+  try {
+    await fsp.rename(file, `${file}.corrupt-${Date.now()}`);
+    unquarantinedCorruptFile = null;
+    logger.warn('研究历史文件损坏，已改名留档并按空历史继续（历史记录需人工恢复）', {
+      file,
+      err,
+    });
+  } catch {
+    unquarantinedCorruptFile = file;
+    logger.error('研究历史文件损坏且无法留档，已禁止写入以免覆盖原文件', { file, err });
+  }
+}
+
 /** 从盘加载并建立缓存；损坏/不可读返回空历史且**不写缓存**（下次调用重试）。 */
 async function loadFromDisk(file: string): Promise<HistoryStore> {
-  let store: HistoryStore;
+  let raw: string;
   try {
-    const raw = await fsp.readFile(file, 'utf-8');
-    const parsed = JSON.parse(raw) as HistoryStore;
-    store = parsed && Array.isArray(parsed.items) ? parsed : { items: [] };
+    raw = await fsp.readFile(file, 'utf-8');
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
       // 文件不存在 = 确定的空历史（不是故障），可以缓存；外部新建文件后 mtime
       // 校验会发现"建立缓存时无文件、现在有"，自动重读。
-      store = { items: [] };
+      const store: HistoryStore = { items: [] };
       storeCache = { file, store, mtimeMs: null, memoryAuthoritative: false };
       return store;
     }
-    // 文件损坏/不可读：视为空历史（不阻断）。**不写缓存**——一次瞬时读失败不该把
-    // 「空历史」钉在内存里（否则下一次写入会把整份历史覆盖为空），下次调用重试读盘。
+    // 读失败（EISDIR/EACCES/EBUSY 等）≠ 内容损坏：不动文件（目录改名会毁掉整棵目录），
+    // 仅禁止后续写入，避免「读到空快照 → 全量写回」覆盖唯一副本。
+    unquarantinedCorruptFile = file;
+    logger.error('研究历史文件读取失败，已禁止写入以免覆盖原文件', { file, err: e });
     return { items: [] };
   }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    // JSON 截断/半截写：改名留档后按空历史继续，不阻断列表与后续保存。
+    await quarantineCorrupt(file, e);
+    return { items: [] };
+  }
+  const parsedStore = parsed as Partial<HistoryStore> | null;
+  if (!parsedStore || !Array.isArray(parsedStore.items)) {
+    await quarantineCorrupt(file, new Error('历史文件结构非法（缺少 items 数组）'));
+    return { items: [] };
+  }
+  const store: HistoryStore = { items: parsedStore.items };
+  unquarantinedCorruptFile = null; // 读取成功：此前的损坏标记已失效
   let mtimeMs: number | null = null;
   try {
     mtimeMs = (await fsp.stat(file)).mtimeMs;
@@ -222,6 +264,7 @@ async function writeStore(store: HistoryStore): Promise<boolean> {
       /* stat 失败则 mtimeMs=null，下次读重新加载（多一次读盘，正确性不受影响） */
     }
     storeCache = { file, store, mtimeMs, memoryAuthoritative: false }; // 写后更新缓存
+    unquarantinedCorruptFile = null; // 写入成功：盘上已是完整快照，损坏标记失效
     return true;
   } catch {
     // 写失败（重试后仍失败）：**保留内存 store 作为权威**，并跳过 mtime 校验。
@@ -337,6 +380,13 @@ export function saveHistoryEntry(
 ): Promise<HistoryItem | null> {
   return enqueueMutation(async () => {
     const store = reuseStore && Array.isArray(reuseStore.items) ? reuseStore : await readStore();
+    // 落盘文件损坏且无法留档：此时读到的「空快照」不能写回（会覆盖唯一副本）
+    if (unquarantinedCorruptFile === getHistoryFile()) {
+      logger.error('研究历史文件损坏且未留档，本次保存已放弃（请人工修复落盘文件）', {
+        file: unquarantinedCorruptFile,
+      });
+      return null;
+    }
     const now = monotonicNowIso();
     const existing = store.items.find((it) => it.stockCode === input.stockCode);
 

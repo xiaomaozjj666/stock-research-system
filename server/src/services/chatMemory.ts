@@ -5,7 +5,6 @@
  * 重启后仍能回忆历史；超过上限自动截断最旧轮次。所有 IO 错误静默降级为无记忆。
  */
 import { promises as fsp } from 'fs';
-import * as fs from 'fs';
 import * as path from 'path';
 
 import { DATA_ROOT } from '../dataRoot.js';

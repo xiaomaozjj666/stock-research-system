@@ -166,7 +166,11 @@ export function runPortfolioBacktest(
     // 换手率（名额占比口径，展示用）：与上期持仓的名额变动占比；首期为满仓建仓（1）
     const keep = holdings.filter((s) => prevHoldings.includes(s)).length;
     const turnover =
-      prevHoldings.length === 0 ? 1 : (holdings.length - keep) / Math.max(holdings.length, 1);
+      prevHoldings.length === 0
+        ? 1
+        : holdings.length === 0
+          ? 1 // 清仓期：名额全部卖出，成本也按全额计提，换手率必须同为 1（此前显示 0）
+          : (holdings.length - keep) / holdings.length;
 
     // 成本按**双边成交额占比**计提（等权内部再平衡同样占用成交额）：
     //   卖出 = 被剔除名额 × 1/|上期| + 留任名额权重下降部分（1/|上期| − 1/|当期|）

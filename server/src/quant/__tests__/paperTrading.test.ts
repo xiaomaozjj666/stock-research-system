@@ -39,6 +39,31 @@ describe('PaperAccount 撮合与记账', () => {
     expect(acct.orders[0].commission).toBeCloseTo(15, 2);
   });
 
+  it('同一交易日重复结算幂等：不重复追加净值点、不虚增天数与日收益', () => {
+    const acct = makeAccount();
+    acct.placeOrder(order({ quantity: 500 }));
+    acct.settleDay(closes({ '600519': 100 }));
+    const cashAfterFirst = acct.cash;
+
+    acct.settleDay(closes({ '600519': 100 })); // 客户端重试 → 同一天再次结算
+
+    expect(acct.cash).toBeCloseTo(cashAfterFirst, 2);
+    expect(acct.getDailyEquity()).toHaveLength(1);
+    const stats = acct.computeStats();
+    expect(stats.totalDays).toBe(1); // 重复点会把天数虚增为 2
+    expect(stats.dailyReturns).toHaveLength(0); // 重复点会插入一条 0% 日收益稀释夏普
+  });
+
+  it('倒序日期结算被忽略：净值序列保持单调（回撤按时间轴计算才正确）', () => {
+    const acct = makeAccount();
+    acct.settleDay(closes({ '600519': 100 }));
+
+    acct.setCurrentDate('2024-12-31'); // 早于已结算日期
+    acct.settleDay(closes({ '600519': 90 }));
+
+    expect(acct.getDailyEquity().map((p) => p.date)).toEqual(['2025-01-02']);
+  });
+
   it('限价买单：收盘价 ≤ 限价 成交，未触发则当日过期', () => {
     const acct = makeAccount();
     acct.placeOrder(order({ type: 'limit', price: 101, quantity: 500 })); // 触发
@@ -154,6 +179,7 @@ describe('PaperAccount 撮合与记账', () => {
     acct.settleDay(closes({ '830001': 12.5 }), closes({ '830001': 10 })); // +25% < 30% → 成交
     expect(acct.orders.at(-1)!.status).toBe('filled');
 
+    acct.setCurrentDate('2025-01-06'); // 新交易日（同一交易日重复结算按幂等忽略）
     acct.placeOrder(order({ code: '830001', quantity: 100 }));
     acct.settleDay(closes({ '830001': 13 }), closes({ '830001': 10 })); // +30% 触板 → 拒买
     expect(acct.orders.at(-1)!.status).toBe('rejected');
@@ -270,6 +296,21 @@ describe('PaperAccount 持久化 round-trip', () => {
     loaded.settleDay(closes({ '600519': 120 }));
     expect(loaded.positions.get('600519')).toBeUndefined();
     expect(loaded.getDailyEquity()).toHaveLength(3);
+  });
+
+  it('minCommission 随快照持久化：配置 0（关闭最低佣金）重启后不回落为 5 元', () => {
+    const acct = new PaperAccount(100000, { filePath: tmpFile, minCommission: 0 });
+    acct.setCurrentDate('2025-01-02');
+    acct.placeOrder(order({ quantity: 100 })); // 1 万 × 万三 = 3 元（< 默认最低 5 元）
+    acct.settleDay(closes({ '600519': 100 }));
+    expect(acct.orders[0].commission).toBeCloseTo(3, 2);
+    acct.save();
+
+    const loaded = PaperAccount.load(tmpFile);
+    loaded.setCurrentDate('2025-01-03');
+    loaded.placeOrder(order({ quantity: 100 }));
+    loaded.settleDay(closes({ '600519': 100 }));
+    expect(loaded.orders.at(-1)!.commission).toBeCloseTo(3, 2); // 未持久化会变成 5
   });
 });
 

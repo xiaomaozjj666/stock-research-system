@@ -16,7 +16,7 @@ import {
 } from '../client.js';
 import type { AnalysisResult } from '../generated';
 
-const axiosInst = vi.hoisted(() => ({
+const httpInst = vi.hoisted(() => ({
   post: vi.fn(),
   get: vi.fn(),
   interceptors: {
@@ -24,7 +24,10 @@ const axiosInst = vi.hoisted(() => ({
     response: { use: () => {} },
   },
 }));
-vi.mock('axios', () => ({ default: { create: () => axiosInst } }));
+vi.mock('../http.js', () => ({
+  default: { create: () => httpInst },
+  isCancelled: (v: unknown) => !!(v && (v as { code?: string }).code === 'ERR_CANCELED'),
+}));
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -86,14 +89,14 @@ describe('normalizeApiError 错误元数据契约', () => {
     expect(err.retryAfter).toBeUndefined();
   });
 
-  it('AxiosHeaders 实例（get 方法）同样可提取', () => {
+  it('Headers 实例（get 方法）同样可提取', () => {
     const headers = {
       get: (name: string) =>
-        name === 'x-request-id' ? 'req-axios' : name === 'retry-after' ? '3' : undefined,
+        name === 'x-request-id' ? 'req-http' : name === 'retry-after' ? '3' : undefined,
     };
     const e = { response: { status: 429, headers, data: {} } };
     const err = normalizeApiError(e);
-    expect(err.requestId).toBe('req-axios');
+    expect(err.requestId).toBe('req-http');
     expect(err.retryAfter).toBe(3);
   });
 

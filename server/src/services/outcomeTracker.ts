@@ -237,7 +237,10 @@ async function evaluateOutcomesLocked(limit: number, signal?: AbortSignal): Prom
           ).catch(() => []),
         ]);
         const realBars = bars.filter((b) => !b.isSimulated && b.close > 0);
-        if (realBars.length === 0) continue; // 行情不可得（或全为模拟），留待下次
+        // 至少 2 根才构成持有区间：区间内只有 1 根（评级日非交易日且此后停牌/
+        // 数据只回 1 行）时建仓价=退出价，returnPct 恒 0 并**永久落盘判定**——
+        // 看多记未命中、看空记命中，持续污染命中率。留待下次回填重试。
+        if (realBars.length < 2) continue;
         const last = realBars[realBars.length - 1];
         // 缓存尾部补拉失败时，最后一行可能是数日前的价——不能当「今日退出价」
         // 永久落盘（写入 evaluatedAt 后不会再重评）
