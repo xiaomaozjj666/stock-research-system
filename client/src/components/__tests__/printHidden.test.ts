@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 
@@ -13,7 +14,22 @@ import { describe, it, expect } from 'vitest';
  *   2. `.no-print` 的规则只能声明 display:none，不能与打印清单里"要显示"的规则打架。
  */
 
-const css = readFileSync(fileURLToPath(new URL('../../index.css', import.meta.url)), 'utf-8');
+/**
+ * 读取 index.css 及其 @import 链（index.css 已拆成 styles/ 下的域文件）：
+ * 断言仍针对「整份样式表」，避免拆分后测试只看到 27 行的 import 清单。
+ */
+function readCssWithImports(file: string, seen = new Set<string>()): string {
+  if (seen.has(file)) return '';
+  seen.add(file);
+  const src = readFileSync(file, 'utf-8');
+  return src.replace(
+    /@import\s+(?:url\()?\s*['"]?([^'")\s;]+)['"]?\s*\)?\s*;/g,
+    (_match, href: string) => readCssWithImports(resolve(dirname(file), href), seen),
+  );
+}
+
+const entry = fileURLToPath(new URL('../../index.css', import.meta.url));
+const css = readCssWithImports(entry);
 
 /** 去掉注释后再断言：注释里会引用旧写法，不剥离就会被自己的注释绊倒 */
 function stripComments(src: string): string {
