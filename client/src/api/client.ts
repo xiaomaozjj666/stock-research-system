@@ -53,8 +53,14 @@ import type {
   CrossSectionResult,
   QuantResearchReport,
 } from '../pages/quant/types';
-import { getApiToken, notifyUnauthorized, withTokenQuery } from './auth';
+import { getApiToken, notifyUnauthorized } from './auth';
 import http, { isCancelled } from './http';
+import { SseSession } from './sse';
+
+// SSE 共享内核的公共类型/常量从 API 入口再导出：调用方与测试仍只依赖 api/client，
+// 不必知道内部拆成了独立文件。
+export { SSE_WATCHDOG_MS, SseSession } from './sse';
+export type { SseSessionOptions } from './sse';
 
 const api = http.create({
   baseURL: '/api',
@@ -657,57 +663,53 @@ export function chatWithAgentStream(
   // "第二轮无需重复股票代码"在流式主路径不可用
   const params = new URLSearchParams({ message });
   if (options.sessionId) params.set('sessionId', options.sessionId);
-  // SSE 只能走 query 传令牌：EventSource 不允许自定义请求头
-  const es = new EventSource(withTokenQuery(`/api/chat/stream?${params.toString()}`));
+
   let settled = false;
-  /** 首包看门狗：20 秒内没收到任何事件即判定服务不可用，避免静默挂起 */
-  let watchdog: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-    if (!settled)
-      finish({ phase: 'error', message: '后端无响应：20 秒内未收到任何进度，请确认服务是否正常' });
-  }, 20000);
   const finish = (evt: ChatStreamEvent) => {
     if (settled) return;
     settled = true;
-    if (watchdog) {
-      clearTimeout(watchdog);
-      watchdog = null;
-    }
-    es.close();
+    session.close();
     onEvent(evt);
   };
-  es.onmessage = (e) => {
-    // 已收尾（done/error/cancel）后不再回调：close() 只能阻止后续事件到达，
-    // 已排进任务队列的那一帧仍会执行——组件已卸载时回调会让调用方在废弃的会话上 setState
-    if (settled) return;
-    if (watchdog) {
-      clearTimeout(watchdog);
-      watchdog = null;
-    }
-    try {
-      const data = JSON.parse(e.data) as ChatStreamEvent;
+
+  const session = new SseSession({
+    path: `/api/chat/stream?${params.toString()}`,
+    onFrame: (raw) => {
+      // 已收尾（done/error/cancel）后不再回调：close() 只能阻止后续事件到达，
+      // 已排进任务队列的那一帧仍会执行——组件已卸载时回调会让调用方在废弃的会话上 setState
+      if (settled) return;
+      const data = raw as ChatStreamEvent;
       if (data.phase === 'done' || data.phase === 'error') finish(data);
       else onEvent(data);
-    } catch (err) {
+    },
+    onParseError: (raw, err) => {
       // 解析失败不再静默吞掉：记录原始帧（截断防刷屏）并给出**可见错误事件**，
-      // 但不 settle——单个坏帧不应终止后续正常事件流
-      console.error('[chatStream] SSE 帧 JSON 解析失败', {
-        raw: String(e.data).slice(0, 200),
-        err,
-      });
+      // 但不 settle——单个坏帧不应终止后续正常事件流；已 settle 后与旧实现一致地丢弃
+      if (settled) return;
+      console.error('[chatStream] SSE 帧 JSON 解析失败', { raw: raw.slice(0, 200), err });
       onEvent({
         phase: 'error',
         message: '对话数据解析失败：收到无法解码的服务端帧（详情见控制台），可重试',
       });
-    }
-  };
-  es.onerror = () => {
-    if (!settled) finish({ phase: 'error', message: '连接中断，对话未完成，请重试' });
-  };
+    },
+    onWatchdogTimeout: () => {
+      // 首包看门狗：20 秒内没收到任何事件即判定服务不可用，避免静默挂起
+      if (!settled)
+        finish({
+          phase: 'error',
+          message: '后端无响应：20 秒内未收到任何进度，请确认服务是否正常',
+        });
+    },
+    onTransportError: () => {
+      if (!settled) finish({ phase: 'error', message: '连接中断，对话未完成，请重试' });
+    },
+  });
+
+  session.open();
   return {
     cancel: () => {
-      if (watchdog) clearTimeout(watchdog);
       settled = true;
-      es.close();
+      session.close();
     },
   };
 }
@@ -759,11 +761,9 @@ export function analyzeStockStream(
   options: AnalyzeStreamOptions = {},
 ): { cancel: () => void; done: Promise<AnalysisResult> } {
   const maxRetries = options.maxRetries ?? 3;
-  const url = withTokenQuery(
-    `/api/analyze/stream?stockCode=${encodeURIComponent(stockCode)}${
-      options.resume ? '&resume=1' : ''
-    }`,
-  );
+  const path = `/api/analyze/stream?stockCode=${encodeURIComponent(stockCode)}${
+    options.resume ? '&resume=1' : ''
+  }`;
 
   let resolveDone!: (r: AnalysisResult) => void;
   let rejectDone!: (e: Error) => void;
@@ -772,81 +772,51 @@ export function analyzeStockStream(
     rejectDone = reject;
   });
 
-  /** 是否收到过任何一条服务端事件 —— 用于区分「连不上」和「中途断开」 */
-  let received = false;
   let settled = false;
   let cancelled = false;
-  let es: EventSource | null = null;
   let retryCount = 0;
-  let watchdog: ReturnType<typeof setTimeout> | null = null;
-  let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const clearWatchdog = () => {
-    if (watchdog) {
-      clearTimeout(watchdog);
-      watchdog = null;
-    }
-  };
-
-  /** 首包看门狗：若 20s 内一条事件都没收到，判定为服务不可用 */
-  const armWatchdog = () => {
-    clearWatchdog();
-    watchdog = setTimeout(() => {
-      if (!received) finish(new Error('后端无响应：20 秒内未收到任何分析进度，请确认服务是否正常'));
-    }, 20000);
-  };
 
   function finish(err: Error | null, result?: AnalysisResult) {
     if (settled) return;
     settled = true;
-    clearWatchdog();
-    if (retryTimer) {
-      clearTimeout(retryTimer);
-      retryTimer = null;
-    }
-    es?.close();
+    session.close();
     if (err) rejectDone(err);
     else resolveDone(result as AnalysisResult);
   }
 
-  function connect() {
-    if (settled || cancelled) return;
-    es = new EventSource(url);
-    armWatchdog();
-
-    es.onmessage = (event) => {
-      received = true;
-      clearWatchdog();
-      try {
-        const data = JSON.parse(event.data) as AnalysisStage;
-        if (data.phase === 'done' && data.result) {
-          finish(null, data.result);
-        } else if (data.phase === 'error') {
-          finish(new Error(data.message || '分析过程出错'));
-        } else {
-          onStage(data);
-        }
-      } catch (err) {
-        // 解析失败不再静默吞掉：记录原始帧并回调可见错误事件；
-        // 不 finish——单个坏帧不应让整次分析以失败收尾
-        console.error('[analyzeStream] SSE 帧 JSON 解析失败', {
-          raw: String(event.data).slice(0, 200),
-          err,
-        });
-        onStage({
-          phase: 'error',
-          message: '分析进度数据解析失败：收到无法解码的服务端帧（详情见控制台）',
-        });
+  const session = new SseSession({
+    path,
+    onFrame: (raw) => {
+      const data = raw as AnalysisStage;
+      if (data.phase === 'done' && data.result) {
+        finish(null, data.result);
+      } else if (data.phase === 'error') {
+        finish(new Error(data.message || '分析过程出错'));
+      } else {
+        // 与旧实现一致：settle 之后队列里剩余的帧仍会回调 onStage（此流无 settled 守卫）
+        onStage(data);
       }
-    };
-
-    es.onerror = () => {
+    },
+    onParseError: (raw, err) => {
+      // 解析失败不再静默吞掉：记录原始帧并回调可见错误事件；
+      // 不 finish——单个坏帧不应让整次分析以失败收尾
+      console.error('[analyzeStream] SSE 帧 JSON 解析失败', { raw: raw.slice(0, 200), err });
+      onStage({
+        phase: 'error',
+        message: '分析进度数据解析失败：收到无法解码的服务端帧（详情见控制台）',
+      });
+    },
+    onWatchdogTimeout: () => {
+      // 首包看门狗：若 20s 内一条事件都没收到，判定为服务不可用
+      if (!session.received)
+        finish(new Error('后端无响应：20 秒内未收到任何分析进度，请确认服务是否正常'));
+    },
+    onTransportError: () => {
       // EventSource 在正常结束时也会触发 error，已 settle 的场景直接忽略
       if (settled || cancelled) return;
-      es?.close();
-      clearWatchdog();
+      session.disconnect();
       // 已收到过事件后断开：分析无法续传，直接报错
-      if (received) {
+      if (session.received) {
         finish(new Error('连接中断，分析未完成，请重试'));
         return;
       }
@@ -854,21 +824,18 @@ export function analyzeStockStream(
       if (retryCount < maxRetries) {
         retryCount += 1;
         options.onReconnect?.(retryCount, maxRetries);
-        retryTimer = setTimeout(connect, 1000 * 2 ** (retryCount - 1));
+        session.reconnectAfter(1000 * 2 ** (retryCount - 1));
         return;
       }
       finish(new Error(BACKEND_UNREACHABLE_MESSAGE));
-    };
-  }
+    },
+  });
 
-  connect();
+  session.open();
 
   return {
     cancel: () => {
       cancelled = true;
-      clearWatchdog();
-      if (retryTimer) clearTimeout(retryTimer);
-      es?.close();
       // settle done：让 `await done` 的调用方能收尾（此前永久挂起，靠调用方手动兜底掩盖）
       finish(new AnalysisCancelledError());
     },
@@ -1438,7 +1405,7 @@ export function runDeepResearchStream(
   if (options.scope) params.set('scope', JSON.stringify(options.scope));
   if (options.config) params.set('config', JSON.stringify(options.config));
   if (options.runId) params.set('runId', options.runId);
-  const url = withTokenQuery(`/api/research/deep/stream?${params.toString()}`);
+  const path = `/api/research/deep/stream?${params.toString()}`;
 
   let resolveDone!: (r: DeepResearchResult) => void;
   let rejectDone!: (e: Error) => void;
@@ -1448,18 +1415,8 @@ export function runDeepResearchStream(
   });
 
   let settled = false;
-  let received = false;
-  let es: EventSource | null = null;
-  let watchdog: ReturnType<typeof setTimeout> | null = null;
   /** 首帧 run_meta：断线时据此把 runId 交给调用方续跑 */
   let runMeta: { runId: string; resumedFromRound: number } | null = null;
-
-  const clearWatchdog = () => {
-    if (watchdog) {
-      clearTimeout(watchdog);
-      watchdog = null;
-    }
-  };
 
   const interrupted = (message: string): DeepResearchInterruptedError =>
     new DeepResearchInterruptedError(message, {
@@ -1471,84 +1428,78 @@ export function runDeepResearchStream(
   function finish(err: Error | null, result?: DeepResearchResult) {
     if (settled) return;
     settled = true;
-    clearWatchdog();
-    es?.close();
-    es = null;
+    session.close();
     if (err) rejectDone(err);
     else resolveDone(result as DeepResearchResult);
   }
 
-  es = new EventSource(url);
-
-  // 首包看门狗：规划阶段要先跑一次 LLM，20 秒内连一条事件都没有说明服务不可用
-  watchdog = setTimeout(() => {
-    if (!received) {
+  const session = new SseSession({
+    path,
+    onFrame: (raw) => {
+      const data = raw as DeepResearchStreamEvent;
+      if (data.phase === 'run_meta') {
+        runMeta = { runId: data.runId, resumedFromRound: data.resumedFromRound };
+        // 透传给页面：续跑时用它渲染「已从第 N 轮继续」的可见提示
+        onEvent(data);
+        return;
+      }
+      if (data.phase === 'done') {
+        finish(null, data.result);
+        return;
+      }
+      if (data.phase === 'error') {
+        // 服务端已发 error 帧：已落盘的轮次仍可续跑，别让用户从头再来
+        finish(interrupted(data.message || '深度研究失败'));
+        return;
+      }
+      onEvent(data);
+    },
+    onParseError: () => {
+      // 单帧坏掉不应终止整次研究：回调一个可见错误后继续等后续帧
+      // （与本流旧实现一致：不写 console；个股分析/聊天流才会写）
+      onEvent({ phase: 'error', message: '研究进度数据解析失败（收到无法解码的服务端帧）' });
+    },
+    onWatchdogTimeout: () => {
+      // 首包看门狗：规划阶段要先跑一次 LLM，20 秒内连一条事件都没有说明服务不可用
+      if (!session.received) {
+        finish(
+          new Error(
+            options.runId
+              ? '后端无响应：20 秒内未收到续跑进度，请确认服务是否正常'
+              : '后端无响应：20 秒内未收到研究进度，请确认服务是否正常',
+          ),
+        );
+      }
+    },
+    onTransportError: () => {
+      if (settled) return;
+      if (session.received) {
+        finish(interrupted('连接中断，研究未完成；可从此前已完成的轮次继续'));
+        return;
+      }
+      if (options.runId) {
+        // 续跑请求首包前就断开：EventSource 读不到 4xx/5xx 响应体，无法区分
+        // 「断点已过期」「该研究仍在收尾」与「服务没起」，文案给全三种可能。
+        // 保留续跑入口（canResume=true）：断点可能只是仍在收尾，稍后可重试。
+        finish(
+          new DeepResearchInterruptedError(
+            '续跑未能开始：断点可能已过期，或该研究仍在进行中，请稍后重试',
+            { canResume: true, runId: options.runId },
+          ),
+        );
+        return;
+      }
       finish(
         new Error(
-          options.runId
-            ? '后端无响应：20 秒内未收到续跑进度，请确认服务是否正常'
-            : '后端无响应：20 秒内未收到研究进度，请确认服务是否正常',
+          // EventSource 读不到 4xx/5xx 的响应体，无法区分「服务没起」与「服务起了但未配 LLM 密钥」；
+          // 这两种情况都表现为首包前断开，所以文案要同时给出两个可操作原因，而不是断言服务没启动。
+          '无法开始研究：请确认后端服务已启动，且已配置 LLM 密钥（DEEPSEEK_API_KEY 或 OPENAI_API_KEY）',
         ),
       );
-    }
-  }, 20000);
+    },
+  });
 
-  es.onmessage = (event) => {
-    received = true;
-    clearWatchdog();
-    let data: DeepResearchStreamEvent;
-    try {
-      data = JSON.parse(event.data) as DeepResearchStreamEvent;
-    } catch {
-      // 单帧坏掉不应终止整次研究：回调一个可见错误后继续等后续帧
-      onEvent({ phase: 'error', message: '研究进度数据解析失败（收到无法解码的服务端帧）' });
-      return;
-    }
-
-    if (data.phase === 'run_meta') {
-      runMeta = { runId: data.runId, resumedFromRound: data.resumedFromRound };
-      // 透传给页面：续跑时用它渲染「已从第 N 轮继续」的可见提示
-      onEvent(data);
-      return;
-    }
-    if (data.phase === 'done') {
-      finish(null, data.result);
-      return;
-    }
-    if (data.phase === 'error') {
-      // 服务端已发 error 帧：已落盘的轮次仍可续跑，别让用户从头再来
-      finish(interrupted(data.message || '深度研究失败'));
-      return;
-    }
-    onEvent(data);
-  };
-
-  es.onerror = () => {
-    if (settled) return;
-    if (received) {
-      finish(interrupted('连接中断，研究未完成；可从此前已完成的轮次继续'));
-      return;
-    }
-    if (options.runId) {
-      // 续跑请求首包前就断开：EventSource 读不到 4xx/5xx 响应体，无法区分
-      // 「断点已过期」「该研究仍在收尾」与「服务没起」，文案给全三种可能。
-      // 保留续跑入口（canResume=true）：断点可能只是仍在收尾，稍后可重试。
-      finish(
-        new DeepResearchInterruptedError(
-          '续跑未能开始：断点可能已过期，或该研究仍在进行中，请稍后重试',
-          { canResume: true, runId: options.runId },
-        ),
-      );
-      return;
-    }
-    finish(
-      new Error(
-        // EventSource 读不到 4xx/5xx 的响应体，无法区分「服务没起」与「服务起了但未配 LLM 密钥」；
-        // 这两种情况都表现为首包前断开，所以文案要同时给出两个可操作原因，而不是断言服务没启动。
-        '无法开始研究：请确认后端服务已启动，且已配置 LLM 密钥（DEEPSEEK_API_KEY 或 OPENAI_API_KEY）',
-      ),
-    );
-  };
+  session.open();
 
   return {
     cancel: () => finish(new Error('已取消本次研究')),
