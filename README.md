@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-3754%20cases-brightgreen" alt="3754 测试用例" />
+  <img src="https://img.shields.io/badge/tests-3770%20cases-brightgreen" alt="3770 测试用例" />
   <a href="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml"><img src="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -78,6 +78,24 @@ flowchart TB
 
 **多数据通道（免费为主，可选增强）**
 东方财富免费接口族（行情/财务/事件/两融/盈利预测）为主通道；可选增强：Tushare Pro（退市股名单，**频控纪律缓存**：长缓存 + 失败回落陈旧 + 并发去重）与 Baostock Python sidecar（**指数历史成分**：hs300/zz500/sz50 任意日期快照，含其后退市的证券——幸存者偏差的正面修复，截面评估可直接用历史成分宇宙）。所有增强通道未配置时优雅跳过，绝不反向依赖。
+
+**数据源 provider 注册表（接新源不改核心代码）**
+行情 K 线默认走东方财富（`eastmoney`）。`server/src/quant/providers/` 提供最小注册表：实现 `DataProvider`（`id` / `capabilities` / `resolveSecid` / `fetchKline`，可选 `fetchQuote` / `fetchFinancial`）后调用 `registerProvider()` 即可接入；缓存、增量补尾、look-ahead 过滤、模拟降级仍由 `quant/dataProvider.ts` 统一负责，新源不必重复实现。`DATA_PROVIDERS`（逗号分隔、按顺序）只在**已注册**的 provider 中选择并排序，取第一个可用项；未知 id 记 warning 并忽略，全部条目都不可用时回落默认 `eastmoney`，未配置时行为与改造前完全一致（本轮不内置新数据源）。注意：宽基基准 secid（`BENCHMARK_SECID_BY_MARKET`）仍按东财编码传递，非东财源需自行映射；报价/财务通道暂未接入注册表，`fetchQuote` / `fetchFinancial` 为预留扩展点。
+
+```ts
+import { registerProvider, type DataProvider } from './quant/providers/index.js';
+
+const myProvider: DataProvider = {
+  id: 'my-vendor',
+  capabilities: { kline: true, quote: false, financial: false },
+  resolveSecid: (code) => `vendor.${code}`, // 代码 → 上游标识；实现须自带入参白名单
+  fetchKline: async ({ secid, startDate, endDate, timeoutMs, signal }) => {
+    // 成功返回 OHLCVData[]；网络/解析失败返回 null（交由上层降级）；区间内无数据返回 []
+    ...
+  },
+};
+registerProvider(myProvider); // DATA_PROVIDERS=my-vendor 即切换；默认仍是 eastmoney
+```
 
 **机构一致预期（快照语境）**
 分析师覆盖机构数、评级分布、逐年度 EPS 预测与目标价区间、北向季度持股，注入八位专家研判语境并在报告页展示；明示快照口径、不参与历史回测（把今天的预期投影回过去即前视）。
@@ -180,7 +198,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3754 用例 / 278 个测试文件，行覆盖 93.42% / statements 91.31% / functions 93.07% / branches 81.91%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3770 用例 / 279 个测试文件，行覆盖 93.42% / statements 91.31% / functions 93.09% / branches 81.91%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
 
 ## 快速开始
 
@@ -337,7 +355,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（3754 用例 / 278 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（3770 用例 / 279 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（17 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src、e2e）
 npm run format:check  # Prettier 格式检查
@@ -348,7 +366,7 @@ npm run size:budget   # 打包体积预算（按 chunk 核对，超预算即失�
 
 - **CI 门禁**（GitHub Actions）：依赖审计 / lint / 格式 / 双端类型检查 / 双端 build /
   打包体积预算 / 全量测试 + 覆盖率阈值（lines ≥ 92% / statements ≥ 90% / functions ≥ 92% / branches ≥ 80%）/ Playwright E2E（`--retries=1`）。
-- **覆盖率统计口径**：`server/src/routes/**` **已纳入**分母（2026-09-28 起）。此前整目录被排除，等于体量最大的业务逻辑文件（`routes/quant.ts`，时为 2100+ 行，现已拆分为 quantCore/quantCrossSection/quantOps）不构成任何门禁；纳入后仅下降约 1.3 个点且四项阈值仍全部通过。当前基线 lines 93.42% / statements 91.31% / functions 93.07% / branches 81.91%。仍排除的只有 `index.ts`（入口组装）、`middleware.ts`（中间件）与真实网络/子进程模块。
+- **覆盖率统计口径**：`server/src/routes/**` **已纳入**分母（2026-09-28 起）。此前整目录被排除，等于体量最大的业务逻辑文件（`routes/quant.ts`，时为 2100+ 行，现已拆分为 quantCore/quantCrossSection/quantOps）不构成任何门禁；纳入后仅下降约 1.3 个点且四项阈值仍全部通过。当前基线 lines 93.42% / statements 91.31% / functions 93.09% / branches 81.91%。仍排除的只有 `index.ts`（入口组装）、`middleware.ts`（中间件）与真实网络/子进程模块。
 - **打包体积预算**（`client/scripts/check-bundle-size.mjs`）：逐 chunk 核对上限，echarts 623 kB 这类大头不再顶着 1000 kB 的 warning 阈值"静默增长"——warning 不会 fail，预算会。当前合计 1233.29 kB / 预算 1300 kB。
 - **受控评估**：`compareBacktests` 输出 DSR（扣除搜索偏差）与 Bootstrap 置信区间；`quant/cscv.ts` 以组合对称交叉验证计算过拟合概率（PBO）；`walkForward.ts` 以 OOS 夏普 < 70% × IS 夏普判定过拟合。
 - **改进闭环（RSI）**：`quant/improvementLoop.ts` 用历史实验台账**回放**候选采信判据——较早 70% 挑候选、较新 30% 做决策，且必须同时满足三条才落盘：验证集上**决策准确率**（采信了扛住样本外的因子、剔除了没扛住的，两者都算对）更高、样本外稳定的**绝对条数不减**、配对差异通过 **McNemar 精确检验**（双侧 p < 0.05）。每次改动连同改前改后指标、检验统计量（不一致对 b/c 与 p 值）、依据与试过的候选记入 `quant/improvementLedger.ts`；`/api/improvement/status|run|history` 可查、可演练（`dryRun` 不落盘）、可回滚（删除策略文件即回到出厂判据）。判据本身由 `quant/harnessPolicy.ts` 持有，默认值与改造前逐字一致。
