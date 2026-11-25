@@ -43,6 +43,11 @@ process.env.CHAT_HISTORY_FILE = join(testDataDir, 'chatHistory.json');
 process.env.WATCHLIST_FILE = join(testDataDir, 'watchlist.json');
 process.env.PAPER_TRADING_FILE = join(testDataDir, 'paperTrading.json');
 process.env.DATA_CACHE_DIR = join(testDataDir, 'cache');
+// 研究报告历史与研究库此前漏了重定向：全量跑一次会把测试快照写进
+// server/data/history.json 与研究库索引（表现为「历史」里多出一条测试报告）。
+// 两者都支持 env 覆盖，这里一并指向临时目录。
+process.env.HISTORY_FILE = join(testDataDir, 'history.json');
+process.env.RESEARCH_LIBRARY_DIR = join(testDataDir, 'research-runs');
 // 基本面（年报/季度财报）缓存默认关闭：路由级集成测试逐用例 mock 其返回值，
 // 缓存会让后序用例读到前序用例的数据（与 beforeEach 的 mockReset 语义冲突）。
 // 需要验证缓存行为的测试在用例内显式把 TTL 设为正数即可。

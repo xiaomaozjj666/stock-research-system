@@ -6,7 +6,7 @@
  * done 携带 result）钉在测试里——改协议必须同步改这里与客户端。
  */
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.hoisted(() => {
   process.env.RATE_LIMIT_MAX_ANALYZE = '200';
@@ -54,9 +54,8 @@ function parseFrames(body: string): Record<string, unknown>[] {
 }
 
 describe('GET /api/research/deep/stream SSE 帧契约', () => {
-  beforeEach(() => {
-    delete process.env.RESEARCH_LIBRARY_DIR;
-  });
+  // 不要 delete RESEARCH_LIBRARY_DIR：这组用例只验 SSE 帧形状，删除后路由会把
+  // 研究结果写进真实的 server/data/research-runs（test/setup.ts 已指向临时目录）。
   afterEach(() => {
     vi.restoreAllMocks();
   });
