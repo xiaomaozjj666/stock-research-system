@@ -77,10 +77,24 @@ export interface HistoryStore {
 }
 
 const DEFAULT_HISTORY_FILE = path.join(DATA_ROOT, 'history.json');
-/** 历史记录容量上限：超出后淘汰最旧记录 */
+/** 历史记录容量上限默认值：超出后淘汰最旧记录 */
 export const MAX_HISTORY_ITEMS = 100;
+/** 硬上限：再大就违背「单文件历史库」的设计前提（整库 JSON 解析会明显变慢） */
+const HARD_MAX_HISTORY_ITEMS = 5000;
 /** 每只股票保留的时间线长度上限：只留最近 N 次，避免列表响应体随使用时长膨胀 */
 export const MAX_TIMELINE_POINTS = 20;
+
+/**
+ * 运行时解析历史容量：`HISTORY_MAX_ITEMS` 可覆盖默认 100（整数，1–5000）。
+ * 非法值静默回落默认值，避免一条写错的环境变量把历史裁剪成 0 条。
+ */
+export function maxHistoryItems(): number {
+  const raw = process.env.HISTORY_MAX_ITEMS?.trim();
+  if (!raw) return MAX_HISTORY_ITEMS;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) return MAX_HISTORY_ITEMS;
+  return Math.min(value, HARD_MAX_HISTORY_ITEMS);
+}
 
 /**
  * 运行时解析落盘路径：支持 HISTORY_FILE 环境变量重定向（与 watchlist/paper/audit 同模式）。
@@ -416,10 +430,11 @@ export function saveHistoryEntry(
       store.items.push(saved);
     }
 
-    // 容量上限：按时间倒序保留最新 MAX_HISTORY_ITEMS 条
-    if (store.items.length > MAX_HISTORY_ITEMS) {
+    // 容量上限：按时间倒序保留最新 N 条（N 可由 HISTORY_MAX_ITEMS 覆盖）
+    const limit = maxHistoryItems();
+    if (store.items.length > limit) {
       store.items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-      store.items = store.items.slice(0, MAX_HISTORY_ITEMS);
+      store.items = store.items.slice(0, limit);
     }
 
     if (!(await writeStore(store))) return null;

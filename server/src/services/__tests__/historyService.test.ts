@@ -13,6 +13,7 @@ import {
   listHistory,
   MAX_HISTORY_ITEMS,
   MAX_TIMELINE_POINTS,
+  maxHistoryItems,
   resetHistoryStoreCache,
   saveHistoryEntry,
   type HistoryEntryInput,
@@ -238,6 +239,35 @@ describe('historyService 研究历史', () => {
     expect(list.some((i) => i.id === first!.id)).toBe(false); // 最旧的 600001 被淘汰
     expect(list.some((i) => i.id === last!.id)).toBe(true); // 最新保存的保留
     expect(list[list.length - 1].stockCode).toBe('600006'); // 最旧的保留项精确可断
+  });
+
+  it('HISTORY_MAX_ITEMS 可覆盖容量上限', { timeout: 30000 }, async () => {
+    const original = process.env.HISTORY_MAX_ITEMS;
+    process.env.HISTORY_MAX_ITEMS = '3';
+    try {
+      for (let i = 1; i <= 5; i++) await saveHistoryEntry(makeEntry(String(600100 + i)));
+      const list = await listHistory(20);
+      expect(list).toHaveLength(3);
+      expect(list[0].stockCode).toBe('600105'); // 最新在前
+    } finally {
+      if (original === undefined) delete process.env.HISTORY_MAX_ITEMS;
+      else process.env.HISTORY_MAX_ITEMS = original;
+    }
+  });
+
+  it('非法 HISTORY_MAX_ITEMS 回落默认值，不会把历史裁成 0 条', () => {
+    const original = process.env.HISTORY_MAX_ITEMS;
+    try {
+      for (const bad of ['abc', '0', '-5', '1.5', '']) {
+        process.env.HISTORY_MAX_ITEMS = bad;
+        expect(maxHistoryItems()).toBe(MAX_HISTORY_ITEMS);
+      }
+      process.env.HISTORY_MAX_ITEMS = '999999';
+      expect(maxHistoryItems()).toBe(5000); // 硬上限
+    } finally {
+      if (original === undefined) delete process.env.HISTORY_MAX_ITEMS;
+      else process.env.HISTORY_MAX_ITEMS = original;
+    }
   });
 
   it('快速连续保存 createdAt 严格递增（毫秒级单调时钟）', async () => {
