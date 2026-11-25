@@ -4,12 +4,23 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-3680%20cases-brightgreen" alt="3680 测试用例" />
+  <img src="https://img.shields.io/badge/tests-3687%20cases-brightgreen" alt="3687 测试用例" />
   <a href="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml"><img src="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
 
 > 面向 A 股的全栈投研平台：多专家协同研判、专业 K 线行情分析、量化回测与防过拟合评估、可插拔交易成本模型与风险归因、模拟盘研究闭环、自选股异动监控，以及对话式研究助手。「今日」页把每天要看的聚到一屏：自选股异动、关注股评分变化、最近一份研究简报。
+
+## 最快上手
+
+```bash
+# 需 Node 24+（见 .nvmrc）
+npm ci --legacy-peer-deps      # 安装依赖（首次）
+cp .env.example server/.env    # 填 DEEPSEEK_API_KEY；缺省时只能用规则引擎的降级结论
+npm run dev                    # 前端 http://localhost:5173，后端 http://localhost:3001
+```
+
+依赖装好后也可双击 `启动系统.bat` 直接起服务。环境变量、生产构建与故障排查见 [快速开始](#快速开始) 与 [环境变量](#环境变量)。
 
 ![深度研究报告总览](docs/screenshots/report-overview.png)
 
@@ -169,7 +180,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3680 用例 / 270 个测试文件，行覆盖 93.36% / statements 91.30% / functions 93.10% / branches 81.93%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3687 用例 / 271 个测试文件，行覆盖 93.36% / statements 91.30% / functions 93.10% / branches 81.93%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
 
 ## 快速开始
 
@@ -193,7 +204,9 @@ npm run dev:client    # 前端 → http://localhost:5173
 npm run build         # server + client，单端口同源托管
 ```
 
-Windows 一键启动：双击 `启动系统.bat`。该脚本不做任何安装，只负责启动与健康等待：先后在 `server/`（`npx tsx watch src/index.ts`，端口 3001）与 `client/`（`npx vite --host`，端口 5173）各开一个命令行窗口，轮询 `http://localhost:3001/api/health` 等待后端就绪（最长 90 秒，超时只打印警告并继续），随后轮询前端端口并自动打开浏览器。因此**首次使用仍需先执行上面的 `npm install`**，否则 `npx tsx` / `npx vite` 会因依赖缺失而失败。
+Windows 一键启动：双击 `启动系统.bat`。该脚本不做任何安装，只负责启动与健康等待：先检查 Node 与 `node_modules`、以及 3001/5173 端口是否被占用，随后在 `server/`（`npx tsx watch src/index.ts`，端口 3001）与 `client/`（`npx vite`，端口 5173）各开一个命令行窗口，轮询 `http://localhost:3001/api/health` 等待后端就绪（最长 90 秒；`/api/health` 在行情源暂不可达时返回 503，脚本同样视为已就绪并在页面显示降级提示），随后轮询前端端口并自动打开浏览器。后端未就绪时会明确打印「启动未完成」并以退出码 1 结束，不会把失败伪装成成功。因此**首次使用仍需先执行上面的 `npm install`**，否则 `npx tsx` / `npx vite` 会因依赖缺失而失败。
+
+> 局域网访问：前端默认只监听回环地址。确需让同网段设备访问时，先设置 `API_AUTH_TOKEN`（否则写接口裸露），再把 `client/` 的启动命令改为 `npx vite --host`；后端默认也只绑 `127.0.0.1`，需要同时设置 `HOST=0.0.0.0`。
 
 ## 环境变量
 
@@ -286,7 +299,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（3680 用例 / 270 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（3687 用例 / 271 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（17 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src、e2e）
 npm run format:check  # Prettier 格式检查
