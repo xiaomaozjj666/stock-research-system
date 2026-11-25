@@ -1,0 +1,730 @@
+/* ============================================================
+   quant.css — 量化研究模块（表单、指标卡、审计、优化、情景、筹码、策略）
+   由 index.css 原第 2120–2844 行原样搬移而来（不重排、不去重）。
+   加载顺序由 index.css 的 @import 顺序保证，请勿调整。
+   ============================================================ */
+
+/* ===== 量化研究模块 ===== */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-default);
+  margin-bottom: var(--space-lg);
+  max-width: 1400px;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 0 var(--space-lg);
+}
+.tab {
+  padding: 10px 24px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--text-body);
+  border-bottom: 2px solid transparent;
+  transition: all var(--duration-fast);
+  font-family: var(--font-main);
+}
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.tab:hover {
+  color: var(--text-secondary);
+}
+
+.quant-page {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: var(--space-xl);
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 var(--space-lg);
+}
+.quant-sidebar {
+  position: sticky;
+  top: 80px;
+  height: fit-content;
+}
+.quant-sidebar-title {
+  font-size: var(--text-h2);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-md);
+}
+.quant-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding-bottom: var(--space-2xl);
+}
+
+/* 策略配置表单 */
+.quant-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.quant-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.quant-form-group label {
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.quant-form-group input,
+.quant-form-group select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: var(--text-body);
+  font-family: var(--font-main);
+}
+.quant-form-group input:focus,
+.quant-form-group select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.quant-form-group select {
+  cursor: pointer;
+}
+.quant-form-group select option {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+.quant-form-divider {
+  height: 1px;
+  background: var(--border-default);
+  margin: var(--space-xs) 0;
+}
+/* 量化表单：搜索选中后的当前标的提示（搜索框选中即清空，需回显所选项） */
+.quant-selected-stock {
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+}
+.quant-start-btn {
+  margin-top: var(--space-sm);
+  width: 100%;
+}
+
+/* 指标卡片 */
+.quant-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-md);
+}
+.quant-metric-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  text-align: center;
+  transition: border-color var(--duration-normal) var(--ease-out);
+}
+.quant-metric-card:hover {
+  border-color: var(--border-hover);
+}
+.quant-metric-value {
+  font-size: var(--text-display);
+  font-weight: 700;
+}
+.quant-metric-label {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* 研究进行中：真实耗时 */
+.quant-mode-pane[hidden] {
+  display: none;
+}
+.quant-elapsed {
+  font-size: var(--text-body);
+  color: var(--text-secondary);
+  margin: var(--space-sm) 0;
+}
+.quant-elapsed-time {
+  /* 原先写作 var(--text-title)，而该变量从未定义且无兜底 → 整条声明被丢弃、
+     耗时数字回落为继承的 14px，失去了"放大突出"的设计意图。改用既有语义变量。 */
+  font-size: var(--text-h2);
+  color: var(--text-primary);
+}
+.quant-elapsed-time b {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 面板通用 */
+.quant-panel {
+  animation: fadeInUp 0.4s var(--ease-out);
+}
+.quant-panel-title {
+  font-size: var(--text-h2);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-md);
+}
+.quant-subtitle {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-sm);
+}
+
+/* 图表 */
+.quant-backtest {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+.quant-chart-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+}
+.quant-chart-title {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-md);
+}
+.quant-chart {
+  width: 100%;
+  height: 320px;
+}
+
+/* 数据质量 */
+.quant-quality-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  margin-bottom: var(--space-md);
+}
+.quant-quality-score {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+}
+.quant-quality-max {
+  font-size: var(--text-body);
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.quant-quality-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: var(--border-default);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.quant-quality-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width var(--duration-slow) var(--ease-out);
+}
+.quant-quality-meta {
+  display: flex;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  margin-bottom: var(--space-md);
+}
+.quant-issue-list,
+.quant-suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  list-style: none;
+}
+.quant-issue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  font-size: 13px;
+  color: var(--color-warning);
+  padding: 8px 12px;
+  background: var(--color-warning-dim);
+  border-radius: var(--radius-sm);
+}
+.quant-issue-icon {
+  flex-shrink: 0;
+}
+.quant-suggestion-item {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent);
+}
+
+/* 审计 */
+.quant-audit-score-block {
+  text-align: center;
+  margin-bottom: var(--space-md);
+}
+.quant-audit-score {
+  font-size: 40px;
+  font-weight: 800;
+  color: var(--color-warning);
+}
+.quant-audit-max {
+  font-size: var(--text-body);
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.quant-audit-label {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.quant-audit-risks {
+  display: flex;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-md);
+}
+.quant-audit-risk-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.quant-audit-risk-label {
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+}
+.quant-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  list-style: none;
+}
+.quant-check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+}
+.quant-check-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.quant-check-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.quant-check-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.quant-check-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.quant-audit-reliability {
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* 优化 */
+.quant-opt-score {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+.quant-opt-score-val {
+  font-size: 40px;
+  font-weight: 800;
+  color: var(--accent);
+}
+.quant-opt-score-max {
+  font-size: var(--text-body);
+  color: var(--text-muted);
+}
+.quant-opt-score-label {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  margin-left: var(--space-sm);
+}
+.quant-opt-section {
+  margin-top: var(--space-lg);
+}
+.quant-opt-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.quant-opt-suggestion-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+.quant-opt-suggestion-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+.quant-opt-suggestion-cat {
+  font-size: var(--text-overline);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.quant-opt-suggestion-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.quant-opt-suggestion-detail {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.quant-sensitivity-table-wrap {
+  overflow-x: auto;
+}
+.quant-sensitivity-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.quant-sensitivity-table th,
+.quant-sensitivity-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-default);
+}
+.quant-sensitivity-table th {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  font-weight: 500;
+}
+.quant-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.quant-accent-text {
+  color: var(--accent);
+  font-weight: 600;
+}
+.quant-risk-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-md);
+}
+.quant-risk-metric {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  text-align: center;
+}
+.quant-risk-metric-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.quant-risk-metric-label {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.quant-iteration-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  list-style: none;
+}
+.quant-iteration-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+}
+.quant-iteration-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* 摘要 */
+.quant-summary-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.quant-summary-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.quant-summary-score-block {
+  text-align: center;
+}
+.quant-summary-score {
+  font-size: 48px;
+  font-weight: 800;
+  line-height: 1;
+}
+.quant-summary-score-label {
+  font-size: var(--text-caption);
+  margin-top: 4px;
+}
+.quant-summary-text {
+  font-size: var(--text-body);
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+.quant-summary-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border-default);
+}
+.quant-summary-meta-item {
+  display: flex;
+  gap: var(--space-sm);
+  font-size: 13px;
+}
+.quant-summary-meta-label {
+  color: var(--text-muted);
+  font-weight: 500;
+  min-width: 60px;
+}
+
+/* 空状态 */
+.quant-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px var(--space-lg);
+  text-align: center;
+}
+.quant-empty-icon {
+  width: 44px;
+  height: 44px;
+  margin-bottom: var(--space-md);
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+.quant-empty-text {
+  font-size: var(--text-body);
+  color: var(--text-muted);
+}
+
+/* === 情景推演 === */
+.scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+.scenario-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+.scenario-card.optimistic {
+  border-left: 3px solid var(--color-positive);
+}
+.scenario-card.neutral {
+  border-left: 3px solid var(--color-info);
+}
+.scenario-card.pessimistic {
+  border-left: 3px solid var(--color-negative);
+}
+.scenario-name {
+  font-size: var(--text-h2);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.scenario-prob {
+  font-size: var(--text-display);
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+.scenario-price-range {
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+  margin: 8px 0;
+}
+.scenario-assumptions {
+  margin-top: 12px;
+}
+.scenario-assumptions li {
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  list-style: none;
+  padding-left: 12px;
+  position: relative;
+}
+.scenario-assumptions li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+}
+.scenario-disclaimer {
+  text-align: center;
+  font-size: var(--text-overline);
+  color: var(--text-muted);
+  margin-top: 12px;
+}
+
+/* === 资金筹码 === */
+.capital-panel {
+  margin-top: 16px;
+}
+.capital-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.capital-sentiment {
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-caption);
+  font-weight: 600;
+}
+.capital-sentiment.bullish {
+  background: var(--color-positive-dim);
+  color: var(--color-positive);
+}
+.capital-sentiment.bearish {
+  background: var(--color-negative-dim);
+  color: var(--color-negative);
+}
+.capital-sentiment.neutral {
+  background: var(--color-info-dim);
+  color: var(--color-info);
+}
+.capital-limitation {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--color-warning-dim);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-caption);
+  color: var(--color-warning);
+}
+
+/* === 策略清单 === */
+.strategy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+.strategy-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+.strategy-name {
+  font-size: var(--text-h2);
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.strategy-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.strategy-metric {
+  text-align: center;
+}
+.strategy-metric-label {
+  font-size: var(--text-overline);
+  color: var(--text-muted);
+}
+.strategy-metric-value {
+  font-size: var(--text-body);
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+.strategy-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.strategy-tag {
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-overline);
+}
+.strategy-tag.applicable {
+  background: var(--color-positive-dim);
+  color: var(--color-positive);
+}
+.strategy-tag.weakness {
+  background: var(--color-negative-dim);
+  color: var(--color-negative);
+}
+.strategy-warning {
+  font-size: var(--text-overline);
+  color: var(--text-muted);
+  font-style: italic;
+}
+.strategy-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 24px;
+}
+
+/* === evidenceType 标签 === */
+.evidence-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  margin-left: 6px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+.evidence-tag.fact {
+  background: var(--color-success-dim);
+  color: var(--color-success);
+}
+.evidence-tag.inference {
+  background: var(--color-info-dim);
+  color: var(--color-info);
+}
+.evidence-tag.hypothesis {
+  background: var(--color-warning-dim);
+  color: var(--color-warning);
+}

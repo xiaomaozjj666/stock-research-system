@@ -1,0 +1,282 @@
+/* ============================================================
+   chrome.css — 回到顶部 / 页面占位 / 打印与存为 PDF / Toast / 报告导出
+   由 index.css 原第 5202–5478 行原样搬移而来（不重排、不去重）。
+   加载顺序由 index.css 的 @import 顺序保证，请勿调整。
+   ============================================================ */
+
+/* === 体验细节：回到顶部 / 页面占位 / 打印 === */
+.back-top {
+  position: fixed;
+  right: 24px;
+  /* 经自定义属性取值：本规则位于文件后部，移动端断点里同特异性的
+     `.back-top { bottom: 84px }` 会被它反超（后声明者胜），故由变量透传。 */
+  bottom: var(--back-top-bottom, 28px);
+  z-index: 200;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.back-top:hover {
+  background: var(--accent);
+  color: var(--text-inverse);
+  transform: translateY(-2px);
+}
+.page-suspense {
+  padding: 60px 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* 打印 / 存为 PDF：深色主题必须整页翻浅色，否则白纸上印浅灰字，必然不可读。
+   这里把设计变量在打印上下文整体重绑为浅色，全站引用变量的地方自动跟随；
+   少数硬编码深色底纹的容器再单独覆盖。 */
+@media print {
+  :root {
+    --bg-primary: #fff;
+    --bg-secondary: #fff;
+    --bg-card: #fff;
+    --bg-card-hover: #fff;
+    --bg-input: #fff;
+    --border-default: #ddd;
+    --border-hover: #bbb;
+    --border-color: #ddd;
+    --text-primary: #111;
+    --text-secondary: #333;
+    --text-muted: #555;
+    --text-inverse: #fff;
+    --accent: #1a4fa0;
+    --accent-dim: transparent;
+    --accent-hover: #1a4fa0;
+    /* 语义色也必须翻深：原红/绿/橙在白纸上分别只有 3.83 / 2.86 / 2.19:1，
+       涨跌与警告标记会印成一片浅色，下面取值均 >= 4.5:1（白底）。 */
+    --color-positive: #b3261e;
+    --color-negative: #0f7a4d;
+    --color-success: #0f7a4d;
+    --color-danger: #b3261e;
+    --color-warning: #9a5b00;
+    --color-info: #3d5a80;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  /* 隐藏各类交互 / 导航元素（含移动端目录与"回到顶部"，否则会盖在正文上）。
+     注意：这里不写通配 button，否则图表内的交互控件会被整体抹掉；只按类名隐藏。 */
+  .navbar,
+  .tab-bar,
+  .side-nav,
+  .mobile-nav,
+  .back-top,
+  .toast-container,
+  .chat-input-area,
+  .chat-header,
+  .chat-enhance-toggle,
+  .history-actions,
+  .history-open,
+  .history-delete,
+  .btn-primary,
+  .btn-ghost,
+  .btn,
+  .stock-search-area,
+  .search-dropdown,
+  .toast,
+  .cmp-fail-retry,
+  .search-history-clear,
+  .delete-btn,
+  .trend-controls,
+  select {
+    display: none !important;
+  }
+  /* 通用的"别打印这个"钩子（此前只在注释里承诺过，既没定义也没人用） */
+  .no-print {
+    display: none !important;
+  }
+  /* 若日后需要"只在打印时出现"的补充信息（如页脚来源说明），加这个类即可 */
+  .print-only {
+    display: block !important;
+  }
+  /* 深色底纹徽标（走势图"模拟数据"、对比失败标记等）在浅色纸上会变成深底深字，
+     这里统一改成浅灰底 + 深色字，信息不丢失 */
+  .trend-badge,
+  .cmp-fail-badge,
+  .chip,
+  .chip-danger,
+  .chip-warn,
+  .chip-positive,
+  .chip-negative,
+  .chip-neutral {
+    background: #f2f2f2 !important;
+    color: #111 !important;
+    border-color: #bbb !important;
+  }
+  /* 标题与正文：统一深色，覆盖渐变文字与强调色 */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  .section-title,
+  .report-title,
+  p,
+  li,
+  dd,
+  dt,
+  strong,
+  b,
+  em,
+  span,
+  label,
+  td,
+  th,
+  div {
+    color: #111 !important;
+    background-image: none !important;
+    text-shadow: none !important;
+  }
+  /* 次要说明仍保留层级差，但保证可读 */
+  .quant-mode-hint,
+  .batch-hint,
+  .factor-footnote,
+  .page-suspense,
+  .ic-decay-legend-empty,
+  .composite-foot,
+  .composite-meta {
+    color: #555 !important;
+  }
+  a {
+    color: #1a4fa0 !important;
+    text-decoration: underline;
+  }
+  .card,
+  .report-section,
+  .chart-card,
+  .scenario-card,
+  .strategy-card,
+  .quant-sidebar,
+  .quant-metric-card,
+  .composite-summary,
+  .batch-table-wrap {
+    background: #fff !important;
+    border: 1px solid #ddd !important;
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
+  /* 表格：白底 + 浅灰分隔线 */
+  table {
+    background: #fff !important;
+    border-collapse: collapse;
+  }
+  th,
+  td {
+    border: 1px solid #ddd !important;
+    background: #fff !important;
+  }
+  thead th {
+    background: #f2f2f2 !important;
+    color: #111 !important;
+  }
+  /* 图表：保留容器边界，避免白底上图形失锚 */
+  svg {
+    background: #fff !important;
+  }
+  /* 语义标签底色：原来靠半透明色块区分，打印后几乎不可见；改为浅灰底 + 深色字，
+     信息不丢失（配合上面翻深的 --color-* 变量）。 */
+  .sig-valid,
+  .sig-inverted,
+  .sig-none,
+  .factor-badge,
+  .factor-tag,
+  .batch-dir,
+  .ic-decay-chip,
+  .batch-table th,
+  .quant-mode-switch,
+  .quant-news-textarea,
+  .cs-oos {
+    background: #f2f2f2 !important;
+  }
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* === Toast 轻提示 === */
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-md);
+  animation: toast-in var(--duration-normal) var(--ease-out);
+}
+.toast-success {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+.toast-info {
+  border-color: var(--color-info);
+  color: var(--color-info);
+}
+.toast-error {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 2px;
+}
+.toast-close:hover {
+  color: var(--text-primary);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* === 报告导出按钮 === */
+.report-export-btn {
+  font-size: 12px;
+  padding: 4px 12px;
+  align-self: flex-start;
+  flex-shrink: 0;
+}

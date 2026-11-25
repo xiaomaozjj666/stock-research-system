@@ -1,0 +1,130 @@
+/* ============================================================
+   layout.css — 页面骨架、侧边导航、主内容区、Dashboard 指标
+   由 index.css 原第 145–269 行原样搬移而来（不重排、不去重）。
+   加载顺序由 index.css 的 @import 顺序保证，请勿调整。
+   ============================================================ */
+
+/* ===== Layout ===== */
+.app {
+  min-height: 100vh;
+}
+.section-title {
+  font-size: var(--text-h1);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-md);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  letter-spacing: 0.2px;
+}
+.section-title::before {
+  content: '';
+  width: 3px;
+  height: 15px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.disclaimer {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  padding: var(--space-md);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  line-height: 1.6;
+}
+
+/* Report layout with side nav */
+.report-layout {
+  display: flex;
+  gap: var(--space-xl);
+  max-width: 1400px;
+  margin: var(--space-xl) auto 0;
+  padding: 0 var(--space-lg);
+}
+
+/* 左侧导航 */
+.side-nav {
+  position: sticky;
+  top: 80px;
+  width: 160px;
+  flex-shrink: 0;
+  height: fit-content;
+  padding: var(--space-md) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.side-nav a {
+  display: block;
+  padding: 6px 12px;
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-fast) var(--ease-out);
+  border-left: 2px solid transparent;
+}
+.side-nav a:hover {
+  color: var(--text-secondary);
+  background: var(--bg-card);
+}
+.side-nav a.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* 主内容区 */
+.report-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  padding-bottom: var(--space-2xl);
+}
+.report-main section {
+  scroll-margin-top: 80px;
+}
+
+/* Dashboard 关键指标 */
+.dashboard-cards {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-md);
+}
+.dash-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg);
+  text-align: center;
+  transition: border-color var(--duration-normal) var(--ease-out);
+}
+.dash-card:hover {
+  border-color: var(--border-hover);
+}
+.dash-label {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  letter-spacing: 0.3px;
+}
+.dash-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.dash-value.accent {
+  color: var(--accent);
+}
+.dash-unit {
+  font-size: var(--text-caption);
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 2px;
+}

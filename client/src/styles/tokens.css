@@ -1,0 +1,79 @@
+/* ============================================================
+   tokens.css — 设计令牌 / CSS 变量
+   由 index.css 原第 1–74 行原样搬移而来（不重排、不去重）。
+   加载顺序由 index.css 的 @import 顺序保证，请勿调整。
+   ============================================================ */
+
+/* ============================================================
+   Design System — Stock Research Tool
+   Warm-dark theme · minimal & focused UI
+   ============================================================ */
+
+/* ===== CSS Variables ===== */
+:root {
+  /* 背景层次：冷调深色，分层清晰（替代扁平纯黑） */
+  --bg-primary: #0a0c10;
+  --bg-secondary: #0e1117;
+  --bg-card: #141920;
+  --bg-card-hover: #1a212b;
+  --bg-input: #12161d;
+  --border-default: #232b37;
+  --border-hover: #333f4e;
+  --border-focus: #4c8dff;
+  /* 补定义：量化 / 批量测算模块引用过 var(--border-color, #2a2f3a)，此变量此前从未定义，
+     一直静默走兜底值。取值介于 --border-default(#232b37) 与 --border-hover(#333f4e) 之间：
+     这 6 处边框都落在 --bg-card 内部（表格 / 汇总条 / 输入框），用 #232b37 会与卡片底色糊在一起。 */
+  --border-color: #2a3242;
+  /* 文本：冷灰阶，阅读层级明确 */
+  --text-primary: #e9edf3;
+  --text-secondary: #9ba6b4;
+  --text-muted: #7c8899;
+  --text-inverse: #0a0c10;
+  /* 主强调色：克制的工程蓝（替代荧光青 #2dd4bf，去除模板感） */
+  --accent: #4c8dff;
+  --accent-dim: rgba(76, 141, 255, 0.14);
+  --accent-hover: #6da4ff;
+  /* 市场语义（A 股惯例：红涨 / 绿跌）——红=涨·利好·买入，绿=跌·利空·卖出 */
+  --color-positive: #ef3f4c;
+  --color-positive-dim: rgba(239, 63, 76, 0.12);
+  --color-negative: #1fae6e;
+  --color-negative-dim: rgba(31, 174, 110, 0.12);
+  /* 状态语义（与涨跌解耦，避免红绿歧义） */
+  --color-success: #1fae6e;
+  --color-success-dim: rgba(31, 174, 110, 0.12);
+  --color-danger: #ef3f4c;
+  --color-danger-dim: rgba(239, 63, 76, 0.12);
+  --color-warning: #e6a23c;
+  --color-warning-dim: rgba(230, 162, 60, 0.12);
+  --color-info: #6f86a8;
+  --color-info-dim: rgba(111, 134, 168, 0.14);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 9999px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.15);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+  /* 外部字体源已移除（国内网络加载慢/阻塞渲染），统一走系统字体栈；
+     中文字体按平台回退：PingFang(macOS/iOS) → Microsoft YaHei(Windows) → Noto Sans CJK(Android/Linux) */
+  --font-main:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  --font-mono: ui-monospace, 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  --text-display: 28px;
+  --text-h1: 22px;
+  --text-h2: 16px;
+  --text-body: 14px;
+  --text-caption: 12px;
+  --text-overline: 11px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+}

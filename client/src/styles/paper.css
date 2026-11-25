@@ -1,0 +1,138 @@
+/* ============================================================
+   paper.css — 模拟盘页面
+   由 index.css 原第 5069–5201 行原样搬移而来（不重排、不去重）。
+   加载顺序由 index.css 的 @import 顺序保证，请勿调整。
+   ============================================================ */
+
+/* === 模拟盘页面 === */
+.paper-page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+}
+.paper-header h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  color: var(--text-primary);
+}
+.paper-sub {
+  margin: 0 0 18px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.paper-message {
+  color: var(--color-success);
+  background: var(--color-success-dim);
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.paper-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.paper-stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+.paper-stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.paper-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.paper-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+.paper-card-title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+.paper-form-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  align-items: flex-end;
+}
+.paper-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 120px;
+  min-width: 100px;
+}
+.paper-field label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.paper-code-name {
+  margin-left: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.paper-field input,
+.paper-field select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  font-size: 14px;
+  outline: none;
+  font-family: var(--font-main);
+}
+.paper-field input:focus,
+.paper-field select:focus {
+  border-color: var(--border-focus);
+}
+.paper-close-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.paper-close-row .mono {
+  flex: 0 0 80px;
+}
+.paper-close-row input {
+  flex: 1 1 120px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  font-size: 14px;
+  outline: none;
+}
+.paper-close-row input:focus {
+  border-color: var(--border-focus);
+}
+.paper-section {
+  margin-top: 20px;
+}
+.paper-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.paper-note {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 8px 0;
+}

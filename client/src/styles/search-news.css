@@ -1,0 +1,594 @@
+/* ============================================================
+   search-news.css — 搜索体验加固、错误/取消、最新消息情绪、回测对比、自选股监控、新闻热力条
+   由 index.css 原第 3820–4408 行原样搬移而来（不重排、不去重）。
+   加载顺序由 index.css 的 @import 顺序保证，请勿调整。
+   ============================================================ */
+
+/* ============================================================
+   前端体验加固：搜索加载/空态、键盘导航、错误重试、边界兜底
+   ============================================================ */
+
+/* --- 搜索框内联加载指示 --- */
+.search-inline-spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--border-hover);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+.stock-search-container > .search-inline-spinner {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  margin-top: -7px;
+  pointer-events: none;
+}
+
+.search-status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 12px 14px;
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+}
+
+/* --- 搜索空态：给出可执行的下一步，而不是干瘪的「无结果」 --- */
+.search-empty {
+  padding: 14px;
+}
+.search-empty-title {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.search-empty-hint {
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+.search-empty-hint b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* --- 键盘导航高亮（与 hover 视觉一致） --- */
+.stock-search-item.kb-active,
+.search-history-item.kb-active {
+  background: var(--bg-card-hover);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* --- 错误横幅：图标 + 文案 + 一键重试 --- */
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  max-width: 1100px;
+  margin: var(--space-lg) auto;
+}
+.error-banner-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.error-banner-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  color: var(--text-inverse);
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+}
+.error-banner-text {
+  line-height: 1.6;
+  word-break: break-word;
+}
+.error-banner-retry {
+  flex-shrink: 0;
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  border-radius: var(--radius-md);
+  padding: 6px 16px;
+  font-size: var(--text-caption);
+  font-weight: 500;
+  font-family: var(--font-main);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.error-banner-retry:hover {
+  background: var(--color-danger);
+  color: var(--text-inverse);
+}
+/* 用户主动取消：中性信息而非错误告警 */
+.error-banner.info .error-banner-icon {
+  background: var(--color-info);
+}
+.error-banner.info .error-banner-text {
+  color: var(--text-secondary);
+}
+/* 错误码 / 请求 ID / 重试间隔：给排障用，弱化排布在正文下方 */
+.error-banner-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+}
+.history-return-btn {
+  margin-left: 10px;
+  vertical-align: baseline;
+}
+
+/* --- 分析进行中的取消入口 --- */
+.loading-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: calc(-1 * var(--space-lg));
+  margin-bottom: var(--space-xl);
+}
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  border-radius: var(--radius-pill);
+  padding: 7px 22px;
+  font-size: var(--text-caption);
+  font-family: var(--font-main);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.btn-ghost:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* --- 错误边界：区块级 / 应用级 --- */
+.error-boundary-msg {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+.error-boundary-actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: center;
+}
+.error-boundary-stack {
+  text-align: left;
+  margin-bottom: var(--space-md);
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+}
+.error-boundary-stack summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+.error-boundary-stack pre {
+  max-height: 220px;
+  overflow: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.error-boundary-app {
+  max-width: 640px;
+  margin: 15vh auto;
+}
+
+/* ===== 最新消息情绪 ===== */
+.news-sentiment-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+}
+.news-sentiment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+.news-sentiment-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+.news-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+}
+.news-badge--bull {
+  background: var(--color-positive-dim);
+  color: var(--color-positive);
+}
+.news-badge--bear {
+  background: var(--color-negative-dim);
+  color: var(--color-negative);
+}
+.news-badge--neutral {
+  background: var(--color-info-dim);
+  color: var(--color-info);
+}
+.news-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+.news-metric {
+  text-align: center;
+}
+.news-metric-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.news-metric-value.bull {
+  color: var(--color-positive);
+}
+.news-metric-value.bear {
+  color: var(--color-negative);
+}
+.news-metric-value.neutral {
+  color: var(--color-info);
+}
+.news-metric-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.news-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.news-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.news-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+.news-dot--bull {
+  background: var(--color-positive);
+}
+.news-dot--bear {
+  background: var(--color-negative);
+}
+.news-dot--neutral {
+  background: var(--color-info);
+}
+.news-item-body {
+  flex: 1;
+}
+.news-item-title {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+.news-item-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+}
+.news-footnote {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: var(--space-md);
+  line-height: 1.5;
+}
+
+/* ===== 量化页：最新消息控件 ===== */
+.quant-news-controls {
+  margin-top: var(--space-lg);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border-default);
+}
+.quant-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.quant-news-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 10px 0 6px;
+}
+.quant-news-textarea {
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: var(--space-sm);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  line-height: 1.5;
+}
+.quant-news-textarea:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+/* ===== 含最新消息 vs 不含新闻 回测对比 ===== */
+.news-compare {
+  margin-bottom: var(--space-lg);
+}
+.backtest-news-badge {
+  font-size: 12px;
+  color: var(--color-info);
+  background: var(--color-info-dim);
+  border-radius: var(--radius-pill);
+  padding: 4px 12px;
+  display: inline-block;
+  margin-bottom: var(--space-sm);
+}
+.news-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.news-compare-table th,
+.news-compare-table td {
+  text-align: right;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-default);
+}
+.news-compare-table th:first-child,
+.news-compare-table td:first-child {
+  text-align: left;
+  color: var(--text-secondary);
+}
+.news-compare-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.news-compare-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: var(--space-sm);
+}
+.strategy-news-aware {
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  color: var(--color-info);
+  background: var(--color-info-dim);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  line-height: 1.5;
+}
+
+/* ===== 自选股 / 持仓监控 ===== */
+.watchlist-page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+}
+.watchlist-header h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  color: var(--text-primary);
+}
+.watchlist-sub {
+  margin: 0 0 18px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.watchlist-add {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.watchlist-input {
+  flex: 1 1 200px;
+  min-width: 160px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-size: 14px;
+  outline: none;
+}
+.watchlist-input:focus {
+  border-color: var(--border-focus);
+}
+.btn-primary {
+  background: var(--accent);
+  color: var(--text-inverse);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.watchlist-run {
+  background: var(--color-info);
+}
+.watchlist-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.watchlist-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  padding: 6px 8px 6px 14px;
+}
+.watchlist-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+.watchlist-remove {
+  background: transparent;
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  border-radius: var(--radius-pill);
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.watchlist-remove:hover {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+.watchlist-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 8px 0;
+  text-align: center;
+  padding: 40px 16px;
+}
+.watchlist-empty-title {
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.watchlist-empty-hint {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.watchlist-note {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 8px 0;
+}
+.watchlist-report {
+  margin-top: 24px;
+}
+.watchlist-report-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+.watchlist-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+.watchlist-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.watchlist-table th,
+.watchlist-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-primary);
+}
+.watchlist-table th {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.watchlist-table tr:last-child td {
+  border-bottom: none;
+}
+.watchlist-table .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.watchlist-table .muted {
+  color: var(--text-muted);
+}
+
+/* === 新闻姿态热力条总览图 === */
+.watchlist-heatbar {
+  margin-top: 20px;
+}
+.watchlist-heatbar-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+.hb-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+  margin-right: 4px;
+}
+.hb-bull {
+  background: #ef4444;
+}
+.hb-bear {
+  background: #22c55e;
+}
+.hb-neutral {
+  background: #64748b;
+  opacity: 0.45;
+}
+/* 中性新闻（极性恰为 0）与「无最新消息」同色系但实心，避免把中性消息误读成看空 */
+.hb-flat {
+  background: #64748b;
+}
+.hb-hint {
+  margin-left: 8px;
+  opacity: 0.7;
+}

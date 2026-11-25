@@ -1,0 +1,126 @@
+/* ============================================================
+   report-ops.css — 报告操作区、窄屏宽表提示、API 访问令牌条
+   由 index.css 原第 6323–6442 行原样搬移而来（不重排、不去重）。
+   加载顺序由 index.css 的 @import 顺序保证，请勿调整。
+   ============================================================ */
+
+/* === 报告操作区（导出 / 打印并排）===
+   两个按钮同为一个 flex 项，行内排布并收窄间距；按钮自身的 align-self/flex-shrink
+   仍由 .report-export-btn 提供，故此处只需补 display 与 gap */
+.report-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ===== 窄屏宽表：给出"可横向滑动"的视觉线索 =====
+   这些容器本就有 overflow-x:auto，但没有任何提示——用户看到被截断的列会以为
+   数据缺失。右侧内阴影是常见且零副作用的滑动暗示（不改变滚动与布局）。 */
+@media (max-width: 768px) {
+  .finance-table-wrap,
+  .comparison-table-wrap,
+  .watchlist-table-wrap,
+  .batch-table-wrap,
+  .factor-table-wrap,
+  .quant-sensitivity-table-wrap {
+    box-shadow: inset -14px 0 12px -12px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/* ===== API 访问令牌解锁条 =====
+   仅在后端配置了 API_AUTH_TOKEN、且页面捕获到 401 时出现（见 components/ApiTokenBar.tsx）。
+   未启用鉴权时不渲染，因此这里的样式对本地开发路径零影响。 */
+.api-token-bar {
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+}
+
+.api-token-bar__form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.api-token-bar__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.api-token-bar__input {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.api-token-bar__input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.api-token-bar__btn {
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.api-token-bar__btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+.api-token-bar__btn--primary {
+  color: var(--text-inverse);
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.api-token-bar__btn--primary:hover {
+  color: var(--text-inverse);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.api-token-bar__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.api-token-bar__hint code {
+  padding: 1px 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border-radius: 3px;
+}
+
+/* 窄屏：按钮独占一行，避免输入框被挤到不可用宽度 */
+@media (max-width: 600px) {
+  .api-token-bar__input {
+    flex-basis: 100%;
+  }
+}

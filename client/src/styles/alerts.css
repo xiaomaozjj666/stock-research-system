@@ -1,0 +1,82 @@
+/* ============================================================
+   alerts.css — 自选股异动预警
+   由 index.css 原第 5479–5555 行原样搬移而来（不重排、不去重）。
+   加载顺序由 index.css 的 @import 顺序保证，请勿调整。
+   ============================================================ */
+
+/* === 自选股异动预警 === */
+.watchlist-monitor {
+  flex-shrink: 0;
+}
+.watchlist-alerts {
+  margin-top: 16px;
+}
+.watchlist-alerts-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+.watchlist-alerts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.watchlist-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+}
+.watchlist-alert-level {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+.watchlist-alert.alert-bull {
+  border-left: 3px solid var(--color-positive);
+}
+.watchlist-alert.alert-bull .watchlist-alert-level {
+  background: var(--color-positive-dim);
+  color: var(--color-positive);
+}
+.watchlist-alert.alert-bear {
+  border-left: 3px solid var(--color-negative);
+}
+.watchlist-alert.alert-bear .watchlist-alert-level {
+  background: var(--color-negative-dim);
+  color: var(--color-negative);
+}
+.watchlist-alert.alert-impact {
+  border-left: 3px solid var(--color-warning);
+}
+.watchlist-alert.alert-impact .watchlist-alert-level {
+  background: var(--color-warning-dim);
+  color: var(--color-warning);
+}
+.watchlist-alert-stock b {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.watchlist-alert-detail {
+  flex: 1;
+  min-width: 120px;
+  color: var(--text-secondary);
+}
+.watchlist-alert-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}

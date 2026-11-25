@@ -1,0 +1,763 @@
+/* ============================================================
+   report.css — 报告页头部、核心摘要、财务表、估值、图表
+   由 index.css 原第 685–1442 行原样搬移而来（不重排、不去重）。
+   加载顺序由 index.css 的 @import 顺序保证，请勿调整。
+   ============================================================ */
+
+/* ===== Report Header ===== */
+.report-header {
+  animation: fadeInUp 0.4s var(--ease-out);
+}
+.report-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+.stock-name {
+  font-size: var(--text-display);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.stock-code {
+  font-size: var(--text-body);
+  color: var(--text-secondary);
+  margin-left: var(--space-sm);
+}
+.stock-industry {
+  display: inline-block;
+  background: var(--color-info-dim);
+  color: var(--color-info);
+  font-size: var(--text-caption);
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  margin-left: var(--space-sm);
+}
+.header-meta {
+  display: flex;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+  margin-top: var(--space-sm);
+}
+.header-meta-item {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.header-meta-item span {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* 报告头部右侧面板：评分 + 评级同一行，标签与导出 / 打印收拢在一起 */
+.report-header-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-sm);
+  padding-left: var(--space-lg);
+  border-left: 1px solid var(--border-default);
+  /* 限制宽度：置信度等长文本曾把面板撑到 ~860px，反过来把左侧股票信息压成一条 */
+  max-width: 340px;
+}
+.report-header-side .score-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  text-align: right;
+}
+.score-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.score-main .rating-tag {
+  margin-top: 0;
+  align-self: center;
+}
+.score-unit {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+}
+
+/* 风险提示 + 历史快照合并后的通知区 */
+.report-notice-history {
+  border-color: var(--color-info);
+}
+.report-notice .history-snapshot-banner {
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+/* Score & Rating */
+.score-block {
+  text-align: center;
+  min-width: 120px;
+}
+.score-number {
+  font-size: 48px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent);
+}
+.rating-tag {
+  display: inline-block;
+  padding: 4px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: var(--space-sm);
+}
+.rating-tag.priority {
+  background: var(--color-positive-dim);
+  color: var(--color-positive);
+}
+.rating-tag.watch {
+  background: var(--color-info-dim);
+  color: var(--color-info);
+}
+.rating-tag.caution {
+  background: var(--color-warning-dim);
+  color: var(--color-warning);
+}
+.rating-tag.avoid {
+  background: var(--color-negative-dim);
+  color: var(--color-negative);
+}
+.confidence-tag {
+  display: inline-block;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: var(--text-caption);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+  /* 长句只在面板宽度内换行，不再按内容撑宽整列 */
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* 较上次分析（记忆反思闭环） */
+.vs-previous-tag {
+  display: inline-block;
+  font-size: var(--text-caption);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.vs-previous-up {
+  background: var(--color-negative-dim);
+  color: var(--color-negative);
+}
+.vs-previous-down {
+  background: var(--color-positive-dim);
+  color: var(--color-positive);
+}
+.vs-previous-flat {
+  background: var(--bg-input);
+  color: var(--text-secondary);
+}
+.vs-previous-rating {
+  opacity: 0.85;
+}
+/* 报告头部补充标签：专家覆盖度披露 / 评级事后校准 */
+.degraded-tag {
+  display: inline-block;
+  background: var(--color-warning-dim);
+  color: var(--color-warning);
+  font-size: var(--text-caption);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+}
+.accuracy-tag {
+  display: inline-block;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.accuracy-tag-accumulating {
+  display: inline-block;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+  border: 1px dashed var(--border-default);
+  opacity: 0.85;
+}
+
+/* ===== 模拟盘首用提示 ===== */
+.paper-first-use-hint {
+  background: rgba(76, 110, 245, 0.08);
+  border: 1px dashed var(--border-default);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+
+/* ===== 批量测算部分跳过提示 ===== */
+.batch-notice {
+  background: rgba(230, 162, 60, 0.08);
+  border: 1px solid rgba(230, 162, 60, 0.35);
+  color: #e6a23c;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+/* ===== 深度研究空态引导 ===== */
+.research-empty {
+  display: flex;
+  justify-content: center;
+  padding: 48px var(--space-lg) 80px;
+}
+.research-empty-card {
+  max-width: 640px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md, 10px);
+  padding: 36px 40px;
+  text-align: center;
+}
+.research-empty-card h2 {
+  margin: 0 0 12px;
+  font-size: 20px;
+}
+.research-empty-desc {
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin: 0 0 20px;
+}
+.research-empty-steps {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.research-empty-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--primary, #4c6ef5);
+  color: #fff;
+  font-size: 12px;
+}
+.research-empty-hint {
+  color: var(--text-tertiary, #8a8f99);
+  font-size: 13px;
+  margin: 0;
+}
+/* 首访一键试跑入口：与提示文案拉开间距，避免看起来像提示的一部分 */
+.research-empty-try {
+  align-self: center;
+  margin-top: 18px;
+}
+
+/* ===== Core Summary V2 ===== */
+.core-summary-v2 {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.summary-block {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-left: 4px solid var(--accent);
+  border-radius: 0 10px 10px 0;
+  padding: 20px 24px;
+}
+
+.summary-text {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+
+.factors-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.factor-col {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 24px;
+}
+
+.factor-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text-primary);
+}
+
+.factor-header--bull {
+  color: var(--color-positive);
+}
+.factor-header--bear {
+  color: var(--color-negative);
+}
+
+.factor-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.factor-icon--bull {
+  background: color-mix(in srgb, var(--color-positive) 12%, transparent);
+  color: var(--color-positive);
+}
+
+.factor-icon--bear {
+  background: color-mix(in srgb, var(--color-negative) 12%, transparent);
+  color: var(--color-negative);
+}
+
+.factor-count {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--bg-secondary);
+  padding: 3px 10px;
+  border-radius: 12px;
+  color: var(--text-secondary);
+}
+
+.factor-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.factor-item {
+  font-size: 14px;
+  line-height: 1.7;
+  padding: 12px 16px;
+  border-radius: 10px;
+  color: var(--text-primary);
+}
+
+.factor-item--bull {
+  background: color-mix(in srgb, var(--color-positive) 10%, transparent);
+  border-left: 4px solid var(--color-positive);
+}
+
+.factor-item--bear {
+  background: color-mix(in srgb, var(--color-negative) 10%, transparent);
+  border-left: 4px solid var(--color-negative);
+}
+
+@media (max-width: 768px) {
+  .factors-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== Financial Table ===== */
+.finance-table-wrap {
+  overflow-x: auto;
+}
+.finance-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.finance-table th,
+.finance-table td {
+  padding: 10px 14px;
+  text-align: center;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-default);
+}
+.finance-table th {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: var(--text-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.finance-table th:first-child,
+.finance-table td:first-child {
+  text-align: left;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.finance-table tr:hover td {
+  background: var(--bg-card-hover);
+}
+.val-positive {
+  color: var(--color-positive);
+}
+.val-negative {
+  color: var(--color-negative);
+}
+.val-neutral {
+  color: var(--text-secondary);
+}
+/* 风险量（如最大回撤）：既不是涨也不是跌，也不是「状态成功/失败」，
+   用琥珀色提示风险，避免借用涨跌色被读成方向 */
+.val-warn {
+  color: var(--color-warning);
+}
+
+/* ===== Valuation ===== */
+.val-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+.val-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  text-align: center;
+  transition: border-color var(--duration-normal) var(--ease-out);
+}
+.val-card:hover {
+  border-color: var(--border-hover);
+}
+.val-card-label {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.val-card-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.val-level-tag {
+  display: inline-block;
+  padding: 4px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+}
+.val-level-tag.undervalued {
+  background: var(--color-positive-dim);
+  color: var(--color-positive);
+}
+.val-level-tag.fair {
+  background: var(--color-info-dim);
+  color: var(--color-info);
+}
+.val-level-tag.overvalued {
+  background: var(--color-negative-dim);
+  color: var(--color-negative);
+}
+
+.peer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: var(--space-md);
+}
+.peer-table th,
+.peer-table td {
+  padding: 10px 14px;
+  text-align: right;
+  border-bottom: 1px solid var(--border-default);
+}
+.peer-table th {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: var(--text-caption);
+}
+.peer-table th:first-child,
+.peer-table td:first-child {
+  text-align: left;
+}
+.peer-table tr:hover td {
+  background: var(--bg-card-hover);
+}
+.peer-table tr.highlight td {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ===== Charts Section =====
+ * 排布：主图（营收与利润趋势）跨整行放大，其余图表两两配对成行；
+ * 窄屏（≤768px）自动降为单列（见底部媒体查询）。 */
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-lg);
+  align-items: stretch;
+}
+.chart-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  transition: border-color var(--duration-normal) var(--ease-out);
+  min-width: 0;
+}
+.chart-card:hover {
+  border-color: var(--border-hover);
+}
+.chart-card h4 {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-md);
+}
+.chart-card-wide {
+  grid-column: 1 / -1;
+}
+
+/* ===== 行情走势图（K线）控件 ===== */
+.trend-chart {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  margin-bottom: var(--space-lg);
+  transition: border-color var(--duration-normal) var(--ease-out);
+}
+.trend-chart:hover {
+  border-color: var(--border-hover);
+}
+.trend-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+.trend-chart-head h4 {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.trend-badge {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+.trend-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.trend-controls .seg {
+  display: inline-flex;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.trend-controls .seg-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast),
+    color var(--duration-fast);
+}
+.trend-controls .seg-btn + .seg-btn {
+  border-left: 1px solid var(--border-default);
+}
+.trend-controls .seg-btn.active {
+  /* 白字配压深的强调蓝：原先 #08110f on #4c8dff 仅约 2.5:1，低于 4.5:1 */
+  background: #1f5bbf;
+  color: #fff;
+  font-weight: 600;
+}
+.trend-controls .chip-btn {
+  appearance: none;
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 4px 9px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+.trend-controls .chip-btn.active {
+  /* 同上：激活态统一改为「压深底色 + 白字」，保证 >= 4.5:1 */
+  color: #fff;
+  font-weight: 600;
+  border-color: transparent;
+}
+.trend-controls .chip-btn.ma-5.active {
+  background: #8a6a00;
+}
+.trend-controls .chip-btn.ma-10.active {
+  background: #0b5f7d;
+}
+.trend-controls .chip-btn.ma-20.active {
+  background: #9c2f74;
+}
+.trend-controls .chip-btn.ma-60.active {
+  background: #5b3bb0;
+}
+.trend-controls .chip-btn:not(.ma-5):not(.ma-10):not(.ma-20):not(.ma-60).active {
+  background: #1f5bbf;
+}
+
+/* 走势图绘图画布（相对定位容器，承载吸顶实况图例） */
+.trend-plot {
+  position: relative;
+  width: 100%;
+}
+/* 吸顶 OHLC 实况图例：覆盖在价格区左上角，悬停实时刷新，可点击隐藏均线 */
+.trend-legend {
+  position: absolute;
+  top: 6px;
+  left: 12px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(13, 13, 13, 0.72);
+  backdrop-filter: blur(2px);
+  font-size: 11px;
+  line-height: 1.4;
+  color: #cfcfcf;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  max-width: calc(100% - 82px);
+}
+.trend-legend .tl-date {
+  color: #fff;
+  font-weight: 600;
+}
+.trend-legend b {
+  font-weight: 600;
+}
+.trend-legend .tl-chg {
+  font-weight: 600;
+}
+.trend-legend .tl-ma {
+  pointer-events: auto;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font: inherit;
+  padding: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.trend-legend .tl-ma:hover {
+  opacity: 0.65;
+  text-decoration: underline;
+}
+.trend-legend .tl-boll {
+  color: #c9cdd4;
+}
+.trend-legend .tl-label {
+  color: #888;
+}
+.trend-legend .tl-val {
+  color: #fff;
+}
+
+/* 走势图 ECharts 容器高度（CSS 控制，便于响应式覆盖） */
+.trend-plot-chart {
+  height: 480px;
+}
+.trend-plot-chart-macd {
+  height: 600px;
+}
+
+@media (max-width: 768px) {
+  .trend-chart {
+    padding: 12px;
+  }
+  .trend-chart-head {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .trend-chart-head h4 {
+    font-size: 13px;
+  }
+  .trend-controls {
+    gap: 8px;
+  }
+  /* 移动端触控目标：此前 3px/7px 内边距只有 ~20px 高，手指点不准（目标 >= 40px） */
+  .trend-controls .seg-btn,
+  .trend-controls .chip-btn {
+    font-size: 11px;
+    padding: 8px 12px;
+    min-height: 40px;
+  }
+  .trend-legend {
+    top: 4px;
+    left: 8px;
+    font-size: 10px;
+    padding: 4px 6px;
+    max-width: calc(100% - 58px);
+    gap: 4px 8px;
+  }
+  .trend-plot-chart {
+    height: 380px;
+  }
+  .trend-plot-chart-macd {
+    height: 460px;
+  }
+}

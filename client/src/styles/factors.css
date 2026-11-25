@@ -1,0 +1,772 @@
+/* ============================================================
+   factors.css — 量价因子面板、评分档位、组合 alpha、IC 衰减、截面评估、因子实验室、简报、溯源、估值建模
+   由 index.css 原第 5556–6322 行原样搬移而来（不重排、不去重）。
+   加载顺序由 index.css 的 @import 顺序保证，请勿调整。
+   ============================================================ */
+
+/* === 量价因子面板（FactorPanel）=== */
+.factor-panel .factor-subtitle {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.factor-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.factor-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.factor-table th,
+.factor-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  vertical-align: top;
+}
+.factor-table th {
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--bg-card, #1b1f27);
+}
+.factor-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.factor-row-signal {
+  background: color-mix(in srgb, var(--color-positive) 7%, transparent);
+}
+.factor-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.factor-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 10px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.tag-adjusted {
+  background: var(--color-warning-dim, rgba(217, 139, 31, 0.15));
+  color: var(--color-warning, #d98b1f);
+}
+.factor-cat {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.factor-dir {
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.factor-muted {
+  color: var(--text-muted);
+}
+.factor-horizon {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: nowrap;
+}
+.factor-ic {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.factor-pval {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.factor-badge {
+  display: inline-block;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.sig-valid {
+  color: var(--color-success);
+}
+.sig-valid.factor-badge,
+.factor-badge.sig-valid {
+  background: var(--color-success-dim);
+  color: var(--color-success);
+}
+.sig-inverted {
+  color: var(--color-warning);
+}
+.sig-inverted.factor-badge,
+.factor-badge.sig-inverted {
+  background: var(--color-warning-dim);
+  color: var(--color-warning);
+}
+.sig-none {
+  color: var(--text-muted);
+}
+.sig-none.factor-badge,
+.factor-badge.sig-none {
+  background: rgba(138, 143, 152, 0.15);
+  color: var(--text-muted);
+}
+/* 分数 / 评级档位（状态语义，与涨跌色解耦）
+   由 lib/colors.ts 的 scoreCls() / scoreBarCls() 产出。高分是「状态好」而不是「涨」，
+   所以走 --color-success（绿），低分走 --color-danger（红）——与 --color-positive（红涨）/
+   --color-negative（绿跌）的字面颜色相近但语义无关，禁止互相借用；涨跌方向用 signCls()。 */
+.score-excellent {
+  color: var(--color-success);
+}
+.score-good {
+  color: var(--accent);
+}
+.score-fair {
+  color: var(--color-warning);
+}
+.score-poor {
+  color: var(--color-danger);
+}
+.score-bar-excellent {
+  background: var(--color-success);
+}
+.score-bar-good {
+  background: var(--accent);
+}
+.score-bar-fair {
+  background: var(--color-warning);
+}
+.score-bar-poor {
+  background: var(--color-danger);
+}
+.factor-evidence {
+  max-width: 280px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.factor-footnote {
+  margin: 10px 2px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.factor-footnote b {
+  color: var(--text-secondary);
+}
+
+/* 多因子组合 alpha 汇总条 */
+.composite-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin: 4px 0 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-color, #2a2f3a);
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.06);
+}
+.composite-overall {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+}
+.composite-overall-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+.composite-overall-dir {
+  font-size: 20px;
+  font-weight: 700;
+}
+.composite-horizons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+.composite-horizon {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+}
+.composite-horizon-period {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.composite-alpha {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.composite-meta {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+.composite-foot {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-top: 2px;
+}
+
+/* ===== 量化页模式切换（单股研究 / 批量测算） ===== */
+.quant-mode-switch {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 3px;
+  border: 1px solid var(--border-color, #2a2f3a);
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.06);
+}
+.quant-mode {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.quant-mode:hover {
+  color: var(--text-primary, inherit);
+}
+.quant-mode.active {
+  background: var(--accent-color, #3b82f6);
+  color: #fff;
+  font-weight: 600;
+}
+.quant-mode-hint {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* ===== 组合 alpha 批量测算 ===== */
+.batch-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 4px 0 14px;
+}
+.batch-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.batch-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.batch-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+.batch-codes {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 1.6;
+  resize: vertical;
+  border: 1px solid var(--border-color, #2a2f3a);
+  border-radius: 6px;
+  background: var(--bg-secondary, transparent);
+  color: inherit;
+}
+.batch-input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border-color, #2a2f3a);
+  border-radius: 6px;
+  background: var(--bg-secondary, transparent);
+  color: inherit;
+}
+.batch-hint {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.batch-hint-error {
+  color: #e05252;
+}
+.batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.batch-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.batch-loading,
+.batch-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.batch-summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+.batch-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-color, #2a2f3a);
+  border-radius: 8px;
+}
+.batch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.batch-table th,
+.batch-table td {
+  padding: 8px 10px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-color, #2a2f3a);
+}
+.batch-table th {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(127, 127, 127, 0.06);
+}
+.batch-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.batch-code {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.batch-market {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+.batch-secid {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.batch-dir {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(127, 127, 127, 0.14);
+}
+.batch-dir.sig-valid {
+  background: var(--color-success-dim);
+}
+.batch-dir.sig-inverted {
+  background: var(--color-warning-dim);
+}
+/* 方向徽章（看多/看空）：涨跌方向要用 A 股红涨绿跌，而不是显著性色板
+   （.sig-valid 绿曾让「看多」显示成绿色）。底色口径随之补齐，保持与上方一致的
+   「淡色底 + 同色字」观感；.sig-* 的规则保持原样，供显著性判定继续使用。 */
+.batch-dir.val-positive {
+  background: var(--color-positive-dim);
+}
+.batch-dir.val-negative {
+  background: var(--color-negative-dim);
+}
+.batch-alpha {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.batch-horizons {
+  display: flex;
+  gap: 12px;
+}
+.batch-horizon {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+}
+.batch-horizon-period {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.batch-top,
+.batch-bars {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.batch-row-error td {
+  color: #e05252;
+}
+.batch-error-text {
+  font-size: 11px;
+}
+.batch-footnote {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* ============ IC 衰减曲线 ============ */
+.paper-equity-chart {
+  width: 100%;
+  height: 220px;
+  margin-bottom: 10px;
+}
+
+.portfolio-curve {
+  width: 100%;
+  height: 240px;
+}
+.portfolio-chart-wrap {
+  margin-top: 10px;
+}
+
+.ic-decay {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-default);
+}
+.ic-decay-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ic-decay-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.ic-decay-note {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.ic-decay-svg {
+  width: 100%;
+  height: auto;
+  margin-top: 6px;
+}
+.ic-decay-zero {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+}
+.ic-decay-gridline {
+  stroke: var(--border-default);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.ic-decay-ylabel,
+.ic-decay-xlabel {
+  font-size: 10px;
+  fill: var(--text-muted);
+  text-anchor: middle;
+}
+.ic-decay-ylabel {
+  text-anchor: end;
+}
+.ic-decay-line-muted {
+  stroke: var(--border-hover);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ic-decay-line-valid {
+  stroke: var(--color-success);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ic-decay-line-inverted {
+  stroke: var(--color-warning);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ic-decay-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ic-decay-legend-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.ic-decay-chip {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.ic-decay-chip.sig-valid {
+  color: var(--color-success);
+  background: var(--color-success-dim);
+}
+.ic-decay-chip.sig-inverted {
+  color: var(--color-warning);
+  background: var(--color-warning-dim);
+}
+.ic-decay-empty {
+  margin-top: 12px;
+  padding: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+/* ============ 截面因子评估面板 ============ */
+.cs-source-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.cs-source-row .quant-mode {
+  font-size: 12px;
+  padding: 4px 12px;
+  flex: 1;
+}
+/* 截面页三个开关：纵向整齐排列（各占一行，间距一致） */
+.cs-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+.cs-toggles .batch-checkbox {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.cs-table th,
+.cs-table td {
+  vertical-align: top;
+}
+.cs-ic-cell {
+  min-width: 96px;
+}
+.cs-ic-mean {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.cs-ic-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.cs-oos {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.cs-oos-ok {
+  color: var(--color-success);
+}
+.cs-oos-no {
+  color: var(--text-muted);
+}
+
+/* === 因子实验室：表达式假设验证 + 实验台账 === */
+.factor-lab {
+  margin-top: 16px;
+}
+
+.factor-lab-period {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-subtle, rgba(128, 128, 128, 0.08));
+  font-size: 12px;
+}
+
+.factor-ledger {
+  margin-top: 14px;
+}
+
+.factor-ledger-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.factor-ledger-head .quant-panel-title {
+  margin: 0;
+}
+
+/* ===== 研究简报（DigestPanel） ===== */
+.digest-panel .digest-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.digest-panel .digest-toolbar .quant-panel-title {
+  margin: 0;
+}
+.digest-panel .digest-toolbar .batch-hint {
+  flex: 1;
+  min-width: 200px;
+}
+.digest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.digest-item {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.digest-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+}
+.digest-head:hover {
+  background: var(--bg-card-hover);
+}
+.digest-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.digest-caret {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+.digest-body {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--border-default);
+}
+.digest-notes {
+  margin: 8px 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.digest-hits {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.digest-error {
+  color: var(--color-danger);
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+/* ===== 数据来源与覆盖范围（溯源表） ===== */
+.data-source-table {
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.data-source-table .quant-panel-title {
+  margin: 0 0 10px;
+}
+.data-source-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.data-source-table th,
+.data-source-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-default);
+  text-align: left;
+  vertical-align: top;
+}
+.data-source-table th {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.data-source-table .ds-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.data-source-table .ds-desc {
+  color: var(--text-secondary);
+}
+.data-source-table .ds-coverage {
+  color: var(--text-secondary);
+}
+
+/* ===== 估值建模面板 ===== */
+.valuation-panel .valuation-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.valuation-panel .valuation-form .batch-input {
+  flex: 1;
+  min-width: 160px;
+}
+.valuation-summary {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.valuation-summary .paper-stat-card {
+  flex: 1;
+  min-width: 140px;
+}
+.valuation-assumptions {
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* 隐含溢价按数值方向着色（正 = 高于内在价值 = 红，负 = 折价 = 绿），
+   与全站 signCls / 红涨绿跌口径一致。此前正溢价走 .neg（绿）、折价走 .pos（红），
+   且无数据（—）也被染成方向色。
+   选择器必须带 .valuation-summary：.paper-stat-value 定义在本文件更后面，
+   同权重下会盖掉全局 .val-* 的颜色。 */
+.valuation-summary .paper-stat-value.val-positive {
+  color: var(--color-positive);
+}
+.valuation-summary .paper-stat-value.val-negative {
+  color: var(--color-negative);
+}
+.valuation-summary .paper-stat-value.val-neutral {
+  color: var(--text-secondary);
+}

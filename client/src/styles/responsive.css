@@ -1,0 +1,152 @@
+/* ============================================================
+   responsive.css — 主响应式断点簇（1280 / 1024 / 768）
+   由 index.css 原第 1973–2119 行原样搬移而来（不重排、不去重）。
+   加载顺序由 index.css 的 @import 顺序保证，请勿调整。
+   ============================================================ */
+
+/* ===== Responsive ===== */
+@media (max-width: 1280px) {
+  .dashboard-cards {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (max-width: 1024px) {
+  .side-nav {
+    display: none;
+  }
+  .report-layout {
+    padding: 0 var(--space-md);
+  }
+  .quant-page {
+    grid-template-columns: 1fr;
+  }
+  .mobile-nav {
+    display: block;
+  }
+  /* 移动端量化页横向溢出修复（390px 视口实测 scrollWidth 433 > 390）：
+     grid 项默认 min-width:auto，会被内部定宽内容撑破容器；这里强制单列、宽度自适应。 */
+  .quant-page,
+  .quant-sidebar,
+  .quant-main {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .quant-sidebar {
+    position: static;
+    top: auto;
+  }
+  .quant-sidebar-title,
+  .quant-mode-switch,
+  .quant-mode,
+  .quant-form,
+  .quant-form-group {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .quant-mode {
+    flex: 1 1 auto;
+  }
+  .quant-form-group input,
+  .quant-form-group select,
+  .quant-form-group textarea {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  /* 移动端两个浮动按钮原本 bottom:20/28 + right:20/24 几乎重合，手指会点错；
+     把"回到顶部"抬到目录按钮上方（84px），并让目录抽屉的层级高于它。 */
+  :root {
+    --back-top-bottom: 84px;
+  }
+  .mobile-nav {
+    z-index: 210;
+  }
+}
+@media (max-width: 768px) {
+  .app {
+    padding: 0 var(--space-md) var(--space-xl);
+  }
+  :root {
+    --text-display: 24px;
+    --text-h1: 18px;
+  }
+  .factors-grid {
+    grid-template-columns: 1fr;
+  }
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+  .controversy-views {
+    grid-template-columns: 1fr;
+  }
+  .navbar-inner {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  /* 桌面端 navbar 用负 margin 出血到容器外；移动端会撑出横向滚动条，改为不溢出 */
+  .navbar {
+    margin: 0 0 var(--space-lg);
+    padding: var(--space-sm) var(--space-md);
+  }
+  .report-header-top {
+    flex-direction: column;
+  }
+  .score-block {
+    text-align: left;
+  }
+  .report-header-side,
+  .report-header-side .score-block {
+    align-items: flex-start;
+    text-align: left;
+  }
+  .report-header-side {
+    padding-left: 0;
+    border-left: 0;
+    max-width: none;
+  }
+  .dashboard-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .quant-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  /* 9 个 tab 在窄屏横向滚动，避免溢出换行；右侧渐隐提示还有内容可滑 */
+  .tab-bar {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 0 var(--space-sm);
+    scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+  .tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .header-meta {
+    /* 移动端把 4 行元数据压到两行内 */
+    gap: 4px 12px;
+  }
+  .tab {
+    flex-shrink: 0;
+    padding: 10px 14px;
+  }
+}
+
+/* 移动端可读性：说明性文字（hint / 次级说明）提到 12px。
+   刻意只覆盖这 9 条：表头紧凑标签、徽标、单位、表格单元格等受版面约束的小字号不动。 */
+@media (max-width: 768px) {
+  .quant-mode-hint,
+  .batch-hint,
+  .factor-footnote,
+  .ic-decay-legend-empty,
+  .composite-foot,
+  .composite-meta,
+  .page-suspense,
+  .quant-selected-stock,
+  .batch-checkbox {
+    font-size: 12px;
+  }
+}
