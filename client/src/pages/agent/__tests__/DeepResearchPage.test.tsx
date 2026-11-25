@@ -12,6 +12,7 @@ import { partial } from '../../../test/partial';
 
 vi.mock('../../../api/client', () => ({
   listDeepResearchRuns: vi.fn(),
+  listResumableDeepResearchRuns: vi.fn(),
   getDeepResearchRun: vi.fn(),
   deleteDeepResearchRun: vi.fn(),
   runDeepResearchStream: vi.fn(),
@@ -25,6 +26,7 @@ import {
   deleteDeepResearchRun,
   getDeepResearchRun,
   listDeepResearchRuns,
+  listResumableDeepResearchRuns,
   runDeepResearchStream,
 } from '../../../api/client';
 import DeepResearchPage from '../DeepResearchPage';
@@ -118,6 +120,7 @@ function makeResult(): DeepResearchResult {
 
 beforeEach(() => {
   vi.mocked(listDeepResearchRuns).mockResolvedValue([SUMMARY]);
+  vi.mocked(listResumableDeepResearchRuns).mockResolvedValue([]);
   vi.mocked(getDeepResearchRun).mockResolvedValue({
     id: SUMMARY.id,
     question: SUMMARY.question,
@@ -253,5 +256,115 @@ describe('DeepResearchPage 运行流（此前审查点名的零覆盖区）', ()
       expect(screen.getByRole('button', { name: '开始研究' })).toBeInTheDocument();
     });
     expect(screen.queryByText(/研究失败/)).not.toBeInTheDocument();
+  });
+});
+
+describe('DeepResearchPage 断线续跑（长期缺口）', () => {
+  beforeEach(() => {
+    vi.mocked(listDeepResearchRuns).mockResolvedValue([]);
+    vi.mocked(listResumableDeepResearchRuns).mockResolvedValue([]);
+  });
+
+  it('已收到事件后断开：显示「继续研究」按钮，点击带 runId 重连并提示 resumed', async () => {
+    const optionsSeen: (Record<string, unknown> | undefined)[] = [];
+    const eventBoxes: ((e: DeepResearchStreamEvent) => void)[] = [];
+    let rejectFirst!: (e: unknown) => void;
+
+    vi.mocked(runDeepResearchStream)
+      .mockImplementationOnce((_q, onEvent, options) => {
+        optionsSeen.push(options as Record<string, unknown> | undefined);
+        eventBoxes.push(onEvent);
+        return {
+          cancel: vi.fn(),
+          done: new Promise<DeepResearchResult>((_resolve, reject) => {
+            rejectFirst = reject;
+          }),
+        };
+      })
+      .mockImplementationOnce((_q, onEvent, options) => {
+        optionsSeen.push(options as Record<string, unknown> | undefined);
+        eventBoxes.push(onEvent);
+        return {
+          cancel: vi.fn(),
+          // 第二次（续跑）保持挂起：本用例只验「带 runId 重连」与 resumed 提示
+          done: new Promise<DeepResearchResult>(() => {}),
+        };
+      });
+
+    render(<DeepResearchPage />);
+    fireEvent.change(screen.getByPlaceholderText(/贵州茅台当前的基本面与估值/), {
+      target: { value: '白酒行业未来两年的竞争格局与风险' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '开始研究' }));
+
+    await waitFor(() => expect(optionsSeen).toHaveLength(1));
+    eventBoxes[0]({
+      phase: 'run_meta',
+      runId: 'run-x',
+      resumed: false,
+      resumedFromRound: 0,
+    });
+    eventBoxes[0]({
+      phase: 'agent_event',
+      event: { seq: 1, type: 'run_started', round: 0, at: 't', message: '研究任务启动' },
+    });
+    await screen.findByText('研究任务启动');
+
+    // 模拟「已收到事件后连接中断」：reject 携带 runId / canResume
+    rejectFirst(
+      Object.assign(new Error('连接中断，研究未完成；可从此前已完成的轮次继续'), {
+        canResume: true,
+        runId: 'run-x',
+        resumedFromRound: 1,
+      }),
+    );
+
+    const resumeBtn = await screen.findByRole('button', { name: /继续研究（从第 2 轮）/ });
+    fireEvent.click(resumeBtn);
+
+    await waitFor(() => expect(optionsSeen).toHaveLength(2));
+    expect(optionsSeen[0]?.runId).toBeUndefined();
+    expect(optionsSeen[1]?.runId).toBe('run-x');
+
+    // 续跑生效提示：resumed 的 run_meta 帧透传到页面可见位置
+    eventBoxes[1]({
+      phase: 'run_meta',
+      runId: 'run-x',
+      resumed: true,
+      resumedFromRound: 1,
+    });
+    expect(await screen.findByText(/已从第 1 轮继续/)).toBeInTheDocument();
+  });
+
+  it('「未完成的研究」列表：刷新页面后仍能点开续跑', async () => {
+    vi.mocked(listResumableDeepResearchRuns).mockResolvedValue([
+      {
+        runId: 'run-y',
+        question: '未完成的光伏产能出清研究',
+        createdAt: '2026-11-18T01:00:00.000Z',
+        updatedAt: '2026-11-18T01:10:00.000Z',
+        roundsCompleted: 1,
+        evidenceCount: 4,
+      },
+    ]);
+    vi.mocked(runDeepResearchStream).mockImplementation(() => ({
+      cancel: vi.fn(),
+      done: new Promise<DeepResearchResult>(() => {}),
+    }));
+
+    render(<DeepResearchPage />);
+
+    expect(await screen.findByText('未完成的研究')).toBeInTheDocument();
+    const item = await screen.findByRole('button', { name: /未完成的光伏产能出清研究/ });
+    expect(screen.getByText(/已完成 1 轮 · 4 条证据可复用/)).toBeInTheDocument();
+    fireEvent.click(item);
+
+    await waitFor(() =>
+      expect(runDeepResearchStream).toHaveBeenCalledWith(
+        '',
+        expect.any(Function),
+        expect.objectContaining({ runId: 'run-y' }),
+      ),
+    );
   });
 });

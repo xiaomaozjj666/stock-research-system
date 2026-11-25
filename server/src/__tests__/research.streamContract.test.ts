@@ -60,18 +60,24 @@ describe('GET /api/research/deep/stream SSE 帧契约', () => {
     vi.restoreAllMocks();
   });
 
-  it('先推 agent_event（事件含 seq/type/round/at/message），最后推 done（含 result）', async () => {
+  it('先推 run_meta（runId 供断线续跑），再推 agent_event，最后推 done', async () => {
     const res = await request(app).get(
       '/api/research/deep/stream?question=白酒行业竞争格局与集中度趋势',
     );
     expect(res.status).toBe(200);
 
     const frames = parseFrames(res.text);
-    expect(frames.length).toBeGreaterThanOrEqual(2);
+    expect(frames.length).toBeGreaterThanOrEqual(3);
 
-    // 第一帧：过程事件——phase 与事件字段形状是客户端的解析契约
-    expect(frames[0].phase).toBe('agent_event');
-    const event = frames[0].event as Record<string, unknown>;
+    // 首帧：run_meta——断线后客户端凭 runId 续跑（旧客户端忽略该帧即可）
+    expect(frames[0].phase).toBe('run_meta');
+    expect(frames[0].resumed).toBe(false);
+    expect(typeof frames[0].runId).toBe('string');
+    expect(frames[0].runId).toMatch(/^[a-z0-9][a-z0-9-]{0,63}$/);
+
+    // 第二帧：过程事件——phase 与事件字段形状是客户端的解析契约
+    expect(frames[1].phase).toBe('agent_event');
+    const event = frames[1].event as Record<string, unknown>;
     expect(event).toMatchObject({
       seq: 1,
       type: 'run_started',

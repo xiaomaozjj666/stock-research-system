@@ -4,7 +4,9 @@ import {
   deleteDeepResearchRun,
   getDeepResearchRun,
   listDeepResearchRuns,
+  listResumableDeepResearchRuns,
   runDeepResearchStream,
+  type DeepResearchCheckpointSummary,
   type DeepResearchEvent,
   type DeepResearchResult,
   type DeepResearchRunSummary,
@@ -57,6 +59,21 @@ function confidenceClass(value: number): string {
   return 'low';
 }
 
+/**
+ * 从错误对象里读续跑信息。用结构判断而不是 `instanceof DeepResearchInterruptedError`：
+ * 页面测试会 mock 整个 api 模块，instanceof 在 mock 下不成立；
+ * 判据（canResume===true 且 runId 是非空字符串）本身已经唯一标识「可续跑」。
+ */
+function readResumeInfo(err: unknown): { runId: string; fromRound: number } | null {
+  if (!err || typeof err !== 'object') return null;
+  const e = err as { canResume?: unknown; runId?: unknown; resumedFromRound?: unknown };
+  if (e.canResume !== true || typeof e.runId !== 'string' || e.runId === '') return null;
+  return {
+    runId: e.runId,
+    fromRound: typeof e.resumedFromRound === 'number' ? e.resumedFromRound : 0,
+  };
+}
+
 function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
@@ -86,6 +103,13 @@ export default function DeepResearchPage() {
   /** 当前展示的是哪条历史记录（null = 本次会话新跑的结果） */
   const [viewingId, setViewingId] = useState<string | null>(null);
 
+  /** 未完成但可续跑的研究（刷新页面后仍能恢复「继续研究」入口） */
+  const [resumable, setResumable] = useState<DeepResearchCheckpointSummary[]>([]);
+  /** 本次断线留下的续跑入口：runId + 已完成的轮次 */
+  const [resumeInfo, setResumeInfo] = useState<{ runId: string; fromRound: number } | null>(null);
+  /** 续跑已生效的可见提示（例：已从第 2 轮继续） */
+  const [resumedNotice, setResumedNotice] = useState<string | null>(null);
+
   const cancelRef = useRef<(() => void) | null>(null);
   const traceEndRef = useRef<HTMLDivElement>(null);
   const seqRef = useRef(0);
@@ -98,9 +122,18 @@ export default function DeepResearchPage() {
     }
   }, []);
 
+  const refreshResumable = useCallback(async () => {
+    try {
+      setResumable(await listResumableDeepResearchRuns(20));
+    } catch {
+      // 可续跑列表同样只是补充入口：读不到就不显示，不影响当前研究
+    }
+  }, []);
+
   useEffect(() => {
     void refreshHistory();
-  }, [refreshHistory]);
+    void refreshResumable();
+  }, [refreshHistory, refreshResumable]);
 
   // 卸载时中断在途研究：SSE 不关会一直占着连接，服务端也会继续烧 token
   useEffect(() => () => cancelRef.current?.(), []);
@@ -111,66 +144,106 @@ export default function DeepResearchPage() {
     traceEndRef.current?.scrollIntoView({ block: 'nearest' });
   }, [events, running]);
 
-  const handleRun = useCallback(() => {
-    const q = question.trim();
-    if (q.length < 4) {
-      showToast('请输入至少 4 个字的研究问题', 'error');
-      return;
-    }
+  const handleRun = useCallback(
+    (resume?: { runId: string }) => {
+      // 续跑沿用在途断点，问题以服务端断点为准；首次运行仍需本地校验问题长度
+      const q = question.trim();
+      if (!resume && q.length < 4) {
+        showToast('请输入至少 4 个字的研究问题', 'error');
+        return;
+      }
 
-    cancelRef.current?.();
-    const gen = ++seqRef.current;
-    setRunning(true);
-    setError(null);
-    setResult(null);
-    setEvents([]);
-    setViewingId(null);
+      cancelRef.current?.();
+      const gen = ++seqRef.current;
+      setRunning(true);
+      setError(null);
+      setResult(null);
+      setViewingId(null);
+      setResumedNotice(null);
+      // 续跑保留已收到的轨迹（用户能看到断点前的进度），首次运行才清空
+      if (!resume) setEvents([]);
 
-    const scope: Record<string, unknown> = {};
-    if (industry.trim()) scope.industry = industry.trim();
-    if (timeRange.trim()) scope.timeRange = timeRange.trim();
+      const scope: Record<string, unknown> = {};
+      if (industry.trim()) scope.industry = industry.trim();
+      if (timeRange.trim()) scope.timeRange = timeRange.trim();
 
-    const { cancel, done } = runDeepResearchStream(
-      q,
-      (evt) => {
-        if (gen !== seqRef.current) return;
-        if (evt.phase === 'agent_event') setEvents((prev) => [...prev, evt.event]);
-      },
-      { scope: Object.keys(scope).length > 0 ? scope : undefined, config: { maxRounds } },
-    );
-    cancelRef.current = cancel;
+      const { cancel, done } = runDeepResearchStream(
+        q,
+        (evt) => {
+          if (gen !== seqRef.current) return;
+          if (evt.phase === 'run_meta') {
+            if (evt.resumed) {
+              setResumedNotice(
+                `已从第 ${evt.resumedFromRound} 轮继续（复用已落盘的计划、证据与验证结论）`,
+              );
+            }
+            return;
+          }
+          if (evt.phase === 'agent_event') {
+            // 续跑时本地可能已有部分事件：按 seq 去重，避免轨迹出现重复条目
+            setEvents((prev) =>
+              prev.some((e) => e.seq === evt.event.seq) ? prev : [...prev, evt.event],
+            );
+          }
+        },
+        {
+          scope: Object.keys(scope).length > 0 ? scope : undefined,
+          config: { maxRounds },
+          runId: resume?.runId,
+        },
+      );
+      cancelRef.current = cancel;
 
-    done
-      .then((res) => {
-        if (gen !== seqRef.current) return;
-        setResult(res);
-        setRunCount((n) => n + 1);
-        // 服务端在返回结果前已落库，这里刷新即可看到刚跑完的一条
-        void refreshHistory();
-      })
-      .catch((err: unknown) => {
-        if (gen !== seqRef.current) return;
-        const message = err instanceof Error ? err.message : '研究失败';
-        // 主动取消不算错误：清空轨迹，避免留下半截进度让人以为还能继续
-        if (message.includes('已取消')) {
-          setEvents([]);
-          return;
-        }
-        setError(message);
-      })
-      .finally(() => {
-        if (gen === seqRef.current) {
-          cancelRef.current = null;
-          setRunning(false);
-        }
-      });
-  }, [question, industry, timeRange, maxRounds, showToast, refreshHistory]);
+      done
+        .then((res) => {
+          if (gen !== seqRef.current) return;
+          setResult(res);
+          setRunCount((n) => n + 1);
+          setResumeInfo(null);
+          // 服务端在返回结果前已落库，这里刷新即可看到刚跑完的一条
+          void refreshHistory();
+          void refreshResumable();
+        })
+        .catch((err: unknown) => {
+          if (gen !== seqRef.current) return;
+          const message = err instanceof Error ? err.message : '研究失败';
+          // 主动取消不算错误：清空轨迹，避免留下半截进度让人以为还能继续
+          if (message.includes('已取消')) {
+            setEvents([]);
+            setResumeInfo(null);
+            return;
+          }
+          setError(message);
+          // 已收到事件后断开：给出可见的「继续研究」入口（而不是只报失败）
+          setResumeInfo(readResumeInfo(err));
+          void refreshResumable();
+        })
+        .finally(() => {
+          if (gen === seqRef.current) {
+            cancelRef.current = null;
+            setRunning(false);
+          }
+        });
+    },
+    [question, industry, timeRange, maxRounds, showToast, refreshHistory, refreshResumable],
+  );
 
   const handleCancel = useCallback(() => {
     cancelRef.current?.();
     cancelRef.current = null;
     setRunning(false);
   }, []);
+
+  /** 从「未完成的研究」续跑：问题以服务端断点为准，本地只补齐输入框展示 */
+  const handleResume = useCallback(
+    (item: DeepResearchCheckpointSummary) => {
+      if (running) return;
+      setQuestion((prev) => (prev.trim() ? prev : item.question));
+      setResumedNotice(null);
+      handleRun({ runId: item.runId });
+    },
+    [running, handleRun],
+  );
 
   const handleExport = useCallback(() => {
     if (!result) return;
@@ -261,6 +334,15 @@ export default function DeepResearchPage() {
         </div>
       )}
 
+      {resumedNotice && (
+        <div className="dr-history-banner" role="status">
+          <span>{resumedNotice}</span>
+          <button type="button" className="btn-ghost" onClick={() => setResumedNotice(null)}>
+            知道了
+          </button>
+        </div>
+      )}
+
       <section className="dr-form card">
         <label className="dr-label" htmlFor="dr-question">
           研究问题
@@ -310,7 +392,7 @@ export default function DeepResearchPage() {
                 取消研究
               </button>
             ) : (
-              <button type="button" className="btn-primary" onClick={handleRun}>
+              <button type="button" className="btn-primary" onClick={() => handleRun()}>
                 {runCount > 0 ? '重新研究' : '开始研究'}
               </button>
             )}
@@ -366,6 +448,37 @@ export default function DeepResearchPage() {
         )}
       </section>
 
+      {resumable.length > 0 && (
+        <section className="dr-history card">
+          <div className="dr-history-head">
+            <h2>未完成的研究</h2>
+            <span className="dr-history-hint">
+              断线不丢进度：从已完成的轮次继续，已落盘的证据与验证结论不重复付费
+            </span>
+          </div>
+          <ul className="dr-history-list">
+            {resumable.map((item) => (
+              <li key={item.runId} className="dr-history-row">
+                <button
+                  type="button"
+                  className="dr-history-item"
+                  onClick={() => handleResume(item)}
+                  disabled={running}
+                >
+                  <span className="dr-history-question">{item.question}</span>
+                  <span className="dr-history-meta">
+                    <span>更新于 {new Date(item.updatedAt).toLocaleString()}</span>
+                    <span>
+                      已完成 {item.roundsCompleted} 轮 · {item.evidenceCount} 条证据可复用
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {history.length > 0 && (
         <section className="dr-history card">
           <div className="dr-history-head">
@@ -417,6 +530,19 @@ export default function DeepResearchPage() {
             </span>
             <span className="error-banner-text">{error}</span>
           </div>
+          {/* 断线可续跑：给出明确按钮，而不是让用户从零再花一次钱 */}
+          {resumeInfo && (
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => handleRun({ runId: resumeInfo.runId })}
+              disabled={running}
+            >
+              {resumeInfo.fromRound > 0
+                ? `继续研究（从第 ${resumeInfo.fromRound + 1} 轮）`
+                : '继续研究'}
+            </button>
+          )}
         </div>
       )}
 

@@ -39,7 +39,15 @@ class FakeEventSource {
 // 认证 token 在测试里不存在，withTokenQuery 应原样返回 URL（不依赖仓库实现细节）
 vi.stubGlobal('EventSource', FakeEventSource);
 
-import { runDeepResearchStream } from '../client';
+import { runDeepResearchStream, DeepResearchInterruptedError } from '../client';
+
+/** run_meta 帧：服务端首帧下发 runId（断线续跑凭据） */
+const META_FRAME = JSON.stringify({
+  phase: 'run_meta',
+  runId: 'abc123-1-deadbeef',
+  resumed: false,
+  resumedFromRound: 0,
+});
 
 /** done 帧负载（服务端 result 的最小可断言子集；解析后为深拷贝，用 toMatchObject 断言） */
 const DONE_FRAME = JSON.stringify({
@@ -124,5 +132,80 @@ describe('runDeepResearchStream', () => {
     const assertion = expect(done).rejects.toThrow(/后端服务已启动.*LLM 密钥/);
     lastES().error();
     await assertion;
+  });
+});
+
+describe('runDeepResearchStream 断线续跑', () => {
+  it('run_meta 帧透传给调用方（UI 据此显示「已从第 N 轮继续」）', async () => {
+    vi.useFakeTimers();
+    const seen: string[] = [];
+    const { done } = runDeepResearchStream('问题', (e) => seen.push(e.phase));
+    const es = lastES();
+    es.emit(META_FRAME);
+    es.emit(DONE_FRAME);
+    await expect(done).resolves.toMatchObject({ report: { title: '测试报告' } });
+    expect(seen).toContain('run_meta');
+  });
+
+  it('已收到事件后断开 → 以可续跑错误 reject，并带上 run_meta 里的 runId', async () => {
+    vi.useFakeTimers();
+    const { done } = runDeepResearchStream('问题', () => {});
+    const assertion = expect(done).rejects.toBeInstanceOf(DeepResearchInterruptedError);
+    const es = lastES();
+    es.emit(META_FRAME);
+    es.emit(JSON.stringify({ phase: 'agent_event', event: { seq: 2, type: 'retrieval_started' } }));
+    es.error();
+    await assertion;
+    await done.catch((err: DeepResearchInterruptedError) => {
+      expect(err.canResume).toBe(true);
+      expect(err.runId).toBe('abc123-1-deadbeef');
+      expect(err.message).toContain('连接中断');
+    });
+    expect(es.closed).toBe(true);
+  });
+
+  it('服务端 error 帧（已拿到 runId）同样标记可续跑，而不是让用户从头再来', async () => {
+    vi.useFakeTimers();
+    const { done } = runDeepResearchStream('问题', () => {});
+    const es = lastES();
+    es.emit(META_FRAME);
+    es.emit(JSON.stringify({ phase: 'error', message: '研究超过最大时长，已中止' }));
+    await done.catch((err: DeepResearchInterruptedError) => {
+      expect(err).toBeInstanceOf(DeepResearchInterruptedError);
+      expect(err.canResume).toBe(true);
+      expect(err.runId).toBe('abc123-1-deadbeef');
+      expect(err.message).toContain('最大时长');
+    });
+  });
+
+  it('续跑调用：URL 带 runId、不带空 question；done 正常 resolve', async () => {
+    vi.useFakeTimers();
+    const { done } = runDeepResearchStream('', () => {}, { runId: 'abc123-1-deadbeef' });
+    const es = lastES();
+    expect(es.url).toContain('runId=abc123-1-deadbeef');
+    expect(es.url).not.toContain('question=');
+    es.emit(
+      JSON.stringify({
+        phase: 'run_meta',
+        runId: 'abc123-1-deadbeef',
+        resumed: true,
+        resumedFromRound: 2,
+      }),
+    );
+    es.emit(DONE_FRAME);
+    await expect(done).resolves.toMatchObject({ report: { title: '测试报告' } });
+  });
+
+  it('续跑请求首包前被拒 → 明确提示「续跑未能开始」，并保留续跑入口', async () => {
+    vi.useFakeTimers();
+    const { done } = runDeepResearchStream('', () => {}, { runId: 'abc123-1-deadbeef' });
+    const assertion = expect(done).rejects.toThrow(/续跑未能开始/);
+    lastES().error();
+    await assertion;
+    await done.catch((err: DeepResearchInterruptedError) => {
+      // 断点可能只是「仍在收尾」：保留续跑入口，用户可稍后重试
+      expect(err.canResume).toBe(true);
+      expect(err.runId).toBe('abc123-1-deadbeef');
+    });
   });
 });

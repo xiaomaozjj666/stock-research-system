@@ -447,6 +447,31 @@ const researchRunListSchema = {
   required: ['items'],
 };
 
+/** 可续跑断点摘要：只暴露续跑入口需要的字段，不含计划/证据正文 */
+const researchCheckpointSummarySchema = {
+  type: 'object',
+  properties: {
+    runId: { type: 'string', description: '续跑用的研究 id（小写字母/数字/连字符）' },
+    question: { type: 'string', description: '原始研究问题' },
+    createdAt: { type: 'string', description: '首次落断点时间（ISO）' },
+    updatedAt: { type: 'string', description: '最近一次落断点时间（ISO）' },
+    roundsCompleted: { type: 'integer', description: '已完成轮次（续跑从下一轮开始）' },
+    evidenceCount: { type: 'integer', description: '断点中已落盘、续跑可复用的证据条数' },
+  },
+  required: ['runId', 'question', 'createdAt', 'updatedAt', 'roundsCompleted', 'evidenceCount'],
+};
+
+const researchCheckpointListSchema = {
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
+      items: { $ref: '#/components/schemas/ResearchCheckpointSummary' },
+    },
+  },
+  required: ['items'],
+};
+
 export const researchSchemas = {
   ResearchSourceRef: sourceRefSchema,
   ResearchAcquisitionPath: acquisitionPathSchema,
@@ -468,4 +493,6 @@ export const researchSchemas = {
   ResearchRunSummary: researchRunSummarySchema,
   SavedResearchRun: savedResearchRunSchema,
   ResearchRunList: researchRunListSchema,
+  ResearchCheckpointSummary: researchCheckpointSummarySchema,
+  ResearchCheckpointList: researchCheckpointListSchema,
 };

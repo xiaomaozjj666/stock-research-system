@@ -1483,6 +1483,25 @@ export type ResearchAgentEvent = {
   data?: Record<string, unknown>;
 };
 
+export type ResearchCheckpointList = {
+  items: ResearchCheckpointSummary[];
+};
+
+export type ResearchCheckpointSummary = {
+  /** 续跑用的研究 id（小写字母/数字/连字符） */
+  runId: string;
+  /** 原始研究问题 */
+  question: string;
+  /** 首次落断点时间（ISO） */
+  createdAt: string;
+  /** 最近一次落断点时间（ISO） */
+  updatedAt: string;
+  /** 已完成轮次（续跑从下一轮开始） */
+  roundsCompleted: number;
+  /** 断点中已落盘、续跑可复用的证据条数 */
+  evidenceCount: number;
+};
+
 export type ResearchConfigInput = {
   /** 约束：最小 1；最大 4 */
   maxRounds?: number;
@@ -3452,23 +3471,46 @@ export type POSTApiQuantValuationModelResponse = ValuationModelResult;
  * 端点：POST /api/research/deep
  */
 export type POSTApiResearchDeepRequestBody = {
-  /** 研究问题（4-500 字） */
-  question: string;
+  /** 研究问题（4-500 字）；续跑时可省略 */
+  question?: string;
   scope?: ResearchScopeInput;
   config?: ResearchConfigInput;
+  /** 续跑用的研究 id（来自 SSE 的 run_meta 帧或 /api/research/deep/resumable） */
+  runId?: string;
 };
 
 /**
  * 多步深度研究（同步）
- * 开放问题 -> 自动拆解子问题 -> 多轮检索取证（公告 / 新闻 / 内部知识库）-> 交叉验证与冲突裁决 -> 生成带逐条引用的结构化报告。与 POST /api/analyze 的区别：analyze 面向「给定代码跑固定专家流水线」，本端点面向「给定开放问题，Agent 自主规划检索」。依赖 LLM，未配置时返回 503。
+ * 开放问题 -> 自动拆解子问题 -> 多轮检索取证（公告 / 新闻 / 内部知识库）-> 交叉验证与冲突裁决 -> 生成带逐条引用的结构化报告。与 POST /api/analyze 的区别：analyze 面向「给定代码跑固定专家流水线」，本端点面向「给定开放问题，Agent 自主规划检索」。依赖 LLM，未配置时返回 503。传 runId 即为**续跑**：从断点已完成的轮次继续，已完成的子问题复用已验证证据（不重复付费）；此时 question/scope/config 可省略，以断点记录为准，传了不一致的值返回 400。
  * 成功响应（HTTP 200）
  * 端点：POST /api/research/deep
  */
 export type POSTApiResearchDeepResponse = ResearchRunResult;
 
 /**
+ * 列出可续跑的未完成深度研究
+ * 返回断点在有效期内的研究摘要（新 -> 旧）。正在运行的研究不出现在列表里。前端刷新页面后凭 runId 恢复「继续研究」入口；一次研究要跑几十次 LLM 调用，断线不应意味着整次作废。
+ * 成功响应（HTTP 200）
+ * 端点：GET /api/research/deep/resumable
+ */
+export type GETApiResearchDeepResumableResponse = ResearchCheckpointList;
+
+/**
+ * 列出可续跑的未完成深度研究
+ * 路径/查询参数
+ * 端点：GET /api/research/deep/resumable
+ */
+export type GETApiResearchDeepResumableParams = {
+  /**
+   * 返回条数（1-50，默认 20；断点保留上限 20 条）
+   * 约束：最小 1；最大 50
+   */
+  limit?: number;
+};
+
+/**
  * 多步深度研究（SSE 流式）
- * 逐条推送 AgentEvent（run_started / plan_created / retrieval_* / verification_completed / synthesis_* / run_finished），最终 phase=done 事件携带完整研究结果。
+ * 逐条推送 AgentEvent（run_started / plan_created / retrieval_* / verification_completed / synthesis_* / run_finished），最终 phase=done 事件携带完整研究结果。首帧为 `{"phase":"run_meta","runId":"...","resumed":false,"resumedFromRound":0}`，客户端凭 runId 在断线后续跑。传 runId 即从断点续跑（已完成轮次不重跑、已完成子问题复用证据）；此时 question/scope/config 可省略，以断点记录为准，传了不一致的值返回 400。
  * 成功响应（HTTP 200）
  * 端点：GET /api/research/deep/stream
  */
@@ -3480,11 +3522,13 @@ export type GETApiResearchDeepStreamResponse = string;
  * 端点：GET /api/research/deep/stream
  */
 export type GETApiResearchDeepStreamParams = {
-  question: string;
+  question?: string;
   /** ResearchScopeInput 的 JSON 字符串（URL 编码） */
   scope?: string;
   /** ResearchConfigInput 的 JSON 字符串（URL 编码） */
   config?: string;
+  /** 断点续跑的研究 id（来自 run_meta 帧或可续跑列表） */
+  runId?: string;
 };
 
 /**

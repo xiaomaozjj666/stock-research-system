@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-3687%20cases-brightgreen" alt="3687 测试用例" />
+  <img src="https://img.shields.io/badge/tests-3722%20cases-brightgreen" alt="3722 测试用例" />
   <a href="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml"><img src="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -65,7 +65,7 @@ flowchart TB
 **深度研究（多专家协同研判）**
 输入 6 位 A 股代码，基本面、估值、风险、行业、资金流、题材、政策、解禁等多路专家独立研判，再经仲裁综合为一份结构化研究报告：核心摘要、财务分析、估值分析、专家观点、资金筹码、情景推演、综合评分、争议焦点、风险清单与跟踪指标，全程流式推送进度。同一股票再次分析时，报告头部会显示**「较上次分析」**的评级与评分变化（记忆反思闭环），让观点演化一目了然。
 
-**健壮性与自我校准**：单个专家研判失败会自动降级剔除，不再拖垮整次分析，报告如实标注实际参与研判的专家数；分析中断后可携带 `resume` 从最后一个成功阶段续跑，跳过已完成的取数/专家/仲裁环节，不再重复支付已完成的 LLM 成本；历次评级会与其后的实际收益对账，统计评级命中率并注入仲裁提示（决策-结果闭环），让系统知道自己的判断历史上是否兑现。
+**健壮性与自我校准**：单个专家研判失败会自动降级剔除，不再拖垮整次分析，报告如实标注实际参与研判的专家数；分析中断后可携带 `resume` 从最后一个成功阶段续跑，跳过已完成的取数/专家/仲裁环节，不再重复支付已完成的 LLM 成本；历次评级会与其后的实际收益对账，统计评级命中率并注入仲裁提示（决策-结果闭环），让系统知道自己的判断历史上是否兑现。深度研究（研究助手里的多轮 Agent）同样按轮次落断点：SSE 断开后带 `runId` 重连会从下一轮继续，已完成子问题的检索与验证结果直接复用；`GET /api/research/deep/resumable` 可列出未完成的研究。
 
 **专业 K 线行情分析**
 蜡烛图（红涨绿跌）、MA5/10/20/60 均线、BOLL 布林通道、MACD、成交量、日/周/月周期切换、区间缩放、右侧价格轴与最新价标线、吸顶 OHLC 图例。
@@ -180,7 +180,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3687 用例 / 271 个测试文件，行覆盖 93.36% / statements 91.30% / functions 93.10% / branches 81.93%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3722 用例 / 274 个测试文件，行覆盖 93.36% / statements 91.30% / functions 93.10% / branches 81.93%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
 
 ## 快速开始
 
@@ -299,7 +299,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（3687 用例 / 271 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（3722 用例 / 274 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（17 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src、e2e）
 npm run format:check  # Prettier 格式检查

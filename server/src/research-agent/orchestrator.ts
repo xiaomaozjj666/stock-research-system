@@ -31,12 +31,43 @@ import type {
 import { DEFAULT_CONFIG } from './types.js';
 import type { LLMAdapter } from './llm.js';
 import type { SearchAdapter } from './search.js';
-import { EvidenceRetriever } from './retriever.js';
+import { EvidenceRetriever, type FailedTask } from './retriever.js';
 import { ResearchAbortedError } from './utils.js';
 import { createPlan, revisePlan, type ReplanProblem } from './planner.js';
 import { verifySubQuestion } from './verifier.js';
 import { synthesize } from './synthesizer.js';
 import { renderReportMarkdown } from './report.js';
+
+/**
+ * 续跑状态：上一次运行中断时落盘的中间产物。
+ * 只包含「可安全复用」的事实——计划、已抽证据、已验证结论、事件与统计；
+ * 不包含检索器的瞬时状态（seenUrls/seenClaims 由 evidence 反推重建）。
+ */
+export interface ResearchResumeState {
+  plan: ResearchPlan;
+  evidence: Evidence[];
+  verifications: Verification[];
+  events: AgentEvent[];
+  stats: RunStats;
+  /** 已完整结束的轮次：续跑从 roundsCompleted + 1 轮开始 */
+  roundsCompleted: number;
+  /** 连续无新增证据的轮数（不持久化时缺省 0） */
+  consecutiveNoProgress?: number;
+  /** 已记录的失败检索任务明细（续跑时并入报告局限性，不丢失） */
+  failedTasks?: FailedTask[];
+}
+
+/** 轮次边界对外暴露的可持久化快照（shape 与 ResearchResumeState 一致） */
+export interface ResearchSnapshot {
+  plan: ResearchPlan;
+  evidence: Evidence[];
+  verifications: Verification[];
+  events: AgentEvent[];
+  stats: RunStats;
+  roundsCompleted: number;
+  consecutiveNoProgress: number;
+  failedTasks: FailedTask[];
+}
 
 export interface OrchestratorDeps {
   llm: LLMAdapter;
@@ -53,6 +84,16 @@ export interface OrchestratorDeps {
    * LLM 与检索适配器的在途请求——避免「客户端已走、编排还在白烧配额」。
    */
   signal?: AbortSignal;
+  /**
+   * 续跑状态：给定后从 roundsCompleted + 1 轮继续，复用计划 / 证据 / 验证，
+   * 已完成子问题不再检索与验证（不重复付费）。缺省为一次全新研究。
+   */
+  resume?: ResearchResumeState;
+  /**
+   * 断点回调：规划完成后与每轮结束后各调一次（同步，调用方自行决定落盘方式）。
+   * 抛错不影响研究本身——断点失败最多是「断了不能续」，不该让研究跟着失败。
+   */
+  onCheckpoint?: (snapshot: ResearchSnapshot) => void;
 }
 
 export interface AgentRunResult {
@@ -76,18 +117,46 @@ export class ResearchOrchestrator {
 
   async run(question: string, scope: ScopeConstraints = {}): Promise<AgentRunResult> {
     const cfg = this.config;
-    const stats: RunStats = {
-      rounds: 0,
-      totalRetrievalTasks: 0,
-      succeededTasks: 0,
-      failedTasks: 0,
-      fallbacksUsed: 0,
-      evidenceCount: 0,
-      conflictsFound: 0,
-      supplementRounds: 0,
-      planVersions: 1,
-      startedAt: new Date().toISOString(),
-    };
+    const resumed = this.deps.resume;
+    const stats: RunStats = resumed
+      ? { ...resumed.stats }
+      : {
+          rounds: 0,
+          totalRetrievalTasks: 0,
+          succeededTasks: 0,
+          failedTasks: 0,
+          fallbacksUsed: 0,
+          evidenceCount: 0,
+          conflictsFound: 0,
+          supplementRounds: 0,
+          planVersions: 1,
+          startedAt: new Date().toISOString(),
+        };
+
+    // 续跑：事件流接续上一次的序号与内容（UI 轨迹不出现「从头开始」的错觉）
+    if (resumed) {
+      this.events.push(...resumed.events);
+      this.seq = resumed.events.reduce((max, ev) => Math.max(max, ev.seq), 0);
+    }
+    // 累计失败 / 降级数跨续跑保留：检索器实例是新的，但用户看到的是同一次研究
+    const priorFailedTasks = resumed?.stats.failedTasks ?? 0;
+    const priorFallbacks = resumed?.stats.fallbacksUsed ?? 0;
+    let completedRounds = resumed?.roundsCompleted ?? 0;
+    let consecutiveNoProgress = resumed?.consecutiveNoProgress ?? 0;
+    /** 失败检索任务明细（续跑前 + 本次），并入报告局限性 */
+    let failedTaskDetails: FailedTask[] = resumed?.failedTasks ? [...resumed.failedTasks] : [];
+
+    let plan: ResearchPlan | null = resumed?.plan ?? null;
+    const evidence: Evidence[] = resumed ? [...resumed.evidence] : [];
+    // 证据按子问题分桶 + 验证结论表：续跑时直接用断点恢复，不重跑已验证子问题
+    const evidenceBySq = new Map<string, Evidence[]>();
+    for (const ev of evidence) {
+      const bucket = evidenceBySq.get(ev.subQuestionId) ?? [];
+      bucket.push(ev);
+      evidenceBySq.set(ev.subQuestionId, bucket);
+    }
+    const verifications = new Map<string, Verification>();
+    for (const v of resumed?.verifications ?? []) verifications.set(v.subQuestionId, v);
 
     const emit: AgentEventEmitter = (type: AgentEventType, message, data) => {
       const event: AgentEvent = {
@@ -102,12 +171,46 @@ export class ResearchOrchestrator {
       this.deps.onEvent?.(event);
     };
 
+    const snapshot = (): ResearchSnapshot | null => {
+      if (!plan) return null;
+      return {
+        plan,
+        evidence: [...evidence],
+        verifications: [...verifications.values()],
+        events: [...this.events],
+        stats: { ...stats },
+        roundsCompleted: completedRounds,
+        consecutiveNoProgress,
+        failedTasks: [...failedTaskDetails],
+      };
+    };
+
+    /** 落断点：失败只降级为「不可续跑」，不打断研究 */
+    const checkpoint = () => {
+      if (!this.deps.onCheckpoint) return;
+      const snap = snapshot();
+      if (!snap) return;
+      try {
+        this.deps.onCheckpoint(snap);
+      } catch {
+        /* 断点旁路，失败不影响研究 */
+      }
+    };
+
     const ensureNotAborted = () => {
       if (this.deps.signal?.aborted) throw new ResearchAbortedError();
     };
     ensureNotAborted();
 
-    emit('run_started', `研究任务启动: ${question}`, { question, scope });
+    emit(
+      'run_started',
+      resumed
+        ? `研究任务续跑（已完成 ${completedRounds} 轮）: ${question}`
+        : `研究任务启动: ${question}`,
+      resumed
+        ? { question, scope, resumed: true, resumedFromRound: completedRounds }
+        : { question, scope },
+    );
 
     try {
       const llm = this.deps.llm;
@@ -118,24 +221,25 @@ export class ResearchOrchestrator {
         emit,
         this.deps.sleep,
         this.deps.signal,
+        // 续跑：已抓过的 URL / 已入库的陈述直接标记为已见，避免重复抓取与重复抽取
+        resumed?.evidence,
       );
 
-      let plan: ResearchPlan | null = null;
-      const evidence: Evidence[] = [];
-      const evidenceBySq = new Map<string, Evidence[]>();
-      const verifications = new Map<string, Verification>();
-      let consecutiveNoProgress = 0;
       let stopReason: StopReason = 'max_rounds';
 
       const maxRounds = Math.max(1, cfg.maxRounds);
+      // 续跑从下一轮开始；若断点已到轮次上限，循环零次、直接进入结论编排
+      const startRound = completedRounds + 1;
 
-      for (let round = 1; round <= maxRounds; round++) {
+      for (let round = startRound; round <= maxRounds; round++) {
         stats.rounds = round;
         ensureNotAborted();
 
         // ---- 阶段一：规划（仅首轮；后续轮的动态修订在终止门处按需触发） ----
         if (!plan) {
           plan = await createPlan(llm, question, scope, cfg, emit, this.deps.signal);
+          // 规划即落一次断点：后续阶段中断时续跑不必再花一次规划调用
+          checkpoint();
         }
 
         // ---- 阶段二：按计划检索 ----
@@ -148,8 +252,10 @@ export class ResearchOrchestrator {
           evidenceBySq.set(ev.subQuestionId, bucket);
         }
         stats.totalRetrievalTasks += attempted.size;
-        stats.fallbacksUsed = retriever.fallbacksUsed;
-        stats.failedTasks = retriever.failedTasks.length;
+        // 续跑时检索器是全新实例：累计值 = 断点前累计 + 本次实例累计
+        stats.fallbacksUsed = priorFallbacks + retriever.fallbacksUsed;
+        stats.failedTasks = priorFailedTasks + retriever.failedTasks.length;
+        failedTaskDetails = [...(resumed?.failedTasks ?? []), ...retriever.failedTasks];
         // succeededTasks 此前只初始化不回填（UI 展示恒 0）——按「发起任务数 −
         // 累计失败数」口径回填；failedTasks 为实例累计数组，差值即成功数
         stats.succeededTasks = stats.totalRetrievalTasks - stats.failedTasks;
@@ -194,6 +300,11 @@ export class ResearchOrchestrator {
           }
         }
         stats.supplementRounds += supplementTriggered;
+        // 本轮（检索 + 验证）已完整结束：更新已完成轮次并落断点。
+        // 断点若落在轮内中断点，续跑从本轮重跑——已完成子问题的验证结论
+        // 已在计划状态里，不会重复验证（只补做未完成的那些）。
+        completedRounds = round;
+        checkpoint();
 
         // ---- 终止门检查（顺序即优先级） ----
         const p0s = plan.subQuestions.filter((sq) => sq.priority === 'P0');
@@ -253,7 +364,7 @@ export class ResearchOrchestrator {
         settledPlan,
         verifications,
         evidence,
-        retriever.failedTasks,
+        failedTaskDetails,
         cfg,
         emit,
         this.deps.signal,

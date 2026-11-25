@@ -13,8 +13,10 @@ export {
   ResearchOrchestrator,
   type AgentRunResult,
   type OrchestratorDeps,
+  type ResearchResumeState,
+  type ResearchSnapshot,
 } from './orchestrator.js';
-export { EvidenceRetriever } from './retriever.js';
+export { EvidenceRetriever, type FailedTask } from './retriever.js';
 export { createPlan, revisePlan } from './planner.js';
 export { verifySubQuestion, computeEvidenceStrength, buildSupplementHints } from './verifier.js';
 export { synthesize } from './synthesizer.js';

@@ -79,7 +79,21 @@ export class EvidenceRetriever {
       new Promise((r) => setTimeout(r, ms)),
     /** 取消信号：任务间隙与每个适配器入口检查，LLM/HTTP 请求级联透传 */
     private readonly signal?: AbortSignal,
-  ) {}
+    /**
+     * 续跑前已入库的证据：用它们重建 seenUrls / seenClaims，
+     * 保证续跑不重复抓同一篇文档、不重复抽取同一条陈述（去重口径跨续跑一致）。
+     */
+    resumeEvidence: Evidence[] = [],
+  ) {
+    for (const ev of resumeEvidence) {
+      const url = ev.source?.url;
+      if (url) this.seenUrls.add(url);
+      const claimKey = String(ev.claim ?? '')
+        .trim()
+        .toLowerCase();
+      if (claimKey) this.seenClaims.add(claimKey);
+    }
+  }
 
   /**
    * 执行一轮检索：只处理 pending / 仍可补充的 insufficient 子问题。

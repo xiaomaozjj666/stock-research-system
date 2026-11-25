@@ -38,6 +38,7 @@ import type {
   POSTApiPaperSettleResponse as PaperSettleResponse,
   POSTApiResearchDeepRequestBody as DeepResearchRequest,
   POSTApiResearchDeepResponse as DeepResearchResult,
+  ResearchCheckpointSummary as DeepResearchCheckpointSummary,
   ResearchRunSummary as DeepResearchRunSummary,
   SavedResearchRun as SavedDeepResearchRun,
   GETApiStocksResponse as StockListResponse,
@@ -1350,10 +1351,19 @@ export type { DeepResearchRequest, DeepResearchResult };
 export type DeepResearchEvent = DeepResearchResult['events'][number];
 
 /**
- * SSE 帧。三种 phase 与服务端一一对应（见 routes/research.ts）：
- * agent_event 是过程推送，done 携带完整结果，error 表示中止。
+ * SSE 帧。与 routes/research.ts 一一对应：
+ * run_meta 首帧携带 runId（断线续跑凭据），agent_event 是过程推送，
+ * done 携带完整结果，error 表示中止。
  */
 export type DeepResearchStreamEvent =
+  | {
+      phase: 'run_meta';
+      runId: string;
+      /** 本次是否从断点续跑 */
+      resumed: boolean;
+      /** 续跑起点：已完成的轮次（0 表示全新研究） */
+      resumedFromRound: number;
+    }
   | { phase: 'agent_event'; event: DeepResearchEvent }
   | { phase: 'done'; result: DeepResearchResult }
   | { phase: 'error'; message?: string };
@@ -1361,6 +1371,34 @@ export type DeepResearchStreamEvent =
 export interface DeepResearchOptions {
   scope?: DeepResearchRequest['scope'];
   config?: DeepResearchRequest['config'];
+  /**
+   * 断线续跑：带上首帧 run_meta 里的 runId，服务端从断点已完成的轮次继续，
+   * 已完成的子问题复用验证结论与证据（不重复付费）。
+   */
+  runId?: string;
+}
+
+/**
+ * 深度研究中断错误（可在已收到事件后凭 runId 续跑）。
+ * 比普通 Error 多带三个字段，页面据此渲染「继续研究」按钮而不是只报一句失败。
+ */
+export class DeepResearchInterruptedError extends Error {
+  /** 是否可续跑（已拿到 runId） */
+  readonly canResume: boolean;
+  readonly runId?: string;
+  /** 本次（若为续跑）从中断处恢复的已完成轮次 */
+  readonly resumedFromRound?: number;
+
+  constructor(
+    message: string,
+    opts: { canResume: boolean; runId?: string; resumedFromRound?: number },
+  ) {
+    super(message);
+    this.name = 'DeepResearchInterruptedError';
+    this.canResume = opts.canResume;
+    this.runId = opts.runId;
+    this.resumedFromRound = opts.resumedFromRound;
+  }
 }
 
 /**
@@ -1382,20 +1420,24 @@ export async function runDeepResearch(question: string): Promise<DeepResearchRes
 }
 
 /**
- * 流式版：逐条推送 Agent 事件，最终 resolve 完整结果。
+ * 流式版：逐条推送 Agent Event，最终 resolve 完整结果。
  *
- * 与 analyzeStockStream 的关键差异：**不做断线重连**。深度研究一次要跑几十次
- * LLM 调用，重连等于把已完成的部分重跑一遍（时间与成本双输）；断开即报错，
- * 由用户决定是否重启。
+ * 断线续跑：服务端首帧 run_meta 携带 runId；「已收到事件后断开」时以
+ * `DeepResearchInterruptedError` reject（带 runId / canResume），页面可带上
+ * 该 runId 重新调用本函数从已完成的轮次继续——服务端复用已落盘的计划、证据与
+ * 验证结论，不会把已完成的部分重跑一遍（时间与成本双省）。
  */
 export function runDeepResearchStream(
   question: string,
   onEvent: (event: DeepResearchStreamEvent) => void,
   options: DeepResearchOptions = {},
 ): { cancel: () => void; done: Promise<DeepResearchResult> } {
-  const params = new URLSearchParams({ question });
+  const params = new URLSearchParams();
+  // 续跑时问题可省略（服务端以断点记录为准），空串不再当作参数上传
+  if (question.trim() !== '') params.set('question', question.trim());
   if (options.scope) params.set('scope', JSON.stringify(options.scope));
   if (options.config) params.set('config', JSON.stringify(options.config));
+  if (options.runId) params.set('runId', options.runId);
   const url = withTokenQuery(`/api/research/deep/stream?${params.toString()}`);
 
   let resolveDone!: (r: DeepResearchResult) => void;
@@ -1409,6 +1451,8 @@ export function runDeepResearchStream(
   let received = false;
   let es: EventSource | null = null;
   let watchdog: ReturnType<typeof setTimeout> | null = null;
+  /** 首帧 run_meta：断线时据此把 runId 交给调用方续跑 */
+  let runMeta: { runId: string; resumedFromRound: number } | null = null;
 
   const clearWatchdog = () => {
     if (watchdog) {
@@ -1416,6 +1460,13 @@ export function runDeepResearchStream(
       watchdog = null;
     }
   };
+
+  const interrupted = (message: string): DeepResearchInterruptedError =>
+    new DeepResearchInterruptedError(message, {
+      canResume: Boolean(runMeta?.runId),
+      runId: runMeta?.runId,
+      resumedFromRound: runMeta?.resumedFromRound,
+    });
 
   function finish(err: Error | null, result?: DeepResearchResult) {
     if (settled) return;
@@ -1431,7 +1482,15 @@ export function runDeepResearchStream(
 
   // 首包看门狗：规划阶段要先跑一次 LLM，20 秒内连一条事件都没有说明服务不可用
   watchdog = setTimeout(() => {
-    if (!received) finish(new Error('后端无响应：20 秒内未收到研究进度，请确认服务是否正常'));
+    if (!received) {
+      finish(
+        new Error(
+          options.runId
+            ? '后端无响应：20 秒内未收到续跑进度，请确认服务是否正常'
+            : '后端无响应：20 秒内未收到研究进度，请确认服务是否正常',
+        ),
+      );
+    }
   }, 20000);
 
   es.onmessage = (event) => {
@@ -1446,12 +1505,19 @@ export function runDeepResearchStream(
       return;
     }
 
+    if (data.phase === 'run_meta') {
+      runMeta = { runId: data.runId, resumedFromRound: data.resumedFromRound };
+      // 透传给页面：续跑时用它渲染「已从第 N 轮继续」的可见提示
+      onEvent(data);
+      return;
+    }
     if (data.phase === 'done') {
       finish(null, data.result);
       return;
     }
     if (data.phase === 'error') {
-      finish(new Error(data.message || '深度研究失败'));
+      // 服务端已发 error 帧：已落盘的轮次仍可续跑，别让用户从头再来
+      finish(interrupted(data.message || '深度研究失败'));
       return;
     }
     onEvent(data);
@@ -1459,14 +1525,28 @@ export function runDeepResearchStream(
 
   es.onerror = () => {
     if (settled) return;
+    if (received) {
+      finish(interrupted('连接中断，研究未完成；可从此前已完成的轮次继续'));
+      return;
+    }
+    if (options.runId) {
+      // 续跑请求首包前就断开：EventSource 读不到 4xx/5xx 响应体，无法区分
+      // 「断点已过期」「该研究仍在收尾」与「服务没起」，文案给全三种可能。
+      // 保留续跑入口（canResume=true）：断点可能只是仍在收尾，稍后可重试。
+      finish(
+        new DeepResearchInterruptedError(
+          '续跑未能开始：断点可能已过期，或该研究仍在进行中，请稍后重试',
+          { canResume: true, runId: options.runId },
+        ),
+      );
+      return;
+    }
     finish(
-      received
-        ? new Error('连接中断，研究未完成，请重试')
-        : new Error(
-            // EventSource 读不到 4xx/5xx 的响应体，无法区分「服务没起」与「服务起了但未配 LLM 密钥」；
-            // 这两种情况都表现为首包前断开，所以文案要同时给出两个可操作原因，而不是断言服务没启动。
-            '无法开始研究：请确认后端服务已启动，且已配置 LLM 密钥（DEEPSEEK_API_KEY 或 OPENAI_API_KEY）',
-          ),
+      new Error(
+        // EventSource 读不到 4xx/5xx 的响应体，无法区分「服务没起」与「服务起了但未配 LLM 密钥」；
+        // 这两种情况都表现为首包前断开，所以文案要同时给出两个可操作原因，而不是断言服务没启动。
+        '无法开始研究：请确认后端服务已启动，且已配置 LLM 密钥（DEEPSEEK_API_KEY 或 OPENAI_API_KEY）',
+      ),
     );
   };
 
@@ -1480,6 +1560,28 @@ export function runDeepResearchStream(
 
 /** 历史研究摘要（列表用，不含报告正文） */
 export type { DeepResearchRunSummary, SavedDeepResearchRun };
+
+/** 可续跑断点摘要（未完成的研究，凭 runId 续跑） */
+export type { DeepResearchCheckpointSummary };
+
+/**
+ * 列出可续跑的未完成研究（新 -> 旧）。
+ * 页面刷新后凭这里的 runId 恢复「继续研究」入口：一次研究几十次 LLM 调用，
+ * 断线（关页/切网）不应意味着整次作废。
+ */
+export async function listResumableDeepResearchRuns(
+  limit = 20,
+): Promise<DeepResearchCheckpointSummary[]> {
+  try {
+    const response = await api.get<{ items: DeepResearchCheckpointSummary[] }>(
+      '/research/deep/resumable',
+      { params: { limit }, timeout: 15000 },
+    );
+    return response.data.items;
+  } catch (error: unknown) {
+    throw normalizeApiError(error, '可续跑研究读取失败');
+  }
+}
 
 /** 列出历史研究（新 -> 旧） */
 export async function listDeepResearchRuns(limit = 20): Promise<DeepResearchRunSummary[]> {

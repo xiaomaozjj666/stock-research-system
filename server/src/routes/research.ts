@@ -12,6 +12,13 @@
  *
  * 成本护栏（研究一次会扇出几十次 LLM 调用，护栏必须有）：
  *   1. 进程内并发上限；2. 问题长度与子问题数上限；3. 轮次上限；4. 同步接口整体超时。
+ *
+ * 断线续跑（runId）：
+ *   一次研究要跑几十次 LLM 调用、分钟级，SSE 断开即整次作废是长期缺口。
+ *   服务端按「规划完成 + 每轮结束」落断点（services/researchCheckpoint），
+ *   客户端带上 runId 重新请求即从下一轮继续：已完成的子问题复用验证结论与
+ *   证据，不重复检索、不重复付费。只传 runId 即可（问题/范围/参数以断点为准）；
+ *   同时传了与原研究不一致的 question/scope/config 会显式 400，避免混跑。
  */
 import { Router } from 'express';
 import type { Request, Response } from 'express';
@@ -23,6 +30,7 @@ import {
   createDefaultSearchAdapters,
   createLLMAdapter,
   type ResearchConfig,
+  type ResearchResumeState,
   type ScopeConstraints,
 } from '../research-agent/index.js';
 import {
@@ -31,6 +39,15 @@ import {
   listResearchRuns,
   saveResearchRun,
 } from '../services/researchLibrary.js';
+import {
+  clearResearchCheckpoint,
+  isResearchRunId,
+  listResearchCheckpoints,
+  loadResearchCheckpoint,
+  newResearchRunId,
+  saveResearchCheckpoint,
+  type ResearchCheckpointRecord,
+} from '../services/researchCheckpoint.js';
 import { errorDetail } from '../utils/errorDetail.js';
 import { abortOnClientClose } from '../utils/clientAbort.js';
 import logger from '../utils/logger.js';
@@ -117,9 +134,7 @@ interface ParsedRequest {
   question: string;
   scope: ScopeConstraints;
   config: Partial<ResearchConfig>;
-}
-
-/** 同步与流式共用一套入参校验：两个入口的口径必须一致，否则用户会看到"同一个问题两种行为" */
+} /** 同步与流式共用一套入参校验：两个入口的口径必须一致，否则用户会看到"同一个问题两种行为" */
 function parseRequest(source: Record<string, unknown>): ParsedRequest | { error: string } {
   const rawQuestion = source.question;
   if (typeof rawQuestion !== 'string' || rawQuestion.trim() === '') {
@@ -146,17 +161,158 @@ function parseRequest(source: Record<string, unknown>): ParsedRequest | { error:
 const LLM_REQUIRED_MESSAGE =
   '深度研究依赖 LLM（规划、证据抽取、交叉验证、结论编排），请先配置 DEEPSEEK_API_KEY 或 OPENAI_API_KEY';
 
+/**
+ * 进程内在跑的 runId。同一次研究不允许被并发续跑：两路 SSE 会各跑一遍
+ * 剩余轮次（重复付费），并互相覆盖同一份断点。
+ */
+const activeRunIds = new Set<string>();
+
+function claimRun(runId: string): boolean {
+  if (activeRunIds.has(runId)) return false;
+  activeRunIds.add(runId);
+  return true;
+}
+
+function releaseRun(runId: string): void {
+  activeRunIds.delete(runId);
+}
+
+/** 断点记录 → 编排器可消费的续跑状态（字段同形，快照即状态） */
+function toResumeState(record: ResearchCheckpointRecord): ResearchResumeState {
+  return { ...record.snapshot };
+}
+
+/**
+ * 续跑入参一致性：问题/范围/参数以断点为准，客户端可以只传 runId。
+ * 显式传了却与原研究不一致时拒绝——否则用户以为在续跑旧研究，
+ * 实际跑出来的是「旧证据 + 新问题」的混合体。
+ */
+function resumeMismatch(
+  record: ResearchCheckpointRecord,
+  incoming: {
+    question: unknown;
+    scope: unknown;
+    config: unknown;
+  },
+): string | null {
+  if (incoming.question !== undefined && incoming.question !== null) {
+    if (typeof incoming.question !== 'string') return '续跑时 question 必须是字符串';
+    const q = incoming.question.trim();
+    if (q !== '' && q !== record.question) {
+      return '续跑的研究问题与原研究不一致（续跑只需传 runId）';
+    }
+  }
+  if (incoming.scope !== undefined && incoming.scope !== null) {
+    const scope = parseScope(incoming.scope);
+    if (scope === null) return '研究范围参数非法';
+    if (JSON.stringify(scope) !== JSON.stringify(record.scope)) {
+      return '续跑的研究范围与原研究不一致（续跑只需传 runId）';
+    }
+  }
+  if (incoming.config !== undefined && incoming.config !== null) {
+    const config = parseConfig(incoming.config);
+    if (config === null) return '研究参数非法（轮次 1-4、子问题 3-10）';
+    if (JSON.stringify(config) !== JSON.stringify(record.config)) {
+      return '续跑的编排参数与原研究不一致（续跑只需传 runId）';
+    }
+  }
+  return null;
+}
+
+type ResolvedRequest =
+  | {
+      ok: true;
+      parsed: ParsedRequest;
+      runId: string;
+      /** 非 null 表示这是续跑，携带有已有断点 */
+      resume: ResearchCheckpointRecord | null;
+    }
+  | { ok: false; status: number; error: string };
+
+/**
+ * 两个入口（POST / SSE）共用的入参解析：
+ *   - 未传 runId：沿用原有校验（question 必填），分配新 runId；
+ *   - 传了 runId：读断点，问题/范围/参数以断点为准，传了不一致的值即 400。
+ * scope/config 在这里已是解码后的值（SSE 入口先做 JSON 解析）。
+ */
+function resolveResearchRequest(input: {
+  runId: unknown;
+  question: unknown;
+  scope: unknown;
+  config: unknown;
+}): ResolvedRequest {
+  const rawRunId = input.runId;
+  if (rawRunId === undefined || rawRunId === null) {
+    const parsed = parseRequest({
+      question: input.question,
+      scope: input.scope,
+      config: input.config,
+    });
+    if ('error' in parsed) return { ok: false, status: 400, error: parsed.error };
+    return { ok: true, parsed, runId: newResearchRunId(), resume: null };
+  }
+  // 重复 query 参数（?runId=a&runId=b）在 Express 里是数组——显式拒绝
+  if (typeof rawRunId !== 'string' || rawRunId.trim() === '') {
+    return { ok: false, status: 400, error: 'runId 必须是非空字符串' };
+  }
+  const runId = rawRunId.trim();
+  if (!isResearchRunId(runId)) {
+    return { ok: false, status: 400, error: 'runId 格式非法' };
+  }
+  const record = loadResearchCheckpoint(runId);
+  if (!record) {
+    return {
+      ok: false,
+      status: 404,
+      error: '研究断点不存在或已过期（断点默认保留 6 小时），请重新发起研究',
+    };
+  }
+  const mismatch = resumeMismatch(record, input);
+  if (mismatch) return { ok: false, status: 400, error: mismatch };
+  return {
+    ok: true,
+    parsed: { question: record.question, scope: record.scope, config: record.config },
+    runId,
+    resume: record,
+  };
+}
+
+/** 断点落盘（best-effort）：写失败只意味着「断了不能续」，不得中断研究 */
+function persistCheckpoint(
+  runId: string,
+  parsed: ParsedRequest,
+  snapshot: Parameters<typeof saveResearchCheckpoint>[0]['snapshot'],
+  route: string,
+): void {
+  try {
+    const ok = saveResearchCheckpoint({
+      runId,
+      question: parsed.question,
+      scope: parsed.scope,
+      config: parsed.config,
+      snapshot,
+    });
+    if (!ok) logger.warn('研究断点写入失败（本次研究不可续跑）', { route, runId });
+  } catch (error) {
+    logger.warn('研究断点写入异常（本次研究不可续跑）', { route, runId, err: error });
+  }
+}
+
 /** 组装一个可直接 run 的编排器：每次请求独立实例，避免事件与状态跨请求串台 */
 function buildOrchestrator(
   config: Partial<ResearchConfig>,
   onEvent: (event: unknown) => void,
   signal?: AbortSignal,
+  resume?: ResearchResumeState,
+  onCheckpoint?: (snapshot: Parameters<typeof saveResearchCheckpoint>[0]['snapshot']) => void,
 ): ResearchOrchestrator {
   return new ResearchOrchestrator({
     llm: createLLMAdapter(),
     adapters: createDefaultSearchAdapters(),
     config,
     signal,
+    resume,
+    onCheckpoint,
     onEvent: (event) => {
       try {
         onEvent(event);
@@ -195,8 +351,16 @@ router.post(
   analyzeLimiter,
   circuitBreakerGuard,
   async (req: Request, res: Response) => {
-    const parsed = parseRequest((req.body ?? {}) as Record<string, unknown>);
-    if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    // 同步入口同样支持 runId 续跑（与 SSE 同一套解析：只传 runId 即以断点为准）
+    const resolved = resolveResearchRequest({
+      runId: body.runId,
+      question: body.question,
+      scope: body.scope,
+      config: body.config,
+    });
+    if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
+    const { parsed, runId, resume } = resolved;
 
     if (!isLLMAvailable()) {
       return res.status(503).json({ error: LLM_REQUIRED_MESSAGE });
@@ -205,6 +369,14 @@ router.post(
     if (inFlight >= MAX_CONCURRENT_RUNS) {
       return res.status(429).json({
         error: '已有深度研究任务在运行，请稍后重试',
+        retryAfterSeconds: 30,
+      });
+    }
+
+    // 同一 runId 不允许被并发续跑：两路会各跑一遍剩余轮次（重复付费）
+    if (!claimRun(runId)) {
+      return res.status(409).json({
+        error: '该研究仍在进行中（可能正在收尾），请稍后再续跑',
         retryAfterSeconds: 30,
       });
     }
@@ -218,16 +390,25 @@ router.post(
     let wallTimer: NodeJS.Timeout | undefined;
     const runPromise = (async () => {
       try {
-        const orchestrator = buildOrchestrator(parsed.config, () => {
-          /* 同步接口不透传事件：事件只在 SSE 通道消费 */
-        });
+        const orchestrator = buildOrchestrator(
+          parsed.config,
+          () => {
+            /* 同步接口不透传事件：事件只在 SSE 通道消费 */
+          },
+          undefined,
+          resume ? toResumeState(resume) : undefined,
+          (snapshot) => persistCheckpoint(runId, parsed, snapshot, '/api/research/deep'),
+        );
         const result = await orchestrator.run(parsed.question, parsed.scope);
         // 归档挂在 run 自身的完成点上（而不是响应成功之后）：响应超时后 run 仍会
         // 跑完，成果照常入库——不因为客户端等不及而整体丢弃一次分钟级研究。
         archiveRun('/api/research/deep', parsed, result);
+        // 研究已完整落库，断点不再需要（避免「已完成的研究还能续跑」的歧义）
+        clearResearchCheckpoint(runId);
         return result;
       } finally {
         inFlight -= 1;
+        releaseRun(runId);
         clearTimeout(wallTimer);
       }
     })();
@@ -246,6 +427,8 @@ router.post(
 
       logger.info('Deep research 完成', {
         route: '/api/research/deep',
+        runId,
+        resumed: Boolean(resume),
         rounds: result.stats.rounds,
         evidence: result.stats.evidenceCount,
         durationMs: Date.now() - startedAt,
@@ -255,7 +438,7 @@ router.post(
       res.json(result);
     } catch (error) {
       // 超时分支：runPromise 已有 race 订阅（无 unhandled rejection），
-      // 其后台完成时会走 archiveRun；此处只负责把超时如实告知调用方
+      // 其后台完成时会走 archiveRun 并清理断点；此处只负责把超时如实告知调用方
       logger.error('Deep research error', { route: '/api/research/deep', err: error });
       res.status(500).json({ error: '深度研究失败', detail: errorDetail(error) });
     }
@@ -290,12 +473,16 @@ router.get(
       return res.status(400).json({ error: 'scope/config 必须是合法的 JSON 字符串' });
     }
 
-    const parsed = parseRequest({
+    // runId：断点续跑入口。只传 runId 即可（问题/范围/参数以断点为准），
+    // 同时传了与原研究不一致的 question/scope/config 会被显式拒绝。
+    const resolved = resolveResearchRequest({
+      runId: req.query.runId,
       question: req.query.question,
       scope: scopeParam.value,
       config: configParam.value,
     });
-    if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+    if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
+    const { parsed, runId, resume } = resolved;
 
     if (!isLLMAvailable()) {
       return res.status(503).json({ error: LLM_REQUIRED_MESSAGE });
@@ -308,8 +495,22 @@ router.get(
       });
     }
 
+    if (!claimRun(runId)) {
+      return res.status(409).json({
+        error: '该研究仍在进行中（可能正在收尾），请稍后再续跑',
+        retryAfterSeconds: 30,
+      });
+    }
+
     inFlight += 1;
     const sse = createSseChannel(req, res);
+    // 第一帧就把 runId 交给客户端：断线后客户端凭它续跑（旧客户端忽略该帧）
+    sse.trySend({
+      phase: 'run_meta',
+      runId,
+      resumed: Boolean(resume),
+      resumedFromRound: resume?.snapshot.roundsCompleted ?? 0,
+    });
     // 取消级联：客户端断开（关页/前端「取消研究」关闭 EventSource）→ res 'close'
     // → abort → 编排器在阶段边界抛 ResearchAbortedError，在途 LLM/检索请求一并中止
     const abort = abortOnClientClose(res);
@@ -334,19 +535,24 @@ router.get(
           sse.trySend({ phase: 'agent_event', event });
         },
         abort.signal,
+        resume ? toResumeState(resume) : undefined,
+        (snapshot) => persistCheckpoint(runId, parsed, snapshot, '/api/research/deep/stream'),
       );
 
       const result = await orchestrator.run(parsed.question, parsed.scope);
       archiveRun('/api/research/deep/stream', parsed, result);
+      clearResearchCheckpoint(runId);
       sse.trySend({ phase: 'done', result });
     } catch (error) {
       if (sse.isClosed()) {
-        logger.info('SSE 客户端已断开，研究已取消（取消信号已级联中止在途 LLM/检索）', {
+        logger.info('SSE 客户端已断开，研究已取消（断点保留，可凭 runId 续跑）', {
           route: '/api/research/deep/stream',
+          runId,
         });
       } else {
         logger.error('Deep research stream error', {
           route: '/api/research/deep/stream',
+          runId,
           err: error,
         });
         sse.trySend({ phase: 'error', message: errorDetail(error) || '深度研究失败' });
@@ -355,10 +561,31 @@ router.get(
       clearTimeout(wallTimer);
       sse.stopHeartbeat();
       inFlight -= 1;
+      releaseRun(runId);
       if (!res.writableEnded) res.end();
     }
   },
 );
+
+/* ------------------------------------------------------ 可续跑断点（入口） */
+
+/**
+ * 列出可续跑的未完成研究（新 -> 旧）。前端刷新页面后凭此恢复「继续研究」入口；
+ * 正在跑的 run 不出现在列表里（它们不是「断了」，而是「还没跑完」）。
+ */
+router.get('/api/research/deep/resumable', metaLimiter, (req: Request, res: Response) => {
+  const raw = req.query.limit;
+  let limit = 20;
+  if (raw !== undefined) {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > 50) {
+      return res.status(400).json({ error: 'limit 必须是 1-50 的整数' });
+    }
+    limit = n;
+  }
+  const items = listResearchCheckpoints(limit).filter((item) => !activeRunIds.has(item.runId));
+  res.json({ items });
+});
 
 /* --------------------------------------------------------- 研究库（历史研究） */
 
