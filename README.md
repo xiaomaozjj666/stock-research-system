@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-3738%20cases-brightgreen" alt="3738 测试用例" />
+  <img src="https://img.shields.io/badge/tests-3754%20cases-brightgreen" alt="3754 测试用例" />
   <a href="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml"><img src="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -180,7 +180,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3738 用例 / 276 个测试文件，行覆盖 93.36% / statements 91.30% / functions 93.10% / branches 81.93%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3754 用例 / 278 个测试文件，行覆盖 93.36% / statements 91.30% / functions 93.10% / branches 81.93%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
 
 ## 快速开始
 
@@ -220,6 +220,44 @@ copy .env.example server\.env    # Windows cmd
 - **必需项只有 `DEEPSEEK_API_KEY`**（且是"不设置即降级"而非"不设置就启动失败"）：未设置时 `isLLMAvailable()` 为 false，8 位专家的 LLM 研判自动降级为规则引擎、对话走降级应答，其余功能不受影响。
 - 其余变量全部可选，都有代码内默认值；不配置的效果是按默认值运行，或对应增强通道优雅跳过（Tushare Pro 退市股名单、Baostock 指数历史成分、外部 MCP 服务器等）。
 - ⚠️ **注意 dotenv 的查找路径**：`server/src/index.ts:5` 用 `import 'dotenv/config'`，dotenv 按**进程工作目录**（`process.cwd()`）查找 `.env`，而不是按文件位置。所以必须让工作目录是 `server/`——`cd server && npm run dev`、`cd server && node dist/index.js` 都能读到 `server/.env`；而在仓库根目录直接 `node server/dist/index.js`（如 Playwright 的 `webServer` 配置）时，dotenv 会去找**仓库根目录**的 `.env`，`server/.env` 不会被加载，所有变量都会退回默认值。
+
+### 异动预警外部推送（企业微信 / 飞书机器人）
+
+自选股异动此前只能打开页面看 `/api/watchlist/alerts` 的「最近一次快照」。配置 `ALERT_WEBHOOK_URL` 后，手动监控（`POST /api/watchlist/monitor`）与自治循环检出 `strong-bull` / `strong-bear` / `high-impact` 时，会把**同一条快照** POST 到该地址。留空 = 关闭（默认），行为与之前完全一致。
+
+```bash
+# 企业微信群机器人 / 飞书自定义机器人的 Webhook 地址（示例，key 换成自己的）
+ALERT_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxxxxxx
+# 可选：默认 3000ms，夹紧到 [500, 10000]
+ALERT_WEBHOOK_TIMEOUT_MS=3000
+```
+
+- 只接受 `http/https`；非法 URL 只记一次 warning 后禁用（不会每轮巡检重复尝试）。
+- 无预警的轮次不推送；网络失败 / 超时 / 非 2xx 只记 warning，**不阻塞监控响应、不改变其返回**。
+- 请求体是通用事件 JSON（`requested` / `skipped` 只在清单超过单次上限、真的发生裁剪时出现）：
+
+```json
+{
+  "event": "watchlist.alerts",
+  "source": "monitor",
+  "generatedAt": "2026-11-26T10:00:00.000Z",
+  "monitored": 20,
+  "alerts": [
+    {
+      "code": "600519",
+      "name": "贵州茅台",
+      "level": "strong-bull",
+      "polarity": 0.82,
+      "weightedImpact": 0.4,
+      "detail": "贵州茅台 新闻姿态强烈看多（polarity=0.82）"
+    }
+  ],
+  "requested": 25,
+  "skipped": 5
+}
+```
+
+> 企业微信与飞书的自定义机器人要求各自的消息封装（企业微信 `msgtype`、飞书 `msg_type`），本服务发送的是统一事件 JSON，不绑定厂商格式。若要让机器人直接显示消息，可在两者之间加一层转发（n8n / Serverless 函数等）把 `alerts` 拼成文本再按厂商格式发送；自建网关或支持通用 JSON 的自动化平台可直接接收。URL 里的 `key` / `token` 等同凭据，请勿提交到版本库；服务端日志不会打印完整 URL。
 
 ## API 概览
 
@@ -299,7 +337,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（3738 用例 / 276 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（3754 用例 / 278 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（17 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src、e2e）
 npm run format:check  # Prettier 格式检查

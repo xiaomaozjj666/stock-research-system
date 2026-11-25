@@ -12,6 +12,7 @@ import {
   saveWatchlistAlertsSnapshot,
 } from '../services/watchlistService.js';
 import { auditToolCall } from '../services/auditLog.js';
+import { pushAlerts } from '../services/alertWebhook.js';
 import { getReqTraceContext } from '../services/telemetry.js';
 import { errorDetail } from '../utils/errorDetail.js';
 import type { WatchlistAlert } from '../services/alerts.js';
@@ -83,8 +84,22 @@ router.post('/api/autonomous/start', watchlistLimiter, async (req, res) => {
           monitored: report.count,
         });
       },
-      onAlert: (alerts) => {
+      onAlert: (alerts, report) => {
         logger.info('[autonomous] 检出异动预警', { count: alerts.length });
+        // 外部推送与 lastAutonomousAlerts 等既有状态更新并列：snapshot 与 onRun 落盘的
+        // 是同一份（同一次 report 的 count/generatedAt + 当前清单只数），保证站内回看与
+        // 外部推送内容一致。fire-and-forget：推送超时/失败只记 warning，不影响下一轮调度。
+        const requested = getWatchlist().length;
+        void pushAlerts(
+          normalizeAlertsSnapshot({
+            generatedAt: report.generatedAt,
+            monitored: report.count,
+            alerts,
+            requested,
+            skipped: Math.max(0, requested - report.count),
+          }),
+          { source: 'autonomous' },
+        );
       },
     });
     auditToolCall(

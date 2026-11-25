@@ -15,6 +15,7 @@ import {
 } from '../services/watchlistService.js';
 import { runWatchlistNewsBacktest } from '../services/watchlistBacktest.js';
 import { detectAlerts } from '../services/alerts.js';
+import { pushAlerts } from '../services/alertWebhook.js';
 import { auditDataAccess } from '../services/auditLog.js';
 import { getReqTraceContext } from '../services/telemetry.js';
 import { abortOnClientClose } from '../utils/clientAbort.js';
@@ -130,6 +131,9 @@ router.post('/api/watchlist/monitor', watchlistLimiter, circuitBreakerGuard, asy
       skipped,
     });
     saveWatchlistAlertsSnapshot(snapshot);
+    // 外部推送（企业微信 / 飞书机器人 / 自建网关）：fire-and-forget，显式不 await——
+    // 推送是旁路能力，网络慢或超时都不该拖慢/改变本次监控响应（失败只记 warning）。
+    void pushAlerts(snapshot, { source: 'monitor' });
     // 审计留痕并带上链路 ID：本路由一次拉几十只的行情与新闻（上游数据访问），
     // traceId 取 telemetry 注入的 res.locals（index.ts 的 expressTracerMiddleware），
     // 退化取请求 ID 中间件挂在 req 上的 reqId；都取不到就透传 undefined（不写脏字段）。
