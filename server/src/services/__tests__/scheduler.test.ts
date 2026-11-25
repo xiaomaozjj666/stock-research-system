@@ -42,7 +42,7 @@ describe('autonomous 循环', () => {
     expect(loop.getState().running).toBe(false);
   });
 
-  it('无告警时不调用 onAlert', async () => {
+  it('无告警时不调用 onAlert，但 onRun 每轮都调用（快照要更新巡检时间）', async () => {
     const monitor = vi.fn(
       async (): Promise<{
         results: WatchlistAlertInput[];
@@ -61,10 +61,13 @@ describe('autonomous 循环', () => {
       }),
     );
     const onAlert = vi.fn();
-    const loop = startAutonomousLoop({ intervalMs: 500, monitor, onAlert });
+    const onRun = vi.fn();
+    const loop = startAutonomousLoop({ intervalMs: 500, monitor, onAlert, onRun });
     await vi.advanceTimersByTimeAsync(500);
     expect(monitor).toHaveBeenCalledTimes(1);
     expect(onAlert).not.toHaveBeenCalled();
+    expect(onRun).toHaveBeenCalledTimes(1);
+    expect(onRun.mock.calls[0][0]).toEqual([]);
     loop.stop();
   });
 

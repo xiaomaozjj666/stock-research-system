@@ -23,6 +23,15 @@ export interface AutonomousOptions {
     alerts: WatchlistAlert[],
     report: { count: number; generatedAt: string },
   ) => void | Promise<void>;
+  /**
+   * 每一轮成功监控后回调（含无告警的空结果）。
+   * 与 onAlert 分开：告警回调只在命中时触发，而「最近一次监控」快照需要每轮更新，
+   * 否则进程重启后「今日」页只能看到很久以前（或从未）的巡检时间。
+   */
+  onRun?: (
+    alerts: WatchlistAlert[],
+    report: { count: number; generatedAt: string },
+  ) => void | Promise<void>;
 }
 
 export interface AutonomousState {
@@ -87,6 +96,10 @@ export function startAutonomousLoop(opts: AutonomousOptions): AutonomousControll
       state.lastRunAt = report.generatedAt;
       const alerts = detectAlerts(report.results);
       state.lastAlertCount = alerts.length;
+      // 每轮成功都通知一次（含空告警）：快照/巡检时间要跟着每轮更新。
+      if (opts.onRun) {
+        await opts.onRun(alerts, { count: report.count, generatedAt: report.generatedAt });
+      }
       if (alerts.length > 0 && opts.onAlert) {
         await opts.onAlert(alerts, { count: report.count, generatedAt: report.generatedAt });
       }

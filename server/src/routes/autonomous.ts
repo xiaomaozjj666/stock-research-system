@@ -6,7 +6,11 @@ import type { Request, Response } from 'express';
 import { watchlistLimiter } from '../middleware.js';
 import { startAutonomousLoop, type AutonomousController } from '../services/scheduler.js';
 import { runWatchlistNewsBacktest } from '../services/watchlistBacktest.js';
-import { getWatchlist } from '../services/watchlistService.js';
+import {
+  getWatchlist,
+  normalizeAlertsSnapshot,
+  saveWatchlistAlertsSnapshot,
+} from '../services/watchlistService.js';
 import { auditToolCall } from '../services/auditLog.js';
 import { getReqTraceContext } from '../services/telemetry.js';
 import { errorDetail } from '../utils/errorDetail.js';
@@ -59,8 +63,27 @@ router.post('/api/autonomous/start', watchlistLimiter, async (req, res) => {
           report.skipped > 0 ? { requested: report.requested, skipped: report.skipped } : null;
         return report;
       },
-      onAlert: (alerts) => {
+      // 每轮成功都落盘「最近一次监控」快照（无告警时也为空快照）：
+      // 此前自治结果只存在内存，进程重启后「今日」页再也看不到；
+      // 与手动 /api/watchlist/monitor 共用同一份文件与规范化逻辑。
+      onRun: (alerts, report) => {
+        const requested = getWatchlist().length;
+        saveWatchlistAlertsSnapshot(
+          normalizeAlertsSnapshot({
+            generatedAt: report.generatedAt,
+            monitored: report.count,
+            alerts,
+            requested,
+            skipped: Math.max(0, requested - report.count),
+          }),
+        );
         lastAutonomousAlerts = alerts;
+        logger.info('[autonomous] 本轮监控完成', {
+          alerts: alerts.length,
+          monitored: report.count,
+        });
+      },
+      onAlert: (alerts) => {
         logger.info('[autonomous] 检出异动预警', { count: alerts.length });
       },
     });

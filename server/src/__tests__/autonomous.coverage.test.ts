@@ -16,12 +16,23 @@ import request from 'supertest';
 const mocks = vi.hoisted(() => ({
   /** route 传进 scheduler 的 monitor 闭包（手动触发一轮监控用） */
   monitor: null as null | (() => Promise<unknown>),
+  /** route 传进 scheduler 的 onAlert 回调 */
+  onAlert: null as null | ((alerts: unknown[]) => void),
+  /** route 传进 scheduler 的 onRun 回调（每轮都调用） */
+  onRun: null as null | ((alerts: unknown[], report: unknown) => void),
   getWatchlist: vi.fn(),
+  saveSnapshot: vi.fn(),
 }));
 
 vi.mock('../services/scheduler.js', () => ({
-  startAutonomousLoop: (opts: { monitor: () => Promise<unknown> }) => {
+  startAutonomousLoop: (opts: {
+    monitor: () => Promise<unknown>;
+    onAlert: (alerts: unknown[]) => void;
+    onRun: (alerts: unknown[], report: unknown) => void;
+  }) => {
     mocks.monitor = opts.monitor;
+    mocks.onAlert = opts.onAlert;
+    mocks.onRun = opts.onRun;
     return {
       stop: () => {},
       getState: () => ({
@@ -37,7 +48,11 @@ vi.mock('../services/scheduler.js', () => ({
 
 vi.mock('../services/watchlistService.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/watchlistService.js')>();
-  return { ...actual, getWatchlist: mocks.getWatchlist };
+  return {
+    ...actual,
+    getWatchlist: mocks.getWatchlist,
+    saveWatchlistAlertsSnapshot: mocks.saveSnapshot,
+  };
 });
 
 vi.mock('../services/watchlistBacktest.js', async (importOriginal) => {
@@ -72,7 +87,10 @@ function codesOf(n: number): string[] {
 
 beforeEach(() => {
   mocks.monitor = null;
+  mocks.onAlert = null;
+  mocks.onRun = null;
   mocks.getWatchlist.mockReset();
+  mocks.saveSnapshot.mockReset();
 });
 
 afterEach(async () => {
@@ -135,6 +153,45 @@ describe('自治状态披露被跳过的自选股只数', () => {
     await mocks.monitor!();
     const afterRun = await request(app).get('/api/autonomous/status');
     expect(afterRun.body).not.toHaveProperty('skipped');
+  });
+
+  it('自治循环每轮都落盘「最近一次」快照（含告警，重启后今日页仍可见）', async () => {
+    mocks.getWatchlist.mockReturnValue(codesOf(25));
+    await request(app).post('/api/autonomous/start').send({ intervalMs: 60000 });
+    await mocks.monitor!();
+
+    const alerts = [
+      {
+        code: '600000',
+        name: '浦发银行',
+        level: 'strong-bull',
+        polarity: 0.8,
+        weightedImpact: 0.9,
+        detail: '重大利好',
+      },
+    ];
+    mocks.onRun!(alerts, { count: WATCHLIST_BATCH_MAX, generatedAt: '2026-09-17T00:00:00.000Z' });
+
+    expect(mocks.saveSnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.saveSnapshot.mock.calls[0][0]).toMatchObject({
+      generatedAt: '2026-09-17T00:00:00.000Z',
+      monitored: WATCHLIST_BATCH_MAX,
+      alerts,
+      requested: 25,
+      skipped: 25 - WATCHLIST_BATCH_MAX,
+    });
+  });
+
+  it('无告警的轮次也落盘空快照（刷新巡检时间，不清空今日页）', async () => {
+    mocks.getWatchlist.mockReturnValue(codesOf(3));
+    await request(app).post('/api/autonomous/start').send({ intervalMs: 60000 });
+    mocks.onRun!([], { count: 3, generatedAt: '2026-09-17T01:00:00.000Z' });
+    expect(mocks.saveSnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.saveSnapshot.mock.calls[0][0]).toMatchObject({
+      generatedAt: '2026-09-17T01:00:00.000Z',
+      monitored: 3,
+      alerts: [],
+    });
   });
 
   it('启动/停止都留下审计条目，并带上本次请求的 traceId', async () => {
