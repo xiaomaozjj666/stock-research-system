@@ -32,14 +32,35 @@ describe('normalizeApiError', () => {
     expect(normalizeApiError(e).message).toBe('请求已取消');
   });
 
-  it('超时（ECONNABORTED/timeout）提示分析耗时', () => {
+  it('超时（ECONNABORTED/timeout）给出通用超时提示', () => {
     const e = { code: 'ECONNABORTED', message: 'timeout of 60000ms exceeded' };
-    expect(normalizeApiError(e).message).toContain('超时');
+    const msg = normalizeApiError(e).message;
+    expect(msg).toContain('超时');
+    // 共用出口：短请求（自选股 / 模拟盘）超时不能提示「换一只标的」
+    expect(msg).not.toContain('标的');
   });
 
   it('网络不可达（无 response）提示启动后端', () => {
     const e = { code: 'ERR_NETWORK', message: 'Network Error' };
-    expect(normalizeApiError(e).message).toContain('localhost:3001');
+    const msg = normalizeApiError(e).message;
+    expect(msg).toContain('无法连接后端服务');
+    // 不写死地址：部署环境下 localhost:3001 是错误指引
+    expect(msg).not.toContain('localhost');
+  });
+
+  it('无 response 且非网络错误码时回落到传入文案，不误报“后端没启动”', () => {
+    // 例：前端自身 TypeError。此前一律提示后端不可达，会把代码错误误导成运维问题。
+    const e = { message: 'x is not a function' };
+    expect(normalizeApiError(e, '兜底文案').message).toBe('兜底文案');
+  });
+
+  it('Vite 代理的 502 + PROXY_ECONNREFUSED 走统一文案（不被 body 里的地址绕过）', () => {
+    const e = {
+      response: { status: 502, data: { code: 'PROXY_ECONNREFUSED' } },
+    };
+    const msg = normalizeApiError(e).message;
+    expect(msg).toContain('无法连接后端服务');
+    expect(msg).not.toContain('3001');
   });
 
   it('404 提示版本不一致', () => {

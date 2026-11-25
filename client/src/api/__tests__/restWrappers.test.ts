@@ -103,9 +103,10 @@ describe('normalizeApiError —— 既有单测未覆盖的分支', () => {
   });
 
   it('传入 null / undefined / 非对象时不抛 TypeError（调用方 catch 里安全）', () => {
-    expect(normalizeApiError(null).message).toContain('localhost:3001');
-    expect(normalizeApiError(undefined, '兜底').message).toContain('localhost:3001');
-    expect(normalizeApiError('boom').message).toContain('localhost:3001');
+    // 没有 response 也没有已知网络错误码：不是“后端没开”，回落到通用文案
+    expect(normalizeApiError(null).message).toBe('请求失败');
+    expect(normalizeApiError(undefined, '兜底').message).toBe('兜底');
+    expect(normalizeApiError('boom').message).toBe('请求失败');
   });
 
   it('不传 fallback 时默认文案为"请求失败"', () => {
@@ -440,7 +441,7 @@ describe('REST 封装 —— 后端未启动时统一给出启动指引', () => 
     httpInst.post.mockRejectedValue(networkError());
     httpInst.delete.mockRejectedValue(networkError());
     for (const c of CASES) {
-      await expect(c.call()).rejects.toThrow('无法连接后端服务（localhost:3001）');
+      await expect(c.call()).rejects.toThrow('无法连接后端服务');
     }
   });
 });
@@ -637,7 +638,7 @@ describe('getUniverseBoards —— in-flight 去重 + 5 分钟缓存（该端点
 
   it('失败同样被翻成中文提示（网络不可达时给启动指引）', async () => {
     httpInst.get.mockRejectedValueOnce(networkError());
-    await expect(getUniverseBoards()).rejects.toThrow('无法连接后端服务（localhost:3001）');
+    await expect(getUniverseBoards()).rejects.toThrow('无法连接后端服务');
   });
 });
 

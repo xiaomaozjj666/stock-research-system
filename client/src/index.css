@@ -370,7 +370,9 @@ tr:hover td {
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-default);
   padding: var(--space-sm) var(--space-lg);
-  margin: 0 calc(-1 * var(--space-lg)) var(--space-lg);
+  /* 父级 .app 没有内边距，原先的负外边距会让导航条比视口宽 48px，
+     桌面端因此常驻横向滚动条 */
+  margin: 0 0 var(--space-lg);
 }
 .navbar-inner {
   max-width: 1200px;
@@ -726,6 +728,49 @@ tr:hover td {
   font-weight: 600;
 }
 
+/* 报告头部右侧面板：评分 + 评级同一行，标签与导出 / 打印收拢在一起 */
+.report-header-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-sm);
+  padding-left: var(--space-lg);
+  border-left: 1px solid var(--border-default);
+  /* 限制宽度：置信度等长文本曾把面板撑到 ~860px，反过来把左侧股票信息压成一条 */
+  max-width: 340px;
+}
+.report-header-side .score-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  text-align: right;
+}
+.score-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.score-main .rating-tag {
+  margin-top: 0;
+  align-self: center;
+}
+.score-unit {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+}
+
+/* 风险提示 + 历史快照合并后的通知区 */
+.report-notice-history {
+  border-color: var(--color-info);
+}
+.report-notice .history-snapshot-banner {
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
 /* Score & Rating */
 .score-block {
   text-align: center;
@@ -769,6 +814,10 @@ tr:hover td {
   padding: 3px 10px;
   border-radius: var(--radius-sm);
   margin-top: 6px;
+  /* 长句只在面板宽度内换行，不再按内容撑宽整列 */
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 /* 较上次分析（记忆反思闭环） */
 .vs-previous-tag {
@@ -2015,21 +2064,36 @@ tr:hover td {
   .score-block {
     text-align: left;
   }
+  .report-header-side,
+  .report-header-side .score-block {
+    align-items: flex-start;
+    text-align: left;
+  }
+  .report-header-side {
+    padding-left: 0;
+    border-left: 0;
+    max-width: none;
+  }
   .dashboard-cards {
     grid-template-columns: repeat(2, 1fr);
   }
   .quant-metrics {
     grid-template-columns: repeat(2, 1fr);
   }
-  /* 7 个 tab 在窄屏横向滚动，避免溢出换行 */
+  /* 9 个 tab 在窄屏横向滚动，避免溢出换行；右侧渐隐提示还有内容可滑 */
   .tab-bar {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     padding: 0 var(--space-sm);
     scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
   }
   .tab-bar::-webkit-scrollbar {
     display: none;
+  }
+  .header-meta {
+    /* 移动端把 4 行元数据压到两行内 */
+    gap: 4px 12px;
   }
   .tab {
     flex-shrink: 0;
@@ -2854,6 +2918,14 @@ tr:hover td {
   width: 100%;
   max-width: 360px;
   margin-bottom: var(--space-md);
+}
+.loading-notice {
+  width: 100%;
+  max-width: 360px;
+  margin: calc(-1 * var(--space-sm)) 0 var(--space-md);
+  font-size: var(--text-caption);
+  color: var(--color-warning);
+  text-align: center;
 }
 .loading-stage-item {
   display: flex;
@@ -3855,6 +3927,24 @@ button.comparison-tag-add:disabled {
 .error-banner-retry:hover {
   background: var(--color-danger);
   color: var(--text-inverse);
+}
+/* 用户主动取消：中性信息而非错误告警 */
+.error-banner.info .error-banner-icon {
+  background: var(--color-info);
+}
+.error-banner.info .error-banner-text {
+  color: var(--text-secondary);
+}
+/* 错误码 / 请求 ID / 重试间隔：给排障用，弱化排布在正文下方 */
+.error-banner-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+}
+.history-return-btn {
+  margin-left: 10px;
+  vertical-align: baseline;
 }
 
 /* --- 分析进行中的取消入口 --- */

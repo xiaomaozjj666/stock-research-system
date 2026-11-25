@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AnalysisCancelledError, compareStocks } from '../api/client';
 import StockSearchInput from '../components/StockSearchInput';
 import { ErrorBoundary } from './ErrorBoundary';
+import { formatMarketCap } from '../lib/format';
 
 interface StockData {
   stock_code: string;
@@ -139,7 +140,7 @@ function formatValue(v: CellValue, format: FormatType): string {
     case 'pb':
       return num.toFixed(2);
     case 'cap':
-      return num >= 10000 ? `${(num / 10000).toFixed(2)}万亿` : `${num.toFixed(0)}亿`;
+      return formatMarketCap(num);
     case 'percent':
       return `${num.toFixed(2)}%`;
     case 'score':

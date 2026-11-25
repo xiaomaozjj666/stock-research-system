@@ -153,9 +153,11 @@ function estimateRemaining(
 
 interface Props {
   stage?: AnalysisStage | null;
+  /** 连接层提示（如「正在第 N 次重连」）；为空时不渲染 */
+  notice?: string | null;
 }
 
-export default function LoadingScreen({ stage }: Props) {
+export default function LoadingScreen({ stage, notice }: Props) {
   const startedAtRef = useRef(Date.now());
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -261,6 +263,12 @@ export default function LoadingScreen({ stage }: Props) {
             );
           })}
         </div>
+
+        {notice && (
+          <div className="loading-notice" role="status" aria-live="polite">
+            {notice}
+          </div>
+        )}
 
         <div
           className="loading-progress"

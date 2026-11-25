@@ -364,7 +364,8 @@ describe('App —— 分析的进行、取消与重试', () => {
     await screen.findByText('取消分析');
 
     fireEvent.click(screen.getByText('取消分析'));
-    expect(await screen.findByRole('alert')).toHaveTextContent('已取消本次分析');
+    // 主动取消不是错误：用中性 status 提示，而不是告警
+    expect(await screen.findByRole('status')).toHaveTextContent('已取消本次分析');
     expect(screen.queryByText('取消分析')).toBeNull();
   });
 
@@ -399,7 +400,7 @@ describe('App —— 分析的进行、取消与重试', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /重试/ }));
     await waitFor(() => expect(apiMock.analyzeStockStream).toHaveBeenCalledTimes(2));
-    expect(apiMock.analyzeStockStream.mock.calls[1][2]).toEqual({ resume: true });
+    expect(apiMock.analyzeStockStream.mock.calls[1][2]).toMatchObject({ resume: true });
   });
 
   it('新分析会取消上一条在途流（避免两条 SSE 竞争写同一份状态）', async () => {

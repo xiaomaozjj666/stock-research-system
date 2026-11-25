@@ -4,6 +4,7 @@ import { analyzeStockStream, AnalysisCancelledError, type AnalysisStage } from '
 import { isUnauthorized, onUnauthorized, resetUnauthorized } from './api/auth';
 import ApiTokenBar from './components/ApiTokenBar';
 import type { AnalysisResult } from './types';
+import { formatMarketCap } from './lib/format';
 import StockSelector from './components/StockSelector';
 import LoadingScreen from './components/LoadingScreen';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -198,14 +199,7 @@ function DashboardCards({ data }: { data: AnalysisResult['stock_pool'][0] }) {
       </div>
       <div className="dash-card">
         <div className="dash-label">市值</div>
-        <div className="dash-value">
-          {/* 缺数据时显示「—」而不是「0 亿」：把缺失值当实测值展示会读成"该公司市值 0" */}
-          {data.valuation?.marketCap == null
-            ? '—'
-            : data.valuation.marketCap >= 10000
-              ? (data.valuation.marketCap / 10000).toFixed(1) + ' 万亿'
-              : data.valuation.marketCap.toFixed(0) + ' 亿'}
-        </div>
+        <div className="dash-value">{formatMarketCap(data.valuation?.marketCap)}</div>
       </div>
     </div>
   );
@@ -288,6 +282,16 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [analysisStage, setAnalysisStage] = useState<AnalysisStage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 错误横幅的排障信息：ApiError 上已有 requestId / code / retryAfter，此前从未展示
+  const [errorDetail, setErrorDetail] = useState<{
+    requestId?: string;
+    code?: string;
+    retryAfter?: number;
+  } | null>(null);
+  // SSE 自动重连提示（重连期间进度条静止，需要明确告诉用户正在重试）
+  const [streamNotice, setStreamNotice] = useState<string | null>(null);
+  // 回看历史时暂存当前实时报告，用于「返回实时分析」
+  const [liveResult, setLiveResult] = useState<AnalysisResult | null>(null);
   // 后端启用 API_AUTH_TOKEN 且当前令牌无效/缺失时为 true，驱动解锁条出现。
   // 默认 false：未启用鉴权（本系统的默认形态）时这条路径永远不触发。
   const [needsToken, setNeedsToken] = useState(() => isUnauthorized());
@@ -522,6 +526,9 @@ function App() {
     setActiveTab('research');
     setLoading(true);
     setError(null);
+    setErrorDetail(null);
+    setStreamNotice(null);
+    setLiveResult(null); // 新分析开始：历史快照的「返回实时」目标已失效
     setAnalysisStage(null);
     setViewingHistory(false); // 新分析开始：退出历史快照模式
     // 记录在途标记：正常收尾（成功/失败/取消）会清除，只有刷新或关页才会留下
@@ -539,8 +546,14 @@ function App() {
         stockCode,
         (stage) => {
           setAnalysisStage(stage);
+          // 已重新收到服务端事件：重连提示可以撤掉
+          setStreamNotice(null);
         },
-        { resume: opts?.resume === true },
+        {
+          resume: opts?.resume === true,
+          onReconnect: (attempt, maxRetries) =>
+            setStreamNotice(`连接中断，正在第 ${attempt}/${maxRetries} 次重连…`),
+        },
       );
       cancelRef.current = cancel;
       const result = await done;
@@ -552,11 +565,19 @@ function App() {
       if (gen !== analyzeSeqRef.current) return;
       const message = err instanceof Error ? err.message : '分析请求失败';
       setError(message);
+      // 用结构判断而不是 instanceof：测试会整体 mock api/client，instanceof 会拿到 undefined
+      const meta = (err ?? {}) as { requestId?: string; code?: string; retryAfter?: number };
+      setErrorDetail(
+        meta.requestId !== undefined || meta.code !== undefined || meta.retryAfter !== undefined
+          ? { requestId: meta.requestId, code: meta.code, retryAfter: meta.retryAfter }
+          : null,
+      );
     } finally {
       if (gen === analyzeSeqRef.current) {
         cancelRef.current = null;
         setLoading(false);
         setAnalysisStage(null);
+        setStreamNotice(null);
       }
       // 本轮已收尾（成功/失败/取消皆然）：清掉在途标记，避免下次打开误报"可续跑"
       if (gen === analyzeSeqRef.current) clearInflight();
@@ -574,8 +595,18 @@ function App() {
     cancelRef.current = null;
     setLoading(false);
     setAnalysisStage(null);
+    setStreamNotice(null);
+    setErrorDetail(null);
     setError('已取消本次分析');
   }, []);
+
+  /** 从历史快照返回刚才的实时报告（此前进入历史后实时结果被直接覆盖，无路可回） */
+  const handleExitHistory = useCallback(() => {
+    if (!liveResult) return;
+    setAnalysisResult(liveResult);
+    setLiveResult(null);
+    setViewingHistory(false);
+  }, [liveResult]);
 
   /** 忽略"上次中断的分析"提示（同时清掉痕迹，避免下次进入又弹） */
   const dismissInterrupted = useCallback(() => {
@@ -678,6 +709,8 @@ function App() {
    * 切走即卸载，重新进入时取最新数据。
    */
   const shouldRenderTab = (tab: TabId) => tab === activeTab || mountedTabs.has(tab);
+  // 用户主动取消不是错误：用中性提示而不是红色告警
+  const errorIsCancelled = error === '已取消本次分析';
 
   return (
     <div className="app">
@@ -717,7 +750,7 @@ function App() {
       >
         {loading && (
           <>
-            <LoadingScreen stage={analysisStage} />
+            <LoadingScreen stage={analysisStage} notice={streamNotice} />
             <div className="loading-actions">
               <button className="btn-ghost" onClick={handleCancel}>
                 取消分析
@@ -768,6 +801,10 @@ function App() {
               <p className="research-empty-hint">
                 结果会自动存入「历史」，可随时回看与对比；也可以切到「研究助手」用自然语言提问。
               </p>
+              {/* 空状态同样要看到风险提示：此前只有出报告后才渲染免责声明 */}
+              <p className="research-empty-hint">
+                【风险提示】本内容依托公开市场数据进行学术投研模拟分析，所有推演假设标注【推演，存在不确定性】，不构成任何投资建议。
+              </p>
               {/* 首次使用只需读文字猜"能干什么"：给一个一键试跑入口，用最快路径看到成果 */}
               <button
                 className="btn-primary research-empty-try"
@@ -779,14 +816,31 @@ function App() {
           </div>
         )}
         {error && !loading && (
-          <div className="error-banner" role="alert">
+          <div
+            className={`error-banner${errorIsCancelled ? ' info' : ''}`}
+            role={errorIsCancelled ? 'status' : 'alert'}
+          >
             <div className="error-banner-body">
               <span className="error-banner-icon" aria-hidden="true">
-                !
+                {errorIsCancelled ? 'i' : '!'}
               </span>
-              <span className="error-banner-text">{error}</span>
+              <span className="error-banner-text">
+                {error}
+                {errorDetail &&
+                  (errorDetail.code || errorDetail.requestId || errorDetail.retryAfter) && (
+                    <span className="error-banner-meta">
+                      {errorDetail.retryAfter !== undefined
+                        ? `建议 ${errorDetail.retryAfter} 秒后重试`
+                        : ''}
+                      {errorDetail.retryAfter !== undefined && errorDetail.code ? ' · ' : ''}
+                      {errorDetail.code ? `错误码 ${errorDetail.code}` : ''}
+                      {errorDetail.code && errorDetail.requestId ? ' · ' : ''}
+                      {errorDetail.requestId ? `请求 ID ${errorDetail.requestId}` : ''}
+                    </span>
+                  )}
+              </span>
             </div>
-            {lastCodeRef.current && (
+            {lastCodeRef.current && !errorIsCancelled && (
               <button className="error-banner-retry" onClick={handleRetry}>
                 重试 {lastCodeRef.current}
               </button>
@@ -846,15 +900,24 @@ function App() {
 
             {/* 右侧主内容 */}
             <main className="report-main">
-              <div className="disclaimer">
-                【风险提示】本内容依托公开市场数据进行学术投研模拟分析，所有推演假设标注【推演，存在不确定性】，不构成任何投资建议。
-              </div>
-
-              {viewingHistory && (
-                <div className="history-snapshot-banner" role="status">
-                  正在查看<b>历史快照</b>（非实时分析）——发起新的分析即可刷新
+              {/* 风险提示与历史快照合并为一个通知区：此前两条横幅叠放，把报告头部推到首屏下方 */}
+              <div
+                className={`disclaimer report-notice${viewingHistory ? ' report-notice-history' : ''}`}
+              >
+                {viewingHistory && (
+                  <div className="history-snapshot-banner" role="status">
+                    正在查看<b>历史快照</b>（非实时分析）——发起新的分析即可刷新
+                    {liveResult && (
+                      <button className="btn-ghost history-return-btn" onClick={handleExitHistory}>
+                        返回实时分析
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div>
+                  【风险提示】本内容依托公开市场数据进行学术投研模拟分析，所有推演假设标注【推演，存在不确定性】，不构成任何投资建议。
                 </div>
-              )}
+              </div>
 
               <RevealSection>
                 <ReportHeader
@@ -1080,9 +1143,12 @@ function App() {
         <TabPane active={activeTab === 'history'} id="panel-history" tabId="tab-history">
           <HistoryPage
             onOpenHistory={(result) => {
-              // 回看历史：恢复完整分析结果并切回深度研究页渲染
+              // 回看历史：先暂存当前实时报告，横幅里可一键返回；
+              // 已在历史模式时再开另一份，不覆盖暂存的实时结果。
+              if (!viewingHistory) setLiveResult(analysisResult);
               setAnalysisResult(result);
               setError(null);
+              setErrorDetail(null);
               setViewingHistory(true);
               setActiveTab('research');
             }}

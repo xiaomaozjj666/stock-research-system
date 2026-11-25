@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import CompositeBatchPanel from '../CompositeBatchPanel';
 import { ToastProvider } from '../../../components/Toast';
+import { BACKEND_UNREACHABLE_MESSAGE } from '../../../api/client';
 import type {
   CompositeAlphaBatchItem,
   CompositeAlphaBatchResult,
@@ -32,7 +33,8 @@ const apiMocks = vi.hoisted(() => {
   return { runBatchCompositeAlpha: vi.fn(), searchStocks: vi.fn(), AnalysisCancelledError };
 });
 
-vi.mock('../../../api/client', () => ({
+vi.mock('../../../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../api/client')>()),
   runBatchCompositeAlpha: apiMocks.runBatchCompositeAlpha,
   searchStocks: apiMocks.searchStocks,
   AnalysisCancelledError: apiMocks.AnalysisCancelledError,
@@ -688,11 +690,7 @@ describe('CompositeBatchPanel —— 加载、计时与取消', () => {
 describe('CompositeBatchPanel —— 失败与重试', () => {
   it('失败时显示中文错误横幅、不渲染结果；再点一次可重试成功', async () => {
     apiMocks.runBatchCompositeAlpha
-      .mockRejectedValueOnce(
-        new Error(
-          '无法连接后端服务（localhost:3001）。请确认服务已启动，或运行「启动系统.bat」后重试',
-        ),
-      )
+      .mockRejectedValueOnce(new Error(BACKEND_UNREACHABLE_MESSAGE))
       .mockResolvedValueOnce(batch([okItem('600519')]));
     renderPanel();
     fireEvent.click(startButton());

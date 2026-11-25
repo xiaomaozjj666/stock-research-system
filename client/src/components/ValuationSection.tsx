@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { formatMarketCap } from '../lib/format';
 interface ValuationData {
   currentPrice?: number;
   pe?: number;
@@ -32,17 +33,6 @@ function getValLevelClass(level?: string) {
   if (level.includes('低估')) return 'undervalued';
   if (level.includes('高估')) return 'overvalued';
   return 'fair';
-}
-
-/**
- * 总市值 → 「亿 / 万亿」。缺失、非有限值（NaN/Infinity）与非正数一律显示「—」：
- * 此前 `!cap` 只挡住 0/NaN，Infinity 会被渲染成「Infinity万亿」、负数会被渲染成
- * 「-5亿」——把"没有这个数据"当成实测值展示。
- */
-function formatCap(cap?: number) {
-  if (cap == null || !Number.isFinite(cap) || cap <= 0) return '—';
-  if (cap >= 10000) return (cap / 10000).toFixed(1) + '万亿';
-  return cap.toFixed(0) + '亿';
 }
 
 /** 估值倍数：非有限值（NaN/Infinity）当缺失处理（`NaN.toFixed()` 会原样输出 "NaN"）；亏损（PE 无效）显示「亏损」 */
@@ -83,7 +73,7 @@ function ValuationSection({ data, valuation_level, stockName }: ValuationSection
         </div>
         <div className="val-card">
           <div className="val-card-label">总市值</div>
-          <div className="val-card-value">{formatCap(data.marketCap)}</div>
+          <div className="val-card-value">{formatMarketCap(data.marketCap)}</div>
         </div>
       </div>
 
@@ -108,7 +98,7 @@ function ValuationSection({ data, valuation_level, stockName }: ValuationSection
                 <td>{formatRatio(data.pe, 1, data.peUnavailable)}</td>
                 <td>{formatRatio(data.pb, 2)}</td>
                 <td>—</td>
-                <td>{formatCap(data.marketCap)}</td>
+                <td>{formatMarketCap(data.marketCap)}</td>
               </tr>
               {data.peerComparison.map((p) => (
                 <tr key={p.code}>
@@ -120,7 +110,7 @@ function ValuationSection({ data, valuation_level, stockName }: ValuationSection
                       ? p.roe.toFixed(1) + '%'
                       : '—'}
                   </td>
-                  <td>{formatCap(p.marketCap)}</td>
+                  <td>{formatMarketCap(p.marketCap)}</td>
                 </tr>
               ))}
             </tbody>

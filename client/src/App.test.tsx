@@ -201,7 +201,8 @@ describe('App', () => {
 
     await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
     // 第三个参数即 SSE 选项：续跑必须走服务端断点，避免重复支付已完成的 LLM 成本
-    expect(apiMock.analyzeStockStream.mock.calls.at(-1)?.[2]).toEqual({ resume: true });
+    // （onReconnect 是界面重连提示的回调，不属于续跑语义，这里只校验 resume）
+    expect(apiMock.analyzeStockStream.mock.calls.at(-1)?.[2]).toMatchObject({ resume: true });
     // 收尾后清除痕迹，避免下次进入又弹提示
     expect(sessionStorage.getItem('srs:inflight-analysis')).toBeNull();
   });

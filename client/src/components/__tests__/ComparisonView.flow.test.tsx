@@ -3,6 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import ComparisonView from '../ComparisonView';
+import { BACKEND_UNREACHABLE_MESSAGE } from '../../api/client';
 
 /**
  * 股票对比「主流程」行为测试（补充册）：选择标的 → 提交 → 加载/计时 → 成功渲染对比表 →
@@ -31,7 +32,8 @@ const api = vi.hoisted(() => {
   };
 });
 
-vi.mock('../../api/client', () => ({
+vi.mock('../../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/client')>()),
   compareStocks: api.compareStocks,
   searchStocks: api.searchStocks,
   AnalysisCancelledError: api.AnalysisCancelledError,
@@ -348,8 +350,8 @@ describe('ComparisonView 成功渲染对比表', () => {
     expect(price[2]).toHaveClass('cell-best');
     expect(rowCells('PE（市盈率）')[1]).toHaveTextContent('30.25');
     expect(rowCells('PB（市净率）')[1]).toHaveTextContent('8.13');
-    // 市值 ≥1 万亿换算成「万亿」，否则「亿」
-    expect(rowCells('市值（亿）')[1]).toHaveTextContent('2.10万亿');
+    // 市值 ≥1 万亿换算成「万亿」（统一走 lib/format，保留 1 位小数），否则「亿」
+    expect(rowCells('市值（亿）')[1]).toHaveTextContent('2.1万亿');
     expect(rowCells('市值（亿）')[2]).toHaveTextContent('9000亿');
 
     // 财务比率取最近一年
@@ -493,12 +495,12 @@ describe('ComparisonView 失败与取消', () => {
   });
 
   it('提交被拒（网络中断）：停在选择页给中文横幅，未渲染任何表格', async () => {
-    api.compareStocks.mockRejectedValueOnce(new Error('无法连接后端服务（localhost:3001）'));
+    api.compareStocks.mockRejectedValueOnce(new Error(BACKEND_UNREACHABLE_MESSAGE));
     render(<ComparisonView />);
     addTwo();
     fireEvent.click(startButton('开始对比分析（2/3）'));
 
-    const banner = await screen.findByText('无法连接后端服务（localhost:3001）');
+    const banner = await screen.findByText(BACKEND_UNREACHABLE_MESSAGE);
     expect(banner).toHaveClass('comparison-error');
     expect(screen.getByText('股票对比')).toBeInTheDocument();
     expect(screen.queryByRole('table')).toBeNull();

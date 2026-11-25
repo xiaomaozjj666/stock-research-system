@@ -27,15 +27,21 @@ function packageNameOf(id: string): string | null {
   return name && !name.startsWith('.') ? name : null;
 }
 
+// 开发代理的后端地址；报错文案引用同一常量，避免改端口后提示与实际不一致
+const API_PROXY_TARGET = 'http://127.0.0.1:3001';
+
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // 端口被占用时直接失败，不要静默换到 5174：启动脚本只轮询/打开 5173，
+    // 静默漂移会让脚本打开上一次遗留的旧实例。
+    strictPort: true,
     proxy: {
       '/api': {
         // 固定用 127.0.0.1：后端默认只绑回环地址，而 Node 解析 localhost 时可能优先取
         // IPv6 的 ::1，届时代理会 ECONNREFUSED（表现为 502）。
-        target: 'http://127.0.0.1:3001',
+        target: API_PROXY_TARGET,
         changeOrigin: true,
         // SSE 长连接：不能被代理层提前掐断
         timeout: 0,
@@ -46,12 +52,20 @@ export default defineConfig({
             const code = (err as NodeJS.ErrnoException).code;
             const msg =
               code === 'ECONNREFUSED'
-                ? '无法连接后端服务（localhost:3001），请确认服务已启动'
+                ? `无法连接后端服务（${API_PROXY_TARGET}），请确认服务已启动`
                 : `代理请求失败：${err.message}`;
             console.error(`[vite-proxy] ${req.method} ${req.url} -> ${msg}`);
             if ('writeHead' in res && !res.headersSent) {
               res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
-              res.end(JSON.stringify({ error: msg, code: code ?? 'PROXY_ERROR' }));
+              // 只回机器码，用户可见文案统一由前端 BACKEND_UNREACHABLE_MESSAGE 渲染：
+              // 此前 body 里带 host:port 的 error 会让统一文案永远走不到。
+              res.end(
+                JSON.stringify(
+                  code === 'ECONNREFUSED'
+                    ? { code: 'PROXY_ECONNREFUSED' }
+                    : { error: msg, code: code ?? 'PROXY_ERROR' },
+                ),
+              );
             } else if ('end' in res) {
               res.end();
             }

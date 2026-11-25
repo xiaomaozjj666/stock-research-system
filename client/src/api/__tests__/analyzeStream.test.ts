@@ -84,9 +84,13 @@ describe('analyzeStockStream', () => {
 
   it('连接失败后自动重连，重连成功则正常完成（H-03）', async () => {
     const stages: AnalysisStage[] = [];
-    const { done } = analyzeStockStream('600519', (s) => stages.push(s));
-    // 首次连接失败（未收到任何事件）→ 1s 后重连
+    const reconnects: Array<[number, number]> = [];
+    const { done } = analyzeStockStream('600519', (s) => stages.push(s), {
+      onReconnect: (attempt, max) => reconnects.push([attempt, max]),
+    });
+    // 首次连接失败（未收到任何事件）→ 1s 后重连，且回调告知第几次重连
     MockEventSource.instances[0].emitError();
+    expect(reconnects).toEqual([[1, 3]]);
     await vi.advanceTimersByTimeAsync(1000);
     expect(MockEventSource.instances).toHaveLength(2);
     // 第二次连接成功

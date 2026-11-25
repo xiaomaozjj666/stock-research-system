@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import WatchlistPage from '../WatchlistPage';
 import { ToastProvider } from '../../../components/Toast';
+import { BACKEND_UNREACHABLE_MESSAGE } from '../../../api/client';
 import type { WatchlistAlertsSnapshot } from '../../../api/client';
 import type { WatchlistNewsBacktestReport } from '../../../types';
 
@@ -33,7 +34,11 @@ const CancelError = vi.hoisted(
     },
 );
 
-vi.mock('../../../api/client', () => ({ ...api, AnalysisCancelledError: CancelError }));
+vi.mock('../../../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../api/client')>()),
+  ...api,
+  AnalysisCancelledError: CancelError,
+}));
 
 // 回测总览里的新闻姿态热力条走 EChart：真实 echarts 在 jsdom 下无法 init
 const echartsMock = vi.hoisted(() => ({ init: vi.fn() }));
@@ -261,18 +266,12 @@ describe('WatchlistPage 首屏与列表', () => {
 
 describe('WatchlistPage 加载失败与重试', () => {
   it('加载失败：给出中文原因、英文原文只留在 title，并提供「重试」', async () => {
-    api.normalizeApiError.mockReturnValue(
-      new Error(
-        '无法连接后端服务（localhost:3001）。请确认服务已启动，或运行「启动系统.bat」后重试',
-      ),
-    );
+    api.normalizeApiError.mockReturnValue(new Error(BACKEND_UNREACHABLE_MESSAGE));
     api.getWatchlist.mockRejectedValue(new Error('Network Error'));
     renderPage();
 
     const alert = await screen.findByRole('alert');
-    const text = within(alert).getByText(
-      '自选股加载失败：无法连接后端服务（localhost:3001）。请确认服务已启动，或运行「启动系统.bat」后重试',
-    );
+    const text = within(alert).getByText(`自选股加载失败：${BACKEND_UNREACHABLE_MESSAGE}`);
     expect(text).toHaveAttribute('title', 'Network Error');
     expect(within(alert).getByRole('button', { name: '重试' })).toBeInTheDocument();
     // 加载失败 ≠ 没有关注股票：空态文案不能出现（否则用户以为自己的清单被清空了）

@@ -144,21 +144,39 @@ function attachErrorMetadata(err: ApiError, e: HttpErrorLike): ApiError {
  * 把底层 HTTP 客户端（fetch）的原始错误翻译成用户能理解、能行动的中文提示。
  * 后端未启动时只会抛 "Network Error"，对用户毫无意义。
  */
+/**
+ * 后端不可达时的统一文案。前端走同源 /api（开发期由 Vite 代理），实际后端地址因部署而异，
+ * 因此不写死 host:port——写死的 localhost:3001 在部署环境或改端口后会误导排查。
+ */
+export const BACKEND_UNREACHABLE_MESSAGE =
+  '无法连接后端服务，请确认服务已启动后重试（本地运行可执行「启动系统.bat」）';
+
 export function normalizeApiError(error: unknown, fallback = '请求失败'): ApiError {
   const e = error as HttpErrorLike;
 
   if (e?.code === 'ERR_CANCELED') return new ApiError('请求已取消');
   if (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message ?? '')) {
-    return new ApiError('请求超时：分析耗时超过预期，请稍后重试或换一只标的');
+    // 这里是所有接口共用的出口（自选股、模拟盘等 15s 短请求也会走到），
+    // 文案不能只针对「个股分析」，否则用户在加载自选股时会看到「换一只标的」。
+    return new ApiError('请求超时：服务端在预期时间内没有响应，请稍后重试');
   }
-  if (e?.code === 'ERR_NETWORK' || !e?.response) {
-    return new ApiError(
-      '无法连接后端服务（localhost:3001）。请确认服务已启动，或运行「启动系统.bat」后重试',
-    );
+  if (e?.code === 'ERR_NETWORK' || e?.code === 'ECONNREFUSED') {
+    return new ApiError(BACKEND_UNREACHABLE_MESSAGE);
+  }
+  if (!e?.response) {
+    // 没有 response 且不是已知网络错误码（如前端自身 TypeError）：不能都归因为“后端没启动”，
+    // 否则真正的代码错误会被误导成运维问题。
+    return new ApiError(fallback);
   }
 
   const status = e.response.status;
-  const serverMsg = e.response.data?.error || e.response.data?.message;
+  const data = e.response.data;
+  // Vite 开发代理在后端未启动时回 502 + 机器码；文案由前端单一来源渲染，
+  // 避免代理 body 里再写一份带 host:port 的提示绕过统一出口。
+  if (status === 502 && data?.code === 'PROXY_ECONNREFUSED') {
+    return new ApiError(BACKEND_UNREACHABLE_MESSAGE);
+  }
+  const serverMsg = data?.error || data?.message;
   if (serverMsg) return attachErrorMetadata(new ApiError(serverMsg), e);
   if (status === 404) {
     return attachErrorMetadata(new ApiError('接口不存在（404），请确认前后端版本一致'), e);
@@ -710,6 +728,11 @@ export interface AnalyzeStreamOptions {
    * 服务端无断点或断点已过期时自动全新开始，因此失败重试场景可放心恒传 true。
    */
   resume?: boolean;
+  /**
+   * 自动重连即将开始时回调（attempt 从 1 起）。此前重连期间界面完全静止，
+   * 用户会以为卡死；加载屏据此显示「正在第 N 次重连」。
+   */
+  onReconnect?: (attempt: number, maxRetries: number) => void;
 }
 
 /** 取消导致的 Promise 拒绝：调用方应静默处理（区别于真实失败） */
@@ -829,14 +852,11 @@ export function analyzeStockStream(
       // 从未收到事件：指数退避重连（1s/2s/4s…），耗尽后报连接失败（H-03）
       if (retryCount < maxRetries) {
         retryCount += 1;
+        options.onReconnect?.(retryCount, maxRetries);
         retryTimer = setTimeout(connect, 1000 * 2 ** (retryCount - 1));
         return;
       }
-      finish(
-        new Error(
-          '无法连接后端服务（localhost:3001）。请确认服务已启动，或运行「启动系统.bat」后重试',
-        ),
-      );
+      finish(new Error(BACKEND_UNREACHABLE_MESSAGE));
     };
   }
 

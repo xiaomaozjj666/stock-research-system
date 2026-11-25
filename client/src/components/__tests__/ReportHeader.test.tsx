@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import ReportHeader from '../ReportHeader';
 
 const base = {
@@ -224,5 +224,31 @@ describe('ReportHeader 打印友好（.no-print）', () => {
     expect(screen.getByText('贵州茅台').className.split(/\s+/)).not.toContain('no-print');
     expect(screen.getByText('85').className.split(/\s+/)).not.toContain('no-print');
     expect(screen.getByText('优先跟踪').className.split(/\s+/)).not.toContain('no-print');
+  });
+});
+
+describe('ReportHeader 右侧面板结构', () => {
+  it('评分、评级与导出/打印收在同一右侧面板内', () => {
+    const { container } = render(<ReportHeader data={base} onExport={vi.fn()} />);
+    const side = container.querySelector('.report-header-side');
+    expect(side).not.toBeNull();
+    // 评分与评级同一行，且「综合评分」标注存在
+    expect(side!.querySelector('.score-main')?.textContent).toContain('85');
+    expect(side!.querySelector('.score-main')?.textContent).toContain('优先跟踪');
+    expect(side!.querySelector('.score-unit')?.textContent).toBe('综合评分');
+    // 动作按钮在面板内（此前的三列布局会把它留在卡片右上角）
+    expect(
+      within(side as HTMLElement).getByRole('button', { name: '导出报告' }),
+    ).toBeInTheDocument();
+    expect(within(side as HTMLElement).getByRole('button', { name: '打印' })).toBeInTheDocument();
+  });
+
+  it('置信度长句在头部只显示首句，完整文本放进 title', () => {
+    const long =
+      '基于8位专家独立研判+仲裁综合，整体置信度86%。财务数据置信度高（上市公司年报审计），行业判断置信度中等（存在政策不确定性）。';
+    render(<ReportHeader data={base} research_confidence={long} />);
+    const tag = screen.getByText(/研究置信度/);
+    expect(tag.textContent).toBe('研究置信度：基于8位专家独立研判+仲裁综合，整体置信度86%');
+    expect(tag.getAttribute('title')).toBe(long);
   });
 });
