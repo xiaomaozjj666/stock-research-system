@@ -1,13 +1,14 @@
 import { memo } from 'react';
 interface FinanceMetrics {
   years?: string[];
-  revenue?: number[];
-  netProfit?: number[];
-  grossMargin?: number[];
-  netMargin?: number[];
-  roe?: number[];
-  operatingCashFlow?: number[];
-  eps?: number[];
+  // 单期指标可能缺值（上游缺报），与行内 (number | undefined)[] 保持一致
+  revenue?: (number | undefined)[];
+  netProfit?: (number | undefined)[];
+  grossMargin?: (number | undefined)[];
+  netMargin?: (number | undefined)[];
+  roe?: (number | undefined)[];
+  operatingCashFlow?: (number | undefined)[];
+  eps?: (number | undefined)[];
 }
 
 interface FinancialSectionProps {
