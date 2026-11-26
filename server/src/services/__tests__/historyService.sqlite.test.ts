@@ -7,7 +7,7 @@
  *
  * 数据文件重定向到进程专属临时目录（HISTORY_FILE，数据库落在同目录 .db）。
  */
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -298,5 +298,177 @@ describe('historyService SQLite 并发与迁移', () => {
       delete process.env.HISTORY_DB_FILE;
       resetHistoryStoreCache();
     }
+  });
+});
+
+describe('historyService 真实规模迁移与并发容量', () => {
+  it('3000 条（含重复代码与损坏样本）迁移：限时、去重、按容量裁剪、原文件留档', async () => {
+    const original = process.env.HISTORY_MAX_ITEMS;
+    process.env.HISTORY_MAX_ITEMS = '1200';
+    try {
+      const items: unknown[] = [];
+      const base = Date.parse('2026-01-01T00:00:00.000Z');
+      for (let i = 0; i < 2400; i++) {
+        items.push({
+          id: `legacy-${i}`,
+          stockCode: String(600000 + i),
+          stockName: `股票${i}`,
+          rating: '持续观察',
+          totalScore: 50 + (i % 30),
+          createdAt: new Date(base + i * 60_000).toISOString(),
+          result: { stock_pool: [{ stock_code: String(600000 + i) }] },
+        });
+      }
+      // 600 条重复代码：同一 stock_code 更新，createdAt 更晚 → 应覆盖旧行
+      for (let i = 0; i < 600; i++) {
+        const code = String(600000 + (i % 2400));
+        items.push({
+          id: `dup-${i}`,
+          stockCode: code,
+          stockName: `更新${i}`,
+          rating: '买入',
+          totalScore: 90,
+          createdAt: new Date(base + 10 * 86_400_000 + i * 1000).toISOString(),
+          result: { stock_pool: [{ stock_code: code }] },
+        });
+      }
+      // 损坏样本：非对象 / 缺 id / 缺 result / 非对象字符串
+      items.push(
+        null,
+        {},
+        { id: 'no-code', createdAt: '2026-02-01T00:00:00.000Z', result: {} },
+        { id: 'no-result', stockCode: '600001', createdAt: '2026-02-01T00:00:00.000Z' },
+        'oops',
+      );
+      writeFileSync(legacyFile, JSON.stringify({ items }), 'utf-8');
+
+      const started = performance.now();
+      const firstPage = await listHistory(200);
+      const elapsed = performance.now() - started;
+
+      // listHistory 自身上限 200；真正落库条数用外部连接核对
+      expect(firstPage).toHaveLength(200);
+      expect(elapsed).toBeLessThan(10_000);
+
+      closeHistoryStore();
+      const external = new DatabaseSync(dbFile);
+      try {
+        const count = external.prepare('SELECT COUNT(*) AS c FROM history_items').get() as {
+          c: number;
+        };
+        expect(Number(count.c)).toBe(1200); // 2400 个去重后行 → 按容量裁到 1200
+
+        const dup = external
+          .prepare('SELECT total_score, created_at FROM history_items WHERE stock_code = ?')
+          .get('600000') as { total_score: number; created_at: string };
+        expect(dup.total_score).toBe(90); // 重复项中较新的那条胜出
+        expect(dup.created_at).toBe('2026-01-11T00:00:00.000Z');
+      } finally {
+        external.close();
+      }
+
+      expect(existsSync(legacyFile)).toBe(false);
+      expect(readdirSync(tmpDir).some((f) => f.startsWith('history.json.migrated-'))).toBe(true);
+    } finally {
+      if (original === undefined) delete process.env.HISTORY_MAX_ITEMS;
+      else process.env.HISTORY_MAX_ITEMS = original;
+    }
+  });
+
+  it('迁移中途失败：整批回滚、旧文件保留、meta 不置位；修复后重试可完整导入', async () => {
+    // 先正常建库并写入 migrated 标记，再清标记 + 装一个会失败的触发器
+    await listHistory();
+    closeHistoryStore();
+    const seeded = new DatabaseSync(dbFile);
+    try {
+      seeded.exec(
+        `CREATE TRIGGER fail_boom BEFORE INSERT ON history_items
+         WHEN NEW.stock_code = '600999'
+         BEGIN SELECT RAISE(ABORT, 'boom'); END;`,
+      );
+      seeded.prepare(`DELETE FROM history_meta WHERE key = 'legacy_json_migrated'`).run();
+    } finally {
+      seeded.close();
+    }
+
+    const base = Date.parse('2026-03-01T00:00:00.000Z');
+    writeFileSync(
+      legacyFile,
+      JSON.stringify({
+        items: [
+          {
+            id: 'ok-1',
+            stockCode: '600001',
+            stockName: '先插入',
+            createdAt: new Date(base).toISOString(),
+            rating: '持续观察',
+            totalScore: 60,
+            result: {},
+          },
+          {
+            id: 'boom',
+            stockCode: '600999',
+            stockName: '触发失败',
+            createdAt: new Date(base + 1000).toISOString(),
+            rating: '持续观察',
+            totalScore: 61,
+            result: {},
+          },
+          {
+            id: 'ok-2',
+            stockCode: '600002',
+            stockName: '后插入',
+            createdAt: new Date(base + 2000).toISOString(),
+            rating: '持续观察',
+            totalScore: 62,
+            result: {},
+          },
+        ],
+      }),
+      'utf-8',
+    );
+    resetHistoryStoreCache();
+
+    // 整批回滚：失败点之前的 ok-1 也不能留下
+    expect(await listHistory()).toEqual([]);
+    expect(existsSync(legacyFile)).toBe(true);
+    expect(readdirSync(tmpDir).some((f) => f.startsWith('history.json.migrated-'))).toBe(false);
+
+    // 修复后重试：同一份旧文件被完整导入（含此前触发失败的那条），且只留一次 .migrated 留档
+    closeHistoryStore();
+    const fixed = new DatabaseSync(dbFile);
+    try {
+      fixed.exec('DROP TRIGGER fail_boom');
+    } finally {
+      fixed.close();
+    }
+    resetHistoryStoreCache();
+    const list = await listHistory(200);
+    expect(list.map((i) => i.stockCode).sort()).toEqual(['600001', '600002', '600999']);
+    expect(readdirSync(tmpDir).filter((f) => f.startsWith('history.json.migrated-'))).toHaveLength(
+      1,
+    );
+  });
+
+  it('旧 JSON 解析失败：留档 .corrupt-*，不导入任何记录，也不阻塞后续保存', async () => {
+    writeFileSync(legacyFile, '{ broken json', 'utf-8');
+    expect(await listHistory()).toEqual([]);
+    expect(existsSync(legacyFile)).toBe(false);
+    expect(readdirSync(tmpDir).some((f) => f.startsWith('history.json.corrupt-'))).toBe(true);
+    expect(await saveHistoryEntry(makeEntry('600519'))).not.toBeNull();
+    expect(await listHistory()).toHaveLength(1);
+  });
+
+  it('并发保存叠加容量上限：最终条数等于上限且保留最新', async () => {
+    expect(saveSettings({ historyMaxItems: 5 })).toEqual({ ok: true });
+    const codes = Array.from({ length: 15 }, (_, i) => String(601000 + i));
+    const results = await Promise.all(
+      codes.map((code, i) => saveHistoryEntry(makeEntry(code, { totalScore: 60 + i }))),
+    );
+    expect(results.every((r) => r !== null)).toBe(true);
+
+    const list = await listHistory(200);
+    expect(list).toHaveLength(5);
+    expect(list.map((i) => i.stockCode)).toEqual(codes.slice(-5).reverse());
   });
 });

@@ -30,6 +30,9 @@ export default defineConfig({
       PORT: '3100',
       NODE_ENV: 'production',
       LOG_LEVEL: 'warn',
+      // 写操作限流默认 10 次/分钟：E2E 会在同一分钟内连续保存设置/增删自选股，
+      // 保持真实阈值会让用例顺序决定成败。只在本进程放开配额，不改变生产默认值。
+      RATE_LIMIT_MAX_WRITE: '1000',
       // 数据隔离：E2E 不触碰真实自选股/模拟盘/缓存/审计日志/研究历史数据
       WATCHLIST_FILE: path.join(E2E_TMP, 'watchlist.json'),
       PAPER_TRADING_FILE: path.join(E2E_TMP, 'paperTrading.json'),

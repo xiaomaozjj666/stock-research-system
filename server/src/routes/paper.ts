@@ -24,13 +24,46 @@ function paperStoreFile(): string {
     ? process.env.PAPER_TRADING_FILE
     : path.join(DATA_ROOT, 'paperTrading.json');
 }
+/**
+ * 损坏快照改名留档（`.corrupt-<ts>`）。返回 false 表示无法安全留档：
+ * 此时绝不能新建账户覆盖它——那会毁掉唯一副本。
+ */
+function quarantineCorruptAccount(file: string): boolean {
+  try {
+    if (!fs.statSync(file).isFile()) return false;
+  } catch {
+    return false;
+  }
+  const target = `${file}.corrupt-${Date.now()}`;
+  try {
+    fs.renameSync(file, target);
+    logger.warn('模拟盘账户文件损坏，已改名留档并按新账户继续', { file, backup: target });
+    return true;
+  } catch (error) {
+    logger.error('模拟盘账户文件损坏且无法留档，已拒绝写入以免覆盖原文件', { file, err: error });
+    return false;
+  }
+}
+
 function getPaperAccount(): PaperAccount {
-  if (!_paperAccount) {
-    const file = paperStoreFile();
+  if (_paperAccount) return _paperAccount;
+  const file = paperStoreFile();
+  if (!fs.existsSync(file)) {
     // 文件缺失（首次运行/测试临时路径）时回退新建账户，避免 load 抛 ENOENT 导致 500
-    _paperAccount =
-      (fs.existsSync(file) ? PaperAccount.load(file) : null) ??
-      new PaperAccount(PAPER_INITIAL_CAPITAL, { autoSave: true });
+    _paperAccount = new PaperAccount(PAPER_INITIAL_CAPITAL, { autoSave: true });
+    return _paperAccount;
+  }
+  try {
+    _paperAccount = PaperAccount.load(file);
+  } catch (error) {
+    // 与历史库/设置文件同一语义：坏文件先留档再重建，避免“一次损坏 = 模拟盘永久 500”。
+    // 留档失败则抛出，宁可 500 也不覆盖唯一副本（人工可从备份恢复）。
+    logger.error('模拟盘账户加载失败，尝试留档后重建', { file, err: error });
+    if (!quarantineCorruptAccount(file)) {
+      throw new Error('模拟盘账户文件损坏且无法留档，请人工修复');
+    }
+    _paperAccount = new PaperAccount(PAPER_INITIAL_CAPITAL, { autoSave: true });
+    _paperAccount.save();
   }
   return _paperAccount;
 }

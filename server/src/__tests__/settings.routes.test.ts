@@ -182,6 +182,32 @@ describe('PUT /api/settings', () => {
     expect(cleared.body.history.source).toBe('default');
   });
 
+  it('并发保存不同字段：互不覆盖，最终配置是三者并集', async () => {
+    await Promise.all([
+      request(wrapped)
+        .put('/api/settings')
+        .send({ alertWebhook: { url: 'https://a.example.com/hook' } })
+        .expect(200),
+      request(wrapped)
+        .put('/api/settings')
+        .send({ alertWebhook: { timeoutMs: 1500 } })
+        .expect(200),
+      request(wrapped)
+        .put('/api/settings')
+        .send({ history: { maxItems: 321 } })
+        .expect(200),
+    ]);
+
+    const res = await request(wrapped).get('/api/settings').expect(200);
+    expect(res.body.alertWebhook).toMatchObject({
+      configured: true,
+      urlMasked: 'https://a.example.com/…',
+      timeoutMs: 1500,
+      source: 'settings',
+    });
+    expect(res.body.history).toMatchObject({ maxItems: 321, source: 'settings' });
+  });
+
   it('调低历史容量后立即裁剪现有记录', async () => {
     for (let i = 1; i <= 3; i++) {
       await saveHistoryEntry(entry(String(600100 + i)));
