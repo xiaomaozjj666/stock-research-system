@@ -517,4 +517,117 @@ describe('量化研究工具（初筛/台账/时序/简报）', () => {
     );
     expect(seen[0]).toBe(20);
   });
+
+  it('get_recent_announcements：未配置/代码非法/空内容/超长截断', async () => {
+    const call = (code: string) =>
+      executeToolCall(
+        {
+          id: '1',
+          type: 'function',
+          function: {
+            name: 'get_recent_announcements',
+            arguments: JSON.stringify({ stockCode: code }),
+          },
+        },
+        { getAnnouncements: async () => '' },
+      );
+
+    expect(
+      await executeToolCall(
+        {
+          id: '1',
+          type: 'function',
+          function: { name: 'get_recent_announcements', arguments: '{}' },
+        },
+        {},
+      ),
+    ).toContain('未配置');
+    expect(await call('abc')).toContain('6 位');
+    expect(await call('600519')).toContain('没有可读的公告记录');
+
+    const r = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: { name: 'get_recent_announcements', arguments: '{"stockCode":"600519"}' },
+      },
+      { getAnnouncements: async () => '公'.repeat(7000) },
+    );
+    expect(r.startsWith('公'.repeat(6000))).toBe(true);
+    expect(r).toContain('已截断');
+  });
+
+  it('run_valuation_model：只透传有限数值假设，非法值被忽略', async () => {
+    expect(
+      await executeToolCall(
+        {
+          id: '1',
+          type: 'function',
+          function: { name: 'run_valuation_model', arguments: '{}' },
+        },
+        {},
+      ),
+    ).toContain('未配置');
+
+    const seen: { code: string; assumptions?: Record<string, number> }[] = [];
+    const deps: ToolDeps = {
+      runValuationModel: async (input) => {
+        seen.push(input);
+        return { fairValue: 10 };
+      },
+    };
+    const ok = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: {
+          name: 'run_valuation_model',
+          arguments: JSON.stringify({
+            stockCode: '600519',
+            growthRate1: 0.15,
+            discountRate: 'oops',
+          }),
+        },
+      },
+      deps,
+    );
+    expect(ok).toContain('fairValue');
+    expect(seen[0]).toEqual({ code: '600519', assumptions: { growthRate1: 0.15 } });
+
+    const bad = await executeToolCall(
+      {
+        id: '2',
+        type: 'function',
+        function: { name: 'run_valuation_model', arguments: '{"stockCode":"abc"}' },
+      },
+      deps,
+    );
+    expect(bad).toContain('6 位');
+
+    await executeToolCall(
+      {
+        id: '3',
+        type: 'function',
+        function: { name: 'run_valuation_model', arguments: '{"stockCode":"600519"}' },
+      },
+      deps,
+    );
+    expect(seen[1]).toEqual({ code: '600519' }); // 无有效假设时不带 assumptions 字段
+  });
+
+  it('处理器抛错：返回可读错误而不是把异常抛给调用方', async () => {
+    const r = await executeToolCall(
+      {
+        id: '1',
+        type: 'function',
+        function: { name: 'run_valuation_model', arguments: '{"stockCode":"600519"}' },
+      },
+      {
+        runValuationModel: async () => {
+          throw new Error('upstream boom');
+        },
+      },
+    );
+    expect(r).toBe('工具执行出错: upstream boom');
+  });
 });

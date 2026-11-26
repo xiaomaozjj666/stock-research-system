@@ -509,19 +509,6 @@
   line-height: 1.6;
 }
 
-/* ===== Data Sources Tags (legacy) ===== */
-.data-sources-tags {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
-}
-.data-sources-label {
-  font-size: var(--text-caption);
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
 /* ===== Error Banner ===== */
 .error-banner {
   background: var(--color-danger-dim);

@@ -34,6 +34,14 @@ vi.mock('../../api/client', () => ({
     result: { stock_pool: [{ stock_code: '600519' }] },
   })),
   deleteHistoryItem: vi.fn(async () => {}),
+  // 页面错误分支依赖它把英文/网络错误翻成中文；mock 模块必须显式提供，
+  // 否则一旦触发 catch 就会在 mock 边界抛 "No export"（本组用例正是为此存在）
+  normalizeApiError: (err: unknown, fallback: string) => ({
+    message:
+      err instanceof Error && /fetch|network/i.test(err.message)
+        ? '网络错误，请检查网络后重试'
+        : fallback,
+  }),
 }));
 
 import { fetchHistoryList, fetchHistoryDetail, deleteHistoryItem } from '../../api/client';
@@ -316,10 +324,119 @@ describe('HistoryPage 查看的请求序号', () => {
 });
 
 /**
- * 资源与并发删除。
- * 背景：二次确认的 3 秒 setTimeout 卸载时未清理（切页后仍对已卸载组件 setState）；
- * 并发删除共用一个 deletingId，A 的 finally 会清掉 B 的「删除中…」。
+ * 失败路径与二次确认超时。
+ * 这三条曾经完全没有覆盖：加载失败被空态吞掉、打开/删除失败没有错误横幅、
+ * 3 秒确认窗口到点后按钮是否复位。
  */
+describe('HistoryPage 错误横幅与确认超时', () => {
+  beforeEach(() => {
+    vi.mocked(fetchHistoryList).mockClear();
+    vi.mocked(fetchHistoryDetail).mockReset();
+    vi.mocked(deleteHistoryItem).mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('列表加载失败：显示中文错误 + 原文 title + 重试入口，不落空态', async () => {
+    vi.mocked(fetchHistoryList).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    render(<HistoryPage onOpenHistory={() => {}} />);
+
+    const banner = await screen.findByRole('alert');
+    expect(banner).toHaveTextContent('研究历史加载失败：');
+    expect(banner.querySelector('.error-banner-text')?.getAttribute('title')).toBe(
+      'Failed to fetch',
+    );
+    expect(screen.queryByText('暂无研究历史。')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('打开详情失败：错误文案带动作前缀，列表仍在', async () => {
+    vi.mocked(fetchHistoryDetail).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    render(<HistoryPage onOpenHistory={() => {}} />);
+    await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
+
+    fireEvent.click(openButtons()[0]);
+
+    const banner = await screen.findByRole('alert');
+    expect(banner).toHaveTextContent('研究报告打不开：');
+    expect(screen.getByText('平安银行')).toBeInTheDocument();
+    // 失败后按钮必须恢复，不能停在「打开中…」
+    expect(screen.queryByRole('button', { name: '打开中…' })).toBeNull();
+  });
+
+  it('删除失败：保留该行并提示删除失败', async () => {
+    vi.mocked(deleteHistoryItem).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    render(<HistoryPage onOpenHistory={() => {}} />);
+    await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
+
+    fireEvent.click(rowButtons('贵州茅台', '删除'));
+    fireEvent.click(rowButtons('贵州茅台', '确认删除？'));
+
+    const banner = await screen.findByRole('alert');
+    expect(banner).toHaveTextContent('删除失败：');
+    expect(screen.getByText('贵州茅台')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '删除中…' })).toBeNull();
+  });
+
+  it('二次确认 3 秒后自动复位，避免误触一直悬着', async () => {
+    render(<HistoryPage onOpenHistory={() => {}} />);
+    await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getAllByRole('button', { name: '删除' })[0]);
+    expect(screen.getByRole('button', { name: '确认删除？' })).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(screen.queryByRole('button', { name: '确认删除？' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: '删除' })).toHaveLength(2);
+  });
+
+  it('小数变化量与非法评分：分别显示两位小数 / 不渲染变化量', async () => {
+    vi.mocked(fetchHistoryList).mockResolvedValueOnce([
+      {
+        id: 'h1',
+        stockCode: '600519',
+        stockName: '贵州茅台',
+        createdAt: '2026-09-10T02:00:00Z',
+        rating: '优先跟踪',
+        totalScore: 87.25,
+        timeline: [
+          { date: '2026-08-01', score: 86, rating: '持续观察' },
+          { date: '2026-09-10', score: 87.25, rating: '优先跟踪' },
+        ],
+      },
+      {
+        id: 'h2',
+        stockCode: '000001',
+        stockName: '平安银行',
+        createdAt: '2026-09-10T01:00:00Z',
+        rating: '持续观察',
+        totalScore: Number.NaN,
+        timeline: [
+          { date: '2026-08-01', score: 80, rating: '持续观察' },
+          { date: '2026-09-10', score: Number.NaN, rating: '持续观察' },
+        ],
+      },
+    ]);
+    const { container } = render(<HistoryPage onOpenHistory={() => {}} />);
+    await waitFor(() => expect(screen.getByText('贵州茅台')).toBeInTheDocument());
+
+    const positive = container.querySelector('.val-positive');
+    expect(positive?.textContent).toBe(' ▲ +1.25');
+    // h2 的 score 为 NaN → scoreDelta 返回 null，该行不得渲染任何变化量
+    const badRow = screen.getByText('平安银行').closest('li') as HTMLElement;
+    expect(badRow.querySelector('.val-positive')).toBeNull();
+    expect(badRow.textContent).not.toContain('▲');
+    expect(container.querySelectorAll('.val-positive')).toHaveLength(1);
+  });
+});
 describe('HistoryPage 资源与并发删除', () => {
   beforeEach(() => {
     vi.mocked(fetchHistoryList).mockClear();

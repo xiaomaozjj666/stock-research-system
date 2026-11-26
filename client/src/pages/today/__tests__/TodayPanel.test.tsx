@@ -230,4 +230,93 @@ describe('TodayPanel 失败文案来自真实 reason', () => {
     expect(screen.getByText(/放量涨停/)).toBeInTheDocument();
     expect(screen.getByText('▲ +7')).toBeInTheDocument();
   });
+
+  it('自选/历史任一失败：观点变化块如实报错，不误报成其余两块', async () => {
+    api.fetchWatchlistAlerts.mockResolvedValue({
+      generatedAt: '2026-09-16T02:30:00.000Z',
+      monitored: 0,
+      alerts: [],
+    });
+    api.getResearchDigests.mockResolvedValue({ items: [] });
+    api.getWatchlist.mockRejectedValue(new Error('watchlist down'));
+    api.fetchHistoryList.mockResolvedValue([historyItem()]);
+
+    render(<TodayPanel />);
+
+    await waitFor(() => expect(screen.getByText(/观点变化读取失败/)).toBeInTheDocument());
+    expect(screen.getByText(/本次监控未发现异动/)).toBeInTheDocument();
+    expect(screen.getByText(/还没有简报/)).toBeInTheDocument();
+  });
+
+  it('变化计算：跳过单点/零变化同评级，保留持平换评级并按幅度排序', async () => {
+    api.fetchWatchlistAlerts.mockResolvedValue({ generatedAt: null, monitored: 0, alerts: [] });
+    api.getResearchDigests.mockResolvedValue({ items: [] });
+    api.getWatchlist.mockResolvedValue({ codes: ['600519', '000001', '000002', '000003'] });
+    api.fetchHistoryList.mockResolvedValue([
+      // 只有一个时间点 → 跳过
+      historyItem({
+        id: 'h0',
+        stockCode: '600519',
+        timeline: [{ date: '2026-09-16', score: 80, rating: '持续观察' }],
+      }),
+      // 分数与评级都没变 → 跳过
+      historyItem({
+        id: 'h1',
+        stockCode: '000001',
+        stockName: '平安银行',
+        timeline: [
+          { date: '2026-09-10', score: 80, rating: '持续观察' },
+          { date: '2026-09-16', score: 80, rating: '持续观察' },
+        ],
+      }),
+      // 分数不变但评级变了 → 保留「持平」
+      historyItem({
+        id: 'h2',
+        stockCode: '000002',
+        stockName: '',
+        timeline: [
+          { date: '2026-09-10', score: 80, rating: '持续观察' },
+          { date: '2026-09-16', score: 80, rating: '优先跟踪' },
+        ],
+      }),
+      // 大幅下降
+      historyItem({
+        id: 'h3',
+        stockCode: '000003',
+        stockName: '万科A',
+        timeline: [
+          { date: '2026-09-10', score: 85, rating: '优先跟踪' },
+          { date: '2026-09-16', score: 76, rating: '持续观察' },
+        ],
+      }),
+    ]);
+
+    render(<TodayPanel />);
+
+    await waitFor(() => expect(screen.getByText('万科A（000003）')).toBeInTheDocument());
+    // 仅两条保留：-9 排在持平之前；name 为空时用代码兜底
+    expect(screen.getByText('000002（000002）')).toBeInTheDocument();
+    expect(screen.getByText('▼ -9')).toBeInTheDocument();
+    expect(screen.getByText('— 持平')).toBeInTheDocument();
+    expect(screen.queryByText(/平安银行/)).toBeNull();
+
+    const rows = screen.getAllByText(/（\d{6}）/);
+    expect(rows[0].textContent).toContain('万科A');
+    expect(rows[1].textContent).toContain('000002');
+  });
+
+  it('简报缺少 screener 字段：命中数按 0 展示且不拼「代表」', async () => {
+    api.fetchWatchlistAlerts.mockResolvedValue({ generatedAt: null, monitored: 0, alerts: [] });
+    api.getResearchDigests.mockResolvedValue({
+      items: [{ id: 'd1', createdAt: 'not-a-date' }],
+    });
+    api.fetchHistoryList.mockResolvedValue([]);
+
+    render(<TodayPanel />);
+
+    await waitFor(() => expect(screen.getByText(/初筛命中/)).toBeInTheDocument());
+    expect(screen.getByText(/初筛命中\s*0\s*只/)).toBeInTheDocument();
+    expect(screen.queryByText(/代表：/)).toBeNull();
+    expect(screen.getByText(/生成于 —/)).toBeInTheDocument();
+  });
 });

@@ -39,12 +39,13 @@ export default defineConfig({
       // 不占分母，也就不构成门禁**：体量最大的业务逻辑文件恰好落在门禁盲区里。
       // 实测纳入后仅下降约 1.3 个点且四项阈值仍全部通过，说明该目录本就由
       // server/src/__tests__/*.routes.test.ts 的 supertest 用例真实覆盖。
-      // 阈值留约 1.5 个点余量，避免与业务无关的小改动动辄失败。
+      // 2026-11-26：分支覆盖 84.30%（11688/13864），分支阈值由 80 抬到 83，
+      // 留约 1.3 个点余量；其余三项同步留 1.5 个点以上。
       thresholds: {
         lines: 92,
-        statements: 90,
-        functions: 92,
-        branches: 80,
+        statements: 91,
+        functions: 93,
+        branches: 83,
       },
       exclude: [
         // 测试文件本身不计入覆盖率：此前只写了 .ts，导致 41 个 .test.tsx 被算进分母

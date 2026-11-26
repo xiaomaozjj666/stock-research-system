@@ -201,4 +201,212 @@ describe('FollowUpSection 后续跟踪指标', () => {
     expect(screen.queryByText(/净收益率 -?\d/)).not.toBeInTheDocument();
     expect(apiMock.evaluateThesis).toHaveBeenCalledWith('thesis-2');
   });
+
+  it('冻结口径校验：数量不足整手/期限越界/限价缺失都拒绝提交', async () => {
+    render(
+      <FollowUpSection
+        data={DATA}
+        stockCode="600519"
+        enableThesis
+        rating="持续观察"
+        entryPrice={100}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText('投资论点'), { target: { value: '论点' } });
+    // 直接触发 submit，绕过浏览器原生约束（这里要测的是组件内的二次校验）
+    const form = document.querySelector('form.thesis-form') as HTMLFormElement;
+
+    fireEvent.change(screen.getByLabelText('数量（股）'), { target: { value: '50' } });
+    fireEvent.submit(form);
+    expect(screen.getByRole('alert')).toHaveTextContent('请填写有效价格、阈值、期限和整手数量');
+
+    fireEvent.change(screen.getByLabelText('数量（股）'), { target: { value: '100' } });
+    fireEvent.change(screen.getByLabelText('期限（天）'), { target: { value: '0' } });
+    fireEvent.submit(form);
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+
+    // 限价单：限价必须为正
+    fireEvent.change(screen.getByLabelText('期限（天）'), { target: { value: '20' } });
+    fireEvent.change(screen.getByLabelText('订单类型'), { target: { value: 'limit' } });
+    fireEvent.change(screen.getByLabelText('限价'), { target: { value: '0' } });
+    fireEvent.submit(form);
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(apiMock.createThesis).not.toHaveBeenCalled();
+  });
+
+  it('限价单提交时把 limitPrice 一起冻结', async () => {
+    apiMock.createThesis.mockResolvedValue({
+      thesis: {
+        id: 't-limit',
+        stockCode: '600519',
+        thesis: '限价买入',
+        rating: '持续观察',
+        metric: 'return_pct',
+        comparator: 'lte',
+        threshold: -5,
+        horizonDays: 20,
+        evidenceSource: 'real_ohlcv',
+        invalidationAction: '复核',
+        benchmarkCode: '000300',
+        execution: {
+          side: 'buy',
+          orderType: 'limit',
+          entryPrice: 100,
+          limitPrice: 99,
+          quantity: 200,
+          commissionRate: 0.0003,
+          stampDutyRate: 0.0005,
+        },
+        createdAt: '2026-01-01T00:00:00.000Z',
+        dueAt: '2026-01-21T00:00:00.000Z',
+        status: 'active',
+        evidenceStatus: 'pending',
+      },
+    } as unknown as { thesis: ThesisRecord });
+    render(
+      <FollowUpSection
+        data={DATA}
+        stockCode="600519"
+        enableThesis
+        rating="持续观察"
+        entryPrice={100}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText('投资论点'), { target: { value: '限价买入' } });
+    fireEvent.change(screen.getByLabelText('数量（股）'), { target: { value: '200' } });
+    fireEvent.change(screen.getByLabelText('订单类型'), { target: { value: 'limit' } });
+    fireEvent.change(screen.getByLabelText('限价'), { target: { value: '99' } });
+    fireEvent.click(screen.getByRole('button', { name: '冻结并创建实验' }));
+
+    await waitFor(() => expect(apiMock.createThesis).toHaveBeenCalledTimes(1));
+    expect(apiMock.createThesis.mock.calls[0][0].execution).toMatchObject({
+      orderType: 'limit',
+      limitPrice: 99,
+      quantity: 200,
+    });
+    expect(await screen.findByText(/限价 99/)).toBeInTheDocument();
+  });
+
+  it('记录渲染：证伪/到期/未成交/收益与超额收益分支', async () => {
+    const base = {
+      stockCode: '600519',
+      rating: '持续观察',
+      metric: 'return_pct' as const,
+      comparator: 'lte' as const,
+      threshold: -5,
+      horizonDays: 20,
+      evidenceSource: 'real_ohlcv' as const,
+      invalidationAction: '复核',
+      benchmarkCode: '000300',
+      execution: {
+        side: 'buy' as const,
+        orderType: 'market' as const,
+        entryPrice: 100,
+        quantity: 100,
+        commissionRate: 0.0003,
+        stampDutyRate: 0.0005,
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      dueAt: '2026-01-21T00:00:00.000Z',
+    };
+    apiMock.getTheses.mockResolvedValue({
+      items: [
+        {
+          ...base,
+          id: 'a',
+          thesis: '证伪成功',
+          status: 'invalidated' as const,
+          evidenceStatus: 'sufficient' as const,
+          returnPct: 3.2,
+          excessPct: 1.5,
+        },
+        {
+          ...base,
+          id: 'b',
+          thesis: '已到期未证伪',
+          status: 'expired' as const,
+          evidenceStatus: 'sufficient' as const,
+        },
+        {
+          ...base,
+          id: 'c',
+          thesis: '未成交',
+          status: 'expired' as const,
+          evidenceStatus: 'no_execution' as const,
+          execution: { ...base.execution, orderType: 'limit' as const, limitPrice: 95 },
+        },
+      ],
+    });
+    render(<FollowUpSection data={DATA} stockCode="600519" enableThesis rating="持续观察" />);
+
+    expect(await screen.findByText('真实证据达到证伪条件')).toBeInTheDocument();
+    expect(screen.getByText(/净收益率 3.2% · 超额 1.5%/)).toBeInTheDocument();
+    expect(screen.getByText('已到期，未达到证伪条件')).toBeInTheDocument();
+    expect(screen.getByText('未按冻结限价规则成交，不生成收益结论')).toBeInTheDocument();
+    expect(screen.getByText(/限价 95/)).toBeInTheDocument();
+  });
+
+  it('评估失败：错误可见且按钮恢复可用', async () => {
+    const active = {
+      id: 't-fail',
+      stockCode: '600519',
+      thesis: '评估失败',
+      rating: '持续观察',
+      metric: 'return_pct',
+      comparator: 'lte',
+      threshold: -5,
+      horizonDays: 20,
+      evidenceSource: 'real_ohlcv',
+      invalidationAction: '复核',
+      benchmarkCode: '000300',
+      execution: {
+        side: 'buy',
+        orderType: 'market',
+        entryPrice: 100,
+        quantity: 100,
+        commissionRate: 0.0003,
+        stampDutyRate: 0.0005,
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      dueAt: '2026-01-21T00:00:00.000Z',
+      status: 'active',
+      evidenceStatus: 'pending',
+    } as ThesisRecord;
+    apiMock.getTheses.mockResolvedValue({ items: [active] });
+    apiMock.evaluateThesis.mockRejectedValue(new Error('上游不可达'));
+    render(<FollowUpSection data={DATA} stockCode="600519" enableThesis rating="持续观察" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '按冻结口径评估' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('上游不可达');
+    expect(screen.getByRole('button', { name: '按冻结口径评估' })).toBeEnabled();
+  });
+
+  it('本地状态损坏/未给股票代码：静默降级，不影响指标渲染', () => {
+    localStorage.setItem('srs-followup:600519', '{ broken');
+    const { rerender } = render(<FollowUpSection data={DATA} stockCode="600519" />);
+    expect(screen.getByText('后续跟踪指标')).toBeInTheDocument();
+
+    rerender(<FollowUpSection data={DATA} />);
+    expect(screen.getByText('季度营收/净利润增速变化')).toBeInTheDocument();
+  });
+
+  it('自定义指标：空白不添加、重复不重复添加、可删除', async () => {
+    render(<FollowUpSection data={DATA} stockCode="600519" />);
+    const input = screen.getByLabelText('自定义跟踪指标输入');
+    const add = screen.getByRole('button', { name: '添加' });
+    expect(add).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.queryByText('   ')).toBeNull();
+
+    fireEvent.change(input, { target: { value: '自定义指标' } });
+    fireEvent.click(add);
+    fireEvent.change(input, { target: { value: '自定义指标' } });
+    fireEvent.click(add);
+    expect(screen.getAllByText('自定义指标')).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: '删除自定义指标' }));
+    expect(screen.queryByText('自定义指标')).toBeNull();
+  });
 });

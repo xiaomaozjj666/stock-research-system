@@ -419,20 +419,6 @@
   flex-wrap: wrap;
   margin-bottom: 16px;
 }
-.watchlist-input {
-  flex: 1 1 200px;
-  min-width: 160px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-default);
-  color: var(--text-primary);
-  border-radius: var(--radius-md);
-  padding: 10px 12px;
-  font-size: 14px;
-  outline: none;
-}
-.watchlist-input:focus {
-  border-color: var(--border-focus);
-}
 .btn-primary {
   background: var(--accent);
   color: var(--text-inverse);

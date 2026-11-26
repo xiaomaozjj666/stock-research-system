@@ -1540,3 +1540,32 @@ fetch stub（service 已 mock、响应确定），且覆盖的是**当前最大�
   下一次 `/api/history` 立即只剩最新 7 条，并核对 `settings.json` 落盘。
 - E2E 写操作限流在 `playwright.config.mts` 放开为 1000/分钟：默认 10 次/分钟会让
   用例顺序决定成败；仅测试进程生效，生产默认值未改。
+
+## 2026-11-26 体积再压缩与分支覆盖率（第三轮）
+
+- **体积终值**：合计 1232.87 kB / 1300（余量 67.1），首屏 426.17 / 500（余量 73.8）；
+  index.css 100.78 → 96.96，index 41.10，report 68.51，echarts 605.92，react 218.88。
+- **本轮真实削减**：删除 7 组静态扫描零引用的历史样式（旧搜索下拉/快捷股/加载单行
+  文案/对比输入框/数据来源标签/自选输入框 + 打印规则里对应条目）-1.62 kB；历史页
+  CSS 改由 `HistoryPage` 按需 import（`.charts-suspense`/`.history-snapshot-banner`
+  因全局使用已移到 components.css / report.css），首屏再 -3.8 kB。
+- **试过但放弃**（均为「收益 ≤ 噪音」或「有可见回归」）：
+  - `build.cssMinify: 'lightningcss'`：Vite 8/Rolldown 下产物字节完全不变，已回滚。
+  - 用 line series 替 `markLine` 省 ~18 kB：分类轴负坐标被夹到索引 0，PE 参考线会内缩
+    /单点不可见，属可见回归（第二轮已回滚，不再尝试）。
+  - 路由级拆 `ChatPanel`：只会把字节从首屏挪到点击后，总字节不变且有加载闪烁，
+    不符合“不牺牲体验”，不做。
+  - 字体/图标：全仓无 `@font-face`、无图标依赖（图标均为内联 SVG/data URI），无可裁剪。
+  - 第三方按需：运行时依赖只有 react/react-dom/echarts 三个，ECharts 已按图表+组件
+    注册（metafile 实测无 geo/radar/pie 等未用模块），无进一步空间。
+  - **下限结论**：ECharts 605.92 + React 218.88 ≈ 825 kB 是固定底噪，应用代码 ~408 kB；
+    再压缩必须删图表类型（K 线/缩放/标线/图例）或删页面功能，不属于无损优化。
+- **分支覆盖率**：82.04% → 84.34%（11694/13864），阈值 80 → 83；statements 90→91、
+  functions 92→93（实测 92.67/94.30），lines 保持 92（实测 94.71）。新增用例优先打
+  此前未覆盖的分支：`api/http.ts` 9%→94%（超时/取消/空响应/非 JSON/拦截器）、
+  `FinancialSection` 41%→94%、行业/资金/估值专家阈值分桶、`llm/tools` 公告与估值工具
+  的未配置/非法输入/异常路径、`documentInsights` LLM 缺字段降级、`HistoryPage` 加载/
+  打开/删除失败与 3 秒确认超时、`PriceTrendChart` 光标与 tooltip 空参/越界/均线缺失、
+  `knowledgeGraph` 缺行业/无效指标/悬挂边、`eventProvider` 取消与字段回落、
+  `TodayPanel` 单点/零变化/失败隔离。剩余未覆盖集中在 `quantOps` 长端点与 App/页面
+  的条件渲染，继续提升需大量 UI 编排测试，性价比低于本轮。

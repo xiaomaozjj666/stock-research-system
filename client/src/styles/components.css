@@ -149,38 +149,6 @@ tr:hover td {
 .navbar-search input::placeholder {
   color: var(--text-muted);
 }
-.search-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  background: var(--bg-card);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  z-index: 200;
-  box-shadow: var(--shadow-md);
-}
-.search-item {
-  padding: var(--space-sm) var(--space-md);
-  cursor: pointer;
-  display: flex;
-  gap: var(--space-sm);
-  align-items: center;
-  transition: background var(--duration-fast) var(--ease-out);
-}
-.search-item:hover {
-  background: var(--bg-card-hover);
-}
-.search-name {
-  color: var(--text-secondary);
-}
-.quick-stocks {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 6px;
-}
 
 /* Stock Search */
 .stock-search-container {
@@ -388,6 +356,15 @@ tr:hover td {
   width: 100%;
   max-width: 360px;
 }
+.charts-suspense {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+}
 .loading-spinner {
   width: 32px;
   height: 32px;
@@ -395,11 +372,6 @@ tr:hover td {
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
-}
-.loading-stage {
-  font-size: var(--text-h2);
-  color: var(--accent);
-  font-weight: 500;
 }
 .loading-progress {
   width: 100%;

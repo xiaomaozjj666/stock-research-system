@@ -168,3 +168,47 @@ describe('/api/quant/factor/experiments 逐条校验', () => {
     expect(badKept.status).toBe(400);
   });
 });
+
+describe('其他 quantOps 入口的参数校验', () => {
+  it('research-memory / announcements / valuation / backtest：非法代码一律 400 且不取数', async () => {
+    expect((await request(app).get('/api/quant/research-memory/abc')).status).toBe(400);
+    expect((await request(app).get('/api/quant/announcements?code=abc')).status).toBe(400);
+    expect(
+      (await request(app).post('/api/quant/valuation/model').send({ code: 'abc' })).status,
+    ).toBe(400);
+    expect((await request(app).post('/api/backtest/evaluate').send({ code: 'abc' })).status).toBe(
+      400,
+    );
+    expect(mockedScreener).not.toHaveBeenCalled();
+  });
+
+  it('digests：limit 非数字回落默认 20，返回数组', async () => {
+    const r = await request(app).get('/api/quant/digests?limit=abc');
+    expect(r.status).toBe(200);
+    expect(Array.isArray(r.body.items)).toBe(true);
+  });
+
+  it('factor/expression：空表达式/语法错误/非法 horizons/非法区间都在取数前拒绝', async () => {
+    const blank = await request(app).post('/api/quant/factor/expression').send({});
+    expect(blank.status).toBe(400);
+    expect(blank.body.error).toContain('expression');
+
+    const syntax = await request(app)
+      .post('/api/quant/factor/expression')
+      .send({ expression: '1 +' });
+    expect(syntax.status).toBe(400);
+    expect(syntax.body.error).toBe('因子表达式非法');
+    expect(typeof syntax.body.detail).toBe('string');
+
+    const horizons = await request(app)
+      .post('/api/quant/factor/expression')
+      .send({ expression: 'close', horizons: [0, 999] });
+    expect(horizons.status).toBe(400);
+    expect(horizons.body.error).toContain('horizons');
+
+    const dates = await request(app)
+      .post('/api/quant/factor/expression')
+      .send({ expression: 'close', startDate: '2026-13-40' });
+    expect(dates.status).toBe(400);
+  });
+});

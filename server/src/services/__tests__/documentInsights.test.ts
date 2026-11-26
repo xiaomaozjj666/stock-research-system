@@ -60,4 +60,72 @@ describe('文档洞察抽取', () => {
     expect(r.positives.length).toBeGreaterThan(0);
     expect(r.risks.length).toBeGreaterThan(0);
   });
+
+  it('LLM 返回缺字段/非数组/未知置信度：逐项降级而不抛错', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '',
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                summary: '',
+                positives: 'not-an-array',
+                risks: null,
+                confidence: 'unknown',
+              }),
+            },
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    const r = await extractDocumentInsights('某公司发布年度报告，营收增长。');
+    expect(r.source).toBe('llm');
+    // summary 为空时回退原文前 200 字
+    expect(r.summary).toBe('某公司发布年度报告，营收增长。');
+    expect(r.positives).toEqual([]);
+    expect(r.risks).toEqual([]);
+    expect(r.catalysts).toEqual([]);
+    expect(r.confidence).toBe('medium');
+  });
+
+  it('置信度大小写与中文均能识别（HIGH/低）', async () => {
+    const payloads = ['HIGH', '低'];
+    for (const confidence of payloads) {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => '',
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  summary: '摘要',
+                  positives: [],
+                  risks: [],
+                  catalysts: [],
+                  confidence,
+                }),
+              },
+            },
+          ],
+        }),
+      }) as unknown as typeof fetch;
+      const r = await extractDocumentInsights('文本');
+      expect(r.confidence).toBe(confidence === '低' ? 'low' : 'high');
+    }
+  });
+
+  it('超长文本：只取前 6000 字做词典扫描，summary 截断到 200', async () => {
+    delete process.env.DEEPSEEK_API_KEY;
+    const long = `${'铺垫'.repeat(3500)}增长`; // 增长出现在 6000 字之后
+    const r = await extractDocumentInsights(long);
+    expect(r.source).toBe('heuristic');
+    expect(r.summary).toHaveLength(200);
+    expect(r.positives).not.toContain('提及「增长」'); // 6000 字窗口外的关键词不计入
+  });
 });

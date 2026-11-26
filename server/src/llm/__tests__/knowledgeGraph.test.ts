@@ -430,3 +430,86 @@ describe('buildFinancialGraph 工厂函数', () => {
     expect(g.edgeCount()).toBe(22);
   });
 });
+
+describe('边界：缺失行业 / 无效指标 / 空子集', () => {
+  it('行业节点缺失时跳过 belongs_to；null/NaN 指标不建成假 0 节点', () => {
+    const data: FinancialGraphData = {
+      sectors: [],
+      stocks: [
+        {
+          code: '600001',
+          name: '测试股',
+          sector: '未知行业',
+          pe: Number.NaN,
+          pb: Number.NaN,
+          roe: 5,
+          grossMargin: Number.NaN,
+        },
+      ],
+    };
+    const g = buildFinancialGraph(data);
+    expect(g.getEdges('stock:600001').some((e) => e.type === 'belongs_to')).toBe(false);
+    const indicators = g.getIndicators('600001');
+    expect(indicators).toHaveLength(1);
+    expect(indicators[0].properties).toMatchObject({ key: 'roe', value: 5 });
+  });
+
+  it('基础统计与重复 addNode 不重复邻接', () => {
+    const g = new KnowledgeGraph();
+    const a: GraphNode = { id: 'stock:a', type: 'stock', name: 'A', properties: {} };
+    const b: GraphNode = { id: 'stock:b', type: 'stock', name: 'B', properties: {} };
+    g.addNode(a);
+    g.addNode(b);
+    g.addEdge({ source: 'stock:a', target: 'stock:b', type: 'competes_with' });
+    g.addNode({ ...a, name: 'A2' });
+
+    expect(g.nodeCount()).toBe(2);
+    expect(g.edgeCount()).toBe(1);
+    expect(
+      g
+        .getAllNodes()
+        .map((n) => n.name)
+        .sort(),
+    ).toEqual(['A2', 'B']);
+    expect(g.getAllEdges()).toHaveLength(1);
+    expect(g.getNeighbors('stock:a')).toHaveLength(1);
+  });
+
+  it('删除不存在的节点/边：返回 false/0，不改变图', () => {
+    const g = buildFinancialGraph(SAMPLE_DATA);
+    const before = g.edgeCount();
+    expect(g.removeNode('stock:不存在')).toBe(false);
+    expect(g.removeEdge('stock:600519', 'stock:不存在')).toBe(0);
+    expect(g.edgeCount()).toBe(before);
+  });
+
+  it('queryRelated 的上游/下游/客户/一般意图都安全返回（无对应关系时为 null）', () => {
+    const g = buildFinancialGraph(SAMPLE_DATA);
+    for (const q of [
+      '贵州茅台 上游',
+      '贵州茅台 供应商',
+      '贵州茅台 下游',
+      '贵州茅台 客户',
+      '贵州茅台',
+    ]) {
+      expect(() => g.queryRelated(q)).not.toThrow();
+    }
+  });
+
+  it('toContextString：不存在的子集 → 空图提示；悬空边用 id 兜底', () => {
+    const g = new KnowledgeGraph();
+    expect(g.toContextString(['stock:missing'])).toBe('【知识图谱】(空)');
+
+    g.addNode({ id: 'stock:a', type: 'stock', name: 'A', properties: {} });
+    g.addEdge({ source: 'stock:a', target: 'stock:ghost', type: 'competes_with' });
+    const text = g.toContextString();
+    expect(text).toContain('A ->[competes_with]-> stock:ghost');
+  });
+
+  it('addEdge 不校验节点存在性：邻居遍历跳过悬挂目标', () => {
+    const g = new KnowledgeGraph();
+    g.addNode({ id: 'stock:a', type: 'stock', name: 'A', properties: {} });
+    g.addEdge({ source: 'stock:a', target: 'stock:ghost', type: 'belongs_to' });
+    expect(g.getNeighbors('stock:a')).toEqual([]);
+  });
+});

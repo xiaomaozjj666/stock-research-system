@@ -25,9 +25,9 @@ const DEFAULT_DIST = resolve(scriptDir, '..', 'dist');
 /**
  * 各 chunk 的体积预算（单位 kB，按 1000 进制，与 vite 构建日志口径一致）。
  *
- * 基线实测（Vite 8.3.8，2026-11-26 构建产物，合计 1234.40 kB）：
- *   echarts-vendor 605.92 / react-vendor 218.88 / index.css 100.78 /
- *   QuantPage 77.70 / report 68.51 / index 41.07
+ * 基线实测（Vite 8.3.8，2026-11-26 最终产物，合计 1232.87 kB / 首屏 426.17 kB）：
+ *   echarts-vendor 605.92 / react-vendor 218.88 / index.css 96.96 /
+ *   QuantPage 77.73 / report 68.51 / index 41.10
  * 历史变动：
  *   index 90.68 → 100.99（API 错误完整携带 requestId/code/retryAfter、
  *   SSE 解析失败可见化，2026-11-05 据此把预算 100 放宽到 109）
@@ -35,8 +35,12 @@ const DEFAULT_DIST = resolve(scriptDir, '..', 'dist');
  *   vendor（axios）chunk 整体消失，合计 1291.46 → 1233.29 kB。
  *   2026-11-26：图例改用 LegendPlain（-5.74 kB）、雷达图由 ECharts radar
  *   坐标系改为轻量 SVG（-11.85 kB，report 慢加载块），报告组件拆出独立
- *   report chunk（index 108.88 → 41.07），三组页面 CSS 改为按需引入
+ *   report chunk（index 108.88 → 41.10），三组页面 CSS 改为按需引入
  *   （首屏 CSS -8 kB）。合计 1250.05 → 1234.40 kB，余量 50 → 65.6 kB。
+ *   2026-11-26 第二轮：删除 7 组已无引用的历史样式（-1.62 kB），历史页 CSS
+ *   改为路由级按需加载（index.css 100.78 → 96.96、首屏 429.97 → 426.17）。
+ *   合计 1232.87 kB / 预算 1300（余量 67.1）；首屏 426.17 / 500（余量 73.8）。
+ *   ECharts/React 固定底噪约 825 kB，应用代码 ~408 kB，继续压缩只能删功能。
  * 预算值在实测值上留了约 8% 余量：够吸收压缩波动和小改动，又能在体积真的
  * 膨胀时立刻失败。改预算 = 承认一次增长，应该在 PR 里说明原因。
  * 名单里没有 vendor：项目已无第三方聚合 chunk，将来若重新出现会落到

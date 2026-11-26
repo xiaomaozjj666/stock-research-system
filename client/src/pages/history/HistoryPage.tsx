@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+// 历史页样式按路由懒加载：index.css 不再全局引入，首屏不再下载只有本页用到的规则
+import '../../styles/history.css';
 import {
   fetchHistoryList,
   fetchHistoryDetail,

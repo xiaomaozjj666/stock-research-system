@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   fetchBuybackEvents,
   fetchDividendEvents,
+  fetchDragonTigerEvents,
   fetchStockEvents,
   fetchUnlockEvents,
 } from '../eventProvider.js';
@@ -304,5 +305,127 @@ describe('取消纪律：fetchStockEvents 的取消不按上游失败处理', ()
 
     await expect(fetchStockEvents('600519', controller.signal)).rejects.toThrow(/客户端断开/);
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('请求中途被取消：降级器重新抛出取消原因，而不是静默返回 []', async () => {
+    const controller = new AbortController();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      controller.abort(new Error('客户端断开'));
+      throw new Error('socket hang up');
+    });
+
+    await expect(fetchStockEvents('600519', controller.signal)).rejects.toThrow(/客户端断开/);
+  });
+});
+
+describe('eventProvider 边界解析', () => {
+  it('缓存 TTL 非法值回落默认 24h（第二次请求命中缓存）', async () => {
+    process.env.QUANT_EVENT_CACHE_TTL_HOURS = 'abc';
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(dcBody(DIV_ROWS));
+    await fetchDividendEvents('600519');
+    await fetchDividendEvents('600519');
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('数字字符串/缺失公告日回落/非法日期：按字段候选顺序解析', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      dcBody([
+        {
+          // PLAN_NOTICE_DATE 非法 → 回落 NOTICE_DATE；股利为字符串数字
+          PLAN_NOTICE_DATE: 'not-a-date',
+          NOTICE_DATE: '2026-05-01 10:00:00',
+          EX_DIVIDEND_DATE: '2026-05-02',
+          PRETAX_BONUS_RMB: '3.5',
+          DIVIDENT_RATIO: '0.01',
+        },
+        // 两个日期都没有 → 行被过滤
+        { PRETAX_BONUS_RMB: 1 },
+      ]),
+    );
+    const rows = await fetchDividendEvents('600519');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      announceDate: '2026-05-01',
+      exDate: '2026-05-02',
+      per10Cash: 3.5,
+      dividendYieldPct: 1,
+    });
+  });
+
+  it('回购：DIM_DATE 缺失回落 NOTICEDATE，市值回落 ZSZ，金额回落下限', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      dcBody([
+        {
+          DIM_DATE: null,
+          NOTICEDATE: '2026-06-01 00:00:00',
+          REPURAMOUNTLIMIT: null,
+          REPURAMOUNTLOWER: 500,
+          AGSZBHXS: null,
+          ZSZ: 900,
+          ZJSZBL: null,
+          REPURPROGRESS: '   ',
+        },
+        // 三个日期全缺 → 过滤
+        { DIM_DATE: null, NOTICEDATE: null, UPDATEDATE: null, REPURAMOUNTLIMIT: 1 },
+      ]),
+    );
+    const rows = await fetchBuybackEvents('600519');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      announceDate: '2026-06-01',
+      planAmountHighYuan: 500,
+      preAnnounceCapYuan: 900,
+      progress: null,
+    });
+  });
+
+  it('解禁：FREE_RATIO >1.5 视为已是百分比；0/null 被过滤', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      dcBody([
+        { FREE_DATE: '2026-01-01', FREE_RATIO: 12.5, CURRENT_FREE_SHARES: 1 },
+        { FREE_DATE: '2026-02-01', FREE_RATIO: 0, CURRENT_FREE_SHARES: 1 },
+        { FREE_DATE: null, FREE_RATIO: 0.2 },
+      ]),
+    );
+    const rows = await fetchUnlockEvents('600519');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ratioOfFloatPct).toBe(12.5);
+  });
+
+  it('龙虎榜：同日多原因按 |净买额| 取最显著，缺失回落占比、原因去空白', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      dcBody([
+        {
+          TRADE_DATE: '2026-07-01',
+          BILLBOARD_NET_AMT: 100,
+          DEAL_NET_RATIO: 5,
+          EXPLANATION: '  涨幅偏离  ',
+        },
+        { TRADE_DATE: '2026-07-01', BILLBOARD_NET_AMT: -500, DEAL_NET_RATIO: -9 },
+        { TRADE_DATE: '2026-07-02', BILLBOARD_NET_AMT: null, DEAL_NET_RATIO: 3 },
+        { TRADE_DATE: null, BILLBOARD_NET_AMT: 1 },
+      ]),
+    );
+    const rows = await fetchDragonTigerEvents('600519');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ eventDate: '2026-07-01', netAmountYuan: -500, reason: null });
+    expect(rows[0].reason).toBeNull();
+  });
+
+  it('上游 message=「返回数据为空」但无 code 9201 → 合法空结果；HTTP 非 2xx → 抛状态错误', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    spy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: false, message: '返回数据为空' }),
+    } as unknown as Response);
+    await expect(fetchDividendEvents('600519')).resolves.toEqual([]);
+
+    spy.mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+    } as unknown as Response);
+    await expect(fetchDividendEvents('000001')).rejects.toThrow(/HTTP 429/);
   });
 });
