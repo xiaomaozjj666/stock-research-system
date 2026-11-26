@@ -9,6 +9,34 @@ const REACT_PKGS = new Set(['react', 'react-dom', 'react-is', 'scheduler']);
 const ECHARTS_PKGS = new Set(['echarts', 'zrender']);
 
 /**
+ * 研究报告渲染组件：报告页是默认页，这组组件会被 App 静态引用，曾经全部落进
+ * 入口 chunk（index 108.88 / 预算 109 kB，只剩 0.12 kB，加任何功能都会先撞这一条）。
+ * 单独成块后入口只保留壳层与交互状态，报告组件作为并行预加载的静态依赖，
+ * 首屏行为不变，但入口体积余量恢复到 ~45 kB，且只改报告组件时不会让入口 hash 失效。
+ * 只列这组组件（不含 EChart/图表组件），避免把 echarts 运行时拖回入口。
+ */
+const REPORT_COMPONENTS = new Set([
+  'ReportHeader',
+  'CoreSummary',
+  'FinancialSection',
+  'ValuationSection',
+  'ExpertOpinions',
+  'CapitalFlowSection',
+  'ScenarioSection',
+  'StrategyListSection',
+  'NewsSentimentCard',
+  'ConsensusCard',
+  'ScoringTable',
+  'ControversySection',
+  'RiskSection',
+  'ReflectionSection',
+  'FollowUpSection',
+  'MobileNav',
+  'ChatPanel',
+  'ResearchEnhance',
+]);
+
+/**
  * 从模块 id 里解析出它所属的 node_modules 包名，非第三方依赖返回 null。
  * 取最后一个 `/node_modules/`，以兼容 pnpm 虚拟 store
  * （<store>/pkg@ver/node_modules/pkg/... 这类嵌套结构）。
@@ -96,19 +124,27 @@ export default defineConfig({
         // 将第三方依赖拆分为独立 chunk，提升长期缓存命中率
         manualChunks(id) {
           const pkg = packageNameOf(id);
-          if (!pkg) return;
-          // 按解析出的包名匹配，而不是按 id 子串匹配：
-          // `id.includes('react')` 这类写法会把任何路径里恰好带 react 字样的包
-          // （例如未来的 react-something）误吞进 react chunk，拆包结果不可预期。
-          // 只有下面两张清单里的包名才会被单独分块。
-          if (ECHARTS_PKGS.has(pkg)) {
-            return 'echarts-vendor';
+          if (pkg) {
+            // 按解析出的包名匹配，而不是按 id 子串匹配：
+            // `id.includes('react')` 这类写法会把任何路径里恰好带 react 字样的包
+            // （例如未来的 react-something）误吞进 react chunk，拆包结果不可预期。
+            // 只有下面两张清单里的包名才会被单独分块。
+            if (ECHARTS_PKGS.has(pkg)) {
+              return 'echarts-vendor';
+            }
+            if (REACT_PKGS.has(pkg)) {
+              return 'react-vendor';
+            }
+            // 其余第三方依赖
+            return 'vendor';
           }
-          if (REACT_PKGS.has(pkg)) {
-            return 'react-vendor';
+          // 应用内模块（非 node_modules）：报告组件单独成块（见 REPORT_COMPONENTS）
+          const normalizedId = id.replace(/\\/g, '/');
+          const componentMatch = /\/src\/components\/([^/]+)\.tsx$/.exec(normalizedId);
+          if (componentMatch && REPORT_COMPONENTS.has(componentMatch[1])) {
+            return 'report';
           }
-          // 其余第三方依赖
-          return 'vendor';
+          return undefined;
         },
       },
     },

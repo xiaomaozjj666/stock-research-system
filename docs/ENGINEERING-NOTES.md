@@ -15,7 +15,7 @@
 - `client` 测试文件：`npm run typecheck:tests` 0（`client/tsconfig.test.json`，2026-10-05 新增）。**这一条不能省** —— 主配置排除测试曾导致测试夹具的类型漂移无人看守，详见文末「客户端测试文件曾完全不被类型检查」一节。
 - `npm run test`（vitest run）：截至 2026-10-05 为 **3397 passed / 0 failed**（245 个测试文件）。此前这里记的是 2026-09-22 的 3239 / 235 文件，本次订正。
 - 覆盖率门禁（`vitest.config.mts`）：阈值 **lines 92 / statements 90 / functions 92 / branches 80**（2026-08-14 由 70/68/62/55 提上来）。实测（2026-10-04）：lines 93.71% / statements 91.76% / functions 93.93% / branches 82.18%，四项均过。`server/src/quant/**` 与 `client/src/**` 均纳入统计（`coverage.include`），排除清单见「测试注意」节。
-- **本机 `test:coverage` 退出码恒为 1**：vitest 收尾清 `coverage/.tmp` 会撞本机删除守卫（`[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]`），与覆盖率是否达标无关。**读 `Coverage summary` 段判断，不要看退出码**。CI 上不受影响。
+- **本机 `test:coverage` 退出码**：历史上 vitest 收尾清 `coverage/.tmp` 会撞本机删除守卫（`[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]`），退出码恒为 1 且与覆盖率无关；2026-11-26 实测已恢复正常（退出码 0）。若再次遇到 1，先读 `Coverage summary` 段判断，不要只看退出码。CI 上不受影响。
 
 ## 依赖升级的硬约束（踩过的坑）
 
@@ -69,7 +69,7 @@
 
 ## 构建/部署注意
 
-- Vite8/Rolldown 的 `emptyOutDir` 与 Vitest 的 `coverage/.tmp` 清理会因批量删除文件被拦截 → `client/vite.config.ts` 设 `build.emptyOutDir:false`（真实 CI 应自行清理 dist）；coverage 报告仍正常写出。
+- Vite8/Rolldown 的 `emptyOutDir` 与 Vitest 的 `coverage/.tmp` 清理历史上会因批量删除文件被拦截，故一度设 `build.emptyOutDir:false`；沙箱删除守卫移除后已恢复默认 `true`（见「构建产物清理」节），coverage 报告仍正常写出。
 - server `dist` 构建失败时：rename 旧 dist 后重建即可。
 - 端到端/冒烟脚本用 `tsx` 跑完即删，不要留仓库。
 
@@ -921,7 +921,7 @@ unknown 报错；引入不认识构造 → 报错）。`contractParity.ts` 也�
   CI `quality` job 新增一步，改了契约没重新生成会拦住合并。
 - 生成物**提交进仓库**（不 gitignore），让契约↔类型的漂移在 PR diff 里直接可见。
 - 生成物落盘前过 prettier（引号统一单引号），否则 `format:check` 门禁会红。
-- 体积预算**零变化**（接入时为 1242.54 kB / 预算 1300 kB；2026-11 移除 axios 后现为 1233.29 kB / 预算 1300 kB）：类型是纯编译期产物。
+- 体积预算**零变化**（接入时为 1242.54 kB / 预算 1300 kB；2026-11 移除 axios 后为 1233.29 kB，2026-11-26 为 1234.40 kB）：类型是纯编译期产物。
   接生成类型不会带来任何运行时体积，这点值得记住。
 
 ### 仍未收敛的部分（刻意保留）
@@ -1481,3 +1481,41 @@ fetch stub（service 已 mock、响应确定），且覆盖的是**当前最大�
   淹没。现约定：正常裁剪走 debug，仅「非法日期行/结构畸形」才 warn 并剔除。
 - **契约与实现的状态码不一致是隐性缺陷**：`/api/intl/klines` 上游失败代码回 500、
   OpenAPI 却声明 502——客户端据此不重试。改接口状态语义时，同步核对 paths/*.ts。
+
+## 2026-11-26 前端体积余量与同类短板处理记录
+
+- **体积构成诊断**（esbuild metafile + 逐组件实验）：本轮起点 1250.05 kB 中，
+  `echarts-vendor` 617.77（懒加载）+ `react-vendor` 218.88 是固定底噪；地图/未用图表
+  已被 tree-shake 干净，继续压缩只能放弃图表类型/交互。
+- **实际削减**（均为无损：不加新交互、不改视觉与读数）：
+  - `LegendComponent` → `LegendPlainComponent`（全仓无滚动图例）：-5.74 kB。
+  - 报告渲染组件拆出独立 `report` chunk（index 108.88 → 41.07 kB），入口 chunk
+    不再被默认页的报告组件挤到 0.12 kB 余量；静态依赖仍并行预加载，首屏体验不变。
+  - `settings.css / paper.css / alerts.css` 改为页面组件按需引入（选择器互不相交），
+    首屏 CSS -8 kB。
+  - **雷达图改轻量 SVG**（`components/ScoreRadar.tsx`）：5 个静态分数不再需要
+    ECharts `RadarChart` + 极坐标系统，移除后 `echarts-vendor` 617.77 → 605.92 kB
+    （-11.85 kB）；网格/轴标签/顶点数值/`<title>` 悬停明细与 tooltip 信息量一致。
+  - **尝试并回滚**：用 line series 替换三处 `markLine` 可再省约 18 kB，但分类轴
+    `boundaryGap` 下负坐标会被 ECharts 夹到索引 0（PE 仅一个点时参考线不可见），
+    属可见回归，已回滚并保留 `MarkLineComponent`。这条不再作为可选优化。
+- **预算模型补强**（`client/scripts/check-bundle-size.mjs`）：新增**首屏（入口）预算**
+  500 kB（实测 429.97），并收紧 index 55 / report 74 / echarts 650 / react 235；
+  总量 1300 kB 保留，用于阻止把体积摊薄到大量小 chunk。结论：总量余量 65.6 kB，
+  首屏余量 ~70 kB；总量下限是"ECharts（3 类图表 + 缩放/标线/图例）+ React"固定底噪
+  约 825 kB，加上应用代码后约 1.19–1.23 MB，任何进一步下降都意味着删图表/删缩放
+  交互，不属于无损优化。
+- **同类短板修复**：
+  - 历史容量默认值/硬上限收敛到 `services/historyLimits.ts` 单一真源（此前
+    settings 与 history 各写一份 50000）。
+  - 旧 JSON 迁移期间同样执行容量裁剪（旧文件超上限时不再先超量入库）。
+  - 损坏的设置文件按 mtime 缓存"为空设置"结论，避免每次预警推送都读盘 + 重复 warning。
+- **文档一致性回归**：新增 `configDocs.test.ts`，直接断言 `.env.example` / README 中
+  的默认值与范围和代码常量一致；改文档或改常量都必须成对出现。
+- **同类短板修复**：
+  - 历史容量默认值/硬上限收敛到 `services/historyLimits.ts` 单一真源（此前
+    settings 与 history 各写一份 50000）。
+  - 旧 JSON 迁移期间同样执行容量裁剪（旧文件超上限时不再先超量入库）。
+  - 损坏的设置文件按 mtime 缓存"为空设置"结论，避免每次预警推送都读盘 + 重复 warning。
+- **文档一致性回归**：新增 `configDocs.test.ts`，直接断言 `.env.example` / README 中
+  的默认值与范围和代码常量一致；改文档或改常量都必须成对出现。

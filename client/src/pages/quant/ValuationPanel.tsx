@@ -3,6 +3,9 @@
  * 假设可缺省（自动从年报 EPS 推导），也可显式覆盖；局限声明照实展示。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+// 估值结果卡片复用了 paper-stat-* 样式（与模拟盘共用同一套指标卡），
+// paper.css 已改为按需加载，这里必须显式引入，否则直接进入量化页时卡片会掉样式。
+import '../../styles/paper.css';
 import { runValuationModelApi, type ValuationModelResult } from '../../api/client';
 import { signCls } from '../../lib/colors';
 

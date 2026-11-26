@@ -23,6 +23,7 @@ import * as path from 'node:path';
 
 import { DATA_ROOT } from '../dataRoot.js';
 import logger from '../utils/logger.js';
+import { HISTORY_MAX_ITEMS_HARD_LIMIT } from './historyLimits.js';
 
 /** 设置文件结构（全部可选；缺省 = 该字段未在界面里覆盖） */
 export interface StoredSettings {
@@ -45,7 +46,8 @@ export const MIN_WEBHOOK_TIMEOUT_MS = 500;
 export const MAX_WEBHOOK_TIMEOUT_MS = 10_000;
 export const DEFAULT_WEBHOOK_TIMEOUT_MS = 3000;
 export const MIN_HISTORY_MAX_ITEMS = 1;
-export const MAX_HISTORY_MAX_ITEMS = 50_000;
+/** 与历史服务共用同一硬上限（避免界面允许值与服务端校验值漂移） */
+export const MAX_HISTORY_MAX_ITEMS = HISTORY_MAX_ITEMS_HARD_LIMIT;
 /** URL 长度上限：防止把一个超长串写进设置文件并原样回显 */
 export const MAX_WEBHOOK_URL_LENGTH = 2048;
 
@@ -162,19 +164,26 @@ export function readSettings(): StoredSettings {
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
+    // 缓存「损坏」这一结论（按 mtime）：否则每次预警推送都读盘 + 打一条 warning，
+    // 无人值守时会刷屏。文件被修好后 mtime 变化会自动重试。
+    const mtimeMs = statMtime(file);
+    cache = { file, mtimeMs, settings: {} };
     logger.warn('设置文件损坏，本次按默认设置运行（保存时会先留档坏文件）', { file, err: error });
-    return {};
+    return cache.settings;
   }
 
   const settings = sanitizeSettings(parsed);
-  let mtimeMs: number | null = null;
-  try {
-    mtimeMs = fs.statSync(file).mtimeMs;
-  } catch {
-    /* stat 失败：不缓存，下次重读 */
-  }
-  cache = { file, mtimeMs, settings };
+  cache = { file, mtimeMs: statMtime(file), settings };
   return settings;
+}
+
+/** 取 mtime；失败返回 null（不缓存，下次重读） */
+function statMtime(file: string): number | null {
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    return null;
+  }
 }
 
 /** 损坏的设置文件改名留档（`.corrupt-<ts>`），避免保存时静默覆盖 */

@@ -37,6 +37,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { DATA_ROOT } from '../dataRoot.js';
 import type { AnalysisResult } from '../types.js';
 import logger from '../utils/logger.js';
+import { DEFAULT_HISTORY_MAX_ITEMS, HISTORY_MAX_ITEMS_HARD_LIMIT } from './historyLimits.js';
 import { resolveHistoryMaxItems } from './settings.js';
 
 /** 评分/评级时间线单点（精简：只留回看"观点怎么变的"所需字段，不带完整 result） */
@@ -79,9 +80,7 @@ export interface HistoryEntryInput {
 }
 
 /** 默认保留条数：SQLite 下不再受「整库解析」约束，默认从 100 提高到 2000 */
-export const DEFAULT_HISTORY_MAX_ITEMS = 2000;
-/** 硬上限：再大就超出「本地单机研究历史」的合理体量 */
-const HARD_MAX_HISTORY_ITEMS = 50_000;
+export { DEFAULT_HISTORY_MAX_ITEMS, HISTORY_MAX_ITEMS_HARD_LIMIT } from './historyLimits.js';
 /** 每只股票保留的时间线长度上限：只留最近 N 次，避免列表响应体随使用时长膨胀 */
 export const MAX_TIMELINE_POINTS = 20;
 
@@ -98,7 +97,7 @@ export function historyMaxItemsStatus(): {
   if (raw) {
     const value = Number(raw);
     if (Number.isInteger(value) && value >= 1) {
-      envOverride = Math.min(value, HARD_MAX_HISTORY_ITEMS);
+      envOverride = Math.min(value, HISTORY_MAX_ITEMS_HARD_LIMIT);
     }
   }
   return resolveHistoryMaxItems(DEFAULT_HISTORY_MAX_ITEMS, envOverride);
@@ -108,9 +107,6 @@ export function historyMaxItemsStatus(): {
 export function maxHistoryItems(): number {
   return historyMaxItemsStatus().value;
 }
-
-/** 容量硬上限（设置页展示/校验用） */
-export const HISTORY_MAX_ITEMS_HARD_LIMIT = HARD_MAX_HISTORY_ITEMS;
 
 /** 旧版 JSON 历史路径：仅作为一次性迁移来源（也用于推导默认 DB 路径） */
 function legacyJsonPath(): string {
@@ -405,6 +401,9 @@ function migrateLegacyJson(current: DbState): void {
         }
         imported += 1;
       }
+      // 迁移同样受容量约束：旧 JSON 可能远超当前上限（旧版默认 100、用户也可能
+      // 手改过文件），一次性全量搬进新库会让首次打开就超容量，与「上限」自相矛盾。
+      enforceCapacity(db, maxHistoryItems());
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');

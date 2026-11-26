@@ -100,16 +100,17 @@ describe('prefers-reduced-motion → ECharts 入场动画（CSS 媒体查询覆�
     stubMatchMedia(false);
     render(<ChartsSection data={makeChartData()} />);
     const all = options();
-    expect(all.length).toBeGreaterThanOrEqual(5);
+    // 雷达图已改为纯 SVG（不产生 setOption），这里只剩营收/盈利/同业/历史 PE 四张
+    expect(all.length).toBeGreaterThanOrEqual(4);
     for (const o of all) expect(o.animation).toBe(true);
     expect(all[0].animationDuration).toBe(1500);
   });
 
-  it('ChartsSection：系统开启 reduced 时 5 张图全部 animation:false', () => {
+  it('ChartsSection：系统开启 reduced 时 4 张图全部 animation:false', () => {
     stubMatchMedia(true);
     render(<ChartsSection data={makeChartData()} />);
     const all = options();
-    expect(all.length).toBeGreaterThanOrEqual(5);
+    expect(all.length).toBeGreaterThanOrEqual(4);
     for (const o of all) {
       expect(o.animation).toBe(false);
       expect(o.animationDuration).toBe(0);

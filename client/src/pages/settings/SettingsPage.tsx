@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import '../../styles/settings.css';
 import {
   fetchSettings,
   normalizeApiError,

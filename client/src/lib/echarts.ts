@@ -5,17 +5,18 @@
  */
 import * as echarts from 'echarts/core';
 
-// 图表
-import { LineChart, BarChart, RadarChart, CandlestickChart } from 'echarts/charts';
+// 图表（雷达图已改为轻量 SVG，见 components/ScoreRadar.tsx，不再需要 radar 坐标系）
+import { LineChart, BarChart, CandlestickChart } from 'echarts/charts';
 
 // 组件
 import {
   GridComponent,
   TooltipComponent,
-  LegendComponent,
+  // 只用到普通图例（全仓无 type:'scroll' 的滚动图例），用 LegendPlainComponent
+  // 而不是 LegendComponent（后者会连带打入滚动图例，实测多 5.74 kB）。
+  LegendPlainComponent,
   MarkLineComponent,
   DataZoomComponent,
-  AxisPointerComponent,
 } from 'echarts/components';
 
 // 渲染器
@@ -24,14 +25,14 @@ import { CanvasRenderer } from 'echarts/renderers';
 echarts.use([
   LineChart,
   BarChart,
-  RadarChart,
   CandlestickChart,
   GridComponent,
   TooltipComponent,
-  LegendComponent,
+  LegendPlainComponent,
   MarkLineComponent,
   DataZoomComponent,
-  AxisPointerComponent,
+  // AxisPointerComponent 不再显式注册：TooltipComponent 内部已 install 同一模块，
+  // 重复 use() 不会增加体积，留着只会让人误以为它是独立依赖。
   CanvasRenderer,
 ]);
 

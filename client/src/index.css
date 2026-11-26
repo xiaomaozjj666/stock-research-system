@@ -20,9 +20,10 @@
 @import './styles/search-news.css';
 @import './styles/chat.css';
 @import './styles/history.css';
-@import './styles/paper.css';
 @import './styles/chrome.css';
-@import './styles/alerts.css';
 @import './styles/factors.css';
 @import './styles/report-ops.css';
-@import './styles/settings.css';
+/* settings.css / paper.css / alerts.css 由各自页面组件按需引入：
+   这三组选择器只被对应懒加载页面使用（.settings-* / .paper-* / .watchlist-alert-*），
+   移出全局清单后首屏 CSS 少 ~8 kB；页面打开时随各自 chunk 加载，顺序在全局样式之后，
+   与拆分前的层叠次序一致。 */

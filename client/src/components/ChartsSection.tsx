@@ -6,6 +6,7 @@ import { useReducedMotion } from '../hooks/useReducedMotion';
 import type { PricePoint } from '../types';
 import EChart from './EChart';
 import PriceTrendChart from './PriceTrendChart';
+import ScoreRadar from './ScoreRadar';
 
 export interface StockData {
   stock_name?: string;
@@ -38,7 +39,6 @@ export interface ChartsSectionProps {
 
 // Design system colors（克制专业配色，去除 neon 模板感）
 const accent = '#4c8dff';
-const accentDim = 'rgba(76, 141, 255, 0.14)';
 const colorInfo = '#e6a23c';
 const colorPositive = '#9a8cf5';
 const colorWarning = '#e06c75';
@@ -273,52 +273,6 @@ function ChartsSection({ data }: ChartsSectionProps) {
     ],
   };
 
-  // 4. Radar
-  const radarChart = {
-    backgroundColor: transparent,
-    textStyle: chartTextStyle,
-    ...anim,
-    tooltip: {},
-    radar: {
-      indicator: [
-        { name: '盈利质量', max: 20 },
-        { name: '成长性', max: 20 },
-        { name: '估值性价比', max: 20 },
-        { name: '行业景气度', max: 20 },
-        { name: '风险水平', max: 20 },
-      ],
-      shape: 'polygon' as const,
-      axisName: { color: textSecondary, fontSize: 12 },
-      splitArea: { areaStyle: { color: ['rgba(42,42,42,0.1)', 'rgba(42,42,42,0.2)'] } },
-      axisLine: { lineStyle: { color: borderDefault } },
-      splitLine: { lineStyle: { color: borderDefault } },
-    },
-    series: [
-      {
-        type: 'radar',
-        data: [
-          {
-            value: scoreDetail
-              ? [
-                  scoreDetail.profit_quality,
-                  scoreDetail.growth,
-                  scoreDetail.valuation,
-                  scoreDetail.industry_boom,
-                  scoreDetail.risk_deduction,
-                ]
-              : [0, 0, 0, 0, 0],
-            name: '综合评分',
-            areaStyle: { color: accentDim },
-            lineStyle: { color: accent, width: 2 },
-            itemStyle: { color: accent },
-            // 顶点数值标签：直接读出各维度得分
-            label: { show: true, fontSize: 11, color: textSecondary },
-          },
-        ],
-      },
-    ],
-  };
-
   // 5. Historical PE
   const peYears = historicalPE.map((p) => p.year);
   const peValues = historicalPE.map((p) => p.pe);
@@ -414,7 +368,8 @@ function ChartsSection({ data }: ChartsSectionProps) {
         {hasRadar && (
           <div className="chart-card">
             <h4>五维度雷达图</h4>
-            <EChart option={radarChart} style={{ height: 280 }} />
+            {/* 轻量 SVG 雷达：只为 5 个静态分数不再引入 ECharts radar 坐标系（省 11.9 kB） */}
+            <ScoreRadar scores={scoreDetail} />
           </div>
         )}
         {hasPeData && (

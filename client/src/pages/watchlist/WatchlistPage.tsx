@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import '../../styles/alerts.css';
 import {
   AnalysisCancelledError,
   getWatchlist,

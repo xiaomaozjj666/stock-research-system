@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react';
+import '../../styles/paper.css';
 import EChart from '../../components/EChart';
 import {
   getPaperPortfolio,

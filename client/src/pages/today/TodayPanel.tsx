@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import '../../styles/alerts.css';
 import {
   fetchHistoryList,
   fetchWatchlistAlerts,

@@ -1,3 +1,9 @@
+import { HISTORY_MAX_ITEMS_HARD_LIMIT } from '../../historyLimits.js';
+import {
+  MAX_WEBHOOK_TIMEOUT_MS,
+  MIN_HISTORY_MAX_ITEMS,
+  MIN_WEBHOOK_TIMEOUT_MS,
+} from '../../settings.js';
 import { errorResponse, jsonBody, jsonOk } from '../shared.js';
 
 export const systemPaths = {
@@ -173,7 +179,7 @@ export const systemPaths = {
                 timeoutMs: {
                   type: 'number',
                   nullable: true,
-                  description: '500–10000 的整数毫秒；null = 清除',
+                  description: `${MIN_WEBHOOK_TIMEOUT_MS}–${MAX_WEBHOOK_TIMEOUT_MS} 的整数毫秒；null = 清除`,
                 },
               },
             },
@@ -183,7 +189,7 @@ export const systemPaths = {
                 maxItems: {
                   type: 'number',
                   nullable: true,
-                  description: '1–50000 的整数条数；null = 清除',
+                  description: `${MIN_HISTORY_MAX_ITEMS}–${HISTORY_MAX_ITEMS_HARD_LIMIT} 的整数条数；null = 清除`,
                 },
               },
             },
