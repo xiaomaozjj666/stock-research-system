@@ -37,6 +37,9 @@ export default defineConfig({
       DATA_CACHE_DIR: path.join(E2E_TMP, 'cache'),
       AUDIT_LOG_FILE: path.join(E2E_TMP, 'audit.log'),
       HISTORY_FILE: path.join(E2E_TMP, 'history.json'),
+      // 历史已改为 SQLite；设置页（Webhook/历史容量）同样不能读写真实配置
+      HISTORY_DB_FILE: path.join(E2E_TMP, 'history.db'),
+      SETTINGS_FILE: path.join(E2E_TMP, 'settings.json'),
     },
   },
 });

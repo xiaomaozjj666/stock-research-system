@@ -1,4 +1,4 @@
-import { errorResponse, jsonOk } from '../shared.js';
+import { errorResponse, jsonBody, jsonOk } from '../shared.js';
 
 export const systemPaths = {
   '/api/audit': {
@@ -133,6 +133,87 @@ export const systemPaths = {
           description: 'OpenAPI 3.1 文档',
           content: { 'application/json': { schema: { type: 'object' } } },
         },
+      },
+    },
+  },
+  '/api/settings': {
+    get: {
+      tags: ['system'],
+      summary: '运行时设置（Webhook / 历史容量）',
+      description:
+        'Webhook 地址只回脱敏后的主机（key/token 等同凭据）；' +
+        'source 标明当前值来源（设置页 > 环境变量 > 默认值）。',
+      responses: {
+        200: jsonOk(
+          { description: '当前生效设置（与 PUT 成功后的响应同形）' },
+          { $ref: '#/components/schemas/SettingsResponse' },
+        ),
+        429: errorResponse('触发限流（只读元数据默认每分钟 30 次）'),
+      },
+    },
+    put: {
+      tags: ['system'],
+      summary: '修改运行时设置（立即生效）',
+      description:
+        '字段均可省略；null 或空字符串表示清除该项、回退到环境变量/默认值。' +
+        '历史容量调低后会立即裁剪到新上限。',
+      requestBody: jsonBody(
+        {
+          type: 'object',
+          properties: {
+            alertWebhook: {
+              type: 'object',
+              properties: {
+                url: {
+                  type: 'string',
+                  nullable: true,
+                  description: '完整 http/https 地址；null/空字符串 = 清除',
+                  maxLength: 2048,
+                },
+                timeoutMs: {
+                  type: 'number',
+                  nullable: true,
+                  description: '500–10000 的整数毫秒；null = 清除',
+                },
+              },
+            },
+            history: {
+              type: 'object',
+              properties: {
+                maxItems: {
+                  type: 'number',
+                  nullable: true,
+                  description: '1–50000 的整数条数；null = 清除',
+                },
+              },
+            },
+          },
+        },
+        '设置补丁（只认已知字段，类型/范围非法即 400）',
+      ),
+      responses: {
+        200: jsonOk(
+          { description: '保存后的生效设置' },
+          { $ref: '#/components/schemas/SettingsResponse' },
+        ),
+        400: errorResponse('设置值非法（URL 非 http/https、超时/容量越界或类型错误）'),
+        429: errorResponse('触发限流（写操作默认每分钟 10 次）'),
+      },
+    },
+  },
+  '/api/settings/alert-webhook/test': {
+    post: {
+      tags: ['system'],
+      summary: '发送一条测试推送（验证 Webhook 链路）',
+      description:
+        '与真实预警共用同一配置解析与 POST 实现；未配置地址时也回 200，' +
+        '结果里 configured=false 属正常状态（不是请求错误）。',
+      responses: {
+        200: jsonOk(
+          { description: '推送结果（sent/configured，失败附 reason）' },
+          { $ref: '#/components/schemas/WebhookTestResult' },
+        ),
+        429: errorResponse('触发限流（写操作默认每分钟 10 次）'),
       },
     },
   },

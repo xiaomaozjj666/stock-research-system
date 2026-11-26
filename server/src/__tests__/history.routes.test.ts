@@ -9,18 +9,24 @@ import { analysisResult } from '../test/contractFixtures.js';
 import { withContract } from '../test/contractSupertest.js';
 const app = withContract(rawApp);
 
-import { saveHistoryEntry } from '../services/historyService.js';
+import { saveHistoryEntry, closeHistoryStore } from '../services/historyService.js';
 
-// 历史落盘重定向到临时文件（与单测同模式），路由测试经真实 app 验证 CRUD
+// 历史落盘重定向到临时目录（与单测同模式），路由测试经真实 app 验证 CRUD
 const tmpDir = mkdtempSync(join(tmpdir(), 'history-route-'));
 const origFile = process.env.HISTORY_FILE;
+const origDb = process.env.HISTORY_DB_FILE;
 
 beforeAll(() => {
   process.env.HISTORY_FILE = join(tmpDir, 'history.json');
+  // 历史已改为 SQLite：显式重定向数据库（否则会用 setup 的公共 DB，串数据/清不干净）
+  process.env.HISTORY_DB_FILE = join(tmpDir, 'history.db');
 });
 afterAll(() => {
+  closeHistoryStore(); // 释放文件句柄，Windows 上才能删除临时目录
   if (origFile === undefined) delete process.env.HISTORY_FILE;
   else process.env.HISTORY_FILE = origFile;
+  if (origDb === undefined) delete process.env.HISTORY_DB_FILE;
+  else process.env.HISTORY_DB_FILE = origDb;
   rmSync(tmpDir, { recursive: true, force: true });
 });
 

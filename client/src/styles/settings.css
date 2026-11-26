@@ -1,0 +1,136 @@
+/* ============================================================
+   settings.css — 设置页（告警 Webhook / 研究历史容量）
+   追加在 index.css @import 末尾；只使用既有 tokens，不新增主题变量。
+   ============================================================ */
+
+.settings-page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+}
+.settings-header h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  color: var(--text-primary);
+}
+.settings-loading {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 48px 0;
+  font-size: 14px;
+}
+.settings-grid {
+  display: grid;
+  gap: 16px;
+}
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-card-head .quant-panel-title {
+  margin: 0;
+}
+.settings-badge {
+  flex: none;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+}
+.settings-badge.on {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 45%, transparent);
+}
+.settings-badge.off {
+  color: var(--text-muted);
+}
+.settings-badge.neutral {
+  color: var(--text-secondary);
+}
+.settings-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.settings-current {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-current code {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  background: var(--bg-card-hover);
+  border-radius: 4px;
+  padding: 1px 6px;
+  word-break: break-all;
+}
+.settings-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-field label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.settings-field input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-input, var(--bg-card));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: border-color var(--duration-fast);
+}
+.settings-field input:focus {
+  border-color: var(--border-hover);
+}
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+.settings-feedback {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+}
+.settings-feedback.ok {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+.settings-feedback.err {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+}
+
+@media (max-width: 640px) {
+  .settings-page {
+    padding: 18px 14px 48px;
+  }
+}

@@ -10,6 +10,17 @@
 
 // ===== components/schemas =====
 
+export type AlertWebhookSettings = {
+  /** 是否已配置可用地址 */
+  configured: boolean;
+  /** 脱敏地址（如 https://qyapi.weixin.qq.com/…）；未配置为 null */
+  urlMasked: string | null;
+  /** 推送超时毫秒数（500–10000） */
+  timeoutMs: number;
+  /** 当前生效来源：设置页 / 环境变量 / 未配置 */
+  source: 'settings' | 'env' | 'none';
+};
+
 export type AnalysisResult = {
   /** 报告生成时间（ISO） */
   generatedAt?: string;
@@ -857,6 +868,17 @@ export type HealthReport = {
 
 export type HistoryItem = HistorySummary & {
   result: AnalysisResult;
+};
+
+export type HistorySettings = {
+  /** 当前生效的保留条数 */
+  maxItems: number;
+  /** 当前生效来源：设置页 / HISTORY_MAX_ITEMS / 默认值 */
+  source: 'settings' | 'env' | 'default';
+  /** 代码默认值（SQLite 下为 2000） */
+  defaultMaxItems: number;
+  /** 允许配置的硬上限 */
+  hardMaxItems: number;
 };
 
 export type HistorySummary = {
@@ -1888,6 +1910,11 @@ export type SectorRotation = {
   date: string;
 };
 
+export type SettingsResponse = {
+  alertWebhook: AlertWebhookSettings;
+  history: HistorySettings;
+};
+
 export type SkillId = 'quant_factor' | 'backtest' | 'news' | 'compare' | 'watchlist' | 'chat';
 
 export type SkillRoute = {
@@ -2321,6 +2348,17 @@ export type WatchlistNewsBacktestReport = {
     /** 该只失败原因；成功时缺省 */
     error?: string;
   }[];
+};
+
+export type WebhookTestResult = {
+  /** 是否成功送达（2xx） */
+  sent: boolean;
+  /** 是否已配置地址 */
+  configured: boolean;
+  /** 失败原因（未配置/网络错误/非 2xx） */
+  reason?: string;
+  /** 上游 HTTP 状态码（收到响应时出现） */
+  status?: number;
 };
 
 // ===== operations =====
@@ -3586,6 +3624,51 @@ export type GETApiResearchRunsIdResponse = SavedResearchRun;
 export type GETApiResearchRunsIdParams = {
   id: string;
 };
+
+/**
+ * 运行时设置（Webhook / 历史容量）
+ * Webhook 地址只回脱敏后的主机（key/token 等同凭据）；source 标明当前值来源（设置页 > 环境变量 > 默认值）。
+ * 成功响应（HTTP 200）
+ * 端点：GET /api/settings
+ */
+export type GETApiSettingsResponse = SettingsResponse;
+
+/**
+ * 修改运行时设置（立即生效）
+ * POST/PUT 等请求体
+ * 端点：PUT /api/settings
+ */
+export type PUTApiSettingsRequestBody = {
+  alertWebhook?: {
+    /**
+     * 完整 http/https 地址；null/空字符串 = 清除
+     * 约束：最长 2048
+     */
+    url?: string | null;
+    /** 500–10000 的整数毫秒；null = 清除 */
+    timeoutMs?: number | null;
+  };
+  history?: {
+    /** 1–50000 的整数条数；null = 清除 */
+    maxItems?: number | null;
+  };
+};
+
+/**
+ * 修改运行时设置（立即生效）
+ * 字段均可省略；null 或空字符串表示清除该项、回退到环境变量/默认值。历史容量调低后会立即裁剪到新上限。
+ * 成功响应（HTTP 200）
+ * 端点：PUT /api/settings
+ */
+export type PUTApiSettingsResponse = SettingsResponse;
+
+/**
+ * 发送一条测试推送（验证 Webhook 链路）
+ * 与真实预警共用同一配置解析与 POST 实现；未配置地址时也回 200，结果里 configured=false 属正常状态（不是请求错误）。
+ * 成功响应（HTTP 200）
+ * 端点：POST /api/settings/alert-webhook/test
+ */
+export type POSTApiSettingsAlertWebhookTestResponse = WebhookTestResult;
 
 /**
  * 已缓存股票列表

@@ -1,17 +1,19 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import * as fsp from 'node:fs/promises';
+import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { partial } from '../../test/partial.js';
 import type { AnalysisResult } from '../../types.js';
 import {
+  closeHistoryStore,
   computeVsPrevious,
+  DEFAULT_HISTORY_MAX_ITEMS,
   deleteHistoryItem,
   getHistoryItem,
   getPreviousAnalysis,
+  HISTORY_MAX_ITEMS_HARD_LIMIT,
   listHistory,
-  MAX_HISTORY_ITEMS,
   MAX_TIMELINE_POINTS,
   maxHistoryItems,
   resetHistoryStoreCache,
@@ -21,34 +23,58 @@ import {
   type HistorySummary,
 } from '../historyService.js';
 
-// ESM 模块命名空间不可配置，vi.spyOn(fsp, 'rename') 会抛
-// "Module namespace is not configurable"。用工厂把 fs/promises 的导出展开成
-// 普通对象——spyOn 可生效且行为与真模块一致（仅引用形态变化）。
-vi.mock('node:fs/promises', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs/promises')>();
+// node:fs 展开成普通对象，便于 spyOn renameSync（ESM 命名空间本身不可配置）。
+// 行为与真模块一致（仅引用形态变化）。
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
   return { ...actual };
 });
 
-// 落盘重定向到进程专属临时文件（HISTORY_FILE env，与 watchlist/paper/audit 同模式）
+// 历史库重定向到进程专属临时目录：HISTORY_FILE 同时作为旧 JSON 迁移来源与
+// 数据库路径的推导依据（同目录 history.db）。
 const tmpDir = mkdtempSync(join(tmpdir(), 'history-svc-'));
-const tmpFile = join(tmpDir, 'history.json');
+const legacyFile = join(tmpDir, 'history.json');
+const dbFile = join(tmpDir, 'history.db');
 const origFile = process.env.HISTORY_FILE;
+const origDb = process.env.HISTORY_DB_FILE;
 
 beforeAll(() => {
-  process.env.HISTORY_FILE = tmpFile;
+  process.env.HISTORY_FILE = legacyFile;
+  delete process.env.HISTORY_DB_FILE;
 });
 afterAll(() => {
+  closeHistoryStore();
   if (origFile === undefined) delete process.env.HISTORY_FILE;
   else process.env.HISTORY_FILE = origFile;
+  if (origDb === undefined) delete process.env.HISTORY_DB_FILE;
+  else process.env.HISTORY_DB_FILE = origDb;
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-/**
- * 直接改写落盘文件（绕过服务）后必须让内存 store 缓存失效：
- * 常规外部改写由 mtime 校验自动发现；这里仍显式重置，保证用例从确定的空状态开始。
- */
+/** 清空所有历史落盘（DB + WAL/SHM + 旧 JSON + 留档文件），保证用例从确定空态开始 */
+function clearStorage(): void {
+  closeHistoryStore();
+  for (const file of [dbFile, `${dbFile}-wal`, `${dbFile}-shm`, legacyFile, `${legacyFile}.tmp`]) {
+    rmSync(file, { force: true });
+  }
+  for (const f of readdirSync(tmpDir)) {
+    if (f.includes('.corrupt-') || f.includes('.migrated-'))
+      rmSync(join(tmpDir, f), { force: true });
+  }
+}
+
+/** 播一颗旧 JSON 种子：首次读取时由服务自动迁移进 SQLite */
 function seedFile(raw: string): void {
-  writeFileSync(tmpFile, raw, 'utf-8');
+  clearStorage();
+  writeFileSync(legacyFile, raw, 'utf-8');
+  resetHistoryStoreCache();
+}
+
+/** 直接弄坏 SQLite 文件（模拟磁盘损坏/半写），用于损坏留档用例 */
+function corruptDb(raw = 'not a sqlite database'): void {
+  closeHistoryStore();
+  rmSync(dbFile, { force: true });
+  writeFileSync(dbFile, raw, 'utf-8');
   resetHistoryStoreCache();
 }
 
@@ -68,12 +94,7 @@ function makeEntry(code: string, over: Partial<HistoryEntryInput> = {}): History
 
 describe('historyService 研究历史', () => {
   beforeEach(() => {
-    // 清掉上一用例可能留下的损坏留档，避免目录级断言串味
-    for (const f of readdirSync(tmpDir)) {
-      if (f.includes('.corrupt-')) rmSync(join(tmpDir, f), { force: true });
-    }
-    // 每个用例从空历史开始（直接重建文件 + 重置内存缓存）
-    seedFile(JSON.stringify({ items: [] }));
+    clearStorage();
   });
 
   it('保存新增条目，列表返回摘要（不含 result）', async () => {
@@ -225,30 +246,34 @@ describe('historyService 研究历史', () => {
     expect(vs!.previous_date).toBe('2026-07-01'); // createdAt 取日期部分
   });
 
-  // 写 MAX+5 条、每条全文件重写（O(n²)）；异步 IO 下常态 1-3s，显式放宽超时防极端负载误判。
-  it('容量超上限时淘汰最旧记录（保留最新 MAX_HISTORY_ITEMS 条）', { timeout: 30000 }, async () => {
-    // createdAt 由服务端单调时钟保证严格递增（同毫秒保存也 +1ms），
-    // 因此"最早保存 = createdAt 最小 = 必被淘汰"的语义恒定成立
-    const first = await saveHistoryEntry(makeEntry('600001'));
-    let last: HistoryItem | null = null;
-    for (let i = 2; i <= MAX_HISTORY_ITEMS + 5; i++) {
-      last = await saveHistoryEntry(makeEntry(String(600000 + i)));
+  it('默认容量为 2000 条（SQLite 下不再受整库解析约束）', () => {
+    const original = process.env.HISTORY_MAX_ITEMS;
+    try {
+      delete process.env.HISTORY_MAX_ITEMS;
+      expect(maxHistoryItems()).toBe(DEFAULT_HISTORY_MAX_ITEMS);
+      expect(DEFAULT_HISTORY_MAX_ITEMS).toBe(2000);
+    } finally {
+      if (original === undefined) delete process.env.HISTORY_MAX_ITEMS;
+      else process.env.HISTORY_MAX_ITEMS = original;
     }
-    const list = await listHistory(200);
-    expect(list).toHaveLength(MAX_HISTORY_ITEMS);
-    expect(list.some((i) => i.id === first!.id)).toBe(false); // 最旧的 600001 被淘汰
-    expect(list.some((i) => i.id === last!.id)).toBe(true); // 最新保存的保留
-    expect(list[list.length - 1].stockCode).toBe('600006'); // 最旧的保留项精确可断
   });
 
-  it('HISTORY_MAX_ITEMS 可覆盖容量上限', { timeout: 30000 }, async () => {
+  it('容量超上限时淘汰最旧记录（保留最新 N 条）', async () => {
     const original = process.env.HISTORY_MAX_ITEMS;
-    process.env.HISTORY_MAX_ITEMS = '3';
+    process.env.HISTORY_MAX_ITEMS = '5';
     try {
-      for (let i = 1; i <= 5; i++) await saveHistoryEntry(makeEntry(String(600100 + i)));
-      const list = await listHistory(20);
-      expect(list).toHaveLength(3);
-      expect(list[0].stockCode).toBe('600105'); // 最新在前
+      // createdAt 由服务端单调时钟保证严格递增（同毫秒保存也 +1ms），
+      // 因此"最早保存 = createdAt 最小 = 必被淘汰"的语义恒定成立
+      const first = await saveHistoryEntry(makeEntry('600001'));
+      let last: HistoryItem | null = null;
+      for (let i = 2; i <= 10; i++) {
+        last = await saveHistoryEntry(makeEntry(String(600000 + i)));
+      }
+      const list = await listHistory(200);
+      expect(list).toHaveLength(5);
+      expect(list.some((i) => i.id === first!.id)).toBe(false); // 最旧的 600001 被淘汰
+      expect(list.some((i) => i.id === last!.id)).toBe(true); // 最新保存的保留
+      expect(list[list.length - 1].stockCode).toBe('600006'); // 最旧的保留项精确可断
     } finally {
       if (original === undefined) delete process.env.HISTORY_MAX_ITEMS;
       else process.env.HISTORY_MAX_ITEMS = original;
@@ -260,10 +285,10 @@ describe('historyService 研究历史', () => {
     try {
       for (const bad of ['abc', '0', '-5', '1.5', '']) {
         process.env.HISTORY_MAX_ITEMS = bad;
-        expect(maxHistoryItems()).toBe(MAX_HISTORY_ITEMS);
+        expect(maxHistoryItems()).toBe(DEFAULT_HISTORY_MAX_ITEMS);
       }
       process.env.HISTORY_MAX_ITEMS = '999999';
-      expect(maxHistoryItems()).toBe(5000); // 硬上限
+      expect(maxHistoryItems()).toBe(HISTORY_MAX_ITEMS_HARD_LIMIT); // 硬上限
     } finally {
       if (original === undefined) delete process.env.HISTORY_MAX_ITEMS;
       else process.env.HISTORY_MAX_ITEMS = original;
@@ -280,45 +305,118 @@ describe('historyService 研究历史', () => {
     expect(b.createdAt < c.createdAt).toBe(true);
   });
 
-  it('文件损坏时安全降级为空历史（不抛错）', async () => {
-    seedFile('{ not valid json');
+  it('数据库文件损坏时安全降级为空历史（不抛错），且可继续写入', async () => {
+    await saveHistoryEntry(makeEntry('600001'));
+    corruptDb();
     expect(await listHistory()).toEqual([]);
-    // 损坏后仍可正常写入新条目
     const saved = await saveHistoryEntry(makeEntry('600519'));
     expect(saved).not.toBeNull();
     expect(await listHistory()).toHaveLength(1);
   });
 
-  it('文件损坏时改名留档，坏文件内容原样保留（不静默丢全部历史）', async () => {
-    seedFile('{ not valid json');
+  it('数据库损坏时改名留档，坏文件内容原样保留（不静默丢全部历史）', async () => {
+    corruptDb('raw-damaged-bytes');
     expect(await listHistory()).toEqual([]);
 
-    const backups = readdirSync(tmpDir).filter((f) => f.includes('.corrupt-'));
+    const backups = readdirSync(tmpDir).filter((f) => f.startsWith('history.db.corrupt-'));
     expect(backups).toHaveLength(1);
-    expect(readFileSync(join(tmpDir, backups[0]), 'utf-8')).toBe('{ not valid json');
+    expect(readFileSync(join(tmpDir, backups[0]), 'utf-8')).toBe('raw-damaged-bytes');
   });
 
-  it('损坏且留档失败时拒绝写入，绝不覆盖唯一副本', async () => {
-    seedFile('{ not valid json');
-    const spy = vi
-      .spyOn(fsp, 'rename')
-      .mockRejectedValue(Object.assign(new Error('EPERM: locked'), { code: 'EPERM' }));
+  it('数据库损坏且留档失败时拒绝写入，绝不覆盖唯一副本', async () => {
+    corruptDb('raw-damaged-bytes');
+    const spy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      throw Object.assign(new Error('EPERM: locked'), { code: 'EPERM' });
+    });
     try {
-      // 读到的只是「空快照」，若照常保存会把坏文件（唯一副本）覆盖成 1 条
+      expect(await listHistory()).toEqual([]);
+      // 若照常保存，坏文件（唯一副本）会被清空重建
       expect(await saveHistoryEntry(makeEntry('600519'))).toBeNull();
-      expect(readFileSync(tmpFile, 'utf-8')).toBe('{ not valid json');
+      expect(readFileSync(dbFile, 'utf-8')).toBe('raw-damaged-bytes');
     } finally {
       spy.mockRestore();
       resetHistoryStoreCache();
     }
   });
 
-  it('写盘失败时返回 null（不阻断主流程）', async () => {
-    // 把 HISTORY_FILE 指向一个目录路径，写文件必然失败
-    process.env.HISTORY_FILE = tmpDir;
-    const r = await saveHistoryEntry(makeEntry('600519'));
-    expect(r).toBeNull();
-    process.env.HISTORY_FILE = tmpFile;
+  it('数据库不可写时返回 null（不阻断主流程）', async () => {
+    // 把数据库路径指向一个目录：SQLite 无法打开，且目录不会被当成文件留档
+    process.env.HISTORY_DB_FILE = tmpDir;
+    resetHistoryStoreCache();
+    try {
+      expect(await saveHistoryEntry(makeEntry('600519'))).toBeNull();
+      expect(await listHistory()).toEqual([]);
+    } finally {
+      delete process.env.HISTORY_DB_FILE;
+      resetHistoryStoreCache();
+    }
+  });
+
+  it('关闭并重开后数据仍在（真实持久化，不是内存快照）', async () => {
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 88 }));
+    closeHistoryStore();
+    const list = await listHistory();
+    expect(list).toHaveLength(1);
+    expect((await getHistoryItem(list[0].id))!.totalScore).toBe(88);
+  });
+
+  it('旧 JSON 首次打开时自动迁移进 SQLite，并把原文件留档', async () => {
+    seedFile(
+      JSON.stringify({
+        items: [
+          {
+            id: 'legacy-1',
+            stockCode: '600519',
+            stockName: '贵州茅台',
+            createdAt: '2026-08-01T00:00:00.000Z',
+            rating: '持续观察',
+            totalScore: 70,
+            result: { stock_pool: [] },
+          },
+        ],
+      }),
+    );
+
+    const list = await listHistory();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ id: 'legacy-1', stockCode: '600519', totalScore: 70 });
+    expect(readdirSync(tmpDir).some((f) => f.startsWith('history.json.migrated-'))).toBe(true);
+
+    // 迁移后的记录继续参与去重/时间线补种
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 85 }));
+    expect((await listHistory())[0].timeline!.map((p) => p.score)).toEqual([70, 85]);
+  });
+
+  it('旧 JSON 损坏时留档后按空库继续，历史文件内容原样保留', async () => {
+    seedFile('{ broken legacy json');
+    expect(await listHistory()).toEqual([]);
+
+    const backups = readdirSync(tmpDir).filter((f) => f.startsWith('history.json.corrupt-'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(tmpDir, backups[0]), 'utf-8')).toBe('{ broken legacy json');
+    // 迁移失败不应影响新库可用性
+    expect(await saveHistoryEntry(makeEntry('600519'))).not.toBeNull();
+  });
+
+  it('旧 JSON 损坏且留档失败时禁止写入，旧文件不被覆盖', async () => {
+    seedFile('{ broken legacy json');
+    const spy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      throw Object.assign(new Error('EPERM: locked'), { code: 'EPERM' });
+    });
+    try {
+      expect(await listHistory()).toEqual([]);
+      expect(await saveHistoryEntry(makeEntry('600519'))).toBeNull();
+      expect(readFileSync(legacyFile, 'utf-8')).toBe('{ broken legacy json');
+    } finally {
+      spy.mockRestore();
+      resetHistoryStoreCache();
+    }
+  });
+
+  it('旧 JSON 结构非法（缺 items 数组）按损坏处置，不导入脏数据', async () => {
+    seedFile(JSON.stringify({ items: { not: 'an array' } }));
+    expect(await listHistory()).toEqual([]);
+    expect(readdirSync(tmpDir).some((f) => f.startsWith('history.json.corrupt-'))).toBe(true);
   });
 
   it('limit 参数钳制在 [1, 200]', async () => {
@@ -327,55 +425,16 @@ describe('historyService 研究历史', () => {
     expect(await listHistory(2)).toHaveLength(2);
   });
 
-  /* ==========================================================================
-   * Windows 瞬态锁定（EPERM/EBUSY）：异步 rename 重试 + 写失败不回滚内存
-   * ------------------------------------------------------------------------
-   * 杀毒/索引服务会短暂锁定刚写出的 tmp 文件，rename 偶发 EPERM。
-   * 重试间隔必须让出事件循环（旧实现的 Atomics.wait 同步 sleep 已移除），
-   * 且写失败不能清内存缓存——否则已完成的条目/时间线更新被静默回滚。
-   * ========================================================================*/
-  it('rename 瞬态 EPERM 经短暂重试后成功：数据正常保存，且重试不阻塞事件循环', async () => {
-    const realRename = fsp.rename;
-    let calls = 0;
-    const spy = vi.spyOn(fsp, 'rename').mockImplementation((async (
-      from: Parameters<typeof fsp.rename>[0],
-      to: Parameters<typeof fsp.rename>[1],
-    ) => {
-      calls += 1;
-      if (calls <= 2) {
-        const e = new Error('被另一进程占用') as NodeJS.ErrnoException;
-        e.code = 'EPERM';
-        throw e;
-      }
-      return realRename(from, to);
-    }) as typeof fsp.rename);
-    try {
-      const pending = saveHistoryEntry(makeEntry('600519', { totalScore: 80 }));
-      // 事件循环探针：重试间隔若仍是 Atomics.wait 同步 sleep（共 150ms），
-      // 这个 10ms 定时器要等阻塞结束才能触发；异步重试下应立即按点触发。
-      const timerStart = Date.now();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const elapsed = Date.now() - timerStart;
-      const saved = await pending;
-      expect(saved).not.toBeNull(); // 第三次重试成功
-      expect(elapsed).toBeLessThan(140); // 未被 150ms 的同步 sleep 卡住
-      expect((await listHistory())[0]!.totalScore).toBe(80);
-    } finally {
-      spy.mockRestore();
-    }
-    expect(calls).toBe(3);
-  });
+  it('写保护期间保存返回 null，恢复后下一次写入仍从已落盘数据继续', async () => {
+    await saveHistoryEntry(makeEntry('600519', { totalScore: 80 }));
+    // 把数据库路径指向目录 → 打开失败且写保护（不会误删目录）
+    process.env.HISTORY_DB_FILE = tmpDir;
+    resetHistoryStoreCache();
+    expect(await saveHistoryEntry(makeEntry('600519', { totalScore: 90 }))).toBeNull();
 
-  it('rename 持续失败：返回 null 但内存不回滚，恢复后下一次写入补齐全部数据', async () => {
-    const spy = vi.spyOn(fsp, 'rename').mockImplementation(async () => {
-      const e = new Error('持续锁定') as NodeJS.ErrnoException;
-      e.code = 'EPERM';
-      throw e;
-    });
-    // 三次重试全部失败 → 写失败降级返回 null（调用方语义不变）
-    expect(await saveHistoryEntry(makeEntry('600519', { totalScore: 80 }))).toBeNull();
-    spy.mockRestore();
-    // 恢复后再次保存同股票：80 那次的时间线点没有被读盘回滚丢掉
+    // 恢复真实路径：已落盘的 80 仍在，新保存从它继续累积时间线
+    delete process.env.HISTORY_DB_FILE;
+    resetHistoryStoreCache();
     await saveHistoryEntry(makeEntry('600519', { totalScore: 95 }));
     const item = (await listHistory())[0]!;
     expect(item.totalScore).toBe(95);

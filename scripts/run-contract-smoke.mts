@@ -53,7 +53,12 @@ process.env.QUANT_FINANCIAL_CACHE_TTL_HOURS = '0';
 process.env.QUANT_QUARTERLY_CACHE_TTL_HOURS = '0';
 
 // 研究历史：与上面同一套隔离机制。
+// 历史已改为 SQLite：种子仍按旧 JSON 形状写入（服务首次打开会自动迁入并留档），
+// 数据库文件显式指向临时目录，避免读写真实 server/data/history.db。
 process.env.HISTORY_FILE = join(smokeDataDir, 'history.json');
+process.env.HISTORY_DB_FILE = join(smokeDataDir, 'history.db');
+// 设置页（Webhook/历史容量）同理：冒烟不得读写开发机上的真实设置。
+process.env.SETTINGS_FILE = join(smokeDataDir, 'settings.json');
 
 /**
  * 3) 播一颗「研究历史」种子。
@@ -61,8 +66,8 @@ process.env.HISTORY_FILE = join(smokeDataDir, 'history.json');
  * 为什么需要：`GET/DELETE /api/history/{id}` 的响应体同样需要被真实校验，
  * 而 history **只由分析成功时落库**（routes/analysis.ts 的 saveHistoryEntry，
  * 依赖 LLM + 行情），冒烟里既没有 LLM 也没有 id，POST /api/history 并不存在
- * （404）。于是这里直接按 `HistoryStore`（services/historyService.ts）的形状
- * 写一条进临时目录，让 DELETE 端点有确定可删的 id。
+ * （404）。于是这里按旧 JSON 形状写一条进临时目录（首次读取自动迁移进 SQLite），
+ * 让 DELETE 端点有确定可删的 id。
  *
  * 写临时目录而非真实数据：这条与删除都只作用于 smokeDataDir。
  */

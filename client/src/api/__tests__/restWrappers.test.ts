@@ -9,6 +9,7 @@ import {
   deleteHistoryItem,
   fetchHistoryDetail,
   fetchHistoryList,
+  fetchSettings,
   fetchWatchlistAlerts,
   getAutonomousStatus,
   getCostReport,
@@ -34,7 +35,9 @@ import {
   runResearchDigestNow,
   runValuationModelApi,
   runWatchlistNewsBacktest,
+  saveSettings,
   searchStocks,
+  sendTestWebhook,
   settlePaperDay,
   stopAutonomous,
   type ChatStreamEvent,
@@ -50,6 +53,7 @@ import {
 const httpInst = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
+  put: vi.fn(),
   delete: vi.fn(),
   interceptors: {
     request: { use: () => {} },
@@ -82,6 +86,7 @@ function networkError() {
 beforeEach(() => {
   httpInst.get.mockReset();
   httpInst.post.mockReset();
+  httpInst.put.mockReset();
   httpInst.delete.mockReset();
 });
 
@@ -123,14 +128,56 @@ describe('normalizeApiError —— 既有单测未覆盖的分支', () => {
 type ApiCase = {
   name: string;
   call: () => Promise<unknown>;
-  method: 'get' | 'post' | 'delete';
+  method: 'get' | 'post' | 'put' | 'delete';
   url: string;
   response: unknown;
   expected: unknown;
   fallback: string;
 };
 
+const SETTINGS_RESPONSE = {
+  alertWebhook: {
+    configured: true,
+    urlMasked: 'https://qyapi.weixin.qq.com/…',
+    timeoutMs: 3000,
+    source: 'settings' as const,
+  },
+  history: {
+    maxItems: 2000,
+    source: 'default' as const,
+    defaultMaxItems: 2000,
+    hardMaxItems: 50000,
+  },
+};
+
 const CASES: ApiCase[] = [
+  {
+    name: 'fetchSettings',
+    call: () => fetchSettings(),
+    method: 'get',
+    url: '/settings',
+    response: SETTINGS_RESPONSE,
+    expected: SETTINGS_RESPONSE,
+    fallback: '设置读取失败',
+  },
+  {
+    name: 'saveSettings',
+    call: () => saveSettings({ alertWebhook: { timeoutMs: 2500 }, history: { maxItems: 800 } }),
+    method: 'put',
+    url: '/settings',
+    response: SETTINGS_RESPONSE,
+    expected: SETTINGS_RESPONSE,
+    fallback: '设置保存失败',
+  },
+  {
+    name: 'sendTestWebhook',
+    call: () => sendTestWebhook(),
+    method: 'post',
+    url: '/settings/alert-webhook/test',
+    response: { sent: true, configured: true, status: 204 },
+    expected: { sent: true, configured: true, status: 204 },
+    fallback: '测试推送失败',
+  },
   {
     name: 'getStockList',
     call: () => getStockList(),
@@ -439,6 +486,7 @@ describe('REST 封装 —— 后端未启动时统一给出启动指引', () => 
   it('所有接口都不把 "Network Error" 原样抛给用户', async () => {
     httpInst.get.mockRejectedValue(networkError());
     httpInst.post.mockRejectedValue(networkError());
+    httpInst.put.mockRejectedValue(networkError());
     httpInst.delete.mockRejectedValue(networkError());
     for (const c of CASES) {
       await expect(c.call()).rejects.toThrow('无法连接后端服务');

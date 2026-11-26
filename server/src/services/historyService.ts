@@ -1,33 +1,43 @@
 /**
- * 研究历史记录（轻量、落盘）
+ * 研究历史记录（SQLite 持久层）
  * ----------------------------------------------------------------------------
  * 每次股票分析完成时自动保存（同股票代码去重更新，保持每只股票仅一条最新记录），
  * 前端历史页可列出、回看（恢复完整分析结果）与删除。
- * 去重会覆盖旧结果，因此额外保留一份「精简时间线」（每只股票最近 N 条 {date,score,rating}），
- * 否则用户无法回答"观点怎么变的"——只能看到最新一份快照。
+ * 去重会覆盖旧结果，因此额外保留一份「精简时间线」（每只股票最近 N 条
+ * {date,score,rating}），否则用户无法回答"观点怎么变的"——只能看到最新一份快照。
  *
- * 持久化：单 JSON 文件（HISTORY_FILE env 可重定向，与 watchlist/paper/audit 同模式），
- * "临时文件 + 原子 rename"写入；容量超上限时淘汰最旧记录；所有 IO 错误静默降级。
+ * 为什么从 JSON 换成 SQLite（2026-11）：
+ * 旧实现是「单 JSON 文件 + 默认 100 条上限」。100 条不是产品上限，而是性能妥协：
+ * 整库 JSON.parse/序列化随条数线性变慢（满额约 14.7MB），历史条目越有价值越不敢留。
+ * 现在改用 Node 24 内置的 `node:sqlite`（零新依赖）：
+ *  - 列表/详情/去重全部走索引查询，不再整库解析；
+ *  - 默认保留 2000 条（`HISTORY_MAX_ITEMS` 或设置页仍可覆盖），长期使用不会
+ *    因为"文件太大"而被迫丢弃研究结论；
+ *  - 首次启动自动把旧 `history.json` 迁入并留档（`.migrated-<ts>`），不丢历史。
  *
- * 异步化（2026-11 架构整改）：
- * 此前读写全部走同步 fs（readFileSync/writeFileSync/renameSync），rename 瞬态失败
- * 还用 Atomics.wait 做同步 sleep。历史库满额（100 条 ≈ 14.7MB）时单次 JSON.parse
- * ≈ 38ms、单次写回数十毫秒，/api/analyze/stream、/api/chat/stream 都是长连接，
- * 事件循环一卡全体等。现在：
- * - 所有 fs 操作一律走 node:fs/promises（含瞬态重试的 sleep 也改为 setTimeout），
- *   模块内不存在任何阻塞事件循环的路径；
- * - 进程内缓存带 mtime 失效：命中缓存时只做一次异步 stat（微秒级），mtime 不变
- *   直接返回内存快照，变了（含外部删除）自动重读——外部（测试夹具/运维手工）
- *   改写落盘文件不再需要手动 resetHistoryStoreCache()；
- * - 「读-改-写」经进程内串行队列执行：并发保存/删除不会交错成丢失更新。
- * API 语义不变：导出函数 Promise 化，返回结构、去重/淘汰/时间线/降级规则逐字保持。
+ * 保留的既有语义（刻意逐条对齐）：
+ *  - **损坏留档**：数据库文件无法打开/自检失败时，改名为 `.corrupt-<ts>` 后按空库
+ *    重建；留档失败（权限/锁定）则禁止写入，宁可本次保存失败，也不覆盖唯一副本。
+ *    旧 JSON 迁移时遇到损坏文件走同一处置（损坏且无法留档 → 禁止写入）。
+ *  - **写入保护**：写失败只记 warning，返回 null，不阻断分析主流程。
+ *  - **串行化**：变更仍经进程内队列，API 语义（Promise）不变；SQLite 事务保证
+ *    去重、时间线追加、容量淘汰原子完成。
+ *  - **严格单调 createdAt**：同毫秒连续保存时 +1ms，容量淘汰语义稳定。
+ *
+ * 路径：
+ *  - `HISTORY_DB_FILE` 显式指定数据库文件；
+ *  - 未设置但设了 `HISTORY_FILE`（旧 JSON 路径）时，数据库落在同目录同名 `.db`
+ *    （测试/冒烟只重定向 HISTORY_FILE 也能天然隔离）；
+ *  - 否则默认 `server/data/history.db`。
  */
-import * as fsp from 'node:fs/promises';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { DATA_ROOT } from '../dataRoot.js';
 import type { AnalysisResult } from '../types.js';
 import logger from '../utils/logger.js';
+import { resolveHistoryMaxItems } from './settings.js';
 
 /** 评分/评级时间线单点（精简：只留回看"观点怎么变的"所需字段，不带完整 result） */
 export interface HistoryTimelinePoint {
@@ -68,244 +78,364 @@ export interface HistoryEntryInput {
   result: AnalysisResult;
 }
 
-/**
- * 历史库落盘结构（同时作为「内存快照」形态对外暴露）：
- * 由 readHistoryStore() 读一次后可作为 saveHistoryEntry() 的第二参数复用。
- */
-export interface HistoryStore {
-  items: HistoryItem[];
-}
-
-const DEFAULT_HISTORY_FILE = path.join(DATA_ROOT, 'history.json');
-/** 历史记录容量上限默认值：超出后淘汰最旧记录 */
-export const MAX_HISTORY_ITEMS = 100;
-/** 硬上限：再大就违背「单文件历史库」的设计前提（整库 JSON 解析会明显变慢） */
-const HARD_MAX_HISTORY_ITEMS = 5000;
+/** 默认保留条数：SQLite 下不再受「整库解析」约束，默认从 100 提高到 2000 */
+export const DEFAULT_HISTORY_MAX_ITEMS = 2000;
+/** 硬上限：再大就超出「本地单机研究历史」的合理体量 */
+const HARD_MAX_HISTORY_ITEMS = 50_000;
 /** 每只股票保留的时间线长度上限：只留最近 N 次，避免列表响应体随使用时长膨胀 */
 export const MAX_TIMELINE_POINTS = 20;
 
 /**
- * 运行时解析历史容量：`HISTORY_MAX_ITEMS` 可覆盖默认 100（整数，1–5000）。
- * 非法值静默回落默认值，避免一条写错的环境变量把历史裁剪成 0 条。
+ * 运行时解析历史容量：设置页 > `HISTORY_MAX_ITEMS` > 默认 2000（整数，1–50000）。
+ * 非法环境变量静默回落默认值，避免一条写错的环境变量把历史裁剪成 0 条。
  */
-export function maxHistoryItems(): number {
+export function historyMaxItemsStatus(): {
+  value: number;
+  source: 'settings' | 'env' | 'default';
+} {
   const raw = process.env.HISTORY_MAX_ITEMS?.trim();
-  if (!raw) return MAX_HISTORY_ITEMS;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1) return MAX_HISTORY_ITEMS;
-  return Math.min(value, HARD_MAX_HISTORY_ITEMS);
+  let envOverride: number | null = null;
+  if (raw) {
+    const value = Number(raw);
+    if (Number.isInteger(value) && value >= 1) {
+      envOverride = Math.min(value, HARD_MAX_HISTORY_ITEMS);
+    }
+  }
+  return resolveHistoryMaxItems(DEFAULT_HISTORY_MAX_ITEMS, envOverride);
+}
+
+/** 当前生效的历史保留条数 */
+export function maxHistoryItems(): number {
+  return historyMaxItemsStatus().value;
+}
+
+/** 容量硬上限（设置页展示/校验用） */
+export const HISTORY_MAX_ITEMS_HARD_LIMIT = HARD_MAX_HISTORY_ITEMS;
+
+/** 旧版 JSON 历史路径：仅作为一次性迁移来源（也用于推导默认 DB 路径） */
+function legacyJsonPath(): string {
+  const explicit = process.env.HISTORY_FILE?.trim();
+  return explicit && explicit.length > 0 ? explicit : path.join(DATA_ROOT, 'history.json');
+}
+
+/** SQLite 数据库路径（见文件头「路径」说明） */
+export function historyDbPath(): string {
+  const explicit = process.env.HISTORY_DB_FILE?.trim();
+  if (explicit && explicit.length > 0) return explicit;
+  const legacy = process.env.HISTORY_FILE?.trim();
+  if (legacy && legacy.length > 0) {
+    return /\.json$/i.test(legacy) ? legacy.replace(/\.json$/i, '.db') : `${legacy}.db`;
+  }
+  return path.join(DATA_ROOT, 'history.db');
+}
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS history_items (
+  id          TEXT PRIMARY KEY,
+  stock_code  TEXT NOT NULL UNIQUE,
+  stock_name  TEXT NOT NULL,
+  industry    TEXT,
+  rating      TEXT NOT NULL,
+  total_score REAL NOT NULL,
+  created_at  TEXT NOT NULL,
+  result_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_history_items_created_at ON history_items(created_at DESC);
+CREATE TABLE IF NOT EXISTS history_timeline (
+  history_id  TEXT NOT NULL,
+  seq         INTEGER NOT NULL,
+  point_date  TEXT NOT NULL,
+  score       REAL NOT NULL,
+  rating      TEXT NOT NULL,
+  PRIMARY KEY (history_id, seq),
+  FOREIGN KEY (history_id) REFERENCES history_items(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS history_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+`;
+
+interface DbState {
+  path: string;
+  db: DatabaseSync | null;
+  /** 文件损坏且无法留档：读按空历史、写一律拒绝（不覆盖唯一副本） */
+  writeProtected: boolean;
+}
+
+let state: DbState | null = null;
+
+function closeState(): void {
+  if (state?.db) {
+    try {
+      state.db.close();
+    } catch {
+      /* 关闭失败不影响后续重建 */
+    }
+  }
+  state = null;
 }
 
 /**
- * 运行时解析落盘路径：支持 HISTORY_FILE 环境变量重定向（与 watchlist/paper/audit 同模式）。
- * 惰性解析而非模块级常量，测试可在 beforeAll 中设置 env 后生效。
- */
-function getHistoryFile(): string {
-  return process.env.HISTORY_FILE && process.env.HISTORY_FILE.length > 0
-    ? process.env.HISTORY_FILE
-    : DEFAULT_HISTORY_FILE;
-}
-
-/**
- * 模块级内存 store（单进程单写者）+ mtime 失效。
- * ----------------------------------------------------------------------------
- * 读走内存、写后更新缓存；命中时仅用一次异步 stat 校验 mtime——不读全量文件、
- * 不 JSON.parse。外部直接改写/删除落盘文件后 mtime 变化（或 stat 失败），缓存自动
- * 失效重读；resetHistoryStoreCache() 仍保留，供"内容变了但 mtime 被刻意保持"等
- * 极端场景强制重读。
- */
-interface StoreCacheEntry {
-  file: string;
-  store: HistoryStore;
-  /**
-   * 建立缓存时落盘文件的 mtime（毫秒）；null 表示建立缓存时文件不存在（ENOENT）
-   * 或写盘后 stat 失败——两种情况下次读都会重新加载，不会把过期内容钉在内存里。
-   */
-  mtimeMs: number | null;
-  /**
-   * 写盘失败后的「内存权威」标记：盘上内容已落后于内存（原子替换要么成功要么
-   * 没发生，旧文件未动），此时 mtime 校验必然失配，若据此重读会把已完成的更新
-   * 静默回滚。标记期间跳过校验，直到下一次成功写盘。
-   */
-  memoryAuthoritative: boolean;
-}
-let storeCache: StoreCacheEntry | null = null;
-
-/**
- * 清空内存缓存：供测试隔离、或外部直接改写了落盘文件且 mtime 未变时强制重读
- * （常规外部改写由 mtime 校验自动发现，生产路径无需调用）。
+ * 清空数据库连接并丢弃缓存：供测试隔离、或外部改写了 DB 文件后强制重开
+ * （常规运行无需调用；SQLite 自身保证读到已提交数据）。
  */
 export function resetHistoryStoreCache(): void {
-  storeCache = null;
+  closeState();
 }
 
-/**
- * 读取历史库快照（内存缓存命中且 mtime 未变则不读盘、不 parse）。
- * 同一请求内可「读一次、复用给 saveHistoryEntry(input, store)」，让整条链路只读一次写一次。
- * 注意：返回的是浅拷贝，可自由读；但同一份快照不要跨多次写入复用（后一次会覆盖前一次）。
- */
-export async function readHistoryStore(): Promise<HistoryStore> {
-  return { items: [...(await readStore()).items] };
+/** 显式关闭连接（优雅关闭 / 测试 teardown 释放文件句柄，Windows 上才能删除临时目录） */
+export function closeHistoryStore(): void {
+  closeState();
 }
 
-/**
- * 最近一次「损坏且留档失败」的历史文件路径。
- * ----------------------------------------------------------------------------
- * 文件损坏本身可以按空历史继续，但 saveHistoryEntry 会把读到的空快照全量写回——
- * 一次 JSON 截断就会永久清零全部研究历史（100 条 ≈ 14.7MB）。因此先改名留档
- * （`.corrupt-<ts>`，可人工恢复）再继续；留档也失败时（权限/锁定）禁止任何写入，
- * 宁可本次保存失败，也不覆盖唯一副本。评级台账 outcomeTracker 是同一处置口径。
- */
-let unquarantinedCorruptFile: string | null = null;
-
-/** 损坏文件改名留档；留档失败则禁止写入（避免用空快照覆盖唯一副本）。 */
-async function quarantineCorrupt(file: string, err: unknown): Promise<void> {
+/** 只处理普通文件：目录绝不改名（会把整棵目录搬走） */
+function quarantineDbFile(file: string): boolean {
   try {
-    await fsp.rename(file, `${file}.corrupt-${Date.now()}`);
-    unquarantinedCorruptFile = null;
-    logger.warn('研究历史文件损坏，已改名留档并按空历史继续（历史记录需人工恢复）', {
-      file,
-      err,
-    });
+    const st = fs.statSync(file);
+    if (!st.isFile()) return false;
   } catch {
-    unquarantinedCorruptFile = file;
-    logger.error('研究历史文件损坏且无法留档，已禁止写入以免覆盖原文件', { file, err });
+    return false;
   }
-}
-
-/** 从盘加载并建立缓存；损坏/不可读返回空历史且**不写缓存**（下次调用重试）。 */
-async function loadFromDisk(file: string): Promise<HistoryStore> {
-  let raw: string;
-  try {
-    raw = await fsp.readFile(file, 'utf-8');
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
-      // 文件不存在 = 确定的空历史（不是故障），可以缓存；外部新建文件后 mtime
-      // 校验会发现"建立缓存时无文件、现在有"，自动重读。
-      const store: HistoryStore = { items: [] };
-      storeCache = { file, store, mtimeMs: null, memoryAuthoritative: false };
-      return store;
-    }
-    // 读失败（EISDIR/EACCES/EBUSY 等）≠ 内容损坏：不动文件（目录改名会毁掉整棵目录），
-    // 仅禁止后续写入，避免「读到空快照 → 全量写回」覆盖唯一副本。
-    unquarantinedCorruptFile = file;
-    logger.error('研究历史文件读取失败，已禁止写入以免覆盖原文件', { file, err: e });
-    return { items: [] };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    // JSON 截断/半截写：改名留档后按空历史继续，不阻断列表与后续保存。
-    await quarantineCorrupt(file, e);
-    return { items: [] };
-  }
-  const parsedStore = parsed as Partial<HistoryStore> | null;
-  if (!parsedStore || !Array.isArray(parsedStore.items)) {
-    await quarantineCorrupt(file, new Error('历史文件结构非法（缺少 items 数组）'));
-    return { items: [] };
-  }
-  const store: HistoryStore = { items: parsedStore.items };
-  unquarantinedCorruptFile = null; // 读取成功：此前的损坏标记已失效
-  let mtimeMs: number | null = null;
-  try {
-    mtimeMs = (await fsp.stat(file)).mtimeMs;
-  } catch {
-    // 读到内容却 stat 失败（极端竞态）：保持 null，下次读重新加载，绝不误信缓存
-  }
-  storeCache = { file, store, mtimeMs, memoryAuthoritative: false };
-  return store;
-}
-
-async function readStore(): Promise<HistoryStore> {
-  const file = getHistoryFile();
-  const cached = storeCache;
-  if (cached && cached.file === file) {
-    if (cached.memoryAuthoritative) return cached.store; // 写失败后内存是权威，不回滚
+  const target = `${file}.corrupt-${Date.now()}`;
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const st = await fsp.stat(file);
-      if (cached.mtimeMs !== null && st.mtimeMs === cached.mtimeMs) {
-        return cached.store; // 缓存命中：mtime 未变，不读盘
+      fs.renameSync(file, target);
+      // WAL/SHM 属于同一份数据库，一并挪走，避免新库被旧日志干扰
+      for (const suffix of ['-wal', '-shm']) {
+        try {
+          if (fs.existsSync(`${file}${suffix}`))
+            fs.renameSync(`${file}${suffix}`, `${target}${suffix}`);
+        } catch {
+          /* 附属文件挪不走不致命 */
+        }
       }
-    } catch {
-      // 文件被外部删除：建立缓存时本就无文件（ENOENT 缓存）则仍然有效
-      if (cached.mtimeMs === null) return cached.store;
-    }
-    // mtime 变化 / 文件被删 / 出现新文件：落到下方重读
-  }
-  return loadFromDisk(file);
-}
-
-/**
- * rename 的瞬态失败重试（Windows 专属痛点）。
- * 杀毒/搜索索引服务会短暂锁定刚写出的 tmp 或目标文件，rename 随即
- * EPERM/EBUSY——数百毫秒后自动放手。graceful-fs 对同类问题的标准处置就是
- * 短暂重试；不重试的话单次锁定就会触发整条「写失败」降级路径。
- * 重试间隔用 setTimeout 让出事件循环（此前的 Atomics.wait 同步 sleep 会把
- * 所有在途请求一起卡住，已随异步化彻底移除）。非锁定类错误（EINVAL/ENOENT 等）
- * 不属于瞬态，直接上抛由调用方降级。
- */
-async function renameWithRetry(tmp: string, file: string): Promise<void> {
-  const transient = new Set(['EPERM', 'EBUSY', 'EACCES']);
-  let lastErr: unknown;
-  for (const delay of [0, 50, 100]) {
-    if (delay > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-    try {
-      await fsp.rename(tmp, file);
-      return;
-    } catch (e) {
-      lastErr = e;
-      if (!transient.has((e as NodeJS.ErrnoException).code ?? '')) throw e;
+      logger.warn('研究历史数据库损坏，已改名留档并按空库重建（历史需人工恢复）', {
+        file,
+        backup: target,
+      });
+      return true;
+    } catch (error) {
+      if (attempt === 2) {
+        logger.error('研究历史数据库损坏且无法留档，已禁止写入以免覆盖原文件', {
+          file,
+          err: error,
+        });
+        return false;
+      }
     }
   }
-  throw lastErr;
+  return false;
 }
 
-async function writeStore(store: HistoryStore): Promise<boolean> {
-  const file = getHistoryFile();
-  const tmp = `${file}.tmp`;
+function openDatabase(file: string): DatabaseSync {
+  const db = new DatabaseSync(file);
   try {
-    await fsp.mkdir(path.dirname(file), { recursive: true });
-    await fsp.writeFile(tmp, JSON.stringify(store, null, 2), 'utf-8');
-    await renameWithRetry(tmp, file); // 原子替换，避免半写状态；瞬态锁定重试见函数注释
-    let mtimeMs: number | null = null;
-    try {
-      mtimeMs = (await fsp.stat(file)).mtimeMs;
-    } catch {
-      /* stat 失败则 mtimeMs=null，下次读重新加载（多一次读盘，正确性不受影响） */
+    db.exec('PRAGMA busy_timeout = 3000');
+    db.exec('PRAGMA foreign_keys = ON');
+    db.exec('PRAGMA journal_mode = WAL');
+    db.exec(SCHEMA);
+    const check = db.prepare('PRAGMA quick_check').get() as Record<string, unknown> | undefined;
+    const verdict = check ? String(Object.values(check)[0] ?? '') : '';
+    if (verdict !== 'ok') {
+      throw new Error(`SQLite quick_check 未通过：${verdict || 'unknown'}`);
     }
-    storeCache = { file, store, mtimeMs, memoryAuthoritative: false }; // 写后更新缓存
-    unquarantinedCorruptFile = null; // 写入成功：盘上已是完整快照，损坏标记失效
+    return db;
+  } catch (error) {
+    try {
+      db.close();
+    } catch {
+      /* 打开过程中的异常已由外层处置 */
+    }
+    throw error;
+  }
+}
+
+/** 打开（或复用）数据库；打不开时返回「写保护」状态而不是抛错，保证读接口始终可用 */
+function ensureState(): DbState {
+  const file = historyDbPath();
+  if (state && state.path === file) return state;
+  if (state) closeState();
+
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+  } catch (error) {
+    logger.error('研究历史目录创建失败，本次按空历史处理且禁止写入', { file, err: error });
+    state = { path: file, db: null, writeProtected: true };
+    return state;
+  }
+
+  let db: DatabaseSync;
+  try {
+    db = openDatabase(file);
+  } catch (error) {
+    logger.error('研究历史数据库打开失败', { file, err: error });
+    if (!quarantineDbFile(file)) {
+      state = { path: file, db: null, writeProtected: true };
+      return state;
+    }
+    try {
+      db = openDatabase(file);
+    } catch (retryError) {
+      logger.error('研究历史数据库重建失败，本次按空历史处理且禁止写入', {
+        file,
+        err: retryError,
+      });
+      state = { path: file, db: null, writeProtected: true };
+      return state;
+    }
+  }
+
+  state = { path: file, db, writeProtected: false };
+  migrateLegacyJson(state);
+  return state;
+}
+
+function setMeta(db: DatabaseSync, key: string, value: string): void {
+  db.prepare(
+    'INSERT INTO history_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  ).run(key, value);
+}
+
+function getMeta(db: DatabaseSync, key: string): string | null {
+  const row = db.prepare('SELECT value FROM history_meta WHERE key = ?').get(key) as
+    { value?: string } | undefined;
+  return typeof row?.value === 'string' ? row.value : null;
+}
+
+/** 留档旧 JSON；失败返回 false（此时禁止写入，避免旧文件是唯一副本却被无视） */
+function quarantineLegacyJson(file: string): boolean {
+  try {
+    fs.renameSync(file, `${file}.corrupt-${Date.now()}`);
+    logger.warn('旧研究历史 JSON 损坏，已改名留档并按空库继续（历史需人工恢复）', { file });
     return true;
-  } catch {
-    // 写失败（重试后仍失败）：**保留内存 store 作为权威**，并跳过 mtime 校验。
-    // rename 失败时盘上旧文件未被动过（原子替换要么成功要么没发生），
-    // 此前清缓存会让下次 readStore 从旧盘重建——本次已完成的条目新增/
-    // 去重更新/时间线追加被静默回滚（丢用户研究历史）；保留缓存则盘暂时
-    // 滞后一条，下一次 writeStore 全量重写时自动追上。tmp 残留一并
-    // best-effort 清理（不影响正确性，只是不留孤儿文件）。
-    storeCache = { file, store, mtimeMs: null, memoryAuthoritative: true };
-    try {
-      await fsp.unlink(tmp);
-    } catch {
-      /* tmp 可能尚未创建 */
-    }
+  } catch (error) {
+    logger.error('旧研究历史 JSON 损坏且无法留档，已禁止写入以免覆盖原文件', { file, err: error });
     return false;
   }
 }
 
 /**
- * 「读-改-写」串行队列：saveHistoryEntry/deleteHistoryItem 都是先读快照、内存修改、
- * 再全量写回。异步化后若不做串行化，两个并发保存会在 await 点交错——各自拿着
- * 旧快照写回，后写覆盖先写（丢失更新）。队列把整个变更操作串行执行，读操作
- * （list/get/getPrevious）不进队列，保持并发吞吐。
+ * 首次打开时把旧 `history.json` 一次性迁入 SQLite，并把原文件改名为 `.migrated-<ts>`。
+ * 迁移成功后写 meta 标记；失败（含损坏留档失败）也会写标记——否则每次启动都会
+ * 重复处理同一个坏文件，并在每轮留下新的 `.corrupt-*`。
+ */
+function migrateLegacyJson(current: DbState): void {
+  const db = current.db;
+  if (!db) return;
+  if (getMeta(db, 'legacy_json_migrated')) return;
+  const legacy = legacyJsonPath();
+  if (path.resolve(legacy) === path.resolve(current.path)) {
+    setMeta(db, 'legacy_json_migrated', new Date().toISOString());
+    return;
+  }
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(legacy, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      setMeta(db, 'legacy_json_migrated', new Date().toISOString());
+      return;
+    }
+    logger.warn('旧研究历史 JSON 读取失败，本次跳过迁移（文件保持原样）', { legacy, err: error });
+    return;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    logger.warn('旧研究历史 JSON 解析失败，按损坏文件处置', { legacy, err: error });
+    if (!quarantineLegacyJson(legacy)) current.writeProtected = true;
+    setMeta(db, 'legacy_json_migrated', new Date().toISOString());
+    return;
+  }
+
+  const items = (parsed as { items?: unknown } | null)?.items;
+  if (!Array.isArray(items)) {
+    logger.warn('旧研究历史 JSON 结构非法（缺少 items 数组），按损坏文件处置', { legacy });
+    if (!quarantineLegacyJson(legacy)) current.writeProtected = true;
+    setMeta(db, 'legacy_json_migrated', new Date().toISOString());
+    return;
+  }
+
+  let imported = 0;
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const rawItem of items) {
+        if (!rawItem || typeof rawItem !== 'object') continue;
+        const item = rawItem as Partial<HistoryItem>;
+        if (
+          typeof item.id !== 'string' ||
+          typeof item.stockCode !== 'string' ||
+          typeof item.createdAt !== 'string'
+        ) {
+          continue;
+        }
+        const result = item.result;
+        if (!result || typeof result !== 'object') continue;
+        db.prepare(
+          `INSERT INTO history_items (id, stock_code, stock_name, industry, rating, total_score, created_at, result_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(stock_code) DO UPDATE SET
+             stock_name = excluded.stock_name,
+             industry = excluded.industry,
+             rating = excluded.rating,
+             total_score = excluded.total_score,
+             created_at = excluded.created_at,
+             result_json = excluded.result_json`,
+        ).run(
+          item.id,
+          item.stockCode,
+          typeof item.stockName === 'string' ? item.stockName : item.stockCode,
+          typeof item.industry === 'string' ? item.industry : null,
+          typeof item.rating === 'string' ? item.rating : '',
+          Number.isFinite(item.totalScore) ? Number(item.totalScore) : 0,
+          item.createdAt,
+          JSON.stringify(result),
+        );
+        const row = db
+          .prepare('SELECT id FROM history_items WHERE stock_code = ?')
+          .get(item.stockCode) as { id?: string } | undefined;
+        const timeline = sanitizeTimeline(item.timeline);
+        if (row?.id && timeline.length > 0) {
+          replaceTimeline(db, row.id, timeline);
+        }
+        imported += 1;
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    logger.warn('旧研究历史迁移失败，原文件保持原样（下次启动会重试）', { legacy, err: error });
+    return;
+  }
+
+  try {
+    fs.renameSync(legacy, `${legacy}.migrated-${Date.now()}`);
+  } catch (error) {
+    // 迁移已完成：原文件挪不走不致命，用 meta 标记阻止重复导入即可
+    logger.warn('旧研究历史已迁移，但原文件改名失败（已用标记避免重复导入）', {
+      legacy,
+      err: error,
+    });
+  }
+  setMeta(db, 'legacy_json_migrated', new Date().toISOString());
+  logger.info('研究历史已从 JSON 迁移到 SQLite', { legacy, imported });
+}
+
+/**
+ * 「读-改-写」串行队列：SQLite 单条写入很快，但文件名/路径可能在调用间变化，
+ * 且 saveHistoryEntry 依赖「先查再写」的事务一致性。队列保证同一进程内的
+ * 保存/删除按调用顺序执行；读操作不进队列，保持并发吞吐。
  */
 let mutationQueue: Promise<unknown> = Promise.resolve();
 function enqueueMutation<T>(op: () => Promise<T>): Promise<T> {
-  const run = mutationQueue.then(op, op); // 前序失败不阻塞后续变更
+  const run = mutationQueue.then(op, op);
   mutationQueue = run.then(
     () => undefined,
     () => undefined,
@@ -317,9 +447,8 @@ function makeId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// 毫秒级单调时钟：Date.now() 在快速连续保存（如批量测试/脚本）时可能落在同一毫秒，
-// createdAt 相同会让"按时间倒序 + 淘汰最旧"依赖数组稳定序（结果错误：淘汰的是后保存的）。
-// 同毫秒时强制 +1ms 递增，保证 createdAt 严格单调、排序与淘汰语义永远正确。
+// 毫秒级单调时钟：快速连续保存可能落在同一毫秒，createdAt 相同会让容量淘汰
+// 依赖查询排序的不确定性（结果错误：淘汰的是后保存的）。同毫秒强制 +1ms。
 let lastCreatedAtMs = 0;
 function monotonicNowIso(): string {
   const now = Date.now();
@@ -348,108 +477,278 @@ function sanitizeTimeline(value: unknown): HistoryTimelinePoint[] {
   return out.slice(-MAX_TIMELINE_POINTS);
 }
 
-/**
- * 追加一个时间线点并裁剪到上限。
- * 旧数据（timeline 字段上线前落盘）缺失时间线时，用「本次将被覆盖的那次快照」补种起点：
- * 否则老记录第一次更新后只有 1 个点，用户依然看不到"变了多少"。
- */
+/** 追加一个时间线点并裁剪到上限；旧数据缺时间线时用「将被覆盖的那次快照」补种起点 */
 function appendTimeline(
-  existing: HistoryItem,
+  existing: { createdAt: string; totalScore: number; rating: string } | null,
+  points: HistoryTimelinePoint[],
   nowIso: string,
   input: HistoryEntryInput,
 ): HistoryTimelinePoint[] {
-  const points = sanitizeTimeline(existing.timeline);
-  if (points.length === 0 && typeof existing.createdAt === 'string') {
-    points.push({
+  const next = sanitizeTimeline(points);
+  if (next.length === 0 && existing && typeof existing.createdAt === 'string') {
+    next.push({
       date: existing.createdAt.slice(0, 10),
       score: existing.totalScore,
       rating: existing.rating,
     });
   }
-  points.push({ date: nowIso.slice(0, 10), score: input.totalScore, rating: input.rating });
-  return points.slice(-MAX_TIMELINE_POINTS);
+  next.push({ date: nowIso.slice(0, 10), score: input.totalScore, rating: input.rating });
+  return next.slice(-MAX_TIMELINE_POINTS);
 }
 
+function replaceTimeline(
+  db: DatabaseSync,
+  historyId: string,
+  points: HistoryTimelinePoint[],
+): void {
+  db.prepare('DELETE FROM history_timeline WHERE history_id = ?').run(historyId);
+  const insert = db.prepare(
+    'INSERT INTO history_timeline (history_id, seq, point_date, score, rating) VALUES (?, ?, ?, ?, ?)',
+  );
+  points.slice(-MAX_TIMELINE_POINTS).forEach((point, index) => {
+    insert.run(historyId, index, point.date, point.score, point.rating);
+  });
+}
+
+function readTimeline(db: DatabaseSync, historyId: string): HistoryTimelinePoint[] {
+  const rows = db
+    .prepare(
+      'SELECT point_date, score, rating FROM history_timeline WHERE history_id = ? ORDER BY seq ASC',
+    )
+    .all(historyId) as { point_date?: string; score?: number; rating?: string }[];
+  return sanitizeTimeline(
+    rows.map((r) => ({ date: r.point_date, score: r.score, rating: r.rating })),
+  );
+}
+
+interface SummaryRow {
+  id: string;
+  stock_code: string;
+  stock_name: string;
+  industry: string | null;
+  rating: string;
+  total_score: number;
+  created_at: string;
+}
+
+const SUMMARY_COLUMNS = 'id, stock_code, stock_name, industry, rating, total_score, created_at';
+
 /**
- * 条目 → 列表摘要：剥掉完整 result（响应体瘦身），时间线做一次净化；
- * 空时间线不返回空数组，让"无时间线"在类型上就是 undefined（前端不必区分 [] 与缺失）。
+ * SQLite 返回的行是 `Record<string, SQLOutputValue>`（类型层面未知）。
+ * 这里做一次边界收敛：字段类型不符的行直接丢弃（视为损坏数据），
+ * 而不是用 `as` 把未知值硬转成业务类型——后者会让损坏行一路透到接口。
  */
-function toSummary(item: HistoryItem): HistorySummary {
-  const { result: _result, timeline, ...summary } = item;
-  const points = sanitizeTimeline(timeline);
-  return points.length > 0 ? { ...summary, timeline: points } : summary;
+function coerceSummaryRow(row: unknown): SummaryRow | null {
+  if (!row || typeof row !== 'object') return null;
+  const r = row as Record<string, unknown>;
+  if (
+    typeof r.id !== 'string' ||
+    typeof r.stock_code !== 'string' ||
+    typeof r.stock_name !== 'string' ||
+    typeof r.rating !== 'string' ||
+    typeof r.created_at !== 'string'
+  ) {
+    return null;
+  }
+  const score = Number(r.total_score);
+  if (!Number.isFinite(score)) return null;
+  return {
+    id: r.id,
+    stock_code: r.stock_code,
+    stock_name: r.stock_name,
+    industry: typeof r.industry === 'string' ? r.industry : null,
+    rating: r.rating,
+    total_score: score,
+    created_at: r.created_at,
+  };
+}
+
+function toSummary(row: SummaryRow, timeline: HistoryTimelinePoint[]): HistorySummary {
+  const summary: HistorySummary = {
+    id: row.id,
+    stockCode: row.stock_code,
+    stockName: row.stock_name,
+    createdAt: row.created_at,
+    rating: row.rating,
+    totalScore: Number(row.total_score),
+  };
+  if (typeof row.industry === 'string' && row.industry.length > 0) {
+    summary.industry = row.industry;
+  }
+  if (timeline.length > 0) summary.timeline = timeline;
+  return summary;
+}
+
+/** 列表用的时间线：一条 SQL 取回本页所有 id 的点，避免 N+1 查询 */
+function timelinesFor(db: DatabaseSync, ids: string[]): Map<string, HistoryTimelinePoint[]> {
+  const grouped = new Map<string, HistoryTimelinePoint[]>();
+  if (ids.length === 0) return grouped;
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = db
+    .prepare(
+      `SELECT history_id, point_date, score, rating FROM history_timeline
+       WHERE history_id IN (${placeholders}) ORDER BY history_id, seq ASC`,
+    )
+    .all(...ids) as {
+    history_id?: string;
+    point_date?: string;
+    score?: number;
+    rating?: string;
+  }[];
+  for (const row of rows) {
+    if (typeof row.history_id !== 'string') continue;
+    if (typeof row.point_date !== 'string' || !Number.isFinite(row.score)) continue;
+    const list = grouped.get(row.history_id) ?? [];
+    list.push({
+      date: row.point_date,
+      score: Number(row.score),
+      rating: typeof row.rating === 'string' ? row.rating : '',
+    });
+    grouped.set(row.history_id, list);
+  }
+  for (const [id, points] of grouped) grouped.set(id, points.slice(-MAX_TIMELINE_POINTS));
+  return grouped;
 }
 
 /**
  * 保存/更新一条历史记录：同股票代码去重（更新为最新分析，id 保留），
- * 容量超上限时淘汰最旧记录。返回保存后的条目；写盘失败返回 null（不阻断分析主流程）。
- *
- * @param reuseStore 复用调用方已读到的 store（可选）：同一请求里先 getPreviousAnalysis()
- *   再 saveHistoryEntry() 时传入（见 readHistoryStore()），可确保只读一次盘。
- *   不传时命中模块级内存缓存，效果相同；签名向后兼容（新增可选参数）。
+ * 容量超上限时淘汰最旧记录。返回保存后的条目；写盘失败/写保护返回 null
+ * （不阻断分析主流程）。
  */
-export function saveHistoryEntry(
-  input: HistoryEntryInput,
-  reuseStore?: HistoryStore,
-): Promise<HistoryItem | null> {
+export function saveHistoryEntry(input: HistoryEntryInput): Promise<HistoryItem | null> {
   return enqueueMutation(async () => {
-    const store = reuseStore && Array.isArray(reuseStore.items) ? reuseStore : await readStore();
-    // 落盘文件损坏且无法留档：此时读到的「空快照」不能写回（会覆盖唯一副本）
-    if (unquarantinedCorruptFile === getHistoryFile()) {
-      logger.error('研究历史文件损坏且未留档，本次保存已放弃（请人工修复落盘文件）', {
-        file: unquarantinedCorruptFile,
+    const current = ensureState();
+    if (!current.db || current.writeProtected) {
+      logger.error('研究历史数据库不可写，本次保存已放弃（请人工修复落盘文件）', {
+        file: current.path,
       });
       return null;
     }
+    const db = current.db;
     const now = monotonicNowIso();
-    const existing = store.items.find((it) => it.stockCode === input.stockCode);
 
-    let saved: HistoryItem;
-    if (existing) {
-      // 时间线必须先按"被覆盖前"的值计算，再覆盖其余字段
-      existing.timeline = appendTimeline(existing, now, input);
-      existing.stockName = input.stockName;
-      existing.industry = input.industry;
-      existing.rating = input.rating;
-      existing.totalScore = input.totalScore;
-      existing.result = input.result;
-      existing.createdAt = now;
-      saved = existing;
-    } else {
-      saved = {
-        id: makeId(),
-        stockCode: input.stockCode,
-        stockName: input.stockName,
-        industry: input.industry,
-        rating: input.rating,
-        totalScore: input.totalScore,
-        createdAt: now,
-        timeline: [{ date: now.slice(0, 10), score: input.totalScore, rating: input.rating }],
-        result: input.result,
-      };
-      store.items.push(saved);
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      let saved: HistoryItem;
+      try {
+        const existing = db
+          .prepare(
+            'SELECT id, stock_code, stock_name, industry, rating, total_score, created_at FROM history_items WHERE stock_code = ?',
+          )
+          .get(input.stockCode) as SummaryRow | undefined;
+
+        if (existing) {
+          const previousPoints = readTimeline(db, existing.id);
+          const timeline = appendTimeline(
+            {
+              createdAt: existing.created_at,
+              totalScore: Number(existing.total_score),
+              rating: existing.rating,
+            },
+            previousPoints,
+            now,
+            input,
+          );
+          db.prepare(
+            `UPDATE history_items SET stock_name = ?, industry = ?, rating = ?, total_score = ?,
+               created_at = ?, result_json = ? WHERE id = ?`,
+          ).run(
+            input.stockName,
+            input.industry ?? null,
+            input.rating,
+            input.totalScore,
+            now,
+            JSON.stringify(input.result),
+            existing.id,
+          );
+          replaceTimeline(db, existing.id, timeline);
+          saved = {
+            id: existing.id,
+            stockCode: input.stockCode,
+            stockName: input.stockName,
+            createdAt: now,
+            rating: input.rating,
+            totalScore: input.totalScore,
+            result: input.result,
+            timeline,
+          };
+          if (input.industry) saved.industry = input.industry;
+        } else {
+          const id = makeId();
+          db.prepare(
+            `INSERT INTO history_items (id, stock_code, stock_name, industry, rating, total_score, created_at, result_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            id,
+            input.stockCode,
+            input.stockName,
+            input.industry ?? null,
+            input.rating,
+            input.totalScore,
+            now,
+            JSON.stringify(input.result),
+          );
+          const timeline: HistoryTimelinePoint[] = [
+            { date: now.slice(0, 10), score: input.totalScore, rating: input.rating },
+          ];
+          replaceTimeline(db, id, timeline);
+          saved = {
+            id,
+            stockCode: input.stockCode,
+            stockName: input.stockName,
+            createdAt: now,
+            rating: input.rating,
+            totalScore: input.totalScore,
+            result: input.result,
+            timeline,
+          };
+          if (input.industry) saved.industry = input.industry;
+        }
+
+        enforceCapacity(db, maxHistoryItems());
+        db.exec('COMMIT');
+        return saved;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    } catch (error) {
+      logger.warn('研究历史写入失败，本次保存已放弃', { file: current.path, err: error });
+      return null;
     }
-
-    // 容量上限：按时间倒序保留最新 N 条（N 可由 HISTORY_MAX_ITEMS 覆盖）
-    const limit = maxHistoryItems();
-    if (store.items.length > limit) {
-      store.items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-      store.items = store.items.slice(0, limit);
-    }
-
-    if (!(await writeStore(store))) return null;
-    return saved;
   });
+}
+
+/** 容量上限：按 createdAt 倒序保留最新 N 条，其余连时间线一并删除（外键 CASCADE） */
+function enforceCapacity(db: DatabaseSync, limit: number): void {
+  const row = db.prepare('SELECT COUNT(*) AS c FROM history_items').get() as
+    { c?: number } | undefined;
+  const count = Number(row?.c ?? 0);
+  if (count <= limit) return;
+  db.prepare(
+    `DELETE FROM history_items WHERE id IN (
+       SELECT id FROM history_items ORDER BY created_at DESC LIMIT -1 OFFSET ?
+     )`,
+  ).run(limit);
 }
 
 /** 历史列表（倒序，最新在前；不含完整 result，仅摘要字段 + 精简时间线） */
 export async function listHistory(limit = 50): Promise<HistorySummary[]> {
-  const store = await readStore();
-  return store.items
-    .slice()
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, Math.max(1, Math.min(limit, 200)))
-    .map(toSummary);
+  const current = ensureState();
+  if (!current.db) return [];
+  const db = current.db;
+  const normalized = Math.max(1, Math.min(limit, 200));
+  const rows = db
+    .prepare(`SELECT ${SUMMARY_COLUMNS} FROM history_items ORDER BY created_at DESC LIMIT ?`)
+    .all(normalized)
+    .map(coerceSummaryRow)
+    .filter((row): row is SummaryRow => row !== null);
+  if (rows.length === 0) return [];
+  const timelines = timelinesFor(
+    db,
+    rows.map((r) => r.id),
+  );
+  return rows.map((row) => toSummary(row, timelines.get(row.id) ?? []));
 }
 
 /**
@@ -458,10 +757,14 @@ export async function listHistory(limit = 50): Promise<HistorySummary[]> {
  * 无记录返回 null。
  */
 export async function getPreviousAnalysis(stockCode: string): Promise<HistorySummary | null> {
-  const store = await readStore();
-  const prev = store.items.find((it) => it.stockCode === stockCode);
-  if (!prev) return null;
-  return toSummary(prev);
+  const current = ensureState();
+  if (!current.db) return null;
+  const db = current.db;
+  const row = db
+    .prepare(`SELECT ${SUMMARY_COLUMNS} FROM history_items WHERE stock_code = ?`)
+    .get(stockCode) as SummaryRow | undefined;
+  if (!row) return null;
+  return toSummary(row, readTimeline(db, row.id));
 }
 
 /**
@@ -491,17 +794,58 @@ export function computeVsPrevious(
 
 /** 历史详情（含完整 result，供前端恢复研究报告） */
 export async function getHistoryItem(id: string): Promise<HistoryItem | null> {
-  const store = await readStore();
-  return store.items.find((it) => it.id === id) ?? null;
+  const current = ensureState();
+  if (!current.db) return null;
+  const db = current.db;
+  const row = db
+    .prepare(`SELECT ${SUMMARY_COLUMNS}, result_json FROM history_items WHERE id = ?`)
+    .get(id) as (SummaryRow & { result_json?: string }) | undefined;
+  if (!row) return null;
+
+  let result: AnalysisResult;
+  try {
+    result = JSON.parse(String(row.result_json)) as AnalysisResult;
+  } catch (error) {
+    logger.warn('研究历史详情内容损坏，无法恢复报告', { id, err: error });
+    return null;
+  }
+  return { ...toSummary(row, readTimeline(db, row.id)), result };
 }
 
 /** 删除一条历史记录；返回是否删除成功 */
 export function deleteHistoryItem(id: string): Promise<boolean> {
   return enqueueMutation(async () => {
-    const store = await readStore();
-    const next = store.items.filter((it) => it.id !== id);
-    if (next.length === store.items.length) return false;
-    store.items = next;
-    return writeStore(store);
+    const current = ensureState();
+    if (!current.db || current.writeProtected) return false;
+    try {
+      const res = current.db.prepare('DELETE FROM history_items WHERE id = ?').run(id);
+      return Number(res.changes) > 0;
+    } catch (error) {
+      logger.warn('研究历史删除失败', { id, err: error });
+      return false;
+    }
+  });
+}
+
+/**
+ * 按当前容量上限立即裁剪（设置页把上限调低后调用）。
+ * 不裁剪的话，用户看到「已设为 500」但列表仍是 2000 条，要等下一次保存才生效。
+ */
+export function trimHistoryToLimit(): Promise<void> {
+  return enqueueMutation(async () => {
+    const current = ensureState();
+    if (!current.db || current.writeProtected) return;
+    try {
+      current.db.exec('BEGIN IMMEDIATE');
+      try {
+        enforceCapacity(current.db, maxHistoryItems());
+        current.db.exec('COMMIT');
+      } catch (error) {
+        current.db.exec('ROLLBACK');
+        throw error;
+      }
+    } catch (error) {
+      logger.warn('研究历史容量裁剪失败', { file: current.path, err: error });
+    }
   });
 }

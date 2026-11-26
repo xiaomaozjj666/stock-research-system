@@ -1089,4 +1089,66 @@ export const commonSchemas = {
     },
     required: ['name', 'baseline', 'experiment', 'delta', 'improved'],
   },
+
+  /**
+   * 预警 Webhook 生效状态（GET/PUT /api/settings 的 alertWebhook）。
+   * 地址只回脱敏后的主机：企业微信 key / 飞书 token 都在 URL 里。
+   * source 标明当前值来自设置页、环境变量还是完全未配置。
+   */
+  AlertWebhookSettings: {
+    type: 'object',
+    properties: {
+      configured: { type: 'boolean', description: '是否已配置可用地址' },
+      urlMasked: {
+        type: 'string',
+        nullable: true,
+        description: '脱敏地址（如 https://qyapi.weixin.qq.com/…）；未配置为 null',
+      },
+      timeoutMs: { type: 'number', description: '推送超时毫秒数（500–10000）' },
+      source: {
+        type: 'string',
+        enum: ['settings', 'env', 'none'],
+        description: '当前生效来源：设置页 / 环境变量 / 未配置',
+      },
+    },
+    required: ['configured', 'urlMasked', 'timeoutMs', 'source'],
+  },
+
+  /** 研究历史容量状态（GET/PUT /api/settings 的 history） */
+  HistorySettings: {
+    type: 'object',
+    properties: {
+      maxItems: { type: 'number', description: '当前生效的保留条数' },
+      source: {
+        type: 'string',
+        enum: ['settings', 'env', 'default'],
+        description: '当前生效来源：设置页 / HISTORY_MAX_ITEMS / 默认值',
+      },
+      defaultMaxItems: { type: 'number', description: '代码默认值（SQLite 下为 2000）' },
+      hardMaxItems: { type: 'number', description: '允许配置的硬上限' },
+    },
+    required: ['maxItems', 'source', 'defaultMaxItems', 'hardMaxItems'],
+  },
+
+  /** 运行时设置快照（PUT 成功后返回同一形状，前端无需二次拉取） */
+  SettingsResponse: {
+    type: 'object',
+    properties: {
+      alertWebhook: { $ref: '#/components/schemas/AlertWebhookSettings' },
+      history: { $ref: '#/components/schemas/HistorySettings' },
+    },
+    required: ['alertWebhook', 'history'],
+  },
+
+  /** 设置页「测试推送」结果（未配置也回 200，configured=false 属正常状态） */
+  WebhookTestResult: {
+    type: 'object',
+    properties: {
+      sent: { type: 'boolean', description: '是否成功送达（2xx）' },
+      configured: { type: 'boolean', description: '是否已配置地址' },
+      reason: { type: 'string', description: '失败原因（未配置/网络错误/非 2xx）' },
+      status: { type: 'number', description: '上游 HTTP 状态码（收到响应时出现）' },
+    },
+    required: ['sent', 'configured'],
+  },
 };

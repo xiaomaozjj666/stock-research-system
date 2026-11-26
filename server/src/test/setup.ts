@@ -47,6 +47,11 @@ process.env.DATA_CACHE_DIR = join(testDataDir, 'cache');
 // server/data/history.json 与研究库索引（表现为「历史」里多出一条测试报告）。
 // 两者都支持 env 覆盖，这里一并指向临时目录。
 process.env.HISTORY_FILE = join(testDataDir, 'history.json');
+// 历史已改为 SQLite：HISTORY_DB_FILE 优先于由 HISTORY_FILE 推导的路径，
+// 显式指向临时目录，避免外部环境变量把测试写进真实 server/data/history.db。
+process.env.HISTORY_DB_FILE = join(testDataDir, 'history.db');
+// 运行时设置（Webhook / 历史容量）同理：不允许读到开发机上的真实设置。
+process.env.SETTINGS_FILE = join(testDataDir, 'settings.json');
 process.env.RESEARCH_LIBRARY_DIR = join(testDataDir, 'research-runs');
 // 深度研究断点同理：续跑路由/服务测试若忘了各自重定向，也不该写进真实 server/data。
 process.env.RESEARCH_CHECKPOINT_DIR = join(testDataDir, 'research-checkpoints');

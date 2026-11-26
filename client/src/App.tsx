@@ -36,6 +36,8 @@ const ComparisonView = lazy(() => import('./components/ComparisonView'));
 const PaperTradingPage = lazy(() => import('./pages/paper/PaperTradingPage'));
 const WatchlistPage = lazy(() => import('./pages/watchlist/WatchlistPage'));
 const HistoryPage = lazy(() => import('./pages/history/HistoryPage'));
+// 「设置」：告警 Webhook 与研究历史容量（此前只能改 .env 重启）
+const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
 // 「今日」聚合页：自选股异动 + 关注股观点变化 + 最近简报（此前三者分散、且无日常入口）
 const TodayPanel = lazy(() => import('./pages/today/TodayPanel'));
 // 「AI 研究员」：开放问题的多步深度研究（规划 → 检索取证 → 交叉验证 → 带引用报告）
@@ -206,7 +208,16 @@ function DashboardCards({ data }: { data: AnalysisResult['stock_pool'][0] }) {
 }
 
 type TabId =
-  'research' | 'agent' | 'today' | 'quant' | 'compare' | 'watchlist' | 'paper' | 'chat' | 'history';
+  | 'research'
+  | 'agent'
+  | 'today'
+  | 'quant'
+  | 'compare'
+  | 'watchlist'
+  | 'paper'
+  | 'chat'
+  | 'history'
+  | 'settings';
 
 /** 顶部功能导航：集中定义便于 ARIA tablist 的键盘导航（←/→/Home/End） */
 const TABS: { id: TabId; label: string }[] = [
@@ -219,6 +230,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'paper', label: '模拟盘' },
   { id: 'chat', label: '研究助手' },
   { id: 'history', label: '历史' },
+  { id: 'settings', label: '设置' },
 ];
 
 /** 未带 hash（或 hash 无法识别）时的默认标签页 */
@@ -1153,6 +1165,11 @@ function App() {
               setActiveTab('research');
             }}
           />
+        </TabPane>
+      )}
+      {shouldRenderTab('settings') && (
+        <TabPane active={activeTab === 'settings'} id="panel-settings" tabId="tab-settings">
+          <SettingsPage />
         </TabPane>
       )}
 

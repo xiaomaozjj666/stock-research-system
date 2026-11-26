@@ -182,6 +182,9 @@ export default {
       post<T>(path: string, body?: unknown, config: HttpRequestConfig = {}) {
         return send<T>('POST', path, body, config);
       },
+      put<T>(path: string, body?: unknown, config: HttpRequestConfig = {}) {
+        return send<T>('PUT', path, body, config);
+      },
       delete<T>(path: string, config: HttpRequestConfig = {}) {
         return send<T>('DELETE', path, undefined, config);
       },

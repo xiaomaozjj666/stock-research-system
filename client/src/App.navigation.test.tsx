@@ -256,11 +256,11 @@ describe('App —— 标签页导航', () => {
     pressOn(tablist, 'ArrowLeft');
     expect(activeName()).toBe('深度研究');
     pressOn(tablist, 'ArrowLeft'); // 首个再往左 → 回卷到末个
-    expect(activeName()).toBe('历史');
+    expect(activeName()).toBe('设置');
     pressOn(tablist, 'Home');
     expect(activeName()).toBe('深度研究');
     pressOn(tablist, 'End');
-    expect(activeName()).toBe('历史');
+    expect(activeName()).toBe('设置');
   });
 
   it('漫游 tabindex：只有当前 tab 可被 Tab 键聚焦', () => {

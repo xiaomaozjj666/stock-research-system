@@ -39,5 +39,6 @@ export * from './rest/intl';
 export * from './rest/paper';
 export * from './rest/quant';
 export * from './rest/research';
+export * from './rest/settings';
 export * from './rest/stocks';
 export * from './rest/watchlist';

@@ -22,10 +22,13 @@ vi.mock('../services/analysisPipeline.js', () => ({
 // 运行时数据隔离：分析完成会写研究历史与评级台账，全部重定向到临时目录
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'analyze-stream-'));
 process.env.HISTORY_FILE = path.join(tmpDir, 'history.json');
+// 历史已改为 SQLite：显式重定向数据库文件（否则 setup 的公共 DB 会与本文件串数据）
+process.env.HISTORY_DB_FILE = path.join(tmpDir, 'history.db');
 process.env.OUTCOME_FILE = path.join(tmpDir, 'outcomes.json');
 process.env.AUDIT_LOG_FILE = path.join(tmpDir, 'audit.log');
 
 const { app } = await import('../index.js');
+const { closeHistoryStore, listHistory } = await import('../services/historyService.js');
 
 /** 从 SSE 文本里解析出所有 data 帧 */
 function parseFrames(body: string): unknown[] {
@@ -58,7 +61,10 @@ describe('/api/analyze/stream（SSE 流式分析）', () => {
   });
 
   afterAll(() => {
-    for (const key of ['HISTORY_FILE', 'OUTCOME_FILE', 'AUDIT_LOG_FILE']) delete process.env[key];
+    closeHistoryStore(); // 释放 SQLite 文件句柄，Windows 上才能删除临时目录
+    for (const key of ['HISTORY_FILE', 'HISTORY_DB_FILE', 'OUTCOME_FILE', 'AUDIT_LOG_FILE']) {
+      delete process.env[key];
+    }
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
@@ -147,9 +153,8 @@ describe('/api/analyze/stream（SSE 流式分析）', () => {
 
     await request(app).get('/api/analyze/stream').query({ stockCode: '600519' });
 
-    const raw = fs.readFileSync(path.join(tmpDir, 'history.json'), 'utf-8');
-    const store = JSON.parse(raw) as { items?: Array<Record<string, unknown>> };
-    expect(Array.isArray(store.items)).toBe(true);
-    expect(store.items?.[0]).toMatchObject({ stockCode: '600519' });
+    // 历史已落 SQLite：经服务读取（而非读取旧 JSON 文件）验证真实写入
+    const items = await listHistory();
+    expect(items[0]).toMatchObject({ stockCode: '600519' });
   });
 });

@@ -1,6 +1,30 @@
 {
   "components": {
     "schemas": {
+      "AlertWebhookSettings": {
+        "properties": {
+          "configured": {
+            "description": "是否已配置可用地址",
+            "type": "boolean"
+          },
+          "source": {
+            "description": "当前生效来源：设置页 / 环境变量 / 未配置",
+            "enum": ["settings", "env", "none"],
+            "type": "string"
+          },
+          "timeoutMs": {
+            "description": "推送超时毫秒数（500–10000）",
+            "type": "number"
+          },
+          "urlMasked": {
+            "description": "脱敏地址（如 https://qyapi.weixin.qq.com/…）；未配置为 null",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": ["configured", "urlMasked", "timeoutMs", "source"],
+        "type": "object"
+      },
       "AnalysisResult": {
         "properties": {
           "dataAsOf": {
@@ -2392,6 +2416,29 @@
             "type": "object"
           }
         ]
+      },
+      "HistorySettings": {
+        "properties": {
+          "defaultMaxItems": {
+            "description": "代码默认值（SQLite 下为 2000）",
+            "type": "number"
+          },
+          "hardMaxItems": {
+            "description": "允许配置的硬上限",
+            "type": "number"
+          },
+          "maxItems": {
+            "description": "当前生效的保留条数",
+            "type": "number"
+          },
+          "source": {
+            "description": "当前生效来源：设置页 / HISTORY_MAX_ITEMS / 默认值",
+            "enum": ["settings", "env", "default"],
+            "type": "string"
+          }
+        },
+        "required": ["maxItems", "source", "defaultMaxItems", "hardMaxItems"],
+        "type": "object"
       },
       "HistorySummary": {
         "properties": {
@@ -5251,6 +5298,18 @@
         ],
         "type": "object"
       },
+      "SettingsResponse": {
+        "properties": {
+          "alertWebhook": {
+            "$ref": "#/components/schemas/AlertWebhookSettings"
+          },
+          "history": {
+            "$ref": "#/components/schemas/HistorySettings"
+          }
+        },
+        "required": ["alertWebhook", "history"],
+        "type": "object"
+      },
       "SkillId": {
         "enum": ["quant_factor", "backtest", "news", "compare", "watchlist", "chat"],
         "type": "string"
@@ -6554,6 +6613,28 @@
           }
         },
         "required": ["generatedAt", "count", "withNewsCount", "results"],
+        "type": "object"
+      },
+      "WebhookTestResult": {
+        "properties": {
+          "configured": {
+            "description": "是否已配置地址",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "失败原因（未配置/网络错误/非 2xx）",
+            "type": "string"
+          },
+          "sent": {
+            "description": "是否成功送达（2xx）",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "上游 HTTP 状态码（收到响应时出现）",
+            "type": "number"
+          }
+        },
+        "required": ["sent", "configured"],
         "type": "object"
       }
     }
@@ -10639,6 +10720,140 @@
         },
         "summary": "读取单次历史研究的完整结果",
         "tags": ["analysis"]
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "description": "Webhook 地址只回脱敏后的主机（key/token 等同凭据）；source 标明当前值来源（设置页 > 环境变量 > 默认值）。",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "当前生效设置（与 PUT 成功后的响应同形）"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "触发限流（只读元数据默认每分钟 30 次）"
+          }
+        },
+        "summary": "运行时设置（Webhook / 历史容量）",
+        "tags": ["system"]
+      },
+      "put": {
+        "description": "字段均可省略；null 或空字符串表示清除该项、回退到环境变量/默认值。历史容量调低后会立即裁剪到新上限。",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "alertWebhook": {
+                    "properties": {
+                      "timeoutMs": {
+                        "description": "500–10000 的整数毫秒；null = 清除",
+                        "nullable": true,
+                        "type": "number"
+                      },
+                      "url": {
+                        "description": "完整 http/https 地址；null/空字符串 = 清除",
+                        "maxLength": 2048,
+                        "nullable": true,
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "history": {
+                    "properties": {
+                      "maxItems": {
+                        "description": "1–50000 的整数条数；null = 清除",
+                        "nullable": true,
+                        "type": "number"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "设置补丁（只认已知字段，类型/范围非法即 400）",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "保存后的生效设置"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "设置值非法（URL 非 http/https、超时/容量越界或类型错误）"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "触发限流（写操作默认每分钟 10 次）"
+          }
+        },
+        "summary": "修改运行时设置（立即生效）",
+        "tags": ["system"]
+      }
+    },
+    "/api/settings/alert-webhook/test": {
+      "post": {
+        "description": "与真实预警共用同一配置解析与 POST 实现；未配置地址时也回 200，结果里 configured=false 属正常状态（不是请求错误）。",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookTestResult"
+                }
+              }
+            },
+            "description": "推送结果（sent/configured，失败附 reason）"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "触发限流（写操作默认每分钟 10 次）"
+          }
+        },
+        "summary": "发送一条测试推送（验证 Webhook 链路）",
+        "tags": ["system"]
       }
     },
     "/api/stocks": {

@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/TypeScript-7-3178C6" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
   <img src="https://img.shields.io/badge/Express-5-000000" alt="Express 5" />
-  <img src="https://img.shields.io/badge/tests-3770%20cases-brightgreen" alt="3770 测试用例" />
+  <img src="https://img.shields.io/badge/tests-3807%20cases-brightgreen" alt="3807 测试用例" />
   <a href="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml"><img src="https://github.com/xiaomaozjj666/stock-research-system/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
@@ -109,6 +109,12 @@ registerProvider(myProvider); // DATA_PROVIDERS=my-vendor 即切换；默认仍�
 **自选股与异动监控**
 自选股清单管理、批量含最新消息回测、异动预警监控（强烈看多 / 看空 / 高影响）。
 
+**运行时设置（告警 Webhook 与研究历史容量）**
+「设置」页可直接配置异动预警 Webhook（企业微信 / 飞书机器人、自建网关均可，支持发送测试推送验证链路）与研究历史保留条数，保存即生效、无需重启。设置页的优先级高于 `.env`，清空某项即回退到环境变量或默认值；Webhook 地址只以脱敏形式回显（地址里的 key/token 等同凭据）。
+
+**研究历史（SQLite 持久层）**
+每次分析完成自动入库（同代码去重 + 评分/评级时间线），可列表、回看完整报告与删除。历史已从「单 JSON 文件 + 100 条上限」迁移到 SQLite（Node 内置 `node:sqlite`，零新依赖），默认保留 2000 条（设置页可调，1–50000）；首次启动自动迁移旧 `history.json` 并留档。数据库损坏时改名 `.corrupt-<ts>` 后重建，留档失败则拒绝写入，绝不覆盖唯一副本。
+
 **对话式研究助手**
 自然语言提问，检索增强（RAG）取证、多空辩论、事实校验与幻觉防护、知识图谱上下文，SSE 流式返回，支持研究增强模式。
 
@@ -198,7 +204,7 @@ server/          Express API 服务
 **技术栈**
 
 - Monorepo（npm workspaces）：`server/`（Express 5 + TypeScript）+ `client/`（React 19 + Vite 8 + ECharts 6）
-- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3770 用例 / 279 个测试文件，行覆盖 93.42% / statements 91.31% / functions 93.09% / branches 81.91%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
+- 测试：Vitest（服务 / 量化 / 研究 Agent / 前端组件，3807 用例 / 282 个测试文件，行覆盖 93.30% / statements 91.18% / functions 93.16% / branches 82%）+ Playwright（E2E 17 用例）+ GitHub Actions CI（质量门禁 + 覆盖率阈值 + 体积预算 + E2E）
 
 ## 快速开始
 
@@ -277,6 +283,8 @@ ALERT_WEBHOOK_TIMEOUT_MS=3000
 
 > 企业微信与飞书的自定义机器人要求各自的消息封装（企业微信 `msgtype`、飞书 `msg_type`），本服务发送的是统一事件 JSON，不绑定厂商格式。若要让机器人直接显示消息，可在两者之间加一层转发（n8n / Serverless 函数等）把 `alerts` 拼成文本再按厂商格式发送；自建网关或支持通用 JSON 的自动化平台可直接接收。URL 里的 `key` / `token` 等同凭据，请勿提交到版本库；服务端日志不会打印完整 URL。
 
+也可以在网页「设置」页直接填写地址并点「发送测试推送」验证链路（无需改 `.env` 或重启）。设置页的配置写入 `server/data/settings.json`，优先级高于环境变量；清空即回退到这里配置的 `ALERT_WEBHOOK_URL`。
+
 ## API 概览
 
 | 分类      | 接口                                                                                                                                                                      | 说明                                                                                           |
@@ -285,7 +293,7 @@ ALERT_WEBHOOK_TIMEOUT_MS=3000
 |           | `GET /api/analyze/stream`                                                                                                                                                 | SSE 流式分析（逐阶段推送进度）；`?resume=1` 续跑                                               |
 |           | `POST /api/compare`                                                                                                                                                       | 2-3 只股票横向对比                                                                             |
 |           | `GET /api/stocks`、`GET /api/stocks/search`                                                                                                                               | 股票列表 / 搜索                                                                                |
-| 历史      | `GET /api/history`、`GET /api/history/:id`、`DELETE /api/history/:id`                                                                                                     | 研究历史列表 / 详情 / 删除（同代码去重，容量 100）                                             |
+| 历史      | `GET /api/history`、`GET /api/history/:id`、`DELETE /api/history/:id`                                                                                                     | 研究历史列表 / 详情 / 删除（SQLite 持久化，同代码去重，默认容量 2000）                         |
 | 量化      | `POST /api/quant/analyze`                                                                                                                                                 | 量化研究（回测 + 数据质量 + 审计 + 优化 + 摘要）                                               |
 |           | `GET /api/quant/health`                                                                                                                                                   | 上游预检：行情源 / LLM / 本地缓存（源不可达且无缓存时评估直接 503，不再干等到超时）            |
 |           | `POST /api/quant/factor/cross-section`                                                                                                                                    | 截面因子评估：量价/基本面/事件因子逐日截面 IC + Newey-West + 分层收益 + OOS                    |
@@ -311,6 +319,7 @@ ALERT_WEBHOOK_TIMEOUT_MS=3000
 | 对话      | `POST /api/chat`、`GET /api/chat/stream`、`POST /api/chat/history/clear`                                                                                                  | 自然语言研究助手（SSE 流式）/ 清空会话历史                                                     |
 | 自选股    | `GET/POST/DELETE /api/watchlist`（`DELETE /api/watchlist/:code` 删单只）、`GET /api/watchlist/alerts`、`POST /api/watchlist/news-backtest`、`POST /api/watchlist/monitor` | 清单管理 / 异动告警快照 / 批量新闻回测 / 异动监控                                              |
 | 自治循环  | `POST /api/autonomous/start`、`/stop`、`GET /api/autonomous/status`                                                                                                       | 主动监控自治循环                                                                               |
+| 设置      | `GET/PUT /api/settings`、`POST /api/settings/alert-webhook/test`                                                                                                          | 运行时配置（Webhook 脱敏回显 / 历史容量，保存即生效）与测试推送                                |
 | 改进闭环  | `GET /api/improvement/status`、`POST /api/improvement/run`（`dryRun` 演练）、`GET /api/improvement/history`                                                               | 用历史实验回放调采信判据：保留/回滚都有留痕，可复核                                            |
 | 改进调度  | `POST /api/improvement/scheduler/start`（`intervalHours`）、`/stop`                                                                                                       | 无人值守开关；启动时默认按 `IMPROVEMENT_INTERVAL_HOURS` 自动开启                               |
 | 文档 RAG  | `POST /api/ingest`、`GET /api/documents`                                                                                                                                  | 研报/财报/公告 PDF/文本入库 + 洞察抽取                                                         |
@@ -355,7 +364,7 @@ npm run mcp:serve     # stdio JSON-RPC 2.0
 ## 测试与质量
 
 ```bash
-npm test              # Vitest 全量单测（3770 用例 / 279 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
+npm test              # Vitest 全量单测（3807 用例 / 282 个测试文件：服务 / 量化 / 研究 Agent / 前端组件）
 npm run test:e2e      # Playwright 端到端（17 用例，真实浏览器 + 隔离数据）
 npm run lint          # 代码检查：ESLint（JS/风格，忽略 *.ts/*.tsx）+ oxlint（server/src、client/src、e2e）
 npm run format:check  # Prettier 格式检查
@@ -367,7 +376,7 @@ npm run size:budget   # 打包体积预算（按 chunk 核对，超预算即失�
 - **CI 门禁**（GitHub Actions）：依赖审计 / lint / 格式 / 双端类型检查 / 双端 build /
   打包体积预算 / 全量测试 + 覆盖率阈值（lines ≥ 92% / statements ≥ 90% / functions ≥ 92% / branches ≥ 80%）/ Playwright E2E（`--retries=1`）。
 - **覆盖率统计口径**：`server/src/routes/**` **已纳入**分母（2026-09-28 起）。此前整目录被排除，等于体量最大的业务逻辑文件（`routes/quant.ts`，时为 2100+ 行，现已拆分为 quantCore/quantCrossSection/quantOps）不构成任何门禁；纳入后仅下降约 1.3 个点且四项阈值仍全部通过。当前基线 lines 93.42% / statements 91.31% / functions 93.09% / branches 81.91%。仍排除的只有 `index.ts`（入口组装）、`middleware.ts`（中间件）与真实网络/子进程模块。
-- **打包体积预算**（`client/scripts/check-bundle-size.mjs`）：逐 chunk 核对上限，echarts 623 kB 这类大头不再顶着 1000 kB 的 warning 阈值"静默增长"——warning 不会 fail，预算会。当前合计 1233.29 kB / 预算 1300 kB。
+- **打包体积预算**（`client/scripts/check-bundle-size.mjs`）：逐 chunk 核对上限，echarts 623 kB 这类大头不再顶着 1000 kB 的 warning 阈值"静默增长"——warning 不会 fail，预算会。当前合计 1250.05 kB / 预算 1300 kB。
 - **受控评估**：`compareBacktests` 输出 DSR（扣除搜索偏差）与 Bootstrap 置信区间；`quant/cscv.ts` 以组合对称交叉验证计算过拟合概率（PBO）；`walkForward.ts` 以 OOS 夏普 < 70% × IS 夏普判定过拟合。
 - **改进闭环（RSI）**：`quant/improvementLoop.ts` 用历史实验台账**回放**候选采信判据——较早 70% 挑候选、较新 30% 做决策，且必须同时满足三条才落盘：验证集上**决策准确率**（采信了扛住样本外的因子、剔除了没扛住的，两者都算对）更高、样本外稳定的**绝对条数不减**、配对差异通过 **McNemar 精确检验**（双侧 p < 0.05）。每次改动连同改前改后指标、检验统计量（不一致对 b/c 与 p 值）、依据与试过的候选记入 `quant/improvementLedger.ts`；`/api/improvement/status|run|history` 可查、可演练（`dryRun` 不落盘）、可回滚（删除策略文件即回到出厂判据）。判据本身由 `quant/harnessPolicy.ts` 持有，默认值与改造前逐字一致。
 - **无人值守**：`services/improvementScheduler.ts` 按期自动跑一轮（`IMPROVEMENT_INTERVAL_HOURS` 控制，默认 6 小时，0 = 关闭；首次延迟 10 分钟避开启动预热），单轮失败指数退避、连续失败自动停止并记日志；也可由 `/api/improvement/scheduler/start|stop` 运行期开关，或经 MCP 的 `quant_improvement_run` 手动触发。**证据不足（可回放 < 60 条或验证集 < 20 条）时循环不动并说明还差多少**——判据会被自动改写，样本不够时"不动"才是正确答案。

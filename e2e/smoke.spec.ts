@@ -50,6 +50,12 @@ test.describe('应用加载与导航', () => {
     // 历史（懒加载）
     await page.getByRole('tab', { name: '历史' }).click();
     await expect(page.getByRole('heading', { name: '研究历史' })).toBeVisible();
+
+    // 设置（懒加载）：告警 Webhook 与历史容量
+    await page.getByRole('tab', { name: '设置' }).click();
+    await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
+    await expect(page.getByText('异动预警 Webhook')).toBeVisible();
+    await expect(page.getByText('研究历史容量')).toBeVisible();
   });
 });
 

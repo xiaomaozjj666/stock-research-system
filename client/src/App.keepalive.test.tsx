@@ -98,6 +98,7 @@ vi.mock('./pages/quant/QuantPage', () => ({ default: () => <div>量化页内容<
 vi.mock('./pages/today/TodayPanel', () => ({ default: () => <div>今日页内容</div> }));
 vi.mock('./pages/watchlist/WatchlistPage', () => ({ default: () => <div>自选股页内容</div> }));
 vi.mock('./pages/history/HistoryPage', () => ({ default: () => <div>历史页内容</div> }));
+vi.mock('./pages/settings/SettingsPage', () => ({ default: () => <div>设置页内容</div> }));
 vi.mock('./components/ChartsSection', () => ({ default: () => <div className="charts-mock" /> }));
 
 const echartsMock = vi.hoisted(() => ({ init: vi.fn() }));
@@ -185,12 +186,13 @@ describe('App —— 白名单之外页签切走即卸载', () => {
     expect(screen.queryByText('量化页内容')).toBeNull();
   });
 
-  it('自选股 / 今日 / 历史：切走后各自卸载', async () => {
+  it('自选股 / 今日 / 历史 / 设置：切走后各自卸载', async () => {
     render(<App />);
     for (const [tab, marker] of [
       ['自选股', '自选股页内容'],
       ['今日', '今日页内容'],
       ['历史', '历史页内容'],
+      ['设置', '设置页内容'],
     ] as const) {
       await switchTo(tab);
       expect(await screen.findByText(marker)).toBeInTheDocument();
@@ -211,9 +213,18 @@ describe('App —— 白名单之外页签切走即卸载', () => {
 
   it('非白名单页签不会让隐藏面板的挂载集合无限增长', async () => {
     render(<App />);
-    // 依次访问全部 8 个标签页：白名单只有 3 个，
+    // 依次访问全部 9 个标签页：白名单只有 3 个，
     // 因此卸载后不应有任何非当前面板的内容残留在树上
-    for (const name of ['今日', '量化研究', '对比分析', '自选股', '模拟盘', '研究助手', '历史']) {
+    for (const name of [
+      '今日',
+      '量化研究',
+      '对比分析',
+      '自选股',
+      '模拟盘',
+      '研究助手',
+      '历史',
+      '设置',
+    ]) {
       await switchTo(name);
     }
     await switchTo('深度研究');

@@ -42,6 +42,7 @@ import marketRouter from './routes/market.js';
 import paperRouter from './routes/paper.js';
 import quantRouter from './routes/quant.js';
 import researchRouter from './routes/research.js';
+import settingsRouter from './routes/settings.js';
 import thesisRouter from './routes/thesis.js';
 import watchlistRouter from './routes/watchlist.js';
 
@@ -244,6 +245,7 @@ app.use(costRouter);
 app.use(autonomousRouter);
 app.use(improvementRouter);
 app.use(researchRouter);
+app.use(settingsRouter);
 
 // === 生产环境 SPA 静态托管：让单容器同时服务前端页面与 API（同源，无 CORS 依赖） ===
 // 仅当 ../client/dist 存在（即已执行 npm run build）且为生产环境时启用；
