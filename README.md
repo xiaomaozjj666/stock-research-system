@@ -17,10 +17,15 @@
 # 需 Node 24+（见 .nvmrc）
 npm ci --legacy-peer-deps      # 安装依赖（首次）
 cp .env.example server/.env    # 填 DEEPSEEK_API_KEY；缺省时只能用规则引擎的降级结论
+
+# 方式一（推荐，Windows）：编译原生桌面程序（内置 WebView2，无双黑框、不依赖浏览器）
+npm run build:desktop          # 自动执行生产构建并生成 desktop-app\Stock Research System.exe
+
+# 方式二：开发模式（双进程热重载）
 npm run dev                    # 前端 http://localhost:5173，后端 http://localhost:3001
 ```
 
-依赖装好后也可双击 `启动系统.bat` 直接起服务。环境变量、生产构建与故障排查见 [快速开始](#快速开始) 与 [环境变量](#环境变量)。
+依赖装好后也可双击 `desktop-app\Stock Research System.exe`（桌面程序版，推荐）或 `启动系统.bat`（传统双窗口开发脚本）。环境变量、生产构建与故障排查见 [快速开始](#快速开始) 与 [环境变量](#环境变量)。
 
 ![深度研究报告总览](docs/screenshots/report-overview.png)
 
@@ -142,6 +147,10 @@ API 层默认**不鉴权**，与本机自用场景的既有行为一致。要把
 
 ## 界面展示
 
+|      「今日」聚合页（异动 / 观点变化 / 简报）       |     运行时设置（Webhook 与 SQLite 历史容量）      |
+| :-------------------------------------------------: | :-----------------------------------------------: |
+| ![今日聚合页](docs/screenshots/today-dashboard.png) | ![运行时设置](docs/screenshots/settings-page.png) |
+
 |               深度研究报告（总览）                |        K 线走势（蜡烛/均线/BOLL/MACD）        |
 | :-----------------------------------------------: | :-------------------------------------------: |
 | ![报告总览](docs/screenshots/report-overview.png) | ![K线走势](docs/screenshots/report-kline.png) |
@@ -150,7 +159,7 @@ API 层默认**不鉴权**，与本机自用场景的既有行为一致。要把
 | :----------------------------------------------: | :---------------------------------------------: |
 | ![综合评分](docs/screenshots/report-scoring.png) | ![财务图表](docs/screenshots/report-charts.png) |
 
-|          量化回测（策略配置与结果研判）          |           对比分析（多股票横向对比）           |
+|   量化研究（单股 / 批量 / 截面因子与估值建模）   |           对比分析（多股票横向对比）           |
 | :----------------------------------------------: | :--------------------------------------------: |
 | ![量化回测](docs/screenshots/quant-backtest.png) | ![对比分析](docs/screenshots/shot-compare.png) |
 
@@ -158,9 +167,11 @@ API 层默认**不鉴权**，与本机自用场景的既有行为一致。要把
 | :--------------------------------------------: | :----------------------------------------: |
 | ![自选股](docs/screenshots/shot-watchlist.png) | ![模拟盘](docs/screenshots/shot-paper.png) |
 
-|               对话式研究助手                |              研究历史（记忆闭环）              |
+|               对话式研究助手                |          研究历史（SQLite 记忆闭环）           |
 | :-----------------------------------------: | :--------------------------------------------: |
 | ![研究助手](docs/screenshots/shot-chat.png) | ![研究历史](docs/screenshots/shot-history.png) |
+
+> 以上截图可通过 `npx tsx scripts/capture-screenshots.mts` 基于生产构建自动刷新（使用隔离临时目录，不触碰真实 `server/data/`）。
 
 ## 量化内核
 
@@ -222,13 +233,16 @@ npm run dev:client    # 前端 → http://localhost:5173
 
 > 可选增强（PDF 入库）：研报/财报/公告的 **PDF** 抽取依赖 `pdfjs-dist`（`server/src/quant/pdfExtract.ts` 用动态 import 加载，故未安装时不影响构建与其余功能），需另行 `npm i pdfjs-dist`；未安装时该入口会抛出明确错误并提示改用纯文本入口 `text`，**不会静默降级**。
 
-生产构建：
+生产构建与原生桌面应用（Windows，推荐）：
 
 ```bash
 npm run build         # server + client，单端口同源托管
+npm run build:desktop # 生成 desktop-app\Stock Research System.exe（可加 -- -DesktopShortcut 创建桌面快捷方式）
 ```
 
-Windows 一键启动：双击 `启动系统.bat`。该脚本不做任何安装，只负责启动与健康等待：先检查 Node 与 `node_modules`、以及 3001/5173 端口是否被占用，随后在 `server/`（`npx tsx watch src/index.ts`，端口 3001）与 `client/`（`npx vite`，端口 5173）各开一个命令行窗口，轮询 `http://localhost:3001/api/health` 等待后端就绪（最长 90 秒；`/api/health` 在行情源暂不可达时返回 503，脚本同样视为已就绪并在页面显示降级提示），随后轮询前端端口并自动打开浏览器。后端未就绪时会明确打印「启动未完成」并以退出码 1 结束，不会把失败伪装成成功。因此**首次使用仍需先执行上面的 `npm install`**，否则 `npx tsx` / `npx vite` 会因依赖缺失而失败。
+双击 `desktop-app\Stock Research System.exe` 即可像独立软件一样启动：自动以生产模式（`NODE_ENV=production`、工作目录固定为 `server/` 以正确加载 `server/.env`）在独立桌面端口 `13001` 单端口同源托管前后端，并通过系统内置 WebView2 渲染完整界面——不再弹出两个黑色命令行窗口、也不占用浏览器标签页；关闭窗口时通过 Windows Job Object 自动清理后台 Node 进程。更新源码后运行 `powershell -File scripts/build-desktop.ps1 -Rebuild` 重新构建即可。
+
+传统脚本一键启动（Windows 开发模式）：双击 `启动系统.bat`。该脚本不做任何安装，只负责启动与健康等待：先检查 Node 与 `node_modules`、以及 3001/5173 端口是否被占用，随后在 `server/`（`npx tsx watch src/index.ts`，端口 3001）与 `client/`（`npx vite`，端口 5173）各开一个命令行窗口，轮询 `http://localhost:3001/api/health` 等待后端就绪（最长 90 秒；`/api/health` 在行情源暂不可达时返回 503，脚本同样视为已就绪并在页面显示降级提示），随后轮询前端端口并自动打开浏览器。后端未就绪时会明确打印「启动未完成」并以退出码 1 结束，不会把失败伪装成成功。因此**首次使用仍需先执行上面的 `npm install`**，否则 `npx tsx` / `npx vite` 会因依赖缺失而失败。
 
 > 局域网访问：前端默认只监听回环地址。确需让同网段设备访问时，先设置 `API_AUTH_TOKEN`（否则写接口裸露），再把 `client/` 的启动命令改为 `npx vite --host`；后端默认也只绑 `127.0.0.1`，需要同时设置 `HOST=0.0.0.0`。
 

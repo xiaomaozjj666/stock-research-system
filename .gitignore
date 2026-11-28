@@ -63,3 +63,6 @@ server/src/data/screenerLatest.json
 
 # 研究简报落盘（运行时数据，不入库）
 server/src/data/researchDigests.json
+
+# 本地编译生成的 Windows 桌面应用产物（通过 scripts/build-desktop.ps1 生成）
+desktop-app/

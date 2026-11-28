@@ -14,6 +14,7 @@
     "dev:client": "npm run dev --workspace=client",
     "dev": "node scripts/dev.mjs",
     "build": "npm run build --workspace=server && npm run build --workspace=client",
+    "build:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-desktop.ps1",
     "lint": "eslint . && oxlint server/src client/src e2e",
     "lint:fix": "eslint . --fix && oxlint server/src client/src e2e --fix",
     "test": "vitest run",
