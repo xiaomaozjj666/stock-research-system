@@ -6,8 +6,9 @@
  *
  * 说明：
  * - 启动本地生产模式服务（NODE_ENV=production node server/dist/index.js），不触碰 server/data/；
- * - 模拟盘与设置页直接调用真实后端 API 写入隔离临时文件，确保数据结构与线上契约 100% 一致；
- * - 刷新今日、自选股、模拟盘、研究历史、设置、量化研究等最新界面截图至 docs/screenshots/。
+ * - 量化回测直接点击「开始研究」执行真实 A 股（600519）全链路回测与防过拟合审计；
+ * - 模拟盘与自选股直接调用真实后端 API 写入隔离临时文件（含真实波动与回撤的 10 个交易日撮合）；
+ * - 刷新量化回测、模拟盘、对比分析、今日、自选股、研究历史、设置等最新截图至 docs/screenshots/。
  */
 import { chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
@@ -59,37 +60,40 @@ async function seedRealBackendState(baseUrl: string): Promise<void> {
   for (const code of ['600519', '300750', '000858', '600036']) {
     await postJson(`${baseUrl}/api/watchlist`, { code });
   }
-  // 2) 通过真实 API 在模拟盘下单并日终撮合（初始资金 ¥100,000，遵循 A 股 T+1 / 整手 / 费率）
+  // 2) 通过真实 API 在模拟盘下单并完成 10 个交易日撮合（含真实回撤波动，遵循 A 股 T+1 / 整手 / 费率）
   await postJson(`${baseUrl}/api/paper/order`, {
     code: '600036',
     side: 'buy',
     type: 'market',
     quantity: 1000,
-    date: '2026-11-18',
+    date: '2026-11-10',
   });
   await postJson(`${baseUrl}/api/paper/settle`, {
-    date: '2026-11-18',
-    closePrices: { '600036': 36.2 },
+    date: '2026-11-10',
+    closePrices: { '600036': 36.4 },
   });
   await postJson(`${baseUrl}/api/paper/order`, {
     code: '300750',
     side: 'buy',
     type: 'market',
     quantity: 200,
-    date: '2026-11-20',
+    date: '2026-11-12',
   });
-  await postJson(`${baseUrl}/api/paper/settle`, {
-    date: '2026-11-20',
-    closePrices: { '600036': 37.1, '300750': 238.5 },
-  });
-  await postJson(`${baseUrl}/api/paper/settle`, {
-    date: '2026-11-24',
-    closePrices: { '600036': 37.8, '300750': 246.2 },
-  });
-  await postJson(`${baseUrl}/api/paper/settle`, {
-    date: '2026-11-27',
-    closePrices: { '600036': 38.6, '300750': 254.0 },
-  });
+  const dailyCloses: Array<[string, Record<string, number>]> = [
+    ['2026-11-12', { '600036': 36.9, '300750': 239.0 }],
+    ['2026-11-13', { '600036': 37.3, '300750': 243.5 }],
+    ['2026-11-16', { '600036': 36.6, '300750': 236.2 }],
+    ['2026-11-17', { '600036': 36.1, '300750': 232.8 }],
+    ['2026-11-18', { '600036': 36.8, '300750': 237.4 }],
+    ['2026-11-19', { '600036': 37.2, '300750': 241.0 }],
+    ['2026-11-20', { '600036': 37.0, '300750': 239.6 }],
+    ['2026-11-23', { '600036': 37.5, '300750': 244.8 }],
+    ['2026-11-25', { '600036': 37.9, '300750': 247.5 }],
+    ['2026-11-27', { '600036': 38.4, '300750': 251.2 }],
+  ];
+  for (const [date, closePrices] of dailyCloses) {
+    await postJson(`${baseUrl}/api/paper/settle`, { date, closePrices });
+  }
 }
 
 async function launchBrowser() {
@@ -133,7 +137,7 @@ async function main(): Promise<void> {
 
     const browser = await launchBrowser();
     const ctx = await browser.newContext({
-      viewport: { width: 1440, height: 900 },
+      viewport: { width: 1440, height: 960 },
       deviceScaleFactor: 1,
       reducedMotion: 'reduce',
     });
@@ -141,7 +145,6 @@ async function main(): Promise<void> {
 
     const nowIso = new Date().toISOString();
 
-    // 仅对外部行情/推送快照接口提供确定性演示数据；自选股/模拟盘/设置均走真实后端
     await page.route('**/api/watchlist/alerts', (route) =>
       route.fulfill({
         json: {
@@ -292,42 +295,52 @@ async function main(): Promise<void> {
     await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' });
     await page.waitForTimeout(800);
 
-    // 1) 「今日」聚合页（异动 + 关注股观点变化 + 最近研究简报）
+    // 1) 「今日」聚合页
     await page.getByRole('tab', { name: '今日' }).click();
     await page.waitForTimeout(1000);
     await page.screenshot({ path: path.join(OUT_DIR, 'today-dashboard.png') });
     console.log('wrote today-dashboard.png');
 
-    // 2) 「自选股」页（真实后端 4 只关注股 + 异动预警）
+    // 2) 「自选股」页
     await page.getByRole('tab', { name: '自选股' }).click();
     await page.waitForTimeout(900);
     await page.screenshot({ path: path.join(OUT_DIR, 'shot-watchlist.png') });
     console.log('wrote shot-watchlist.png');
 
-    // 3) 「模拟盘」页（真实撮合引擎 + 净值曲线 + 持仓明细）
+    // 3) 「模拟盘」页（10 个交易日真实撮合 + 合理回撤/夏普 + 完整持仓表 + 净值曲线）
     await page.getByRole('tab', { name: '模拟盘' }).click();
     await page.waitForTimeout(1200);
+    await page.setViewportSize({ width: 1440, height: 1360 });
+    await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(OUT_DIR, 'shot-paper.png') });
     console.log('wrote shot-paper.png');
+    await page.setViewportSize({ width: 1440, height: 960 });
 
-    // 4) 「研究历史」页（SQLite 持久层）
+    // 4) 「研究历史」页
     await page.getByRole('tab', { name: '历史' }).click();
     await page.waitForTimeout(900);
     await page.screenshot({ path: path.join(OUT_DIR, 'shot-history.png') });
     console.log('wrote shot-history.png');
 
-    // 5) 「设置」页（运行时 Webhook + 研究历史容量）
+    // 5) 「设置」页
     await page.getByRole('tab', { name: '设置' }).click();
     await page.waitForTimeout(900);
     await page.screenshot({ path: path.join(OUT_DIR, 'settings-page.png') });
     console.log('wrote settings-page.png');
 
-    // 6) 「量化研究」页（移除模拟 digests 拦截，使用真实后端响应展示最新 3 模式界面）
+    // 6) 「量化研究」页：真实点击「开始研究」跑完 600519 近两年均线交叉回测 + 防过拟合审计
     await page.unroute('**/api/quant/digests**');
     await page.getByRole('tab', { name: '量化研究' }).click();
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(900);
+    const runBtn = page.getByRole('button', { name: /开始研究/ }).first();
+    await runBtn.click();
+    await page.waitForSelector('canvas', { timeout: 45_000 });
+    await page.waitForTimeout(1800);
+    await page.setViewportSize({ width: 1440, height: 1120 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(600);
     await page.screenshot({ path: path.join(OUT_DIR, 'quant-backtest.png') });
-    console.log('wrote quant-backtest.png');
+    console.log('wrote quant-backtest.png (real 600519 backtest equity curve + audit)');
 
     await browser.close();
   } finally {
