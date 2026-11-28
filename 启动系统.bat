@@ -1,5 +1,9 @@
 @echo off
 chcp 65001 >nul
+if "%~1"=="" if exist "%~dp0desktop-app\Stock Research System.exe" (
+  start "" "%~dp0desktop-app\Stock Research System.exe"
+  exit /b 0
+)
 echo ========================================
 echo   股票深度研究系统 - 启动中...
 echo ========================================
